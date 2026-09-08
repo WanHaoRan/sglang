@@ -1,0 +1,119 @@
+Running with specified request rate...
+#Input tokens: 16384
+#Output tokens: 16384
+#Input tokens: 49152
+#Output tokens: 49152
+
+  Barrier: round 0 complete (16 clients), releasing 16 requests for round 1
+
+  Barrier: round 1 complete (16 clients), releasing 16 requests for round 2
+
+  Barrier: round 2 complete (16 clients), releasing 16 requests for round 3
+
+  Barrier: round 3 complete (16 clients), releasing 0 requests for round 4
+All requests completed
+Performance metrics summary:
+  Total requests: 64 at 2.0 requests per second
+  Average Prompt Length: 2911.50 tokens
+  Average Output Length: 750.78 tokens
+  P90 Prompt Length: 4733 tokens
+  P99 Prompt Length: 5842 tokens
+  P90 Output Length: 1024 tokens
+  P99 Output Length: 1024 tokens
+  Average TTFT: 0.13
+  P90 TTFT: 0.18
+  P99 TTFT: 0.24
+  Median TTFT: 0.13
+  Max TTFT: 0.24
+  Average TPOT: 0.0121
+  P90 TPOT: 0.0137
+  P99 TPOT: 0.0138
+  Median TPOT: 0.0120
+  Max TPOT: 0.0138
+  Average ITL: 0.0121
+  P90 ITL: 0.0133
+  P99 ITL: 0.0368
+  Median ITL: 0.0116
+  Max ITL: 0.1360
+  Average latency: 9.17
+  P90 latency: 13.18
+  P99 latency: 14.30
+  Median latency: 10.90
+  Max latency: 14.30
+  Input token throughput: 1376.28 tokens per second
+  Output token throughput: 354.90 tokens per second
+  Request Throughput: 0.47 requests per second
+  Cache Hit Rate: 0.576679
+Per-round metrics:
+  Round 0: Average TTFT = 0.10s, Cache Hit Rate = 0.000000 (16 requests, 16 clients)
+  Round 1: Average TTFT = 0.12s, Cache Hit Rate = 0.477961 (16 requests, 16 clients)
+  Round 2: Average TTFT = 0.15s, Cache Hit Rate = 0.622023 (16 requests, 16 clients)
+  Round 3: Average TTFT = 0.16s, Cache Hit Rate = 0.721035 (16 requests, 16 clients)
+
+--- stderr ---
+/sgl-workspace/sglang/python/sglang/bench_serving.py:13: FutureWarning: `sglang.bench_serving` is deprecated and will be removed in a future release; use `sglang.benchmark.serving` instead (e.g. `python -m sglang.benchmark.serving`).
+  warnings.warn(
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+  0%|          | 0/64 [00:00<?, ?it/s]
+  2%|▏         | 1/64 [00:03<03:38,  3.47s/it]
+  3%|▎         | 2/64 [00:03<01:46,  1.72s/it]
+  5%|▍         | 3/64 [00:05<01:41,  1.67s/it]
+  6%|▋         | 4/64 [00:06<01:28,  1.48s/it]
+  8%|▊         | 5/64 [00:08<01:22,  1.40s/it]
+  9%|▉         | 6/64 [00:10<01:34,  1.62s/it]
+ 11%|█         | 7/64 [00:12<01:52,  1.97s/it]
+ 14%|█▍        | 9/64 [00:13<01:00,  1.10s/it]
+ 16%|█▌        | 10/64 [00:14<01:03,  1.17s/it]
+ 17%|█▋        | 11/64 [00:16<01:21,  1.53s/it]
+ 19%|█▉        | 12/64 [00:18<01:13,  1.41s/it]
+ 20%|██        | 13/64 [00:18<00:54,  1.07s/it]
+ 22%|██▏       | 14/64 [00:18<00:42,  1.18it/s]
+ 23%|██▎       | 15/64 [00:19<00:38,  1.28it/s]
+ 25%|██▌       | 16/64 [00:23<01:30,  1.90s/it]
+ 27%|██▋       | 17/64 [00:41<05:04,  6.48s/it]
+ 28%|██▊       | 18/64 [00:43<04:00,  5.23s/it]
+ 30%|██▉       | 19/64 [00:45<03:06,  4.14s/it]
+ 33%|███▎      | 21/64 [00:45<01:39,  2.32s/it]
+ 34%|███▍      | 22/64 [00:46<01:29,  2.14s/it]
+ 36%|███▌      | 23/64 [00:48<01:19,  1.95s/it]
+ 38%|███▊      | 24/64 [00:49<01:04,  1.61s/it]
+ 39%|███▉      | 25/64 [00:49<00:48,  1.24s/it]
+ 41%|████      | 26/64 [00:50<00:41,  1.10s/it]
+ 42%|████▏     | 27/64 [00:52<00:53,  1.44s/it]
+ 44%|████▍     | 28/64 [00:54<00:57,  1.60s/it]
+ 45%|████▌     | 29/64 [00:55<00:50,  1.45s/it]
+ 47%|████▋     | 30/64 [00:56<00:48,  1.43s/it]
+ 48%|████▊     | 31/64 [00:57<00:35,  1.07s/it]
+ 50%|█████     | 32/64 [01:00<00:52,  1.64s/it]
+ 52%|█████▏    | 33/64 [01:17<03:13,  6.24s/it]
+ 53%|█████▎    | 34/64 [01:19<02:28,  4.96s/it]
+ 55%|█████▍    | 35/64 [01:19<01:42,  3.52s/it]
+ 56%|█████▋    | 36/64 [01:19<01:10,  2.51s/it]
+ 58%|█████▊    | 37/64 [01:25<01:33,  3.45s/it]
+ 59%|█████▉    | 38/64 [01:25<01:08,  2.62s/it]
+ 62%|██████▎   | 40/64 [01:26<00:37,  1.57s/it]
+ 64%|██████▍   | 41/64 [01:26<00:28,  1.26s/it]
+ 66%|██████▌   | 42/64 [01:30<00:41,  1.87s/it]
+ 67%|██████▋   | 43/64 [01:31<00:33,  1.59s/it]
+ 69%|██████▉   | 44/64 [01:31<00:26,  1.30s/it]
+ 70%|███████   | 45/64 [01:33<00:25,  1.32s/it]
+ 72%|███████▏  | 46/64 [01:33<00:17,  1.03it/s]
+ 73%|███████▎  | 47/64 [01:36<00:30,  1.79s/it]
+ 75%|███████▌  | 48/64 [01:37<00:24,  1.55s/it]
+ 77%|███████▋  | 49/64 [01:52<01:23,  5.54s/it]
+ 78%|███████▊  | 50/64 [01:58<01:16,  5.49s/it]
+ 80%|███████▉  | 51/64 [01:59<00:53,  4.08s/it]
+ 81%|████████▏ | 52/64 [01:59<00:36,  3.06s/it]
+ 83%|████████▎ | 53/64 [02:00<00:24,  2.25s/it]
+ 84%|████████▍ | 54/64 [02:01<00:20,  2.04s/it]
+ 86%|████████▌ | 55/64 [02:03<00:18,  2.03s/it]
+ 88%|████████▊ | 56/64 [02:04<00:14,  1.76s/it]
+ 89%|████████▉ | 57/64 [02:05<00:09,  1.37s/it]
+ 91%|█████████ | 58/64 [02:05<00:06,  1.06s/it]
+ 94%|█████████▍| 60/64 [02:07<00:03,  1.05it/s]
+ 95%|█████████▌| 61/64 [02:10<00:04,  1.59s/it]
+ 97%|█████████▋| 62/64 [02:11<00:02,  1.40s/it]
+ 98%|█████████▊| 63/64 [02:12<00:01,  1.15s/it]
+100%|██████████| 64/64 [02:15<00:00,  1.76s/it]
+100%|██████████| 64/64 [02:35<00:00,  2.43s/it]

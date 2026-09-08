@@ -21,8 +21,12 @@ BASE_ARGS=(
   --mem-fraction-static 0.85
   --enable-cache-report
   --enable-metrics
-  --reasoning-parser qwen3
 )
+# Llama 3.3 has no reasoning channel; passing a parser it never emits is
+# harmless but misreports the config. Default keeps earlier callers identical.
+if [ -n "${REASONING_PARSER-qwen3}" ]; then
+  BASE_ARGS+=(--reasoning-parser "${REASONING_PARSER:-qwen3}")
+fi
 printf "%s\n" "${BASE_ARGS[@]}" "$@" > "$OUT/server_args.txt"
 python3 -m sglang.launch_server "${BASE_ARGS[@]}" "$@" > "$OUT/server.log" 2>&1 &
 SPID=$!

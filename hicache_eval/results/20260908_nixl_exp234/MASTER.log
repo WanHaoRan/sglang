@@ -1,0 +1,61 @@
+################ 2026-09-08T04:06:53Z  START qwen8b
+model=Qwen/Qwen3-8B  b=147456 B/tok  thinking=1
+
+========== [qwen8b] Exp2 baseline sweep (wait_complete)  rates=0,0.5,1,2,4,8,16 ==========
+
+========== [qwen8b] Exp2 timeout-policy sweep  rates=0,2,8 ==========
+
+========== [qwen8b] Exp2 C1 (L3 on tmpfs)  R=8 ==========
+
+========== [qwen8b] Exp2 C2 (backup_skip)  R=8  -- populate clean, then probe with writes disabled ==========
+
+========== [qwen8b] Exp2 C3 (py-spy under write load R=8) ==========
+py-spy top failed
+
+========== [qwen8b] Exp3 five conditions ==========
+
+========== [qwen8b] Exp4 strip-thinking-cache oracle ==========
+
+========== [qwen8b] DONE ==========
+################ 2026-09-08T05:19:59Z  END   qwen8b (rc=0)
+################ 2026-09-08T05:19:59Z  START qwen32b
+model=Qwen/Qwen3-32B-FP8  b=131072 B/tok  thinking=1
+
+========== [qwen32b] Exp2 baseline sweep (wait_complete)  rates=0,0.25,0.5,1,2,4 ==========
+
+========== [qwen32b] Exp2 timeout-policy sweep  rates=0,0.5,2 ==========
+
+========== [qwen32b] Exp2 C1 (L3 on tmpfs)  R=2 ==========
+
+========== [qwen32b] Exp2 C2 (backup_skip)  R=2  -- populate clean, then probe with writes disabled ==========
+
+========== [qwen32b] Exp2 C3 (py-spy under write load R=2) ==========
+py-spy top failed
+
+========== [qwen32b] Exp3 five conditions ==========
+
+========== [qwen32b] Exp4 strip-thinking-cache oracle ==========
+
+========== [qwen32b] DONE ==========
+################ 2026-09-08T07:20:39Z  END   qwen32b (rc=0)
+################ 2026-09-08T07:20:39Z  START llama70b
+model=casperhansen/llama-3.3-70b-instruct-awq  b=163840 B/tok  thinking=0
+
+========== [llama70b] Exp2 baseline sweep (wait_complete)  rates=0,0.1,0.25,0.5,1,2 ==========
+
+========== [llama70b] Exp2 timeout-policy sweep  rates=0,0.25,1 ==========
+
+========== [llama70b] Exp2 C1 (L3 on tmpfs)  R=1 ==========
+
+========== [llama70b] Exp2 C2 (backup_skip)  R=1  -- populate clean, then probe with writes disabled ==========
+
+========== [llama70b] Exp2 C3 (py-spy under write load R=1) ==========
+py-spy top failed
+
+========== [llama70b] Exp3 five conditions ==========
+
+========== [llama70b] Exp4 SKIPPED: strip_thinking_cache is gated on reasoning_tokens>0 (schedule_batch.py:1381) and this model emits none ==========
+
+========== [llama70b] DONE ==========
+################ 2026-09-08T09:42:50Z  END   llama70b (rc=0)
+################ 2026-09-08T09:42:50Z  ALL MODELS DONE

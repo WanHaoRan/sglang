@@ -18,12 +18,21 @@ import hcommon  # noqa: E402
 WORK = "/sgl-workspace/sglang/hicache_eval"
 SCRIPTS = f"{WORK}/scripts"
 REPO = "/sgl-workspace/sglang"
-OUT = os.path.join(os.environ["RESULTS"], "exp3")
+OUT = os.path.join(os.environ["RESULTS"], os.environ.get("EXP3_SUBDIR", "exp3"))
 os.makedirs(OUT, exist_ok=True)
 CSV = os.path.join(OUT, "amplification.csv")
-KV = 147456
+KV = int(os.environ.get("KV_BYTES_PER_TOKEN", 147456))
+MODEL = os.environ.get("MODEL", "Qwen/Qwen3-8B")
+MODEL_KEY = os.environ.get("MODEL_KEY", "qwen8b")
+BACKEND = os.environ.get("HICACHE_BACKEND", "file")
+# Llama 3.3 emits no reasoning channel, so enable_thinking is not a
+# template kwarg it accepts and strip_thinking_cache never fires
+# (schedule_batch.py:1381). Both are gated on this.
+SUPPORTS_THINKING = os.environ.get("SUPPORTS_THINKING", "1") == "1"
+REASONING_PARSER = os.environ.get("REASONING_PARSER", "qwen3")
+MODEL_EXTRA_ARGS = os.environ.get("MODEL_EXTRA_ARGS", "")
 
-FIELDS = ["condition", "hicache_size", "write_policy", "extra", "duration_s",
+FIELDS = ["model", "backend", "condition", "hicache_size", "write_policy", "extra", "duration_s",
           "written_L3_tokens", "written_L3_bytes", "l3_files", "l3_bytes_on_disk",
           "read_L3_tokens", "prefetched_tokens", "unfulfilled_tokens",
           "dropped_tokens", "backup_dropped_tokens", "generation_tokens",
@@ -51,15 +60,17 @@ def run_condition(name, hicache_size, write_policy, extra, client_args, no_hicac
     os.makedirs(cond_out, exist_ok=True)
 
     if no_hicache:
-        server_extra = "--reasoning-parser qwen3"
+        server_extra = ""
     else:
         server_extra = (
             f"--enable-hierarchical-cache --hicache-size {hicache_size} "
             f"--hicache-write-policy {write_policy} --hicache-io-backend kernel "
-            f"--hicache-mem-layout page_first --hicache-storage-backend file "
+            f"--hicache-mem-layout page_first --hicache-storage-backend {BACKEND} "
             f"--hicache-storage-prefetch-policy timeout --radix-eviction-policy lru "
             f"{extra}")
-    server_extra += " --default-chat-template-kwargs '{\"enable_thinking\": true}'"
+    server_extra = f"{MODEL_EXTRA_ARGS} {server_extra}".strip()
+    if SUPPORTS_THINKING:
+        server_extra += " --default-chat-template-kwargs '{\"enable_thinking\": true}'"
 
     print(f"\n### condition {name}: {server_extra}", flush=True)
     start(tag, server_extra)
@@ -69,7 +80,7 @@ def run_condition(name, hicache_size, write_policy, extra, client_args, no_hicac
     t0 = time.time()
     logf = os.path.join(cond_out, "bench.jsonl")
     cmd = (f"cd {REPO}/benchmark/hicache && python3 bench_multiturn.py "
-           f"--model-path Qwen/Qwen3-8B --port 30000 --api-format openai "
+           f"--model-path {MODEL} --port 30000 --api-format openai "
            f"--disable-random-sample --disable-auto-run --enable-round-barrier "
            f"--ready-queue-policy random --tag {name} --log-file {logf} {client_args}")
     r = sh(cmd)
@@ -96,6 +107,7 @@ def run_condition(name, hicache_size, write_policy, extra, client_args, no_hicac
     wl3_tokens = d("sglang:hicache_backup_tokens_total")
     rl3_tokens = d("sglang:storage_prefetch_hit_tokens_total")
     row = {
+        "model": MODEL_KEY, "backend": BACKEND if not no_hicache else "-",
         "condition": name, "hicache_size": hicache_size,
         "write_policy": write_policy if not no_hicache else "none",
         "extra": extra.strip() or "-", "duration_s": round(dur, 1),

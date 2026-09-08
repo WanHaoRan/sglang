@@ -8,8 +8,18 @@ import argparse
 import asyncio
 import json
 import random
+import signal
 import sys
 import time
+
+# Exp 2 stops the load as soon as its probes are done. Without a clean stop the
+# summary line (achieved_rps) is never printed and the rate axis reads zero.
+_STOP = False
+
+
+def _on_term(signum, frame):
+    global _STOP
+    _STOP = True
 
 import aiohttp
 
@@ -60,7 +70,7 @@ async def run(a):
                 await one(session, a.base, body, a.out, results)
 
         t_start = time.time()
-        while time.time() < stop:
+        while time.time() < stop and not _STOP:
             # The unique marker must be a PREFIX. Appending it left all pool
             # entries sharing their whole prefix, so every len(pool)-th request
             # hit the radix cache instead of inserting new nodes — which voided
@@ -102,11 +112,15 @@ def main():
     ap.add_argument("--out-file", default=None)
     ap.add_argument("--timeout", type=float, default=600)
     a = ap.parse_args()
+    signal.signal(signal.SIGTERM, _on_term)
+    signal.signal(signal.SIGINT, _on_term)
     if a.rate <= 0:
         print(json.dumps({"requested_rps": 0, "achieved_rps": 0.0, "sent": 0,
                           "ok": 0, "failed": 0, "elapsed_s": a.duration,
                           "len": a.len, "out": a.out, "implied_write_gbps": 0.0}))
-        time.sleep(a.duration)
+        t_end = time.time() + a.duration
+        while time.time() < t_end and not _STOP:
+            time.sleep(0.5)
         return
     asyncio.run(run(a))
 

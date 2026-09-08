@@ -556,6 +556,13 @@ class HiCacheController:
             # todo: load balancing
             and self.storage_config.tp_rank != 0
         )
+        # EVAL-ONLY (hicache_eval Exp 2 control C2): keep the D2H copy and all
+        # Python bookkeeping but drop the L3 write, to separate SSD contention
+        # from PCIe/host/GIL contention. Revert before any real use.
+        import os as _os
+
+        if _os.environ.get("HICACHE_EVAL_BACKUP_SKIP") == "1":
+            self.backup_skip = True
 
         # Use storage backend factory for dynamic backend creation
         from sglang.srt.mem_cache.storage import StorageBackendFactory

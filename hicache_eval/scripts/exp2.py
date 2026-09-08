@@ -7,6 +7,7 @@ host/PCIe/GIL contention.
 import argparse
 import json
 import os
+import random
 import subprocess
 import sys
 import threading
@@ -16,12 +17,31 @@ sys.path.insert(0, "/sgl-workspace/sglang/hicache_eval/scripts")
 import hcommon  # noqa: E402
 from probe import probe  # noqa: E402
 
-OUT = os.path.join(os.environ["RESULTS"], "exp2")
+OUT = os.path.join(os.environ["RESULTS"], os.environ.get("EXP2_SUBDIR", "exp2"))
 os.makedirs(OUT, exist_ok=True)
 CSV = os.path.join(OUT, "interference.csv")
 BASE = hcommon.BASE
-PROBE_L = 16384
+PROBE_L = int(os.environ.get("PROBE_L", 16384))
+MODEL_KEY = os.environ.get("MODEL_KEY", "qwen8b")
+BACKEND = os.environ.get("HICACHE_BACKEND", "file")
 SCRIPTS = "/sgl-workspace/sglang/hicache_eval/scripts"
+# Fresh per invocation: guarantees the recompute control has never been sent to
+# this store by any earlier stage, so it cannot silently become an L3 hit.
+RC_SALT = random.randrange(10 ** 6, 10 ** 7)
+
+
+def diskstats(dev="vda"):
+    """Sectors read/written for one device, straight from /proc/diskstats.
+
+    iostat_sample() measures the interval *before* the probe, so it captures the
+    steady write pressure but never the probe's own read burst. Bracketing the
+    probe with diskstats gives the read volume that probe actually caused.
+    """
+    for line in open("/proc/diskstats"):
+        f = line.split()
+        if len(f) > 13 and f[2] == dev:
+            return {"r_sectors": int(f[5]), "w_sectors": int(f[9])}
+    return {"r_sectors": 0, "w_sectors": 0}
 
 
 def iostat_sample(seconds=5):
@@ -61,7 +81,10 @@ class WriteLoad:
     def __exit__(self, *exc):
         if self.proc:
             try:
-                out, _ = self.proc.communicate(timeout=60)
+                # SIGTERM breaks writeload's send loop so it prints its summary;
+                # without it communicate() times out and achieved_rps reads 0.
+                self.proc.terminate()
+                out, _ = self.proc.communicate(timeout=120)
                 for line in (out or "").splitlines():
                     if line.strip().startswith("{"):
                         self.summary = json.loads(line)
@@ -80,7 +103,7 @@ def prepopulate(bodies, seeds):
     print(f"  drain {time.time()-t0:.0f}s; L3={hcommon.l3_stats()}", flush=True)
 
 
-def run_point(rate, bodies, seeds, reps, control, duration, offset):
+def run_point(rate, bodies, seeds, reps, control, duration, offset, rc_bodies=None):
     rows = []
     with WriteLoad(rate, duration) as wl:
         time.sleep(30 if rate > 0 else 2)  # warm-up excluded
@@ -96,16 +119,45 @@ def run_point(rate, bodies, seeds, reps, control, duration, offset):
                 # fully idle, so flush_cache can never succeed. Instead each
                 # prompt is probed exactly once, so its only copy is in L3.
                 hcommon.drop_page_cache()
+                ds0 = diskstats()
                 rec, _ = probe(BASE, body, L, s, {})
+                ds1 = diskstats()
             except Exception as e:
                 print(f"  probe failed at R={rate}: {e}", flush=True)
                 continue
-            row = {"requested_rps": rate, "control": control, "rep": rep,
+            row = {"model": MODEL_KEY, "backend": BACKEND,
+                   "requested_rps": rate, "control": control, "rep": rep,
                    "ttft_s": rec["ttft_s"], "cached_storage": rec.get("cached_storage"),
                    "cached_device": rec.get("cached_device"),
-                   "cached_host": rec.get("cached_host"), **io}
+                   "cached_host": rec.get("cached_host"),
+                   "probe_read_mb": (ds1["r_sectors"] - ds0["r_sectors"]) * 512 / 2**20,
+                   "probe_write_mb": (ds1["w_sectors"] - ds0["w_sectors"]) * 512 / 2**20,
+                   **io}
             rows.append(row)
             print(json.dumps(row), flush=True)
+
+            # Paired control: a prompt never sent before, so it cannot hit any
+            # tier and must recompute. Same load, same instant -- this is the
+            # line the L3 hit has to beat.
+            if rc_bodies is not None:
+                try:
+                    ds0 = diskstats()
+                    rc, _ = probe(BASE, rc_bodies[k], L, RC_SALT + k, {})
+                    ds1 = diskstats()
+                    rrow = dict(row)
+                    rrow.update({
+                        "control": control + "_recompute", "ttft_s": rc["ttft_s"],
+                        "rc_seed": RC_SALT + k,
+                        "cached_storage": rc.get("cached_storage"),
+                        "cached_device": rc.get("cached_device"),
+                        "cached_host": rc.get("cached_host"),
+                        "probe_read_mb": (ds1["r_sectors"] - ds0["r_sectors"]) * 512 / 2**20,
+                        "probe_write_mb": (ds1["w_sectors"] - ds0["w_sectors"]) * 512 / 2**20,
+                    })
+                    rows.append(rrow)
+                    print(json.dumps(rrow), flush=True)
+                except Exception as e:
+                    print(f"  recompute probe failed at R={rate}: {e}", flush=True)
             if rate > 0:
                 time.sleep(10)
         a0 = hcommon.parse_metrics(hcommon.scrape())
@@ -133,11 +185,14 @@ def main():
     rates = [float(x) for x in a.rates.split(",")]
     seeds = [(PROBE_L, 2000 + i) for i in range(a.reps * len(rates))]
     bodies = [hcommon.build_prompt(L, s) for L, s in seeds]
+    # Never populated into L3, so every one of these is a guaranteed miss.
+    rc_bodies = [hcommon.build_prompt(L, RC_SALT + i) for i, (L, s) in enumerate(seeds)]
 
     if not os.path.exists(CSV):
         with open(CSV, "w") as f:
-            f.write("requested_rps,achieved_rps,write_gbps_actual,control,rep,ttft_s,"
+            f.write("model,backend,requested_rps,achieved_rps,write_gbps_actual,control,rep,ttft_s,"
                     "cached_storage,cached_device,cached_host,unfulfilled_tokens,"
+                    "probe_read_mb,probe_write_mb,"
                     "iostat_r_mbps,iostat_w_mbps,r_await_ms,w_await_ms,util_pct\n")
 
     if not a.skip_populate:
@@ -149,12 +204,13 @@ def main():
     for i, rate in enumerate(rates):
         print(f"\n### R={rate} req/s  control={a.control}", flush=True)
         for row in run_point(rate, bodies, seeds, a.reps, a.control, a.duration,
-                             offset=i * a.reps):
+                             offset=i * a.reps, rc_bodies=rc_bodies):
             with open(CSV, "a") as f:
                 f.write(",".join(str(row.get(k, "")) for k in [
-                    "requested_rps", "achieved_rps", "write_gbps_actual", "control",
+                    "model", "backend", "requested_rps", "achieved_rps", "write_gbps_actual", "control",
                     "rep", "ttft_s", "cached_storage", "cached_device", "cached_host",
-                    "unfulfilled_tokens", "iostat_r_mbps", "iostat_w_mbps",
+                    "unfulfilled_tokens", "probe_read_mb", "probe_write_mb",
+                    "iostat_r_mbps", "iostat_w_mbps",
                     "r_await_ms", "w_await_ms", "util_pct"]) + "\n")
     print("\nDONE exp2", flush=True)
 

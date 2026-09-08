@@ -1,0 +1,1476 @@
+/sgl-workspace/sglang/python/sglang/launch_server.py:63: UserWarning: 'python -m sglang.launch_server' is still supported, but 'sglang serve' is the recommended entrypoint.
+  Example: sglang serve --model-path <model> [options]
+  warnings.warn(
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[2026-09-08 07:02:32] Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[2026-09-08 07:02:32] Attention backend not specified. Use fa3 backend by default.
+[2026-09-08 07:02:32] FlashAttention3 only supports fp8_e4m3 if using FP8; Setting attention backend to triton.
+[2026-09-08 07:02:35] server_args={'model_path': 'Qwen/Qwen3-32B-FP8', 'tokenizer_path': 'Qwen/Qwen3-32B-FP8', 'tokenizer_mode': 'auto', 'tokenizer_backend': 'huggingface', 'tokenizer_worker_num': 1, 'detokenizer_worker_num': 1, 'skip_tokenizer_init': False, 'load_format': 'auto', 'model_loader_extra_config': '{}', 'trust_remote_code': False, 'context_length': 32768, 'is_embedding': False, 'enable_multimodal': None, 'revision': None, 'model_impl': 'auto', 'model_config_parser': 'auto', 'json_model_override_args': '{}', 'dtype': 'auto', 'quantization': None, 'quantization_param_path': None, 'kv_cache_dtype': 'fp8_e5m2', 'enable_fp32_lm_head': False, 'modelopt_quant': None, 'modelopt_checkpoint_restore_path': None, 'modelopt_checkpoint_save_path': None, 'modelopt_export_path': None, 'quantize_and_serve': False, 'rl_quant_profile': None, 'enable_tf32_matmul': False, 'mem_fraction_static': 0.85, 'max_running_requests': None, 'max_queued_requests': None, 'max_total_tokens': None, 'chunked_prefill_size': 8192, 'prefill_decode_interval': 0, 'enable_dynamic_chunking': False, 'max_prefill_tokens': 16384, 'prefill_max_requests': None, 'schedule_policy': 'fcfs', 'enable_priority_scheduling': False, 'disable_priority_preemption': False, 'default_priority_value': None, 'abort_on_priority_when_disabled': False, 'schedule_low_priority_values_first': False, 'priority_scheduling_preemption_threshold': 10, 'retraction_policy': 'length', 'schedule_conservativeness': 1.0, 'page_size': 64, 'c128_page_size': 16, 'swa_full_tokens_ratio': 0.8, 'disable_hybrid_swa_memory': False, 'radix_eviction_policy': 'lru', 'radix_eviction_policy_config': None, 'prefill_only_disable_kv_cache': False, 'disable_radix_cache': False, 'enable_page_major_kv_layout': False, 'enable_unified_memory': False, 'disable_chunked_prefix_cache': False, 'disable_overlap_schedule': False, 'num_continuous_decode_steps': 1, 'scheduler_recv_interval': 1, 'enable_mixed_chunk': False, 'nccl_port': None, 'dist_timeout': None, 'dist_init_addr': None, 'gated_launch_port': None, 'nnodes': 1, 'node_rank': 0, 'tp_size': 1, 'dcp_size': 1, 'pp_size': 1, 'pp_max_micro_batch_size': None, 'pp_async_batch_depth': 0, 'dp_size': 1, 'load_balance_method': 'round_robin', 'attn_cp_size': 1, 'moe_dp_size': 1, 'dwdp_size': 1, 'dcp_comm_backend': 'ag_rs', 'dcp_replicate_q_proj': None, 'enable_prefill_cp': False, 'cp_strategy': None, 'enable_dsa_cache_layer_split': False, 'enable_dsa_prefill_context_parallel': False, 'dsa_prefill_cp_mode': 'round-robin-split', 'enable_prefill_context_parallel': False, 'prefill_cp_mode': 'in-seq-split', 'enable_cp_decode_attn_tp': False, 'enable_dp_attention': False, 'enable_dp_attention_local_control_broadcast': False, 'enable_dp_lm_head': False, 'enable_tp_lm_head_all_to_all': False, 'enable_attn_tp_input_scattered': False, 'enable_shared_experts_attn_tp': False, 'enable_dense_mlp_attn_tp': False, 'enable_layernorm_sp': False, 'disable_attn_tp_gather': False, 'enable_p2p_check': False, 'device': 'cuda', 'base_gpu_id': 0, 'gpu_id_step': 1, 'random_seed': 728372897, 'mlx_enable_sampling': False, 'watchdog_timeout': 300, 'soft_watchdog_timeout': None, 'sleep_on_idle': False, 'use_ray': False, 'custom_sigquit_handler': None, 'numa_node': None, 'gc_threshold': None, 'host': '0.0.0.0', 'port': 30000, 'fastapi_root_path': '', 'smg_grpc_mode': False, 'grpc_mode': False, 'grpc_port': None, 'grpc_worker_threads': 4, 'sidecar': None, 'sidecar_args': None, 'skip_server_warmup': False, 'warmups': None, 'enable_http2': False, 'http2_max_concurrent_streams': 200, 'http2_initial_connection_window_size': 1048576, 'ssl_keyfile': None, 'ssl_certfile': None, 'ssl_ca_certs': None, 'ssl_keyfile_password': None, 'enable_ssl_refresh': False, 'api_key': None, 'admin_api_key': None, 'served_model_name': 'Qwen/Qwen3-32B-FP8', 'weight_version': 'default', 'chat_template': None, 'hf_chat_template_name': None, 'completion_template': None, 'file_storage_path': 'sglang_storage', 'enable_cache_report': True, 'return_input_ids': False, 'return_output_ids': False, 'reasoning_parser': 'qwen3', 'default_chat_template_kwargs': {'enable_thinking': True}, 'strip_thinking_cache': True, 'enable_strict_thinking': False, 'tool_call_parser': None, 'tool_server': None, 'sampling_defaults': 'model', 'asr_max_buffer_seconds': 60, 'asr_max_concurrent_sessions': 32, 'preferred_sampling_params': None, 'allow_auto_truncate': False, 'stream_interval': 1, 'batch_notify_size': 16, 'stream_response_default_include_usage': False, 'incremental_streaming_output': False, 'enable_streaming_session': False, 'enable_session_radix_cache': False, 'log_level': 'info', 'log_level_http': None, 'log_requests': False, 'log_requests_level': 2, 'log_requests_format': 'text', 'log_requests_target': None, 'uvicorn_access_log_exclude_prefixes': [], 'crash_dump_folder': None, 'show_time_cost': False, 'enable_metrics': True, 'smg_http_sidecar_port': None, 'enable_mfu_metrics': False, 'enable_metrics_for_all_schedulers': False, 'load_snapshot_publish_interval': 15, 'tokenizer_metrics_custom_labels_header': 'x-custom-labels', 'tokenizer_metrics_allowed_custom_labels': None, 'extra_metric_labels': None, 'bucket_time_to_first_token': None, 'bucket_inter_token_latency': None, 'bucket_e2e_request_latency': None, 'prompt_tokens_buckets': None, 'generation_tokens_buckets': None, 'gc_warning_threshold_secs': 0.0, 'decode_log_interval': 40, 'enable_request_time_stats_logging': False, 'kv_events_config': None, 'load_publish_endpoint': None, 'enable_forward_pass_metrics': False, 'forward_pass_metrics_worker_id': '', 'forward_pass_metrics_ipc_name': None, 'enable_trace': False, 'trace_modules': 'request', 'otlp_traces_endpoint': 'localhost:4317', 'export_metrics_to_file': False, 'export_metrics_to_file_dir': None, 'stat_loggers': None, 'constrained_json_whitespace_pattern': None, 'constrained_json_disable_any_whitespace': False, 'attention_backend': 'triton', 'decode_attention_backend': None, 'enable_lean_attention': None, 'prefill_attention_backend': None, 'sampling_backend': 'flashinfer', 'grammar_backend': 'xgrammar', 'radix_cache_backend': None, 'mm_attention_backend': None, 'fp8_gemm_runner_backend': 'auto', 'fp4_gemm_runner_backend': 'auto', 'bf16_gemm_backend': 'auto', 'dsa_prefill_backend': None, 'dsv4_prefill_backend': 'auto', 'dsa_decode_backend': None, 'dsa_paged_mqa_logits_backend': 'auto', 'dsa_topk_backend': 'sgl-kernel', 'disable_flashinfer_autotune': False, 'flashinfer_autotune_skip_ops': None, 'mamba_backend': 'triton', 'cuda_graph_config': {'decode': {'backend': 'full', 'max_bs': 256, 'bs': [1, 2, 4, 8, 12, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256], 'tc_compiler': 'eager', 'full_prefill_max_req': None, 'full_prefill_prefix_chunk_tokens': None}, 'prefill': {'backend': 'breakable', 'max_bs': 8192, 'bs': [4, 8, 12, 16, 20, 24, 28, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 704, 768, 832, 896, 960, 1024, 1280, 1536, 1792, 2048, 2304, 2560, 2816, 3072, 3328, 3584, 3840, 4096, 4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192], 'tc_compiler': 'eager', 'full_prefill_max_req': None, 'full_prefill_prefix_chunk_tokens': None}}, 'cuda_graph_backend_decode': None, 'cuda_graph_backend_prefill': None, 'cuda_graph_max_bs_decode': None, 'cuda_graph_max_bs_prefill': None, 'cuda_graph_bs_decode': None, 'cuda_graph_bs_prefill': None, 'cuda_graph_tc_compiler': None, 'disable_prefill_cuda_graph': False, 'disable_decode_cuda_graph': False, 'disable_cuda_graph': False, 'disable_cuda_graph_padding': False, 'enable_profile_cuda_graph': False, 'enable_cudagraph_gc': False, 'debug_cuda_graph': False, 'enable_layerwise_nvtx_marker': False, 'enable_nccl_nvls': False, 'enable_symm_mem': False, 'triton_attention_reduce_in_fp32': False, 'triton_attention_num_kv_splits': 8, 'triton_attention_split_tile_size': None, 'flashinfer_mla_disable_ragged': False, 'enable_fused_qk_norm_rope': False, 'enable_precise_embedding_interpolation': False, 'enable_fused_moe_sum_all_reduce': False, 'enable_deepseek_v4_fp4_indexer': False, 'disable_custom_all_reduce': False, 'enable_mscclpp': False, 'enable_torch_symm_mem': False, 'enable_scattered_sconv': False, 'pre_warm_nccl': False, 'enable_quant_communications': False, 'enable_flashinfer_allreduce_fusion': False, 'enforce_disable_flashinfer_allreduce_fusion': False, 'flashinfer_allreduce_fusion_backend': None, 'enable_aiter_allreduce_fusion': False, 'enable_torch_compile': False, 'enable_torch_compile_debug_mode': False, 'torch_compile_max_bs': 32, 'speculative_algorithm': None, 'uno_lora_path': None, 'speculative_draft_model_path': None, 'speculative_draft_model_revision': None, 'speculative_draft_load_format': None, 'speculative_num_steps': None, 'speculative_eagle_topk': None, 'speculative_num_draft_tokens': None, 'speculative_dflash_block_size': None, 'speculative_dspark_block_size': None, 'speculative_dspark_sps_table_path': None, 'speculative_dspark_confidence_sts_path': None, 'speculative_dspark_align_verify_tokens_to_graph_tier': False, 'speculative_accept_threshold_single': 1.0, 'speculative_accept_threshold_acc': 1.0, 'speculative_use_rejection_sampling': False, 'speculative_token_map': None, 'speculative_attention_mode': 'prefill', 'speculative_draft_attention_backend': None, 'speculative_dsa_topk_backend': 'sgl-kernel', 'speculative_draft_kv_cache_dtype': None, 'speculative_draft_window_size': None, 'speculative_moe_runner_backend': 'auto', 'speculative_moe_a2a_backend': None, 'speculative_draft_model_quantization': None, '_speculative_draft_quantization_explicitly_set': False, 'speculative_skip_dp_mlp_sync': False, 'enable_multi_layer_eagle': False, 'speculative_adaptive': False, 'speculative_adaptive_config': None, 'decoupled_spec_bind_endpoint': None, 'decoupled_spec_connect_endpoints': None, 'decoupled_spec_rank': None, 'decoupled_spec_role': 'null', 'spec_trace_dir': None, 'speculative_ngram_min_bfs_breadth': 1, 'speculative_ngram_max_bfs_breadth': 10, 'speculative_ngram_match_type': 'BFS', 'speculative_ngram_max_trie_depth': 18, 'speculative_ngram_capacity': 10000000, 'speculative_ngram_external_corpus_path': None, 'speculative_ngram_external_sam_budget': 0, 'speculative_ngram_external_corpus_max_tokens': 10000000, 'ep_size': 1, 'moe_a2a_backend': 'none', 'enable_w4a4_mxfp4_megamoe': False, 'deepep_v2_mode': 'direct', 'moe_runner_backend': 'auto', 'flashinfer_mxfp4_moe_precision': 'default', 'deepep_mode': 'auto', 'fuseep_mode': 2, 'deepep_dispatcher_output_dtype': 'auto', 'ep_num_redundant_experts': 0, 'ep_dispatch_algorithm': None, 'init_expert_location': 'trivial', 'enable_eplb': False, 'eplb_algorithm': 'auto', 'eplb_rebalance_num_iterations': 1000, 'eplb_rebalance_layers_per_chunk': None, 'eplb_min_rebalancing_utilization_threshold': 1.0, 'expert_distribution_recorder_mode': None, 'expert_distribution_recorder_buffer_size': 1000, 'expert_balancedness_report_mode': 'off', 'deepep_config': None, 'moe_dense_tp_size': None, 'elastic_ep_backend': None, 'enable_elastic_expert_backup': False, 'mooncake_ib_device': None, 'enable_waterfill': False, 'ep_join_mode': None, 'ep_join_rank_offset': 0, 'elastic_ep_initial_size': None, 'max_ep_size': None, 'elastic_ep_scale_timeout': 600, 'elastic_ep_rejoin': False, 'disable_flashinfer_cutlass_moe_fp4_allgather': False, 'disable_shared_experts_fusion': False, 'enforce_shared_experts_fusion': False, 'max_mamba_cache_size': None, 'mamba_ssm_dtype': None, 'mamba_max_states_per_path': -1, 'enable_mamba_cache_stochastic_rounding': False, 'mamba_cache_philox_rounds': 0, 'mamba_full_memory_ratio': 0.9, 'mamba_radix_cache_strategy': 'auto', 'uses_mamba_radix_cache': False, 'mamba_track_interval': 256, 'enable_int8_mamba_checkpoint': False, 'int8_mamba_ckpt_size': None, 'linear_attn_backend': 'triton', 'linear_attn_decode_backend': None, 'linear_attn_prefill_backend': None, 'linear_attn_verify_backend': None, 'enable_linear_replayssm': False, 'linear_replayssm_cache_len': 16, 'enable_linear_replayssm_spec': False, 'enable_hierarchical_cache': True, 'hicache_host_memory_mode': 'cache', 'hicache_ratio': 2.0, 'hicache_size': 100, 'hicache_write_policy': 'write_through', 'hicache_io_backend': 'kernel', 'hicache_mem_layout': 'page_first', 'hicache_storage_backend': 'nixl', 'hicache_storage_prefetch_policy': 'timeout', 'hicache_storage_backend_extra_config': None, 'hicache_storage_prefetch_retry_poll_interval': 0, 'hicache_storage_prefetch_retry_max_attempts': 4, 'enable_unified_cache_external_linker': False, 'unified_cache_external_linker_backend': 'mooncake', 'enable_hisparse': False, 'hisparse_config': None, 'enable_broadcast_mm_inputs_process': False, 'enable_prefix_mm_cache': False, 'mm_enable_dp_encoder': False, 'mm_process_config': {}, 'mm_processor_worker_num': 0, 'mm_io_worker_num': 0, 'allowed_media_domains': [], 'media_url_max_file_size_mb': 64, 'mm_preprocess_cache_size_mb': None, 'trust_mm_content_hashes': False, 'limit_mm_data_per_request': None, 'enable_mm_global_cache': False, 'image_processor_backend': 'auto', 'mm_global_cache_backend': 'mooncake', 'disable_fast_image_processor': False, 'mm_feature_transport': 'cpu', 'keep_mm_feature_on_device': False, 'enable_lora': None, 'enable_lora_overlap_loading': None, 'max_lora_rank': None, 'lora_target_modules': None, 'lora_paths': None, 'max_loaded_loras': None, 'max_loras_per_batch': 8, 'lora_eviction_policy': 'lru', 'lora_backend': 'csgmv', 'max_lora_chunk_size': 16, 'experts_shared_outer_loras': None, 'lora_use_virtual_experts': False, 'lora_strict_loading': False, 'lora_drain_wait_threshold': 0.0, 'enable_two_batch_overlap': False, 'enable_single_batch_overlap': False, 'tbo_token_distribution_threshold': 0.48, 'cpu_offload_gb': 0, 'offload_group_size': -1, 'offload_num_in_group': 1, 'offload_prefetch_step': 1, 'offload_mode': 'cpu', 'enable_lmcache': False, 'lmcache_config_file': None, 'enable_flexkv': False, 'flexkv_config_file': None, 'kt_weight_path': None, 'kt_method': 'AMXINT4', 'kt_cpuinfer': None, 'kt_threadpool_count': 2, 'kt_num_gpu_experts': None, 'kt_max_deferred_experts_per_token': None, 'dllm_algorithm': None, 'dllm_algorithm_config': None, 'dllm_fdfo': True, 'disaggregation_mode': 'null', 'disaggregation_transfer_backend': 'mooncake', 'disaggregation_bootstrap_port': 8998, 'disaggregation_ib_device': None, 'disaggregation_decode_enable_radix_cache': False, 'disaggregation_decode_enable_offload_kvcache': False, 'disaggregation_decode_retraction_backup': None, 'num_reserved_decode_tokens': 512, 'disaggregation_decode_extra_slots': None, 'disaggregation_decode_polling_interval': 1, 'optimistic_prefill_attempts': 0, 'encoder_only': False, 'language_only': False, 'language_model_only': False, 'encoder_transfer_backend': 'zmq_to_scheduler', 'encoder_urls': [], 'encoder_bootstrap_port': 8997, 'encoder_register_urls': [], 'enable_adaptive_dispatch_to_encoder': False, 'enable_pdmux': False, 'pdmux_config_path': None, 'sm_group_num': 8, 'startup_weight_load_mode': 'serial', 'custom_weight_loader': [], 'weight_loader_disable_mmap': False, 'weight_loader_prefetch_checkpoints': False, 'weight_loader_prefetch_num_threads': 4, 'weight_loader_drop_cache_after_load': False, 'remote_instance_weight_loader_seed_instance_ip': None, 'remote_instance_weight_loader_seed_instance_service_port': None, 'remote_instance_weight_loader_send_weights_group_ports': None, 'remote_instance_weight_loader_backend': 'nccl', 'remote_instance_weight_loader_start_seed_via_transfer_engine': False, 'engine_info_bootstrap_port': 6789, 'modelexpress_config': None, 'download_dir': None, 'model_checksum': None, 'delete_ckpt_after_loading': False, 'decrypted_config_file': None, 'decrypted_draft_config_file': None, 'checkpoint_engine_wait_weights_before_ready': False, 'enable_prefill_delayer': False, 'prefill_delayer_max_delay_passes': 30, 'prefill_delayer_token_usage_low_watermark': None, 'prefill_delayer_forward_passes_buckets': None, 'prefill_delayer_wait_seconds_buckets': None, 'prefill_delayer_queue_min_ratio': None, 'prefill_delayer_max_delay_ms': None, 'min_free_slots_delay': None, 'enable_deterministic_inference': False, 'rl_on_policy_target': None, 'kv_canary': 'none', 'kv_canary_real_data': 'none', 'kv_canary_sweep_interval': 0, 'enable_dynamic_batch_tokenizer': False, 'dynamic_batch_tokenizer_batch_size': 32, 'dynamic_batch_tokenizer_batch_timeout': 0.002, 'enable_tokenizer_batch_encode': False, 'disable_tokenizer_batch_decode': False, 'debug_tensor_dump_output_folder': None, 'debug_tensor_dump_layers': None, 'debug_tensor_dump_input_file': None, 'enable_memory_saver': False, 'enable_weights_cpu_backup': False, 'enable_draft_weights_cpu_backup': False, 'enable_custom_logit_processor': False, 'enable_return_hidden_states': False, 'return_hidden_states_mode': None, 'enable_return_routed_experts': False, 'enable_return_indexer_topk': False, 'disable_outlines_disk_cache': False, 'enable_mis': False, 'weight_cache_mode': 'off', 'weight_cache_socket': None, 'weight_cache_timeout': 1800, 'forward_hooks': None, 'msprobe_dump_config': None}
+[2026-09-08 07:02:37] Using default HuggingFace chat template with detected content format: string
+[2026-09-08 07:02:37] Auto-detected template features: reasoning_config=ReasoningToggleConfig(toggle_param='enable_thinking', default_enabled=True, special_case=None, effort_kwarg=None), reasoning_parser=qwen3, tool_call_parser=qwen
+[2026-09-08 07:02:51] Init torch distributed begin.
+[2026-09-08 07:02:51] Init torch distributed ends. elapsed=0.05 s, mem usage=0.08 GB
+[2026-09-08 07:02:54] Load weight begin. avail mem=78.55 GB
+[2026-09-08 07:02:54] Detected fp8 checkpoint.
+[2026-09-08 07:02:54] Found local HF snapshot for Qwen/Qwen3-32B-FP8 at /root/.cache/huggingface/hub/models--Qwen--Qwen3-32B-FP8/snapshots/aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df; skipping download.
+Multi-thread loading shards:   0% Completed | 0/7 [00:00<?, ?it/s]Multi-thread loading shards:  14% Completed | 1/7 [00:01<00:06,  1.07s/it]Multi-thread loading shards:  29% Completed | 2/7 [00:02<00:05,  1.01s/it]Multi-thread loading shards:  43% Completed | 3/7 [00:02<00:03,  1.03it/s]Multi-thread loading shards:  57% Completed | 4/7 [00:03<00:02,  1.05it/s]Multi-thread loading shards:  71% Completed | 5/7 [00:04<00:01,  1.07it/s]Multi-thread loading shards:  86% Completed | 6/7 [00:05<00:00,  1.08it/s]Multi-thread loading shards: 100% Completed | 7/7 [00:06<00:00,  1.12it/s]Multi-thread loading shards: 100% Completed | 7/7 [00:06<00:00,  1.07it/s]
+[2026-09-08 07:03:00] Load weight end. elapsed=6.92 s, type=Qwen3ForCausalLM, quant=fp8, fmt=e4m3, avail mem=46.50 GB, mem usage=32.05 GB.
+[2026-09-08 07:03:02] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 284224, K size: 17.35 GB, V size: 17.35 GB
+[2026-09-08 07:03:02] Memory pool end. avail mem=11.25 GB
+[2026-09-08 07:03:03] Capture target prefill CUDA graph begin. backend=breakable, num_tokens=[4, 8, 12, 16, 20, 24, 28, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 704, 768, 832, 896, 960, 1024, 1280, 1536, 1792, 2048, 2304, 2560, 2816, 3072, 3328, 3584, 3840, 4096, 4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192], avail mem=11.13 GB
+  0%|          | 0/58 [00:00<?, ?it/s]Capturing num tokens (num_tokens=8192 avail_mem=11.13 GB):   0%|          | 0/58 [00:00<?, ?it/s][2026-09-08 07:03:04] Entering DeepGEMM JIT Pre-Compile session. It may take a long time (typically 10-20 mins) if you have not run `sglang.compile_deep_gemm`. It is recommended to run `sglang.compile_deep_gemm` with same args as `sglang.launch_server` for pre-compilation to reduce the overhead if you have not run it before. For example: `python3 -m sglang.compile_deep_gemm --model deepseek-ai/DeepSeek-V3 --tp 8 --trust-remote-code`
+[2026-09-08 07:03:04] Try DeepGEMM JIT Compiling for <GEMM_NT_F8F8BF16> N=10240, K=5120, num_groups=1 with all Ms. It only takes a little time (typically 1 sec) if you have run `python3 -m sglang.compile_deep_gemm`. 
+[2026-09-08 07:03:04] Required memory for warmup: 0.439453125GB, Available memory: 10.6322021484375GB
+
+DeepGEMM warmup:   0%|          | 0/16384 [00:00<?, ?it/s][A
+DeepGEMM warmup:   8%|▊         | 1281/16384 [00:00<00:01, 10177.55it/s][A
+DeepGEMM warmup:  14%|█▍        | 2351/16384 [00:00<00:01, 10447.10it/s][A
+DeepGEMM warmup:  21%|██        | 3399/16384 [00:00<00:02, 6059.98it/s] [A
+DeepGEMM warmup:  25%|██▌       | 4147/16384 [00:00<00:02, 4598.63it/s][A
+DeepGEMM warmup:  29%|██▉       | 4717/16384 [00:00<00:03, 3774.88it/s][A
+DeepGEMM warmup:  32%|███▏      | 5170/16384 [00:01<00:03, 3274.27it/s][A
+DeepGEMM warmup:  34%|███▍      | 5545/16384 [00:01<00:03, 2892.22it/s][A
+DeepGEMM warmup:  36%|███▌      | 5863/16384 [00:01<00:04, 2626.18it/s][A
+DeepGEMM warmup:  37%|███▋      | 6141/16384 [00:01<00:04, 2408.01it/s][A
+DeepGEMM warmup:  39%|███▉      | 6389/16384 [00:01<00:04, 2222.08it/s][A
+DeepGEMM warmup:  40%|████      | 6613/16384 [00:01<00:04, 2084.62it/s][A
+DeepGEMM warmup:  42%|████▏     | 6820/16384 [00:02<00:04, 1965.89it/s][A
+DeepGEMM warmup:  43%|████▎     | 7014/16384 [00:02<00:05, 1857.80it/s][A
+DeepGEMM warmup:  44%|████▍     | 7197/16384 [00:02<00:05, 1767.12it/s][A
+DeepGEMM warmup:  45%|████▍     | 7371/16384 [00:02<00:05, 1700.78it/s][A
+DeepGEMM warmup:  46%|████▌     | 7538/16384 [00:02<00:05, 1627.81it/s][A
+DeepGEMM warmup:  47%|████▋     | 7698/16384 [00:02<00:05, 1577.60it/s][A
+DeepGEMM warmup:  48%|████▊     | 7854/16384 [00:02<00:05, 1516.86it/s][A
+DeepGEMM warmup:  49%|████▉     | 8004/16384 [00:02<00:05, 1469.67it/s][A
+DeepGEMM warmup:  50%|████▉     | 8150/16384 [00:03<00:05, 1425.11it/s][A
+DeepGEMM warmup:  51%|█████     | 8292/16384 [00:03<00:05, 1395.07it/s][A
+DeepGEMM warmup:  51%|█████▏    | 8431/16384 [00:03<00:05, 1362.88it/s][A
+DeepGEMM warmup:  52%|█████▏    | 8567/16384 [00:03<00:05, 1329.70it/s][A
+DeepGEMM warmup:  53%|█████▎    | 8700/16384 [00:03<00:05, 1311.24it/s][A
+DeepGEMM warmup:  54%|█████▍    | 8831/16384 [00:03<00:05, 1281.66it/s][A
+DeepGEMM warmup:  55%|█████▍    | 8959/16384 [00:03<00:05, 1260.01it/s][A
+DeepGEMM warmup:  55%|█████▌    | 9085/16384 [00:03<00:05, 1241.64it/s][A
+DeepGEMM warmup:  56%|█████▌    | 9209/16384 [00:03<00:05, 1224.90it/s][A
+DeepGEMM warmup:  57%|█████▋    | 9332/16384 [00:03<00:05, 1197.61it/s][A
+DeepGEMM warmup:  58%|█████▊    | 9452/16384 [00:04<00:05, 1177.91it/s][A
+DeepGEMM warmup:  58%|█████▊    | 9570/16384 [00:04<00:05, 1158.88it/s][A
+DeepGEMM warmup:  59%|█████▉    | 9686/16384 [00:04<00:05, 1147.13it/s][A
+DeepGEMM warmup:  60%|█████▉    | 9801/16384 [00:04<00:05, 1136.47it/s][A
+DeepGEMM warmup:  61%|██████    | 9915/16384 [00:04<00:05, 1122.69it/s][A
+DeepGEMM warmup:  61%|██████    | 10028/16384 [00:04<00:05, 1108.25it/s][A
+DeepGEMM warmup:  62%|██████▏   | 10139/16384 [00:04<00:05, 1090.27it/s][A
+DeepGEMM warmup:  63%|██████▎   | 10249/16384 [00:04<00:05, 1077.14it/s][A
+DeepGEMM warmup:  63%|██████▎   | 10357/16384 [00:04<00:05, 1061.24it/s][A
+DeepGEMM warmup:  64%|██████▍   | 10464/16384 [00:05<00:05, 1051.40it/s][A
+DeepGEMM warmup:  65%|██████▍   | 10570/16384 [00:05<00:05, 1036.46it/s][A
+DeepGEMM warmup:  65%|██████▌   | 10674/16384 [00:05<00:05, 1026.87it/s][A
+DeepGEMM warmup:  66%|██████▌   | 10777/16384 [00:05<00:05, 1019.79it/s][A
+DeepGEMM warmup:  66%|██████▋   | 10879/16384 [00:05<00:05, 1011.77it/s][A
+DeepGEMM warmup:  67%|██████▋   | 10981/16384 [00:05<00:05, 1003.97it/s][A
+DeepGEMM warmup:  68%|██████▊   | 11082/16384 [00:05<00:05, 988.79it/s] [A
+DeepGEMM warmup:  68%|██████▊   | 11181/16384 [00:05<00:05, 975.40it/s][A
+DeepGEMM warmup:  69%|██████▉   | 11279/16384 [00:05<00:05, 964.82it/s][A
+DeepGEMM warmup:  69%|██████▉   | 11376/16384 [00:05<00:05, 954.24it/s][A
+DeepGEMM warmup:  70%|███████   | 11472/16384 [00:06<00:05, 950.32it/s][A
+DeepGEMM warmup:  71%|███████   | 11568/16384 [00:06<00:05, 942.35it/s][A
+DeepGEMM warmup:  71%|███████   | 11663/16384 [00:06<00:05, 935.68it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11757/16384 [00:06<00:04, 931.16it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11851/16384 [00:06<00:04, 919.54it/s][A
+DeepGEMM warmup:  73%|███████▎  | 11943/16384 [00:06<00:04, 909.50it/s][A
+DeepGEMM warmup:  73%|███████▎  | 12034/16384 [00:06<00:04, 902.48it/s][A
+DeepGEMM warmup:  74%|███████▍  | 12125/16384 [00:06<00:04, 890.46it/s][A
+DeepGEMM warmup:  75%|███████▍  | 12215/16384 [00:06<00:04, 880.52it/s][A
+DeepGEMM warmup:  75%|███████▌  | 12304/16384 [00:07<00:04, 873.71it/s][A
+DeepGEMM warmup:  76%|███████▌  | 12392/16384 [00:07<00:04, 869.87it/s][A
+DeepGEMM warmup:  76%|███████▌  | 12479/16384 [00:07<00:04, 867.26it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12566/16384 [00:07<00:04, 863.65it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12653/16384 [00:07<00:04, 854.83it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12739/16384 [00:07<00:04, 848.75it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12824/16384 [00:07<00:04, 842.77it/s][A
+DeepGEMM warmup:  79%|███████▉  | 12909/16384 [00:07<00:04, 832.83it/s][A
+DeepGEMM warmup:  79%|███████▉  | 12993/16384 [00:07<00:04, 826.02it/s][A
+DeepGEMM warmup:  80%|███████▉  | 13076/16384 [00:07<00:04, 822.21it/s][A
+DeepGEMM warmup:  80%|████████  | 13159/16384 [00:08<00:03, 813.74it/s][A
+DeepGEMM warmup:  81%|████████  | 13241/16384 [00:08<00:03, 808.68it/s][A
+DeepGEMM warmup:  81%|████████▏ | 13322/16384 [00:08<00:03, 804.17it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13403/16384 [00:08<00:03, 799.62it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13483/16384 [00:08<00:03, 796.48it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13563/16384 [00:08<00:03, 794.18it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13643/16384 [00:08<00:03, 786.54it/s][A
+DeepGEMM warmup:  84%|████████▍ | 13722/16384 [00:08<00:03, 780.76it/s][A
+DeepGEMM warmup:  84%|████████▍ | 13801/16384 [00:08<00:03, 776.59it/s][A
+DeepGEMM warmup:  85%|████████▍ | 13879/16384 [00:08<00:03, 769.34it/s][A
+DeepGEMM warmup:  85%|████████▌ | 13956/16384 [00:09<00:03, 762.26it/s][A
+DeepGEMM warmup:  86%|████████▌ | 14033/16384 [00:09<00:03, 757.27it/s][A
+DeepGEMM warmup:  86%|████████▌ | 14110/16384 [00:09<00:02, 758.43it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14189/16384 [00:09<00:02, 765.00it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14269/16384 [00:09<00:02, 772.83it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14349/16384 [00:09<00:02, 778.07it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14427/16384 [00:09<00:02, 776.77it/s][A
+DeepGEMM warmup:  89%|████████▊ | 14505/16384 [00:09<00:02, 775.83it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14583/16384 [00:09<00:02, 775.05it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14661/16384 [00:09<00:02, 769.33it/s][A
+DeepGEMM warmup:  90%|████████▉ | 14738/16384 [00:10<00:02, 764.43it/s][A
+DeepGEMM warmup:  90%|█████████ | 14815/16384 [00:10<00:02, 760.92it/s][A
+DeepGEMM warmup:  91%|█████████ | 14892/16384 [00:10<00:01, 759.12it/s][A
+DeepGEMM warmup:  91%|█████████▏| 14968/16384 [00:10<00:01, 758.66it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15044/16384 [00:10<00:01, 758.30it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15120/16384 [00:10<00:01, 756.86it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15196/16384 [00:10<00:01, 750.53it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15272/16384 [00:10<00:01, 746.08it/s][A
+DeepGEMM warmup:  94%|█████████▎| 15347/16384 [00:10<00:01, 742.90it/s][A
+DeepGEMM warmup:  94%|█████████▍| 15422/16384 [00:10<00:01, 736.71it/s][A
+DeepGEMM warmup:  95%|█████████▍| 15496/16384 [00:11<00:01, 731.31it/s][A
+DeepGEMM warmup:  95%|█████████▌| 15570/16384 [00:11<00:01, 727.46it/s][A
+DeepGEMM warmup:  95%|█████████▌| 15643/16384 [00:11<00:01, 723.14it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15716/16384 [00:11<00:00, 716.83it/s][A
+DeepGEMM warmup:  96%|█████████▋| 15788/16384 [00:11<00:00, 712.42it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15860/16384 [00:11<00:00, 709.21it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15931/16384 [00:11<00:00, 707.41it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16002/16384 [00:11<00:00, 706.20it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16073/16384 [00:11<00:00, 705.18it/s][A
+DeepGEMM warmup:  99%|█████████▊| 16144/16384 [00:12<00:00, 703.57it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16215/16384 [00:12<00:00, 698.73it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16285/16384 [00:12<00:00, 695.37it/s][A
+DeepGEMM warmup: 100%|█████████▉| 16355/16384 [00:12<00:00, 693.00it/s][ADeepGEMM warmup: 100%|██████████| 16384/16384 [00:12<00:00, 1325.19it/s]
+[2026-09-08 07:03:17] Entering DeepGEMM JIT Pre-Compile session. It may take a long time (typically 10-20 mins) if you have not run `sglang.compile_deep_gemm`. It is recommended to run `sglang.compile_deep_gemm` with same args as `sglang.launch_server` for pre-compilation to reduce the overhead if you have not run it before. For example: `python3 -m sglang.compile_deep_gemm --model deepseek-ai/DeepSeek-V3 --tp 8 --trust-remote-code`
+[2026-09-08 07:03:17] Try DeepGEMM JIT Compiling for <GEMM_NT_F8F8BF16> N=5120, K=8192, num_groups=1 with all Ms. It only takes a little time (typically 1 sec) if you have run `python3 -m sglang.compile_deep_gemm`. 
+[2026-09-08 07:03:17] Required memory for warmup: 0.3203125GB, Available memory: 10.3665771484375GB
+
+DeepGEMM warmup:   0%|          | 0/16384 [00:00<?, ?it/s][A
+DeepGEMM warmup:  11%|█         | 1766/16384 [00:00<00:00, 17643.57it/s][A
+DeepGEMM warmup:  22%|██▏       | 3531/16384 [00:00<00:01, 7232.18it/s] [A
+DeepGEMM warmup:  28%|██▊       | 4559/16384 [00:00<00:02, 5318.08it/s][A
+DeepGEMM warmup:  32%|███▏      | 5275/16384 [00:01<00:02, 4338.64it/s][A
+DeepGEMM warmup:  36%|███▌      | 5818/16384 [00:01<00:02, 3690.75it/s][A
+DeepGEMM warmup:  38%|███▊      | 6251/16384 [00:01<00:03, 3273.20it/s][A
+DeepGEMM warmup:  40%|████      | 6613/16384 [00:01<00:03, 2945.63it/s][A
+DeepGEMM warmup:  42%|████▏     | 6924/16384 [00:01<00:03, 2717.14it/s][A
+DeepGEMM warmup:  44%|████▍     | 7201/16384 [00:01<00:03, 2487.91it/s][A
+DeepGEMM warmup:  45%|████▌     | 7449/16384 [00:02<00:03, 2327.23it/s][A
+DeepGEMM warmup:  47%|████▋     | 7677/16384 [00:02<00:03, 2201.34it/s][A
+DeepGEMM warmup:  48%|████▊     | 7891/16384 [00:02<00:04, 2060.17it/s][A
+DeepGEMM warmup:  49%|████▉     | 8091/16384 [00:02<00:04, 1955.65it/s][A
+DeepGEMM warmup:  51%|█████     | 8281/16384 [00:02<00:04, 1881.93it/s][A
+DeepGEMM warmup:  52%|█████▏    | 8464/16384 [00:02<00:04, 1817.70it/s][A
+DeepGEMM warmup:  53%|█████▎    | 8642/16384 [00:02<00:04, 1733.45it/s][A
+DeepGEMM warmup:  54%|█████▍    | 8812/16384 [00:02<00:04, 1676.73it/s][A
+DeepGEMM warmup:  55%|█████▍    | 8977/16384 [00:02<00:04, 1630.42it/s][A
+DeepGEMM warmup:  56%|█████▌    | 9138/16384 [00:03<00:04, 1599.44it/s][A
+DeepGEMM warmup:  57%|█████▋    | 9297/16384 [00:03<00:04, 1557.94it/s][A
+DeepGEMM warmup:  58%|█████▊    | 9452/16384 [00:03<00:04, 1517.54it/s][A
+DeepGEMM warmup:  59%|█████▊    | 9603/16384 [00:03<00:04, 1485.38it/s][A
+DeepGEMM warmup:  60%|█████▉    | 9751/16384 [00:03<00:04, 1460.19it/s][A
+DeepGEMM warmup:  60%|██████    | 9897/16384 [00:03<00:04, 1444.19it/s][A
+DeepGEMM warmup:  61%|██████▏   | 10041/16384 [00:03<00:04, 1419.64it/s][A
+DeepGEMM warmup:  62%|██████▏   | 10183/16384 [00:03<00:04, 1386.37it/s][A
+DeepGEMM warmup:  63%|██████▎   | 10322/16384 [00:03<00:04, 1365.16it/s][A
+DeepGEMM warmup:  64%|██████▍   | 10459/16384 [00:04<00:04, 1349.97it/s][A
+DeepGEMM warmup:  65%|██████▍   | 10594/16384 [00:04<00:04, 1317.35it/s][A
+DeepGEMM warmup:  65%|██████▌   | 10726/16384 [00:04<00:04, 1291.51it/s][A
+DeepGEMM warmup:  66%|██████▋   | 10856/16384 [00:04<00:04, 1272.14it/s][A
+DeepGEMM warmup:  67%|██████▋   | 10984/16384 [00:04<00:04, 1254.28it/s][A
+DeepGEMM warmup:  68%|██████▊   | 11110/16384 [00:04<00:04, 1243.26it/s][A
+DeepGEMM warmup:  69%|██████▊   | 11235/16384 [00:04<00:04, 1236.06it/s][A
+DeepGEMM warmup:  69%|██████▉   | 11359/16384 [00:04<00:04, 1214.32it/s][A
+DeepGEMM warmup:  70%|███████   | 11481/16384 [00:04<00:04, 1197.07it/s][A
+DeepGEMM warmup:  71%|███████   | 11601/16384 [00:04<00:04, 1182.17it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11720/16384 [00:05<00:03, 1168.96it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11837/16384 [00:05<00:03, 1160.72it/s][A
+DeepGEMM warmup:  73%|███████▎  | 11954/16384 [00:05<00:03, 1155.73it/s][A
+DeepGEMM warmup:  74%|███████▎  | 12070/16384 [00:05<00:03, 1145.66it/s][A
+DeepGEMM warmup:  74%|███████▍  | 12185/16384 [00:05<00:03, 1128.87it/s][A
+DeepGEMM warmup:  75%|███████▌  | 12298/16384 [00:05<00:03, 1117.45it/s][A
+DeepGEMM warmup:  76%|███████▌  | 12410/16384 [00:05<00:03, 1102.49it/s][A
+DeepGEMM warmup:  76%|███████▋  | 12521/16384 [00:05<00:03, 1090.87it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12631/16384 [00:05<00:03, 1086.60it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12740/16384 [00:06<00:03, 1084.06it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12849/16384 [00:06<00:03, 1073.37it/s][A
+DeepGEMM warmup:  79%|███████▉  | 12957/16384 [00:06<00:03, 1057.21it/s][A
+DeepGEMM warmup:  80%|███████▉  | 13063/16384 [00:06<00:03, 1045.57it/s][A
+DeepGEMM warmup:  80%|████████  | 13168/16384 [00:06<00:03, 1039.77it/s][A
+DeepGEMM warmup:  81%|████████  | 13272/16384 [00:06<00:03, 1032.91it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13376/16384 [00:06<00:02, 1028.10it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13479/16384 [00:06<00:02, 1025.06it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13582/16384 [00:06<00:02, 1020.93it/s][A
+DeepGEMM warmup:  84%|████████▎ | 13685/16384 [00:06<00:02, 1001.74it/s][A
+DeepGEMM warmup:  84%|████████▍ | 13786/16384 [00:07<00:02, 988.84it/s] [A
+DeepGEMM warmup:  85%|████████▍ | 13885/16384 [00:07<00:02, 980.71it/s][A
+DeepGEMM warmup:  85%|████████▌ | 13984/16384 [00:07<00:02, 975.54it/s][A
+DeepGEMM warmup:  86%|████████▌ | 14082/16384 [00:07<00:02, 971.92it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14180/16384 [00:07<00:02, 969.71it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14277/16384 [00:07<00:02, 968.09it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14374/16384 [00:07<00:02, 961.10it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14471/16384 [00:07<00:02, 946.02it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14566/16384 [00:07<00:01, 935.80it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14660/16384 [00:07<00:01, 929.51it/s][A
+DeepGEMM warmup:  90%|█████████ | 14753/16384 [00:08<00:01, 925.57it/s][A
+DeepGEMM warmup:  91%|█████████ | 14846/16384 [00:08<00:01, 922.83it/s][A
+DeepGEMM warmup:  91%|█████████ | 14939/16384 [00:08<00:01, 921.16it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15032/16384 [00:08<00:01, 920.02it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15125/16384 [00:08<00:01, 916.29it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15217/16384 [00:08<00:01, 901.80it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15308/16384 [00:08<00:01, 891.93it/s][A
+DeepGEMM warmup:  94%|█████████▍| 15398/16384 [00:08<00:01, 885.59it/s][A
+DeepGEMM warmup:  95%|█████████▍| 15487/16384 [00:08<00:01, 881.92it/s][A
+DeepGEMM warmup:  95%|█████████▌| 15576/16384 [00:09<00:00, 879.32it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15664/16384 [00:09<00:00, 870.72it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15752/16384 [00:09<00:00, 859.63it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15838/16384 [00:09<00:00, 853.49it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15924/16384 [00:09<00:00, 848.72it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16009/16384 [00:09<00:00, 844.15it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16094/16384 [00:09<00:00, 840.16it/s][A
+DeepGEMM warmup:  99%|█████████▊| 16179/16384 [00:09<00:00, 837.99it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16263/16384 [00:09<00:00, 836.86it/s][A
+DeepGEMM warmup: 100%|█████████▉| 16347/16384 [00:09<00:00, 836.09it/s][ADeepGEMM warmup: 100%|██████████| 16384/16384 [00:09<00:00, 1641.96it/s]
+[2026-09-08 07:03:28] Entering DeepGEMM JIT Pre-Compile session. It may take a long time (typically 10-20 mins) if you have not run `sglang.compile_deep_gemm`. It is recommended to run `sglang.compile_deep_gemm` with same args as `sglang.launch_server` for pre-compilation to reduce the overhead if you have not run it before. For example: `python3 -m sglang.compile_deep_gemm --model deepseek-ai/DeepSeek-V3 --tp 8 --trust-remote-code`
+[2026-09-08 07:03:28] Try DeepGEMM JIT Compiling for <GEMM_NT_F8F8BF16> N=51200, K=5120, num_groups=1 with all Ms. It only takes a little time (typically 1 sec) if you have run `python3 -m sglang.compile_deep_gemm`. 
+[2026-09-08 07:03:28] Required memory for warmup: 1.884765625GB, Available memory: 9.8822021484375GB
+
+DeepGEMM warmup:   0%|          | 0/16384 [00:00<?, ?it/s][A
+DeepGEMM warmup:   6%|▌         | 993/16384 [00:00<00:01, 9913.35it/s][A
+DeepGEMM warmup:  12%|█▏        | 1985/16384 [00:00<00:05, 2833.03it/s][A
+DeepGEMM warmup:  15%|█▌        | 2505/16384 [00:01<00:07, 1909.04it/s][A
+DeepGEMM warmup:  17%|█▋        | 2838/16384 [00:01<00:08, 1536.07it/s][A
+DeepGEMM warmup:  19%|█▉        | 3075/16384 [00:01<00:10, 1314.23it/s][A
+DeepGEMM warmup:  20%|█▉        | 3256/16384 [00:02<00:11, 1164.90it/s][A
+DeepGEMM warmup:  21%|██        | 3401/16384 [00:02<00:12, 1054.89it/s][A
+DeepGEMM warmup:  21%|██▏       | 3521/16384 [00:02<00:13, 966.94it/s] [A
+DeepGEMM warmup:  22%|██▏       | 3625/16384 [00:02<00:14, 896.61it/s][A
+DeepGEMM warmup:  23%|██▎       | 3717/16384 [00:02<00:15, 840.57it/s][A
+DeepGEMM warmup:  23%|██▎       | 3801/16384 [00:02<00:15, 798.01it/s][A
+DeepGEMM warmup:  24%|██▎       | 3879/16384 [00:02<00:16, 757.47it/s][A
+DeepGEMM warmup:  24%|██▍       | 3953/16384 [00:03<00:17, 718.10it/s][A
+DeepGEMM warmup:  25%|██▍       | 4023/16384 [00:03<00:17, 689.32it/s][A
+DeepGEMM warmup:  25%|██▍       | 4090/16384 [00:03<00:18, 667.00it/s][A
+DeepGEMM warmup:  25%|██▌       | 4155/16384 [00:03<00:19, 641.77it/s][A
+DeepGEMM warmup:  26%|██▌       | 4218/16384 [00:03<00:19, 621.16it/s][A
+DeepGEMM warmup:  26%|██▌       | 4279/16384 [00:03<00:19, 605.96it/s][A
+DeepGEMM warmup:  26%|██▋       | 4339/16384 [00:03<00:20, 594.28it/s][A
+DeepGEMM warmup:  27%|██▋       | 4398/16384 [00:03<00:20, 577.68it/s][A
+DeepGEMM warmup:  27%|██▋       | 4456/16384 [00:03<00:21, 562.81it/s][A
+DeepGEMM warmup:  28%|██▊       | 4512/16384 [00:04<00:21, 552.40it/s][A
+DeepGEMM warmup:  28%|██▊       | 4567/16384 [00:04<00:21, 544.76it/s][A
+DeepGEMM warmup:  28%|██▊       | 4622/16384 [00:04<00:21, 538.73it/s][A
+DeepGEMM warmup:  29%|██▊       | 4676/16384 [00:04<00:22, 526.93it/s][A
+DeepGEMM warmup:  29%|██▉       | 4729/16384 [00:04<00:22, 518.09it/s][A
+DeepGEMM warmup:  29%|██▉       | 4781/16384 [00:04<00:22, 511.74it/s][A
+DeepGEMM warmup:  29%|██▉       | 4833/16384 [00:04<00:22, 508.34it/s][A
+DeepGEMM warmup:  30%|██▉       | 4884/16384 [00:04<00:22, 502.91it/s][A
+DeepGEMM warmup:  30%|███       | 4935/16384 [00:04<00:23, 493.37it/s][A
+DeepGEMM warmup:  30%|███       | 4985/16384 [00:05<00:23, 486.55it/s][A
+DeepGEMM warmup:  31%|███       | 5034/16384 [00:05<00:23, 481.68it/s][A
+DeepGEMM warmup:  31%|███       | 5083/16384 [00:05<00:23, 477.97it/s][A
+DeepGEMM warmup:  31%|███▏      | 5131/16384 [00:05<00:23, 474.48it/s][A
+DeepGEMM warmup:  32%|███▏      | 5179/16384 [00:05<00:24, 466.22it/s][A
+DeepGEMM warmup:  32%|███▏      | 5226/16384 [00:05<00:24, 460.52it/s][A
+DeepGEMM warmup:  32%|███▏      | 5273/16384 [00:05<00:24, 456.37it/s][A
+DeepGEMM warmup:  32%|███▏      | 5319/16384 [00:05<00:24, 453.38it/s][A
+DeepGEMM warmup:  33%|███▎      | 5365/16384 [00:05<00:24, 451.10it/s][A
+DeepGEMM warmup:  33%|███▎      | 5411/16384 [00:05<00:24, 444.39it/s][A
+DeepGEMM warmup:  33%|███▎      | 5456/16384 [00:06<00:24, 438.19it/s][A
+DeepGEMM warmup:  34%|███▎      | 5500/16384 [00:06<00:25, 434.44it/s][A
+DeepGEMM warmup:  34%|███▍      | 5544/16384 [00:06<00:25, 431.72it/s][A
+DeepGEMM warmup:  34%|███▍      | 5588/16384 [00:06<00:25, 429.68it/s][A
+DeepGEMM warmup:  34%|███▍      | 5631/16384 [00:06<00:25, 428.12it/s][A
+DeepGEMM warmup:  35%|███▍      | 5674/16384 [00:06<00:25, 422.65it/s][A
+DeepGEMM warmup:  35%|███▍      | 5717/16384 [00:06<00:25, 417.60it/s][A
+DeepGEMM warmup:  35%|███▌      | 5759/16384 [00:06<00:25, 414.10it/s][A
+DeepGEMM warmup:  35%|███▌      | 5801/16384 [00:06<00:25, 411.49it/s][A
+DeepGEMM warmup:  36%|███▌      | 5843/16384 [00:06<00:25, 409.54it/s][A
+DeepGEMM warmup:  36%|███▌      | 5884/16384 [00:07<00:25, 408.16it/s][A
+DeepGEMM warmup:  36%|███▌      | 5925/16384 [00:07<00:26, 402.13it/s][A
+DeepGEMM warmup:  36%|███▋      | 5966/16384 [00:07<00:26, 396.81it/s][A
+DeepGEMM warmup:  37%|███▋      | 6006/16384 [00:07<00:26, 393.16it/s][A
+DeepGEMM warmup:  37%|███▋      | 6046/16384 [00:07<00:26, 390.46it/s][A
+DeepGEMM warmup:  37%|███▋      | 6086/16384 [00:07<00:26, 389.57it/s][A
+DeepGEMM warmup:  37%|███▋      | 6125/16384 [00:07<00:26, 387.81it/s][A
+DeepGEMM warmup:  38%|███▊      | 6164/16384 [00:07<00:26, 384.94it/s][A
+DeepGEMM warmup:  38%|███▊      | 6203/16384 [00:07<00:26, 380.69it/s][A
+DeepGEMM warmup:  38%|███▊      | 6242/16384 [00:08<00:26, 377.69it/s][A
+DeepGEMM warmup:  38%|███▊      | 6280/16384 [00:08<00:26, 375.49it/s][A
+DeepGEMM warmup:  39%|███▊      | 6318/16384 [00:08<00:26, 373.97it/s][A
+DeepGEMM warmup:  39%|███▉      | 6356/16384 [00:08<00:26, 372.84it/s][A
+DeepGEMM warmup:  39%|███▉      | 6394/16384 [00:08<00:26, 372.01it/s][A
+DeepGEMM warmup:  39%|███▉      | 6432/16384 [00:08<00:27, 367.53it/s][A
+DeepGEMM warmup:  39%|███▉      | 6469/16384 [00:08<00:27, 363.35it/s][A
+DeepGEMM warmup:  40%|███▉      | 6506/16384 [00:08<00:27, 360.30it/s][A
+DeepGEMM warmup:  40%|███▉      | 6543/16384 [00:08<00:27, 358.12it/s][A
+DeepGEMM warmup:  40%|████      | 6579/16384 [00:08<00:27, 356.48it/s][A
+DeepGEMM warmup:  40%|████      | 6615/16384 [00:09<00:27, 355.25it/s][A
+DeepGEMM warmup:  41%|████      | 6651/16384 [00:09<00:27, 354.27it/s][A
+DeepGEMM warmup:  41%|████      | 6687/16384 [00:09<00:27, 351.19it/s][A
+DeepGEMM warmup:  41%|████      | 6723/16384 [00:09<00:27, 348.30it/s][A
+DeepGEMM warmup:  41%|████      | 6758/16384 [00:09<00:27, 346.28it/s][A
+DeepGEMM warmup:  41%|████▏     | 6793/16384 [00:09<00:27, 344.78it/s][A
+DeepGEMM warmup:  42%|████▏     | 6828/16384 [00:09<00:27, 343.65it/s][A
+DeepGEMM warmup:  42%|████▏     | 6863/16384 [00:09<00:27, 342.86it/s][A
+DeepGEMM warmup:  42%|████▏     | 6898/16384 [00:09<00:27, 342.24it/s][A
+DeepGEMM warmup:  42%|████▏     | 6933/16384 [00:10<00:27, 339.60it/s][A
+DeepGEMM warmup:  43%|████▎     | 6967/16384 [00:10<00:28, 335.91it/s][A
+DeepGEMM warmup:  43%|████▎     | 7001/16384 [00:10<00:28, 333.24it/s][A
+DeepGEMM warmup:  43%|████▎     | 7035/16384 [00:10<00:28, 331.27it/s][A
+DeepGEMM warmup:  43%|████▎     | 7069/16384 [00:10<00:28, 329.83it/s][A
+DeepGEMM warmup:  43%|████▎     | 7102/16384 [00:10<00:28, 328.69it/s][A
+DeepGEMM warmup:  44%|████▎     | 7135/16384 [00:10<00:28, 327.86it/s][A
+DeepGEMM warmup:  44%|████▍     | 7168/16384 [00:10<00:28, 327.20it/s][A
+DeepGEMM warmup:  44%|████▍     | 7201/16384 [00:10<00:28, 324.38it/s][A
+DeepGEMM warmup:  44%|████▍     | 7234/16384 [00:10<00:28, 322.06it/s][A
+DeepGEMM warmup:  44%|████▍     | 7267/16384 [00:11<00:28, 320.43it/s][A
+DeepGEMM warmup:  45%|████▍     | 7300/16384 [00:11<00:28, 319.24it/s][A
+DeepGEMM warmup:  45%|████▍     | 7332/16384 [00:11<00:28, 318.39it/s][A
+DeepGEMM warmup:  45%|████▍     | 7364/16384 [00:11<00:28, 317.71it/s][A
+DeepGEMM warmup:  45%|████▌     | 7396/16384 [00:11<00:28, 317.20it/s][A
+DeepGEMM warmup:  45%|████▌     | 7428/16384 [00:11<00:28, 316.66it/s][A
+DeepGEMM warmup:  46%|████▌     | 7460/16384 [00:11<00:28, 312.83it/s][A
+DeepGEMM warmup:  46%|████▌     | 7492/16384 [00:11<00:28, 310.15it/s][A
+DeepGEMM warmup:  46%|████▌     | 7524/16384 [00:11<00:28, 308.25it/s][A
+DeepGEMM warmup:  46%|████▌     | 7555/16384 [00:11<00:28, 306.92it/s][A
+DeepGEMM warmup:  46%|████▋     | 7586/16384 [00:12<00:28, 305.89it/s][A
+DeepGEMM warmup:  46%|████▋     | 7617/16384 [00:12<00:28, 305.07it/s][A
+DeepGEMM warmup:  47%|████▋     | 7648/16384 [00:12<00:28, 304.53it/s][A
+DeepGEMM warmup:  47%|████▋     | 7679/16384 [00:12<00:28, 304.12it/s][A
+DeepGEMM warmup:  47%|████▋     | 7710/16384 [00:12<00:28, 301.80it/s][A
+DeepGEMM warmup:  47%|████▋     | 7741/16384 [00:12<00:28, 299.86it/s][A
+DeepGEMM warmup:  47%|████▋     | 7771/16384 [00:12<00:28, 298.53it/s][A
+DeepGEMM warmup:  48%|████▊     | 7801/16384 [00:12<00:28, 297.51it/s][A
+DeepGEMM warmup:  48%|████▊     | 7831/16384 [00:12<00:28, 296.76it/s][A
+DeepGEMM warmup:  48%|████▊     | 7861/16384 [00:12<00:28, 296.15it/s][A
+DeepGEMM warmup:  48%|████▊     | 7891/16384 [00:13<00:28, 295.70it/s][A
+DeepGEMM warmup:  48%|████▊     | 7921/16384 [00:13<00:28, 295.34it/s][A
+DeepGEMM warmup:  49%|████▊     | 7951/16384 [00:13<00:28, 293.82it/s][A
+DeepGEMM warmup:  49%|████▊     | 7981/16384 [00:13<00:28, 290.92it/s][A
+DeepGEMM warmup:  49%|████▉     | 8011/16384 [00:13<00:28, 288.91it/s][A
+DeepGEMM warmup:  49%|████▉     | 8040/16384 [00:13<00:29, 287.44it/s][A
+DeepGEMM warmup:  49%|████▉     | 8069/16384 [00:13<00:29, 286.40it/s][A
+DeepGEMM warmup:  49%|████▉     | 8098/16384 [00:13<00:29, 285.62it/s][A
+DeepGEMM warmup:  50%|████▉     | 8127/16384 [00:13<00:28, 285.04it/s][A
+DeepGEMM warmup:  50%|████▉     | 8156/16384 [00:14<00:28, 284.62it/s][A
+DeepGEMM warmup:  50%|████▉     | 8185/16384 [00:14<00:28, 284.29it/s][A
+DeepGEMM warmup:  50%|█████     | 8214/16384 [00:14<00:28, 282.70it/s][A
+DeepGEMM warmup:  50%|█████     | 8243/16384 [00:14<00:28, 280.89it/s][A
+DeepGEMM warmup:  50%|█████     | 8272/16384 [00:14<00:29, 279.63it/s][A
+DeepGEMM warmup:  51%|█████     | 8300/16384 [00:14<00:29, 278.72it/s][A
+DeepGEMM warmup:  51%|█████     | 8328/16384 [00:14<00:28, 278.03it/s][A
+DeepGEMM warmup:  51%|█████     | 8356/16384 [00:14<00:28, 277.51it/s][A
+DeepGEMM warmup:  51%|█████     | 8384/16384 [00:14<00:28, 277.12it/s][A
+DeepGEMM warmup:  51%|█████▏    | 8412/16384 [00:14<00:28, 276.82it/s][A
+DeepGEMM warmup:  52%|█████▏    | 8440/16384 [00:15<00:28, 276.55it/s][A
+DeepGEMM warmup:  52%|█████▏    | 8468/16384 [00:15<00:28, 274.73it/s][A
+DeepGEMM warmup:  52%|█████▏    | 8496/16384 [00:15<00:28, 272.43it/s][A
+DeepGEMM warmup:  52%|█████▏    | 8524/16384 [00:15<00:29, 270.76it/s][A
+DeepGEMM warmup:  52%|█████▏    | 8552/16384 [00:15<00:29, 269.57it/s][A
+DeepGEMM warmup:  52%|█████▏    | 8579/16384 [00:15<00:29, 268.76it/s][A
+DeepGEMM warmup:  53%|█████▎    | 8606/16384 [00:15<00:29, 268.14it/s][A
+DeepGEMM warmup:  53%|█████▎    | 8633/16384 [00:15<00:28, 267.66it/s][A
+DeepGEMM warmup:  53%|█████▎    | 8660/16384 [00:15<00:28, 267.27it/s][A
+DeepGEMM warmup:  53%|█████▎    | 8687/16384 [00:15<00:28, 266.98it/s][A
+DeepGEMM warmup:  53%|█████▎    | 8714/16384 [00:16<00:28, 266.29it/s][A
+DeepGEMM warmup:  53%|█████▎    | 8741/16384 [00:16<00:28, 264.46it/s][A
+DeepGEMM warmup:  54%|█████▎    | 8768/16384 [00:16<00:28, 263.18it/s][A
+DeepGEMM warmup:  54%|█████▎    | 8795/16384 [00:16<00:28, 262.28it/s][A
+DeepGEMM warmup:  54%|█████▍    | 8822/16384 [00:16<00:28, 261.61it/s][A
+DeepGEMM warmup:  54%|█████▍    | 8849/16384 [00:16<00:28, 261.12it/s][A
+DeepGEMM warmup:  54%|█████▍    | 8876/16384 [00:16<00:28, 260.78it/s][A
+DeepGEMM warmup:  54%|█████▍    | 8903/16384 [00:16<00:28, 260.49it/s][A
+DeepGEMM warmup:  55%|█████▍    | 8930/16384 [00:16<00:28, 260.23it/s][A
+DeepGEMM warmup:  55%|█████▍    | 8957/16384 [00:17<00:28, 259.99it/s][A
+DeepGEMM warmup:  55%|█████▍    | 8983/16384 [00:17<00:28, 258.04it/s][A
+DeepGEMM warmup:  55%|█████▍    | 9009/16384 [00:17<00:28, 256.09it/s][A
+DeepGEMM warmup:  55%|█████▌    | 9035/16384 [00:17<00:28, 254.76it/s][A
+DeepGEMM warmup:  55%|█████▌    | 9061/16384 [00:17<00:28, 253.72it/s][A
+DeepGEMM warmup:  55%|█████▌    | 9087/16384 [00:17<00:28, 252.99it/s][A
+DeepGEMM warmup:  56%|█████▌    | 9113/16384 [00:17<00:28, 252.46it/s][A
+DeepGEMM warmup:  56%|█████▌    | 9139/16384 [00:17<00:28, 252.05it/s][A
+DeepGEMM warmup:  56%|█████▌    | 9165/16384 [00:17<00:28, 251.75it/s][A
+DeepGEMM warmup:  56%|█████▌    | 9191/16384 [00:17<00:28, 251.51it/s][A
+DeepGEMM warmup:  56%|█████▋    | 9217/16384 [00:18<00:28, 251.30it/s][A
+DeepGEMM warmup:  56%|█████▋    | 9243/16384 [00:18<00:28, 249.81it/s][A
+DeepGEMM warmup:  57%|█████▋    | 9268/16384 [00:18<00:28, 248.68it/s][A
+DeepGEMM warmup:  57%|█████▋    | 9293/16384 [00:18<00:28, 247.82it/s][A
+DeepGEMM warmup:  57%|█████▋    | 9318/16384 [00:18<00:28, 247.20it/s][A
+DeepGEMM warmup:  57%|█████▋    | 9343/16384 [00:18<00:28, 246.70it/s][A
+DeepGEMM warmup:  57%|█████▋    | 9368/16384 [00:18<00:28, 246.36it/s][A
+DeepGEMM warmup:  57%|█████▋    | 9393/16384 [00:18<00:28, 246.06it/s][A
+DeepGEMM warmup:  57%|█████▋    | 9418/16384 [00:18<00:28, 245.84it/s][A
+DeepGEMM warmup:  58%|█████▊    | 9443/16384 [00:18<00:28, 245.66it/s][A
+DeepGEMM warmup:  58%|█████▊    | 9468/16384 [00:19<00:28, 245.53it/s][A
+DeepGEMM warmup:  58%|█████▊    | 9493/16384 [00:19<00:28, 243.89it/s][A
+DeepGEMM warmup:  58%|█████▊    | 9518/16384 [00:19<00:28, 242.10it/s][A
+DeepGEMM warmup:  58%|█████▊    | 9543/16384 [00:19<00:28, 240.85it/s][A
+DeepGEMM warmup:  58%|█████▊    | 9568/16384 [00:19<00:28, 239.94it/s][A
+DeepGEMM warmup:  59%|█████▊    | 9592/16384 [00:19<00:28, 239.32it/s][A
+DeepGEMM warmup:  59%|█████▊    | 9616/16384 [00:19<00:28, 238.86it/s][A
+DeepGEMM warmup:  59%|█████▉    | 9640/16384 [00:19<00:28, 238.49it/s][A
+DeepGEMM warmup:  59%|█████▉    | 9664/16384 [00:19<00:28, 238.24it/s][A
+DeepGEMM warmup:  59%|█████▉    | 9688/16384 [00:19<00:28, 238.03it/s][A
+DeepGEMM warmup:  59%|█████▉    | 9712/16384 [00:20<00:28, 237.84it/s][A
+DeepGEMM warmup:  59%|█████▉    | 9736/16384 [00:20<00:28, 237.40it/s][A
+DeepGEMM warmup:  60%|█████▉    | 9760/16384 [00:20<00:28, 235.96it/s][A
+DeepGEMM warmup:  60%|█████▉    | 9784/16384 [00:20<00:28, 234.98it/s][A
+DeepGEMM warmup:  60%|█████▉    | 9808/16384 [00:20<00:28, 234.27it/s][A
+DeepGEMM warmup:  60%|██████    | 9832/16384 [00:20<00:28, 233.77it/s][A
+DeepGEMM warmup:  60%|██████    | 9856/16384 [00:20<00:27, 233.38it/s][A
+DeepGEMM warmup:  60%|██████    | 9880/16384 [00:20<00:27, 233.12it/s][A
+DeepGEMM warmup:  60%|██████    | 9904/16384 [00:20<00:27, 232.88it/s][A
+DeepGEMM warmup:  61%|██████    | 9928/16384 [00:21<00:27, 232.68it/s][A
+DeepGEMM warmup:  61%|██████    | 9952/16384 [00:21<00:27, 232.48it/s][A
+DeepGEMM warmup:  61%|██████    | 9976/16384 [00:21<00:27, 232.34it/s][A
+DeepGEMM warmup:  61%|██████    | 10000/16384 [00:21<00:27, 231.15it/s][A
+DeepGEMM warmup:  61%|██████    | 10024/16384 [00:21<00:27, 229.42it/s][A
+DeepGEMM warmup:  61%|██████▏   | 10047/16384 [00:21<00:27, 228.26it/s][A
+DeepGEMM warmup:  61%|██████▏   | 10070/16384 [00:21<00:27, 227.42it/s][A
+DeepGEMM warmup:  62%|██████▏   | 10093/16384 [00:21<00:27, 226.85it/s][A
+DeepGEMM warmup:  62%|██████▏   | 10116/16384 [00:21<00:27, 226.42it/s][A
+DeepGEMM warmup:  62%|██████▏   | 10139/16384 [00:21<00:27, 226.13it/s][A
+DeepGEMM warmup:  62%|██████▏   | 10162/16384 [00:22<00:27, 225.89it/s][A
+DeepGEMM warmup:  62%|██████▏   | 10185/16384 [00:22<00:27, 225.72it/s][A
+DeepGEMM warmup:  62%|██████▏   | 10208/16384 [00:22<00:27, 225.58it/s][A
+DeepGEMM warmup:  62%|██████▏   | 10231/16384 [00:22<00:27, 225.45it/s][A
+DeepGEMM warmup:  63%|██████▎   | 10254/16384 [00:22<00:27, 224.77it/s][A
+DeepGEMM warmup:  63%|██████▎   | 10277/16384 [00:22<00:27, 223.63it/s][A
+DeepGEMM warmup:  63%|██████▎   | 10300/16384 [00:22<00:27, 222.82it/s][A
+DeepGEMM warmup:  63%|██████▎   | 10323/16384 [00:22<00:27, 222.23it/s][A
+DeepGEMM warmup:  63%|██████▎   | 10346/16384 [00:22<00:27, 221.79it/s][A
+DeepGEMM warmup:  63%|██████▎   | 10369/16384 [00:22<00:27, 221.47it/s][A
+DeepGEMM warmup:  63%|██████▎   | 10392/16384 [00:23<00:27, 221.21it/s][A
+DeepGEMM warmup:  64%|██████▎   | 10415/16384 [00:23<00:27, 221.00it/s][A
+DeepGEMM warmup:  64%|██████▎   | 10438/16384 [00:23<00:26, 220.87it/s][A
+DeepGEMM warmup:  64%|██████▍   | 10461/16384 [00:23<00:26, 220.74it/s][A
+DeepGEMM warmup:  64%|██████▍   | 10484/16384 [00:23<00:26, 220.63it/s][A
+DeepGEMM warmup:  64%|██████▍   | 10507/16384 [00:23<00:26, 219.94it/s][A
+DeepGEMM warmup:  64%|██████▍   | 10529/16384 [00:23<00:26, 218.37it/s][A
+DeepGEMM warmup:  64%|██████▍   | 10551/16384 [00:23<00:26, 217.26it/s][A
+DeepGEMM warmup:  65%|██████▍   | 10573/16384 [00:23<00:26, 216.46it/s][A
+DeepGEMM warmup:  65%|██████▍   | 10595/16384 [00:24<00:26, 215.89it/s][A
+DeepGEMM warmup:  65%|██████▍   | 10617/16384 [00:24<00:26, 215.48it/s][A
+DeepGEMM warmup:  65%|██████▍   | 10639/16384 [00:24<00:26, 215.18it/s][A
+DeepGEMM warmup:  65%|██████▌   | 10661/16384 [00:24<00:26, 214.89it/s][A
+DeepGEMM warmup:  65%|██████▌   | 10683/16384 [00:24<00:26, 214.70it/s][A
+DeepGEMM warmup:  65%|██████▌   | 10705/16384 [00:24<00:26, 214.58it/s][A
+DeepGEMM warmup:  65%|██████▌   | 10727/16384 [00:24<00:26, 214.47it/s][A
+DeepGEMM warmup:  66%|██████▌   | 10749/16384 [00:24<00:26, 214.36it/s][A
+DeepGEMM warmup:  66%|██████▌   | 10771/16384 [00:24<00:26, 213.49it/s][A
+DeepGEMM warmup:  66%|██████▌   | 10793/16384 [00:24<00:26, 212.54it/s][A
+DeepGEMM warmup:  66%|██████▌   | 10815/16384 [00:25<00:26, 211.89it/s][A
+DeepGEMM warmup:  66%|██████▌   | 10837/16384 [00:25<00:26, 211.47it/s][A
+DeepGEMM warmup:  66%|██████▋   | 10859/16384 [00:25<00:26, 211.10it/s][A
+DeepGEMM warmup:  66%|██████▋   | 10881/16384 [00:25<00:26, 210.84it/s][A
+DeepGEMM warmup:  67%|██████▋   | 10903/16384 [00:25<00:26, 210.64it/s][A
+DeepGEMM warmup:  67%|██████▋   | 10925/16384 [00:25<00:25, 210.46it/s][A
+DeepGEMM warmup:  67%|██████▋   | 10947/16384 [00:25<00:25, 210.38it/s][A
+DeepGEMM warmup:  67%|██████▋   | 10969/16384 [00:25<00:25, 210.24it/s][A
+DeepGEMM warmup:  67%|██████▋   | 10991/16384 [00:25<00:25, 210.16it/s][A
+DeepGEMM warmup:  67%|██████▋   | 11013/16384 [00:25<00:25, 209.94it/s][A
+DeepGEMM warmup:  67%|██████▋   | 11034/16384 [00:26<00:25, 208.40it/s][A
+DeepGEMM warmup:  67%|██████▋   | 11055/16384 [00:26<00:25, 207.28it/s][A
+DeepGEMM warmup:  68%|██████▊   | 11076/16384 [00:26<00:25, 206.50it/s][A
+DeepGEMM warmup:  68%|██████▊   | 11097/16384 [00:26<00:25, 205.93it/s][A
+DeepGEMM warmup:  68%|██████▊   | 11118/16384 [00:26<00:25, 205.47it/s][A
+DeepGEMM warmup:  68%|██████▊   | 11139/16384 [00:26<00:25, 205.16it/s][A
+DeepGEMM warmup:  68%|██████▊   | 11160/16384 [00:26<00:25, 204.96it/s][A
+DeepGEMM warmup:  68%|██████▊   | 11181/16384 [00:26<00:25, 204.82it/s][A
+DeepGEMM warmup:  68%|██████▊   | 11202/16384 [00:26<00:25, 204.70it/s][A
+DeepGEMM warmup:  68%|██████▊   | 11223/16384 [00:27<00:25, 204.64it/s][A
+DeepGEMM warmup:  69%|██████▊   | 11244/16384 [00:27<00:25, 204.56it/s][A
+DeepGEMM warmup:  69%|██████▉   | 11265/16384 [00:27<00:25, 204.46it/s][A
+DeepGEMM warmup:  69%|██████▉   | 11286/16384 [00:27<00:25, 203.26it/s][A
+DeepGEMM warmup:  69%|██████▉   | 11307/16384 [00:27<00:25, 201.88it/s][A
+DeepGEMM warmup:  69%|██████▉   | 11328/16384 [00:27<00:25, 200.92it/s][A
+DeepGEMM warmup:  69%|██████▉   | 11349/16384 [00:27<00:25, 200.27it/s][A
+DeepGEMM warmup:  69%|██████▉   | 11370/16384 [00:27<00:25, 199.79it/s][A
+DeepGEMM warmup:  70%|██████▉   | 11390/16384 [00:27<00:25, 199.47it/s][A
+DeepGEMM warmup:  70%|██████▉   | 11410/16384 [00:27<00:24, 199.23it/s][A
+DeepGEMM warmup:  70%|██████▉   | 11430/16384 [00:28<00:24, 199.02it/s][A
+DeepGEMM warmup:  70%|██████▉   | 11450/16384 [00:28<00:24, 198.87it/s][A
+DeepGEMM warmup:  70%|███████   | 11470/16384 [00:28<00:24, 198.73it/s][A
+DeepGEMM warmup:  70%|███████   | 11490/16384 [00:28<00:24, 198.63it/s][A
+DeepGEMM warmup:  70%|███████   | 11510/16384 [00:28<00:24, 198.53it/s][A
+DeepGEMM warmup:  70%|███████   | 11530/16384 [00:28<00:24, 197.97it/s][A
+DeepGEMM warmup:  70%|███████   | 11550/16384 [00:28<00:24, 196.93it/s][A
+DeepGEMM warmup:  71%|███████   | 11570/16384 [00:28<00:24, 196.48it/s][A
+DeepGEMM warmup:  71%|███████   | 11590/16384 [00:28<00:24, 196.17it/s][A
+DeepGEMM warmup:  71%|███████   | 11610/16384 [00:28<00:24, 195.93it/s][A
+DeepGEMM warmup:  71%|███████   | 11630/16384 [00:29<00:24, 195.80it/s][A
+DeepGEMM warmup:  71%|███████   | 11650/16384 [00:29<00:24, 195.66it/s][A
+DeepGEMM warmup:  71%|███████   | 11670/16384 [00:29<00:24, 195.56it/s][A
+DeepGEMM warmup:  71%|███████▏  | 11690/16384 [00:29<00:24, 195.47it/s][A
+DeepGEMM warmup:  71%|███████▏  | 11710/16384 [00:29<00:23, 195.39it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11730/16384 [00:29<00:23, 195.32it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11750/16384 [00:29<00:23, 195.27it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11770/16384 [00:29<00:23, 195.22it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11790/16384 [00:29<00:23, 194.58it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11810/16384 [00:29<00:23, 193.26it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11830/16384 [00:30<00:23, 192.28it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11850/16384 [00:30<00:23, 191.63it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11870/16384 [00:30<00:23, 191.16it/s][A
+DeepGEMM warmup:  73%|███████▎  | 11890/16384 [00:30<00:23, 190.84it/s][A
+DeepGEMM warmup:  73%|███████▎  | 11910/16384 [00:30<00:23, 190.58it/s][A
+DeepGEMM warmup:  73%|███████▎  | 11930/16384 [00:30<00:23, 190.38it/s][A
+DeepGEMM warmup:  73%|███████▎  | 11950/16384 [00:30<00:23, 190.23it/s][A
+DeepGEMM warmup:  73%|███████▎  | 11970/16384 [00:30<00:23, 190.13it/s][A
+DeepGEMM warmup:  73%|███████▎  | 11990/16384 [00:30<00:23, 190.05it/s][A
+DeepGEMM warmup:  73%|███████▎  | 12010/16384 [00:31<00:23, 189.92it/s][A
+DeepGEMM warmup:  73%|███████▎  | 12029/16384 [00:31<00:22, 189.83it/s][A
+DeepGEMM warmup:  74%|███████▎  | 12048/16384 [00:31<00:22, 188.88it/s][A
+DeepGEMM warmup:  74%|███████▎  | 12067/16384 [00:31<00:22, 187.83it/s][A
+DeepGEMM warmup:  74%|███████▍  | 12086/16384 [00:31<00:22, 187.08it/s][A
+DeepGEMM warmup:  74%|███████▍  | 12105/16384 [00:31<00:22, 186.56it/s][A
+DeepGEMM warmup:  74%|███████▍  | 12124/16384 [00:31<00:22, 186.19it/s][A
+DeepGEMM warmup:  74%|███████▍  | 12143/16384 [00:31<00:22, 185.94it/s][A
+DeepGEMM warmup:  74%|███████▍  | 12162/16384 [00:31<00:22, 185.74it/s][A
+DeepGEMM warmup:  74%|███████▍  | 12181/16384 [00:31<00:22, 185.57it/s][A
+DeepGEMM warmup:  74%|███████▍  | 12200/16384 [00:32<00:22, 185.46it/s][A
+DeepGEMM warmup:  75%|███████▍  | 12219/16384 [00:32<00:22, 185.33it/s][A
+DeepGEMM warmup:  75%|███████▍  | 12238/16384 [00:32<00:22, 185.31it/s][A
+DeepGEMM warmup:  75%|███████▍  | 12257/16384 [00:32<00:22, 185.23it/s][A
+DeepGEMM warmup:  75%|███████▍  | 12276/16384 [00:32<00:22, 185.17it/s][A
+DeepGEMM warmup:  75%|███████▌  | 12295/16384 [00:32<00:22, 184.95it/s][A
+DeepGEMM warmup:  75%|███████▌  | 12314/16384 [00:32<00:22, 184.06it/s][A
+DeepGEMM warmup:  75%|███████▌  | 12333/16384 [00:32<00:22, 183.48it/s][A
+DeepGEMM warmup:  75%|███████▌  | 12352/16384 [00:32<00:22, 183.06it/s][A
+DeepGEMM warmup:  76%|███████▌  | 12371/16384 [00:32<00:21, 182.76it/s][A
+DeepGEMM warmup:  76%|███████▌  | 12390/16384 [00:33<00:21, 182.55it/s][A
+DeepGEMM warmup:  76%|███████▌  | 12409/16384 [00:33<00:21, 182.39it/s][A
+DeepGEMM warmup:  76%|███████▌  | 12428/16384 [00:33<00:21, 182.26it/s][A
+DeepGEMM warmup:  76%|███████▌  | 12447/16384 [00:33<00:21, 182.17it/s][A
+DeepGEMM warmup:  76%|███████▌  | 12466/16384 [00:33<00:21, 182.10it/s][A
+DeepGEMM warmup:  76%|███████▌  | 12485/16384 [00:33<00:21, 182.04it/s][A
+DeepGEMM warmup:  76%|███████▋  | 12504/16384 [00:33<00:21, 182.01it/s][A
+DeepGEMM warmup:  76%|███████▋  | 12523/16384 [00:33<00:21, 181.93it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12542/16384 [00:33<00:21, 181.85it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12561/16384 [00:34<00:21, 180.92it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12580/16384 [00:34<00:21, 179.95it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12598/16384 [00:34<00:21, 179.31it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12616/16384 [00:34<00:21, 178.84it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12634/16384 [00:34<00:21, 178.50it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12652/16384 [00:34<00:20, 178.27it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12670/16384 [00:34<00:20, 178.09it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12688/16384 [00:34<00:20, 177.94it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12706/16384 [00:34<00:20, 177.85it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12724/16384 [00:34<00:20, 177.76it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12742/16384 [00:35<00:20, 177.70it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12760/16384 [00:35<00:20, 177.63it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12778/16384 [00:35<00:20, 177.59it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12796/16384 [00:35<00:20, 177.54it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12814/16384 [00:35<00:20, 177.01it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12832/16384 [00:35<00:20, 176.35it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12850/16384 [00:35<00:20, 175.89it/s][A
+DeepGEMM warmup:  79%|███████▊  | 12868/16384 [00:35<00:20, 175.54it/s][A
+DeepGEMM warmup:  79%|███████▊  | 12886/16384 [00:35<00:19, 175.30it/s][A
+DeepGEMM warmup:  79%|███████▉  | 12904/16384 [00:35<00:19, 175.13it/s][A
+DeepGEMM warmup:  79%|███████▉  | 12922/16384 [00:36<00:19, 174.99it/s][A
+DeepGEMM warmup:  79%|███████▉  | 12940/16384 [00:36<00:19, 174.90it/s][A
+DeepGEMM warmup:  79%|███████▉  | 12958/16384 [00:36<00:19, 174.83it/s][A
+DeepGEMM warmup:  79%|███████▉  | 12976/16384 [00:36<00:19, 174.75it/s][A
+DeepGEMM warmup:  79%|███████▉  | 12994/16384 [00:36<00:19, 174.70it/s][A
+DeepGEMM warmup:  79%|███████▉  | 13012/16384 [00:36<00:19, 174.67it/s][A
+DeepGEMM warmup:  80%|███████▉  | 13030/16384 [00:36<00:19, 174.63it/s][A
+DeepGEMM warmup:  80%|███████▉  | 13048/16384 [00:36<00:19, 174.57it/s][A
+DeepGEMM warmup:  80%|███████▉  | 13066/16384 [00:36<00:19, 174.07it/s][A
+DeepGEMM warmup:  80%|███████▉  | 13084/16384 [00:37<00:19, 173.07it/s][A
+DeepGEMM warmup:  80%|███████▉  | 13102/16384 [00:37<00:19, 172.36it/s][A
+DeepGEMM warmup:  80%|████████  | 13120/16384 [00:37<00:18, 171.83it/s][A
+DeepGEMM warmup:  80%|████████  | 13138/16384 [00:37<00:18, 171.47it/s][A
+DeepGEMM warmup:  80%|████████  | 13156/16384 [00:37<00:18, 171.23it/s][A
+DeepGEMM warmup:  80%|████████  | 13174/16384 [00:37<00:18, 171.02it/s][A
+DeepGEMM warmup:  81%|████████  | 13192/16384 [00:37<00:18, 170.85it/s][A
+DeepGEMM warmup:  81%|████████  | 13210/16384 [00:37<00:18, 170.76it/s][A
+DeepGEMM warmup:  81%|████████  | 13228/16384 [00:37<00:18, 170.65it/s][A
+DeepGEMM warmup:  81%|████████  | 13246/16384 [00:37<00:18, 170.60it/s][A
+DeepGEMM warmup:  81%|████████  | 13264/16384 [00:38<00:18, 170.54it/s][A
+DeepGEMM warmup:  81%|████████  | 13282/16384 [00:38<00:18, 170.51it/s][A
+DeepGEMM warmup:  81%|████████  | 13300/16384 [00:38<00:18, 170.44it/s][A
+DeepGEMM warmup:  81%|████████▏ | 13318/16384 [00:38<00:18, 170.26it/s][A
+DeepGEMM warmup:  81%|████████▏ | 13336/16384 [00:38<00:17, 169.59it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13353/16384 [00:38<00:17, 169.13it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13370/16384 [00:38<00:17, 168.81it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13387/16384 [00:38<00:17, 168.57it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13404/16384 [00:38<00:17, 168.39it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13421/16384 [00:39<00:17, 168.24it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13438/16384 [00:39<00:17, 168.13it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13455/16384 [00:39<00:17, 168.06it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13472/16384 [00:39<00:17, 168.00it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13489/16384 [00:39<00:17, 167.95it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13506/16384 [00:39<00:17, 167.94it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13523/16384 [00:39<00:17, 167.88it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13540/16384 [00:39<00:16, 167.85it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13557/16384 [00:39<00:16, 167.80it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13574/16384 [00:39<00:16, 167.58it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13591/16384 [00:40<00:16, 166.58it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13608/16384 [00:40<00:16, 165.87it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13625/16384 [00:40<00:16, 165.35it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13642/16384 [00:40<00:16, 165.00it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13659/16384 [00:40<00:16, 164.76it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13676/16384 [00:40<00:16, 164.58it/s][A
+DeepGEMM warmup:  84%|████████▎ | 13693/16384 [00:40<00:16, 164.46it/s][A
+DeepGEMM warmup:  84%|████████▎ | 13710/16384 [00:40<00:16, 164.34it/s][A
+DeepGEMM warmup:  84%|████████▍ | 13727/16384 [00:40<00:16, 164.29it/s][A
+DeepGEMM warmup:  84%|████████▍ | 13744/16384 [00:40<00:16, 164.24it/s][A
+DeepGEMM warmup:  84%|████████▍ | 13761/16384 [00:41<00:15, 164.19it/s][A
+DeepGEMM warmup:  84%|████████▍ | 13778/16384 [00:41<00:15, 164.14it/s][A
+DeepGEMM warmup:  84%|████████▍ | 13795/16384 [00:41<00:15, 164.06it/s][A
+DeepGEMM warmup:  84%|████████▍ | 13812/16384 [00:41<00:15, 164.04it/s][A
+DeepGEMM warmup:  84%|████████▍ | 13829/16384 [00:41<00:15, 163.96it/s][A
+DeepGEMM warmup:  85%|████████▍ | 13846/16384 [00:41<00:15, 163.28it/s][A
+DeepGEMM warmup:  85%|████████▍ | 13863/16384 [00:41<00:15, 162.81it/s][A
+DeepGEMM warmup:  85%|████████▍ | 13880/16384 [00:41<00:15, 162.47it/s][A
+DeepGEMM warmup:  85%|████████▍ | 13897/16384 [00:41<00:15, 162.22it/s][A
+DeepGEMM warmup:  85%|████████▍ | 13914/16384 [00:41<00:15, 162.05it/s][A
+DeepGEMM warmup:  85%|████████▌ | 13931/16384 [00:42<00:15, 161.93it/s][A
+DeepGEMM warmup:  85%|████████▌ | 13948/16384 [00:42<00:15, 161.85it/s][A
+DeepGEMM warmup:  85%|████████▌ | 13965/16384 [00:42<00:14, 161.75it/s][A
+DeepGEMM warmup:  85%|████████▌ | 13982/16384 [00:42<00:14, 161.70it/s][A
+DeepGEMM warmup:  85%|████████▌ | 13999/16384 [00:42<00:14, 161.69it/s][A
+DeepGEMM warmup:  86%|████████▌ | 14016/16384 [00:42<00:14, 161.63it/s][A
+DeepGEMM warmup:  86%|████████▌ | 14033/16384 [00:42<00:14, 161.61it/s][A
+DeepGEMM warmup:  86%|████████▌ | 14050/16384 [00:42<00:14, 161.58it/s][A
+DeepGEMM warmup:  86%|████████▌ | 14067/16384 [00:42<00:14, 161.56it/s][A
+DeepGEMM warmup:  86%|████████▌ | 14084/16384 [00:43<00:14, 161.48it/s][A
+DeepGEMM warmup:  86%|████████▌ | 14101/16384 [00:43<00:14, 160.53it/s][A
+DeepGEMM warmup:  86%|████████▌ | 14118/16384 [00:43<00:14, 159.84it/s][A
+DeepGEMM warmup:  86%|████████▋ | 14134/16384 [00:43<00:14, 159.38it/s][A
+DeepGEMM warmup:  86%|████████▋ | 14150/16384 [00:43<00:14, 159.03it/s][A
+DeepGEMM warmup:  86%|████████▋ | 14166/16384 [00:43<00:13, 158.78it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14182/16384 [00:43<00:13, 158.65it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14198/16384 [00:43<00:13, 158.53it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14214/16384 [00:43<00:13, 158.43it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14230/16384 [00:43<00:13, 158.34it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14246/16384 [00:44<00:13, 158.29it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14262/16384 [00:44<00:13, 158.25it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14278/16384 [00:44<00:13, 158.21it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14294/16384 [00:44<00:13, 158.15it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14310/16384 [00:44<00:13, 158.13it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14326/16384 [00:44<00:13, 158.08it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14342/16384 [00:44<00:12, 157.95it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14358/16384 [00:44<00:12, 157.33it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14374/16384 [00:44<00:12, 156.92it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14390/16384 [00:44<00:12, 156.60it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14406/16384 [00:45<00:12, 156.38it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14422/16384 [00:45<00:12, 156.21it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14438/16384 [00:45<00:12, 156.07it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14454/16384 [00:45<00:12, 155.97it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14470/16384 [00:45<00:12, 155.89it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14486/16384 [00:45<00:12, 155.86it/s][A
+DeepGEMM warmup:  89%|████████▊ | 14502/16384 [00:45<00:12, 155.81it/s][A
+DeepGEMM warmup:  89%|████████▊ | 14518/16384 [00:45<00:11, 155.80it/s][A
+DeepGEMM warmup:  89%|████████▊ | 14534/16384 [00:45<00:11, 155.78it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14550/16384 [00:46<00:11, 155.77it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14566/16384 [00:46<00:11, 155.72it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14582/16384 [00:46<00:11, 155.70it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14598/16384 [00:46<00:11, 155.50it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14614/16384 [00:46<00:11, 154.64it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14630/16384 [00:46<00:11, 154.05it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14646/16384 [00:46<00:11, 153.62it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14662/16384 [00:46<00:11, 153.34it/s][A
+DeepGEMM warmup:  90%|████████▉ | 14678/16384 [00:46<00:11, 153.14it/s][A
+DeepGEMM warmup:  90%|████████▉ | 14694/16384 [00:46<00:11, 152.97it/s][A
+DeepGEMM warmup:  90%|████████▉ | 14710/16384 [00:47<00:10, 152.86it/s][A
+DeepGEMM warmup:  90%|████████▉ | 14726/16384 [00:47<00:10, 152.77it/s][A
+DeepGEMM warmup:  90%|████████▉ | 14742/16384 [00:47<00:10, 152.68it/s][A
+DeepGEMM warmup:  90%|█████████ | 14758/16384 [00:47<00:10, 152.63it/s][A
+DeepGEMM warmup:  90%|█████████ | 14774/16384 [00:47<00:10, 152.58it/s][A
+DeepGEMM warmup:  90%|█████████ | 14790/16384 [00:47<00:10, 152.58it/s][A
+DeepGEMM warmup:  90%|█████████ | 14806/16384 [00:47<00:10, 152.56it/s][A
+DeepGEMM warmup:  90%|█████████ | 14822/16384 [00:47<00:10, 152.52it/s][A
+DeepGEMM warmup:  91%|█████████ | 14838/16384 [00:47<00:10, 152.50it/s][A
+DeepGEMM warmup:  91%|█████████ | 14854/16384 [00:47<00:10, 152.38it/s][A
+DeepGEMM warmup:  91%|█████████ | 14870/16384 [00:48<00:09, 151.87it/s][A
+DeepGEMM warmup:  91%|█████████ | 14886/16384 [00:48<00:09, 151.51it/s][A
+DeepGEMM warmup:  91%|█████████ | 14902/16384 [00:48<00:09, 151.26it/s][A
+DeepGEMM warmup:  91%|█████████ | 14918/16384 [00:48<00:09, 151.07it/s][A
+DeepGEMM warmup:  91%|█████████ | 14934/16384 [00:48<00:09, 150.95it/s][A
+DeepGEMM warmup:  91%|█████████ | 14950/16384 [00:48<00:09, 150.86it/s][A
+DeepGEMM warmup:  91%|█████████▏| 14966/16384 [00:48<00:09, 150.80it/s][A
+DeepGEMM warmup:  91%|█████████▏| 14982/16384 [00:48<00:09, 150.76it/s][A
+DeepGEMM warmup:  92%|█████████▏| 14998/16384 [00:48<00:09, 150.73it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15014/16384 [00:49<00:09, 150.70it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15030/16384 [00:49<00:08, 150.68it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15046/16384 [00:49<00:08, 150.68it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15062/16384 [00:49<00:08, 150.67it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15078/16384 [00:49<00:08, 150.66it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15094/16384 [00:49<00:08, 150.63it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15110/16384 [00:49<00:08, 150.44it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15126/16384 [00:49<00:08, 149.57it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15141/16384 [00:49<00:08, 148.97it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15156/16384 [00:50<00:08, 148.52it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15171/16384 [00:50<00:08, 148.24it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15186/16384 [00:50<00:08, 148.01it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15201/16384 [00:50<00:08, 147.86it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15216/16384 [00:50<00:07, 147.73it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15231/16384 [00:50<00:07, 147.64it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15246/16384 [00:50<00:07, 147.58it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15261/16384 [00:50<00:07, 147.52it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15276/16384 [00:50<00:07, 147.48it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15291/16384 [00:50<00:07, 147.43it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15306/16384 [00:51<00:07, 147.43it/s][A
+DeepGEMM warmup:  94%|█████████▎| 15321/16384 [00:51<00:07, 147.40it/s][A
+DeepGEMM warmup:  94%|█████████▎| 15336/16384 [00:51<00:07, 147.39it/s][A
+DeepGEMM warmup:  94%|█████████▎| 15351/16384 [00:51<00:07, 147.36it/s][A
+DeepGEMM warmup:  94%|█████████▍| 15366/16384 [00:51<00:06, 147.22it/s][A
+DeepGEMM warmup:  94%|█████████▍| 15381/16384 [00:51<00:06, 146.53it/s][A
+DeepGEMM warmup:  94%|█████████▍| 15396/16384 [00:51<00:06, 146.09it/s][A
+DeepGEMM warmup:  94%|█████████▍| 15411/16384 [00:51<00:06, 145.78it/s][A
+DeepGEMM warmup:  94%|█████████▍| 15426/16384 [00:51<00:06, 145.56it/s][A
+DeepGEMM warmup:  94%|█████████▍| 15441/16384 [00:51<00:06, 145.38it/s][A
+DeepGEMM warmup:  94%|█████████▍| 15456/16384 [00:52<00:06, 145.23it/s][A
+DeepGEMM warmup:  94%|█████████▍| 15471/16384 [00:52<00:06, 145.14it/s][A
+DeepGEMM warmup:  95%|█████████▍| 15486/16384 [00:52<00:06, 145.04it/s][A
+DeepGEMM warmup:  95%|█████████▍| 15501/16384 [00:52<00:06, 144.93it/s][A
+DeepGEMM warmup:  95%|█████████▍| 15516/16384 [00:52<00:05, 144.88it/s][A
+DeepGEMM warmup:  95%|█████████▍| 15531/16384 [00:52<00:05, 144.85it/s][A
+DeepGEMM warmup:  95%|█████████▍| 15546/16384 [00:52<00:05, 144.84it/s][A
+DeepGEMM warmup:  95%|█████████▍| 15561/16384 [00:52<00:05, 144.82it/s][A
+DeepGEMM warmup:  95%|█████████▌| 15576/16384 [00:52<00:05, 144.78it/s][A
+DeepGEMM warmup:  95%|█████████▌| 15591/16384 [00:52<00:05, 144.76it/s][A
+DeepGEMM warmup:  95%|█████████▌| 15606/16384 [00:53<00:05, 144.76it/s][A
+DeepGEMM warmup:  95%|█████████▌| 15621/16384 [00:53<00:05, 144.64it/s][A
+DeepGEMM warmup:  95%|█████████▌| 15636/16384 [00:53<00:05, 144.06it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15651/16384 [00:53<00:05, 143.66it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15666/16384 [00:53<00:05, 143.33it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15681/16384 [00:53<00:04, 143.12it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15696/16384 [00:53<00:04, 142.98it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15711/16384 [00:53<00:04, 142.86it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15726/16384 [00:53<00:04, 142.79it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15741/16384 [00:54<00:04, 142.72it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15756/16384 [00:54<00:04, 142.68it/s][A
+DeepGEMM warmup:  96%|█████████▋| 15771/16384 [00:54<00:04, 142.66it/s][A
+DeepGEMM warmup:  96%|█████████▋| 15786/16384 [00:54<00:04, 142.62it/s][A
+DeepGEMM warmup:  96%|█████████▋| 15801/16384 [00:54<00:04, 142.60it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15816/16384 [00:54<00:03, 142.57it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15831/16384 [00:54<00:03, 142.54it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15846/16384 [00:54<00:03, 142.51it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15861/16384 [00:54<00:03, 142.48it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15876/16384 [00:54<00:03, 142.42it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15891/16384 [00:55<00:03, 141.75it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15906/16384 [00:55<00:03, 141.26it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15921/16384 [00:55<00:03, 140.91it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15936/16384 [00:55<00:03, 140.67it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15951/16384 [00:55<00:03, 140.48it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15966/16384 [00:55<00:02, 140.34it/s][A
+DeepGEMM warmup:  98%|█████████▊| 15981/16384 [00:55<00:02, 140.22it/s][A
+DeepGEMM warmup:  98%|█████████▊| 15996/16384 [00:55<00:02, 140.13it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16011/16384 [00:55<00:02, 140.07it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16026/16384 [00:56<00:02, 140.07it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16041/16384 [00:56<00:02, 140.03it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16056/16384 [00:56<00:02, 139.96it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16070/16384 [00:56<00:02, 139.95it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16084/16384 [00:56<00:02, 139.91it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16098/16384 [00:56<00:02, 139.87it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16112/16384 [00:56<00:01, 139.85it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16126/16384 [00:56<00:01, 139.81it/s][A
+DeepGEMM warmup:  99%|█████████▊| 16140/16384 [00:56<00:01, 139.48it/s][A
+DeepGEMM warmup:  99%|█████████▊| 16154/16384 [00:56<00:01, 139.07it/s][A
+DeepGEMM warmup:  99%|█████████▊| 16168/16384 [00:57<00:01, 138.80it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16182/16384 [00:57<00:01, 138.61it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16196/16384 [00:57<00:01, 138.47it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16210/16384 [00:57<00:01, 138.35it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16224/16384 [00:57<00:01, 138.28it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16238/16384 [00:57<00:01, 138.23it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16252/16384 [00:57<00:00, 138.17it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16266/16384 [00:57<00:00, 138.14it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16280/16384 [00:57<00:00, 138.07it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16294/16384 [00:57<00:00, 138.06it/s][A
+DeepGEMM warmup: 100%|█████████▉| 16308/16384 [00:58<00:00, 138.05it/s][A
+DeepGEMM warmup: 100%|█████████▉| 16322/16384 [00:58<00:00, 138.01it/s][A
+DeepGEMM warmup: 100%|█████████▉| 16336/16384 [00:58<00:00, 138.00it/s][A
+DeepGEMM warmup: 100%|█████████▉| 16350/16384 [00:58<00:00, 138.00it/s][A
+DeepGEMM warmup: 100%|█████████▉| 16364/16384 [00:58<00:00, 137.95it/s][A
+DeepGEMM warmup: 100%|█████████▉| 16378/16384 [00:58<00:00, 137.95it/s][ADeepGEMM warmup: 100%|██████████| 16384/16384 [00:58<00:00, 279.40it/s]
+[2026-09-08 07:04:30] Entering DeepGEMM JIT Pre-Compile session. It may take a long time (typically 10-20 mins) if you have not run `sglang.compile_deep_gemm`. It is recommended to run `sglang.compile_deep_gemm` with same args as `sglang.launch_server` for pre-compilation to reduce the overhead if you have not run it before. For example: `python3 -m sglang.compile_deep_gemm --model deepseek-ai/DeepSeek-V3 --tp 8 --trust-remote-code`
+[2026-09-08 07:04:30] Try DeepGEMM JIT Compiling for <GEMM_NT_F8F8BF16> N=5120, K=25600, num_groups=1 with all Ms. It only takes a little time (typically 1 sec) if you have run `python3 -m sglang.compile_deep_gemm`. 
+[2026-09-08 07:04:30] Required memory for warmup: 0.6689453125GB, Available memory: 9.2181396484375GB
+
+DeepGEMM warmup:   0%|          | 0/16384 [00:00<?, ?it/s][A
+DeepGEMM warmup:   6%|▋         | 1027/16384 [00:00<00:01, 10229.31it/s][A
+DeepGEMM warmup:  13%|█▎        | 2050/16384 [00:00<00:02, 4819.80it/s] [A
+DeepGEMM warmup:  16%|█▋        | 2678/16384 [00:00<00:04, 3187.25it/s][A
+DeepGEMM warmup:  19%|█▉        | 3107/16384 [00:01<00:05, 2486.34it/s][A
+DeepGEMM warmup:  21%|██        | 3426/16384 [00:01<00:06, 2102.04it/s][A
+DeepGEMM warmup:  22%|██▏       | 3678/16384 [00:01<00:06, 1841.60it/s][A
+DeepGEMM warmup:  24%|██▎       | 3886/16384 [00:01<00:07, 1679.06it/s][A
+DeepGEMM warmup:  25%|██▍       | 4065/16384 [00:01<00:07, 1552.67it/s][A
+DeepGEMM warmup:  26%|██▌       | 4224/16384 [00:01<00:08, 1447.19it/s][A
+DeepGEMM warmup:  27%|██▋       | 4369/16384 [00:02<00:09, 1331.23it/s][A
+DeepGEMM warmup:  27%|██▋       | 4500/16384 [00:02<00:09, 1248.26it/s][A
+DeepGEMM warmup:  28%|██▊       | 4622/16384 [00:02<00:09, 1183.29it/s][A
+DeepGEMM warmup:  29%|██▉       | 4737/16384 [00:02<00:10, 1129.32it/s][A
+DeepGEMM warmup:  30%|██▉       | 4847/16384 [00:02<00:10, 1087.12it/s][A
+DeepGEMM warmup:  30%|███       | 4953/16384 [00:02<00:11, 1026.40it/s][A
+DeepGEMM warmup:  31%|███       | 5054/16384 [00:02<00:11, 982.86it/s] [A
+DeepGEMM warmup:  31%|███▏      | 5151/16384 [00:02<00:11, 951.96it/s][A
+DeepGEMM warmup:  32%|███▏      | 5245/16384 [00:03<00:12, 924.58it/s][A
+DeepGEMM warmup:  33%|███▎      | 5337/16384 [00:03<00:12, 901.46it/s][A
+DeepGEMM warmup:  33%|███▎      | 5427/16384 [00:03<00:12, 867.24it/s][A
+DeepGEMM warmup:  34%|███▎      | 5513/16384 [00:03<00:12, 840.09it/s][A
+DeepGEMM warmup:  34%|███▍      | 5597/16384 [00:03<00:13, 821.80it/s][A
+DeepGEMM warmup:  35%|███▍      | 5679/16384 [00:03<00:13, 806.82it/s][A
+DeepGEMM warmup:  35%|███▌      | 5760/16384 [00:03<00:13, 788.95it/s][A
+DeepGEMM warmup:  36%|███▌      | 5839/16384 [00:03<00:13, 776.57it/s][A
+DeepGEMM warmup:  36%|███▌      | 5917/16384 [00:03<00:13, 767.81it/s][A
+DeepGEMM warmup:  37%|███▋      | 5994/16384 [00:03<00:13, 759.38it/s][A
+DeepGEMM warmup:  37%|███▋      | 6070/16384 [00:04<00:13, 752.90it/s][A
+DeepGEMM warmup:  38%|███▊      | 6146/16384 [00:04<00:13, 747.48it/s][A
+DeepGEMM warmup:  38%|███▊      | 6221/16384 [00:04<00:14, 721.66it/s][A
+DeepGEMM warmup:  38%|███▊      | 6294/16384 [00:04<00:14, 707.80it/s][A
+DeepGEMM warmup:  39%|███▉      | 6365/16384 [00:04<00:14, 698.87it/s][A
+DeepGEMM warmup:  39%|███▉      | 6435/16384 [00:04<00:14, 692.64it/s][A
+DeepGEMM warmup:  40%|███▉      | 6505/16384 [00:04<00:14, 684.16it/s][A
+DeepGEMM warmup:  40%|████      | 6574/16384 [00:04<00:14, 678.23it/s][A
+DeepGEMM warmup:  41%|████      | 6642/16384 [00:04<00:14, 674.12it/s][A
+DeepGEMM warmup:  41%|████      | 6710/16384 [00:05<00:14, 669.30it/s][A
+DeepGEMM warmup:  41%|████▏     | 6777/16384 [00:05<00:14, 663.80it/s][A
+DeepGEMM warmup:  42%|████▏     | 6847/16384 [00:05<00:14, 673.35it/s][A
+DeepGEMM warmup:  42%|████▏     | 6917/16384 [00:05<00:13, 678.79it/s][A
+DeepGEMM warmup:  43%|████▎     | 6985/16384 [00:05<00:14, 664.99it/s][A
+DeepGEMM warmup:  43%|████▎     | 7052/16384 [00:05<00:14, 658.07it/s][A
+DeepGEMM warmup:  43%|████▎     | 7118/16384 [00:05<00:14, 653.27it/s][A
+DeepGEMM warmup:  44%|████▍     | 7184/16384 [00:05<00:14, 650.02it/s][A
+DeepGEMM warmup:  44%|████▍     | 7250/16384 [00:05<00:14, 643.30it/s][A
+DeepGEMM warmup:  45%|████▍     | 7315/16384 [00:05<00:14, 637.75it/s][A
+DeepGEMM warmup:  45%|████▌     | 7379/16384 [00:06<00:14, 633.87it/s][A
+DeepGEMM warmup:  45%|████▌     | 7443/16384 [00:06<00:14, 632.86it/s][A
+DeepGEMM warmup:  46%|████▌     | 7507/16384 [00:06<00:14, 630.83it/s][A
+DeepGEMM warmup:  46%|████▌     | 7571/16384 [00:06<00:14, 629.29it/s][A
+DeepGEMM warmup:  47%|████▋     | 7634/16384 [00:06<00:13, 628.08it/s][A
+DeepGEMM warmup:  47%|████▋     | 7697/16384 [00:06<00:13, 623.01it/s][A
+DeepGEMM warmup:  47%|████▋     | 7760/16384 [00:06<00:14, 606.75it/s][A
+DeepGEMM warmup:  48%|████▊     | 7821/16384 [00:06<00:14, 597.79it/s][A
+DeepGEMM warmup:  48%|████▊     | 7881/16384 [00:06<00:14, 590.44it/s][A
+DeepGEMM warmup:  48%|████▊     | 7941/16384 [00:07<00:14, 585.17it/s][A
+DeepGEMM warmup:  49%|████▉     | 8000/16384 [00:07<00:14, 580.36it/s][A
+DeepGEMM warmup:  49%|████▉     | 8059/16384 [00:07<00:14, 576.64it/s][A
+DeepGEMM warmup:  50%|████▉     | 8117/16384 [00:07<00:14, 573.98it/s][A
+DeepGEMM warmup:  50%|████▉     | 8175/16384 [00:07<00:14, 572.03it/s][A
+DeepGEMM warmup:  50%|█████     | 8233/16384 [00:07<00:14, 571.05it/s][A
+DeepGEMM warmup:  51%|█████     | 8291/16384 [00:07<00:14, 569.49it/s][A
+DeepGEMM warmup:  51%|█████     | 8348/16384 [00:07<00:14, 557.66it/s][A
+DeepGEMM warmup:  51%|█████▏    | 8405/16384 [00:07<00:14, 559.32it/s][A
+DeepGEMM warmup:  52%|█████▏    | 8461/16384 [00:07<00:14, 558.75it/s][A
+DeepGEMM warmup:  52%|█████▏    | 8517/16384 [00:08<00:14, 546.79it/s][A
+DeepGEMM warmup:  52%|█████▏    | 8572/16384 [00:08<00:14, 529.95it/s][A
+DeepGEMM warmup:  53%|█████▎    | 8626/16384 [00:08<00:14, 519.44it/s][A
+DeepGEMM warmup:  53%|█████▎    | 8679/16384 [00:08<00:15, 512.29it/s][A
+DeepGEMM warmup:  53%|█████▎    | 8731/16384 [00:08<00:15, 507.26it/s][A
+DeepGEMM warmup:  54%|█████▎    | 8782/16384 [00:08<00:15, 505.67it/s][A
+DeepGEMM warmup:  54%|█████▍    | 8835/16384 [00:08<00:14, 512.23it/s][A
+DeepGEMM warmup:  54%|█████▍    | 8888/16384 [00:08<00:14, 516.21it/s][A
+DeepGEMM warmup:  55%|█████▍    | 8940/16384 [00:08<00:14, 515.50it/s][A
+DeepGEMM warmup:  55%|█████▍    | 8992/16384 [00:08<00:14, 509.32it/s][A
+DeepGEMM warmup:  55%|█████▌    | 9045/16384 [00:09<00:14, 512.60it/s][A
+DeepGEMM warmup:  56%|█████▌    | 9097/16384 [00:09<00:14, 514.36it/s][A
+DeepGEMM warmup:  56%|█████▌    | 9149/16384 [00:09<00:14, 513.47it/s][A
+DeepGEMM warmup:  56%|█████▌    | 9201/16384 [00:09<00:13, 513.40it/s][A
+DeepGEMM warmup:  56%|█████▋    | 9253/16384 [00:09<00:14, 505.17it/s][A
+DeepGEMM warmup:  57%|█████▋    | 9304/16384 [00:09<00:14, 498.59it/s][A
+DeepGEMM warmup:  57%|█████▋    | 9354/16384 [00:09<00:14, 494.43it/s][A
+DeepGEMM warmup:  57%|█████▋    | 9404/16384 [00:09<00:14, 491.51it/s][A
+DeepGEMM warmup:  58%|█████▊    | 9454/16384 [00:09<00:14, 489.43it/s][A
+DeepGEMM warmup:  58%|█████▊    | 9503/16384 [00:10<00:14, 487.70it/s][A
+DeepGEMM warmup:  58%|█████▊    | 9552/16384 [00:10<00:14, 485.55it/s][A
+DeepGEMM warmup:  59%|█████▊    | 9601/16384 [00:10<00:14, 483.93it/s][A
+DeepGEMM warmup:  59%|█████▉    | 9650/16384 [00:10<00:13, 482.83it/s][A
+DeepGEMM warmup:  59%|█████▉    | 9699/16384 [00:10<00:13, 481.95it/s][A
+DeepGEMM warmup:  59%|█████▉    | 9748/16384 [00:10<00:13, 481.36it/s][A
+DeepGEMM warmup:  60%|█████▉    | 9797/16384 [00:10<00:13, 479.32it/s][A
+DeepGEMM warmup:  60%|██████    | 9845/16384 [00:10<00:13, 477.73it/s][A
+DeepGEMM warmup:  60%|██████    | 9893/16384 [00:10<00:13, 477.06it/s][A
+DeepGEMM warmup:  61%|██████    | 9941/16384 [00:10<00:13, 476.56it/s][A
+DeepGEMM warmup:  61%|██████    | 9989/16384 [00:11<00:13, 475.71it/s][A
+DeepGEMM warmup:  61%|██████▏   | 10037/16384 [00:11<00:13, 465.91it/s][A
+DeepGEMM warmup:  62%|██████▏   | 10084/16384 [00:11<00:13, 459.75it/s][A
+DeepGEMM warmup:  62%|██████▏   | 10131/16384 [00:11<00:13, 455.68it/s][A
+DeepGEMM warmup:  62%|██████▏   | 10177/16384 [00:11<00:13, 452.65it/s][A
+DeepGEMM warmup:  62%|██████▏   | 10223/16384 [00:11<00:13, 452.11it/s][A
+DeepGEMM warmup:  63%|██████▎   | 10269/16384 [00:11<00:13, 451.07it/s][A
+DeepGEMM warmup:  63%|██████▎   | 10315/16384 [00:11<00:13, 449.36it/s][A
+DeepGEMM warmup:  63%|██████▎   | 10360/16384 [00:11<00:13, 448.58it/s][A
+DeepGEMM warmup:  64%|██████▎   | 10405/16384 [00:11<00:13, 447.75it/s][A
+DeepGEMM warmup:  64%|██████▍   | 10450/16384 [00:12<00:13, 447.40it/s][A
+DeepGEMM warmup:  64%|██████▍   | 10495/16384 [00:12<00:13, 446.95it/s][A
+DeepGEMM warmup:  64%|██████▍   | 10540/16384 [00:12<00:13, 439.35it/s][A
+DeepGEMM warmup:  65%|██████▍   | 10584/16384 [00:12<00:13, 434.43it/s][A
+DeepGEMM warmup:  65%|██████▍   | 10628/16384 [00:12<00:13, 430.92it/s][A
+DeepGEMM warmup:  65%|██████▌   | 10672/16384 [00:12<00:13, 428.65it/s][A
+DeepGEMM warmup:  65%|██████▌   | 10715/16384 [00:12<00:13, 426.81it/s][A
+DeepGEMM warmup:  66%|██████▌   | 10758/16384 [00:12<00:13, 425.48it/s][A
+DeepGEMM warmup:  66%|██████▌   | 10801/16384 [00:12<00:13, 423.77it/s][A
+DeepGEMM warmup:  66%|██████▌   | 10844/16384 [00:12<00:13, 421.63it/s][A
+DeepGEMM warmup:  66%|██████▋   | 10887/16384 [00:13<00:13, 420.09it/s][A
+DeepGEMM warmup:  67%|██████▋   | 10930/16384 [00:13<00:13, 419.04it/s][A
+DeepGEMM warmup:  67%|██████▋   | 10972/16384 [00:13<00:12, 418.28it/s][A
+DeepGEMM warmup:  67%|██████▋   | 11014/16384 [00:13<00:12, 417.73it/s][A
+DeepGEMM warmup:  67%|██████▋   | 11056/16384 [00:13<00:12, 417.27it/s][A
+DeepGEMM warmup:  68%|██████▊   | 11098/16384 [00:13<00:12, 417.16it/s][A
+DeepGEMM warmup:  68%|██████▊   | 11140/16384 [00:13<00:12, 417.01it/s][A
+DeepGEMM warmup:  68%|██████▊   | 11182/16384 [00:13<00:12, 416.94it/s][A
+DeepGEMM warmup:  69%|██████▊   | 11224/16384 [00:13<00:12, 416.84it/s][A
+DeepGEMM warmup:  69%|██████▉   | 11266/16384 [00:13<00:12, 416.82it/s][A
+DeepGEMM warmup:  69%|██████▉   | 11308/16384 [00:14<00:12, 408.96it/s][A
+DeepGEMM warmup:  69%|██████▉   | 11349/16384 [00:14<00:12, 404.66it/s][A
+DeepGEMM warmup:  70%|██████▉   | 11390/16384 [00:14<00:12, 401.51it/s][A
+DeepGEMM warmup:  70%|██████▉   | 11431/16384 [00:14<00:12, 399.23it/s][A
+DeepGEMM warmup:  70%|███████   | 11471/16384 [00:14<00:12, 397.64it/s][A
+DeepGEMM warmup:  70%|███████   | 11511/16384 [00:14<00:12, 396.51it/s][A
+DeepGEMM warmup:  71%|███████   | 11551/16384 [00:14<00:12, 395.67it/s][A
+DeepGEMM warmup:  71%|███████   | 11591/16384 [00:14<00:12, 395.22it/s][A
+DeepGEMM warmup:  71%|███████   | 11631/16384 [00:14<00:12, 394.92it/s][A
+DeepGEMM warmup:  71%|███████   | 11671/16384 [00:15<00:11, 394.72it/s][A
+DeepGEMM warmup:  71%|███████▏  | 11711/16384 [00:15<00:11, 394.58it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11751/16384 [00:15<00:11, 394.47it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11791/16384 [00:15<00:11, 394.26it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11831/16384 [00:15<00:11, 391.07it/s][A
+DeepGEMM warmup:  72%|███████▏  | 11871/16384 [00:15<00:11, 390.81it/s][A
+DeepGEMM warmup:  73%|███████▎  | 11911/16384 [00:15<00:11, 389.02it/s][A
+DeepGEMM warmup:  73%|███████▎  | 11950/16384 [00:15<00:11, 389.00it/s][A
+DeepGEMM warmup:  73%|███████▎  | 11990/16384 [00:15<00:11, 389.60it/s][A
+DeepGEMM warmup:  73%|███████▎  | 12029/16384 [00:15<00:11, 388.73it/s][A
+DeepGEMM warmup:  74%|███████▎  | 12068/16384 [00:16<00:11, 383.58it/s][A
+DeepGEMM warmup:  74%|███████▍  | 12107/16384 [00:16<00:11, 379.90it/s][A
+DeepGEMM warmup:  74%|███████▍  | 12146/16384 [00:16<00:11, 377.23it/s][A
+DeepGEMM warmup:  74%|███████▍  | 12184/16384 [00:16<00:11, 375.39it/s][A
+DeepGEMM warmup:  75%|███████▍  | 12222/16384 [00:16<00:11, 374.09it/s][A
+DeepGEMM warmup:  75%|███████▍  | 12260/16384 [00:16<00:11, 373.16it/s][A
+DeepGEMM warmup:  75%|███████▌  | 12298/16384 [00:16<00:10, 372.52it/s][A
+DeepGEMM warmup:  75%|███████▌  | 12336/16384 [00:16<00:10, 371.15it/s][A
+DeepGEMM warmup:  76%|███████▌  | 12374/16384 [00:16<00:10, 370.14it/s][A
+DeepGEMM warmup:  76%|███████▌  | 12412/16384 [00:16<00:10, 369.39it/s][A
+DeepGEMM warmup:  76%|███████▌  | 12449/16384 [00:17<00:10, 368.93it/s][A
+DeepGEMM warmup:  76%|███████▌  | 12486/16384 [00:17<00:10, 368.48it/s][A
+DeepGEMM warmup:  76%|███████▋  | 12523/16384 [00:17<00:10, 368.27it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12560/16384 [00:17<00:10, 368.04it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12597/16384 [00:17<00:10, 367.62it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12634/16384 [00:17<00:10, 366.03it/s][A
+DeepGEMM warmup:  77%|███████▋  | 12671/16384 [00:17<00:10, 366.64it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12708/16384 [00:17<00:10, 365.09it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12745/16384 [00:17<00:09, 364.83it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12782/16384 [00:17<00:09, 364.64it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12819/16384 [00:18<00:09, 361.77it/s][A
+DeepGEMM warmup:  78%|███████▊  | 12856/16384 [00:18<00:09, 357.32it/s][A
+DeepGEMM warmup:  79%|███████▊  | 12892/16384 [00:18<00:09, 354.34it/s][A
+DeepGEMM warmup:  79%|███████▉  | 12928/16384 [00:18<00:09, 352.23it/s][A
+DeepGEMM warmup:  79%|███████▉  | 12964/16384 [00:18<00:09, 350.78it/s][A
+DeepGEMM warmup:  79%|███████▉  | 13000/16384 [00:18<00:09, 349.73it/s][A
+DeepGEMM warmup:  80%|███████▉  | 13035/16384 [00:18<00:09, 349.05it/s][A
+DeepGEMM warmup:  80%|███████▉  | 13070/16384 [00:18<00:09, 348.54it/s][A
+DeepGEMM warmup:  80%|███████▉  | 13105/16384 [00:18<00:09, 348.34it/s][A
+DeepGEMM warmup:  80%|████████  | 13140/16384 [00:19<00:09, 348.10it/s][A
+DeepGEMM warmup:  80%|████████  | 13175/16384 [00:19<00:09, 348.01it/s][A
+DeepGEMM warmup:  81%|████████  | 13210/16384 [00:19<00:09, 347.86it/s][A
+DeepGEMM warmup:  81%|████████  | 13245/16384 [00:19<00:09, 347.84it/s][A
+DeepGEMM warmup:  81%|████████  | 13280/16384 [00:19<00:08, 347.70it/s][A
+DeepGEMM warmup:  81%|████████▏ | 13315/16384 [00:19<00:08, 347.72it/s][A
+DeepGEMM warmup:  81%|████████▏ | 13350/16384 [00:19<00:08, 346.20it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13385/16384 [00:19<00:08, 345.27it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13420/16384 [00:19<00:08, 343.81it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13455/16384 [00:19<00:08, 343.60it/s][A
+DeepGEMM warmup:  82%|████████▏ | 13490/16384 [00:20<00:08, 343.73it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13525/16384 [00:20<00:08, 343.80it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13560/16384 [00:20<00:08, 343.84it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13595/16384 [00:20<00:08, 340.29it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13630/16384 [00:20<00:08, 337.03it/s][A
+DeepGEMM warmup:  83%|████████▎ | 13664/16384 [00:20<00:08, 334.61it/s][A
+DeepGEMM warmup:  84%|████████▎ | 13698/16384 [00:20<00:08, 333.06it/s][A
+DeepGEMM warmup:  84%|████████▍ | 13732/16384 [00:20<00:07, 331.86it/s][A
+DeepGEMM warmup:  84%|████████▍ | 13766/16384 [00:20<00:07, 331.13it/s][A
+DeepGEMM warmup:  84%|████████▍ | 13800/16384 [00:20<00:07, 330.50it/s][A
+DeepGEMM warmup:  84%|████████▍ | 13834/16384 [00:21<00:07, 330.10it/s][A
+DeepGEMM warmup:  85%|████████▍ | 13868/16384 [00:21<00:07, 329.72it/s][A
+DeepGEMM warmup:  85%|████████▍ | 13901/16384 [00:21<00:07, 329.63it/s][A
+DeepGEMM warmup:  85%|████████▌ | 13934/16384 [00:21<00:07, 329.51it/s][A
+DeepGEMM warmup:  85%|████████▌ | 13967/16384 [00:21<00:07, 329.53it/s][A
+DeepGEMM warmup:  85%|████████▌ | 14000/16384 [00:21<00:07, 329.43it/s][A
+DeepGEMM warmup:  86%|████████▌ | 14033/16384 [00:21<00:07, 329.43it/s][A
+DeepGEMM warmup:  86%|████████▌ | 14066/16384 [00:21<00:07, 329.35it/s][A
+DeepGEMM warmup:  86%|████████▌ | 14099/16384 [00:21<00:06, 329.16it/s][A
+DeepGEMM warmup:  86%|████████▋ | 14132/16384 [00:21<00:06, 327.19it/s][A
+DeepGEMM warmup:  86%|████████▋ | 14165/16384 [00:22<00:06, 326.53it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14198/16384 [00:22<00:06, 325.46it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14231/16384 [00:22<00:06, 325.62it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14264/16384 [00:22<00:06, 325.69it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14297/16384 [00:22<00:06, 325.75it/s][A
+DeepGEMM warmup:  87%|████████▋ | 14330/16384 [00:22<00:06, 325.81it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14363/16384 [00:22<00:06, 322.56it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14396/16384 [00:22<00:06, 319.59it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14428/16384 [00:22<00:06, 317.59it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14460/16384 [00:22<00:06, 316.19it/s][A
+DeepGEMM warmup:  88%|████████▊ | 14492/16384 [00:23<00:06, 315.19it/s][A
+DeepGEMM warmup:  89%|████████▊ | 14524/16384 [00:23<00:05, 314.47it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14556/16384 [00:23<00:05, 314.00it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14588/16384 [00:23<00:05, 313.61it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14620/16384 [00:23<00:05, 313.44it/s][A
+DeepGEMM warmup:  89%|████████▉ | 14652/16384 [00:23<00:05, 312.39it/s][A
+DeepGEMM warmup:  90%|████████▉ | 14684/16384 [00:23<00:05, 312.55it/s][A
+DeepGEMM warmup:  90%|████████▉ | 14716/16384 [00:23<00:05, 311.74it/s][A
+DeepGEMM warmup:  90%|█████████ | 14748/16384 [00:23<00:05, 312.14it/s][A
+DeepGEMM warmup:  90%|█████████ | 14780/16384 [00:24<00:05, 312.34it/s][A
+DeepGEMM warmup:  90%|█████████ | 14812/16384 [00:24<00:05, 312.54it/s][A
+DeepGEMM warmup:  91%|█████████ | 14844/16384 [00:24<00:04, 311.72it/s][A
+DeepGEMM warmup:  91%|█████████ | 14876/16384 [00:24<00:04, 311.72it/s][A
+DeepGEMM warmup:  91%|█████████ | 14908/16384 [00:24<00:04, 311.27it/s][A
+DeepGEMM warmup:  91%|█████████ | 14940/16384 [00:24<00:04, 309.74it/s][A
+DeepGEMM warmup:  91%|█████████▏| 14971/16384 [00:24<00:04, 309.68it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15003/16384 [00:24<00:04, 309.79it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15034/16384 [00:24<00:04, 309.84it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15066/16384 [00:24<00:04, 309.91it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15097/16384 [00:25<00:04, 309.92it/s][A
+DeepGEMM warmup:  92%|█████████▏| 15128/16384 [00:25<00:04, 307.16it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15159/16384 [00:25<00:04, 304.47it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15190/16384 [00:25<00:03, 302.38it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15221/16384 [00:25<00:03, 301.07it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15252/16384 [00:25<00:03, 300.04it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15283/16384 [00:25<00:03, 299.44it/s][A
+DeepGEMM warmup:  93%|█████████▎| 15313/16384 [00:25<00:03, 298.92it/s][A
+DeepGEMM warmup:  94%|█████████▎| 15343/16384 [00:25<00:03, 298.62it/s][A
+DeepGEMM warmup:  94%|█████████▍| 15373/16384 [00:25<00:03, 298.30it/s][A
+DeepGEMM warmup:  94%|█████████▍| 15403/16384 [00:26<00:03, 298.05it/s][A
+DeepGEMM warmup:  94%|█████████▍| 15433/16384 [00:26<00:03, 296.62it/s][A
+DeepGEMM warmup:  94%|█████████▍| 15463/16384 [00:26<00:03, 297.09it/s][A
+DeepGEMM warmup:  95%|█████████▍| 15493/16384 [00:26<00:02, 297.00it/s][A
+DeepGEMM warmup:  95%|█████████▍| 15523/16384 [00:26<00:02, 296.37it/s][A
+DeepGEMM warmup:  95%|█████████▍| 15553/16384 [00:26<00:02, 295.94it/s][A
+DeepGEMM warmup:  95%|█████████▌| 15583/16384 [00:26<00:02, 295.64it/s][A
+DeepGEMM warmup:  95%|█████████▌| 15613/16384 [00:26<00:02, 295.42it/s][A
+DeepGEMM warmup:  95%|█████████▌| 15643/16384 [00:26<00:02, 292.48it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15673/16384 [00:26<00:02, 290.00it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15703/16384 [00:27<00:02, 288.23it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15732/16384 [00:27<00:02, 287.67it/s][A
+DeepGEMM warmup:  96%|█████████▌| 15761/16384 [00:27<00:02, 287.42it/s][A
+DeepGEMM warmup:  96%|█████████▋| 15790/16384 [00:27<00:02, 287.25it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15819/16384 [00:27<00:01, 287.11it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15848/16384 [00:27<00:01, 286.99it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15877/16384 [00:27<00:01, 286.92it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15906/16384 [00:27<00:01, 286.32it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15935/16384 [00:27<00:01, 285.74it/s][A
+DeepGEMM warmup:  97%|█████████▋| 15964/16384 [00:28<00:01, 285.31it/s][A
+DeepGEMM warmup:  98%|█████████▊| 15993/16384 [00:28<00:01, 285.04it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16022/16384 [00:28<00:01, 284.82it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16051/16384 [00:28<00:01, 284.69it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16080/16384 [00:28<00:01, 284.54it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16109/16384 [00:28<00:00, 284.53it/s][A
+DeepGEMM warmup:  98%|█████████▊| 16138/16384 [00:28<00:00, 284.38it/s][A
+DeepGEMM warmup:  99%|█████████▊| 16167/16384 [00:28<00:00, 284.40it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16196/16384 [00:28<00:00, 283.13it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16225/16384 [00:28<00:00, 283.30it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16254/16384 [00:29<00:00, 282.61it/s][A
+DeepGEMM warmup:  99%|█████████▉| 16283/16384 [00:29<00:00, 282.71it/s][A
+DeepGEMM warmup: 100%|█████████▉| 16312/16384 [00:29<00:00, 282.00it/s][A
+DeepGEMM warmup: 100%|█████████▉| 16341/16384 [00:29<00:00, 282.77it/s][A
+DeepGEMM warmup: 100%|█████████▉| 16370/16384 [00:29<00:00, 282.23it/s][ADeepGEMM warmup: 100%|██████████| 16384/16384 [00:29<00:00, 555.53it/s]
+Capturing num tokens (num_tokens=8192 avail_mem=11.13 GB):   2%|▏         | 1/58 [02:01<1:55:31, 121.60s/it]Capturing num tokens (num_tokens=7680 avail_mem=6.62 GB):   2%|▏         | 1/58 [02:01<1:55:31, 121.60s/it] Capturing num tokens (num_tokens=7680 avail_mem=6.62 GB):   3%|▎         | 2/58 [02:04<48:20, 51.79s/it]   Capturing num tokens (num_tokens=7168 avail_mem=6.61 GB):   3%|▎         | 2/58 [02:04<48:20, 51.79s/it]Capturing num tokens (num_tokens=7168 avail_mem=6.61 GB):   5%|▌         | 3/58 [02:06<26:48, 29.25s/it]Capturing num tokens (num_tokens=6656 avail_mem=6.60 GB):   5%|▌         | 3/58 [02:06<26:48, 29.25s/it]Capturing num tokens (num_tokens=6656 avail_mem=6.60 GB):   7%|▋         | 4/58 [02:09<16:46, 18.64s/it]Capturing num tokens (num_tokens=6144 avail_mem=6.60 GB):   7%|▋         | 4/58 [02:09<16:46, 18.64s/it]Capturing num tokens (num_tokens=6144 avail_mem=6.60 GB):   9%|▊         | 5/58 [02:11<11:10, 12.65s/it]Capturing num tokens (num_tokens=5632 avail_mem=6.58 GB):   9%|▊         | 5/58 [02:11<11:10, 12.65s/it]Capturing num tokens (num_tokens=5632 avail_mem=6.58 GB):  10%|█         | 6/58 [02:13<07:45,  8.95s/it]Capturing num tokens (num_tokens=5120 avail_mem=6.57 GB):  10%|█         | 6/58 [02:13<07:45,  8.95s/it]Capturing num tokens (num_tokens=5120 avail_mem=6.57 GB):  12%|█▏        | 7/58 [02:14<05:33,  6.54s/it]Capturing num tokens (num_tokens=4608 avail_mem=6.57 GB):  12%|█▏        | 7/58 [02:14<05:33,  6.54s/it]Capturing num tokens (num_tokens=4608 avail_mem=6.57 GB):  14%|█▍        | 8/58 [02:16<04:05,  4.91s/it]Capturing num tokens (num_tokens=4096 avail_mem=6.56 GB):  14%|█▍        | 8/58 [02:16<04:05,  4.91s/it]Capturing num tokens (num_tokens=4096 avail_mem=6.56 GB):  16%|█▌        | 9/58 [02:17<03:03,  3.74s/it]Capturing num tokens (num_tokens=3840 avail_mem=6.55 GB):  16%|█▌        | 9/58 [02:17<03:03,  3.74s/it]Capturing num tokens (num_tokens=3840 avail_mem=6.55 GB):  17%|█▋        | 10/58 [02:18<02:20,  2.93s/it]Capturing num tokens (num_tokens=3584 avail_mem=6.54 GB):  17%|█▋        | 10/58 [02:18<02:20,  2.93s/it]Capturing num tokens (num_tokens=3584 avail_mem=6.54 GB):  19%|█▉        | 11/58 [02:19<01:49,  2.33s/it]Capturing num tokens (num_tokens=3328 avail_mem=6.53 GB):  19%|█▉        | 11/58 [02:19<01:49,  2.33s/it]Capturing num tokens (num_tokens=3328 avail_mem=6.53 GB):  21%|██        | 12/58 [02:20<01:27,  1.90s/it]Capturing num tokens (num_tokens=3072 avail_mem=6.52 GB):  21%|██        | 12/58 [02:20<01:27,  1.90s/it]Capturing num tokens (num_tokens=3072 avail_mem=6.52 GB):  22%|██▏       | 13/58 [02:21<01:11,  1.58s/it]Capturing num tokens (num_tokens=2816 avail_mem=6.51 GB):  22%|██▏       | 13/58 [02:21<01:11,  1.58s/it]Capturing num tokens (num_tokens=2816 avail_mem=6.51 GB):  24%|██▍       | 14/58 [02:21<00:58,  1.33s/it]Capturing num tokens (num_tokens=2560 avail_mem=6.50 GB):  24%|██▍       | 14/58 [02:21<00:58,  1.33s/it]Capturing num tokens (num_tokens=2560 avail_mem=6.50 GB):  26%|██▌       | 15/58 [02:22<00:48,  1.13s/it]Capturing num tokens (num_tokens=2304 avail_mem=6.49 GB):  26%|██▌       | 15/58 [02:22<00:48,  1.13s/it]Capturing num tokens (num_tokens=2304 avail_mem=6.49 GB):  28%|██▊       | 16/58 [02:23<00:41,  1.02it/s]Capturing num tokens (num_tokens=2048 avail_mem=6.48 GB):  28%|██▊       | 16/58 [02:23<00:41,  1.02it/s]Capturing num tokens (num_tokens=2048 avail_mem=6.48 GB):  29%|██▉       | 17/58 [02:23<00:34,  1.18it/s]Capturing num tokens (num_tokens=1792 avail_mem=6.47 GB):  29%|██▉       | 17/58 [02:23<00:34,  1.18it/s]Capturing num tokens (num_tokens=1792 avail_mem=6.47 GB):  31%|███       | 18/58 [02:24<00:29,  1.36it/s]Capturing num tokens (num_tokens=1536 avail_mem=6.47 GB):  31%|███       | 18/58 [02:24<00:29,  1.36it/s]Capturing num tokens (num_tokens=1536 avail_mem=6.47 GB):  33%|███▎      | 19/58 [02:24<00:24,  1.56it/s]Capturing num tokens (num_tokens=1280 avail_mem=6.46 GB):  33%|███▎      | 19/58 [02:24<00:24,  1.56it/s]Capturing num tokens (num_tokens=1280 avail_mem=6.46 GB):  34%|███▍      | 20/58 [02:24<00:20,  1.83it/s]Capturing num tokens (num_tokens=1024 avail_mem=6.45 GB):  34%|███▍      | 20/58 [02:24<00:20,  1.83it/s]Capturing num tokens (num_tokens=1024 avail_mem=6.45 GB):  36%|███▌      | 21/58 [02:25<00:17,  2.11it/s]Capturing num tokens (num_tokens=960 avail_mem=6.44 GB):  36%|███▌      | 21/58 [02:25<00:17,  2.11it/s] Capturing num tokens (num_tokens=960 avail_mem=6.44 GB):  38%|███▊      | 22/58 [02:25<00:14,  2.41it/s]Capturing num tokens (num_tokens=896 avail_mem=6.43 GB):  38%|███▊      | 22/58 [02:25<00:14,  2.41it/s]Capturing num tokens (num_tokens=896 avail_mem=6.43 GB):  40%|███▉      | 23/58 [02:25<00:13,  2.67it/s]Capturing num tokens (num_tokens=832 avail_mem=6.42 GB):  40%|███▉      | 23/58 [02:25<00:13,  2.67it/s]Capturing num tokens (num_tokens=832 avail_mem=6.42 GB):  41%|████▏     | 24/58 [02:26<00:11,  2.93it/s]Capturing num tokens (num_tokens=768 avail_mem=6.42 GB):  41%|████▏     | 24/58 [02:26<00:11,  2.93it/s]Capturing num tokens (num_tokens=768 avail_mem=6.42 GB):  43%|████▎     | 25/58 [02:26<00:10,  3.14it/s]Capturing num tokens (num_tokens=704 avail_mem=6.40 GB):  43%|████▎     | 25/58 [02:26<00:10,  3.14it/s]Capturing num tokens (num_tokens=704 avail_mem=6.40 GB):  45%|████▍     | 26/58 [02:26<00:09,  3.34it/s]Capturing num tokens (num_tokens=640 avail_mem=6.40 GB):  45%|████▍     | 26/58 [02:26<00:09,  3.34it/s]Capturing num tokens (num_tokens=640 avail_mem=6.40 GB):  47%|████▋     | 27/58 [02:26<00:08,  3.53it/s]Capturing num tokens (num_tokens=576 avail_mem=6.39 GB):  47%|████▋     | 27/58 [02:26<00:08,  3.53it/s]Capturing num tokens (num_tokens=576 avail_mem=6.39 GB):  48%|████▊     | 28/58 [02:27<00:08,  3.69it/s]Capturing num tokens (num_tokens=512 avail_mem=6.38 GB):  48%|████▊     | 28/58 [02:27<00:08,  3.69it/s]Capturing num tokens (num_tokens=512 avail_mem=6.38 GB):  50%|█████     | 29/58 [02:27<00:07,  3.71it/s]Capturing num tokens (num_tokens=480 avail_mem=6.37 GB):  50%|█████     | 29/58 [02:27<00:07,  3.71it/s]Capturing num tokens (num_tokens=480 avail_mem=6.37 GB):  52%|█████▏    | 30/58 [02:27<00:07,  3.75it/s]Capturing num tokens (num_tokens=448 avail_mem=6.36 GB):  52%|█████▏    | 30/58 [02:27<00:07,  3.75it/s]Capturing num tokens (num_tokens=448 avail_mem=6.36 GB):  53%|█████▎    | 31/58 [02:27<00:07,  3.75it/s]Capturing num tokens (num_tokens=416 avail_mem=6.35 GB):  53%|█████▎    | 31/58 [02:27<00:07,  3.75it/s]Capturing num tokens (num_tokens=416 avail_mem=6.35 GB):  55%|█████▌    | 32/58 [02:28<00:06,  3.81it/s]Capturing num tokens (num_tokens=384 avail_mem=6.35 GB):  55%|█████▌    | 32/58 [02:28<00:06,  3.81it/s]Capturing num tokens (num_tokens=384 avail_mem=6.35 GB):  57%|█████▋    | 33/58 [02:28<00:06,  3.89it/s]Capturing num tokens (num_tokens=352 avail_mem=6.34 GB):  57%|█████▋    | 33/58 [02:28<00:06,  3.89it/s]Capturing num tokens (num_tokens=352 avail_mem=6.34 GB):  59%|█████▊    | 34/58 [02:28<00:06,  3.96it/s]Capturing num tokens (num_tokens=320 avail_mem=6.33 GB):  59%|█████▊    | 34/58 [02:28<00:06,  3.96it/s]Capturing num tokens (num_tokens=320 avail_mem=6.33 GB):  60%|██████    | 35/58 [02:28<00:05,  3.99it/s]Capturing num tokens (num_tokens=288 avail_mem=6.32 GB):  60%|██████    | 35/58 [02:28<00:05,  3.99it/s]Capturing num tokens (num_tokens=288 avail_mem=6.32 GB):  62%|██████▏   | 36/58 [02:29<00:05,  4.02it/s]Capturing num tokens (num_tokens=256 avail_mem=6.31 GB):  62%|██████▏   | 36/58 [02:29<00:05,  4.02it/s]Capturing num tokens (num_tokens=256 avail_mem=6.31 GB):  64%|██████▍   | 37/58 [02:29<00:05,  4.05it/s]Capturing num tokens (num_tokens=240 avail_mem=6.30 GB):  64%|██████▍   | 37/58 [02:29<00:05,  4.05it/s]Capturing num tokens (num_tokens=240 avail_mem=6.30 GB):  66%|██████▌   | 38/58 [02:29<00:04,  4.06it/s]Capturing num tokens (num_tokens=224 avail_mem=6.29 GB):  66%|██████▌   | 38/58 [02:29<00:04,  4.06it/s]Capturing num tokens (num_tokens=224 avail_mem=6.29 GB):  67%|██████▋   | 39/58 [02:29<00:04,  4.07it/s]Capturing num tokens (num_tokens=208 avail_mem=6.28 GB):  67%|██████▋   | 39/58 [02:29<00:04,  4.07it/s]Capturing num tokens (num_tokens=208 avail_mem=6.28 GB):  69%|██████▉   | 40/58 [02:30<00:04,  4.06it/s]Capturing num tokens (num_tokens=192 avail_mem=6.27 GB):  69%|██████▉   | 40/58 [02:30<00:04,  4.06it/s]Capturing num tokens (num_tokens=192 avail_mem=6.27 GB):  71%|███████   | 41/58 [02:30<00:04,  4.07it/s]Capturing num tokens (num_tokens=176 avail_mem=6.27 GB):  71%|███████   | 41/58 [02:30<00:04,  4.07it/s]Capturing num tokens (num_tokens=176 avail_mem=6.27 GB):  72%|███████▏  | 42/58 [02:30<00:03,  4.09it/s]Capturing num tokens (num_tokens=160 avail_mem=6.26 GB):  72%|███████▏  | 42/58 [02:30<00:03,  4.09it/s]Capturing num tokens (num_tokens=160 avail_mem=6.26 GB):  74%|███████▍  | 43/58 [02:30<00:03,  4.10it/s]Capturing num tokens (num_tokens=144 avail_mem=6.25 GB):  74%|███████▍  | 43/58 [02:30<00:03,  4.10it/s]Capturing num tokens (num_tokens=144 avail_mem=6.25 GB):  76%|███████▌  | 44/58 [02:31<00:03,  4.09it/s]Capturing num tokens (num_tokens=128 avail_mem=6.24 GB):  76%|███████▌  | 44/58 [02:31<00:03,  4.09it/s]Capturing num tokens (num_tokens=128 avail_mem=6.24 GB):  78%|███████▊  | 45/58 [02:31<00:03,  4.08it/s]Capturing num tokens (num_tokens=112 avail_mem=6.23 GB):  78%|███████▊  | 45/58 [02:31<00:03,  4.08it/s]Capturing num tokens (num_tokens=112 avail_mem=6.23 GB):  79%|███████▉  | 46/58 [02:31<00:02,  4.08it/s]Capturing num tokens (num_tokens=96 avail_mem=6.22 GB):  79%|███████▉  | 46/58 [02:31<00:02,  4.08it/s] Capturing num tokens (num_tokens=96 avail_mem=6.22 GB):  81%|████████  | 47/58 [02:31<00:02,  4.08it/s]Capturing num tokens (num_tokens=80 avail_mem=6.20 GB):  81%|████████  | 47/58 [02:31<00:02,  4.08it/s]Capturing num tokens (num_tokens=80 avail_mem=6.20 GB):  83%|████████▎ | 48/58 [02:32<00:02,  4.08it/s]Capturing num tokens (num_tokens=64 avail_mem=6.19 GB):  83%|████████▎ | 48/58 [02:32<00:02,  4.08it/s]Capturing num tokens (num_tokens=64 avail_mem=6.19 GB):  84%|████████▍ | 49/58 [02:32<00:02,  4.08it/s]Capturing num tokens (num_tokens=48 avail_mem=6.18 GB):  84%|████████▍ | 49/58 [02:32<00:02,  4.08it/s]Capturing num tokens (num_tokens=48 avail_mem=6.18 GB):  86%|████████▌ | 50/58 [02:32<00:01,  4.07it/s]Capturing num tokens (num_tokens=32 avail_mem=6.18 GB):  86%|████████▌ | 50/58 [02:32<00:01,  4.07it/s]Capturing num tokens (num_tokens=32 avail_mem=6.18 GB):  88%|████████▊ | 51/58 [02:32<00:01,  4.08it/s]Capturing num tokens (num_tokens=28 avail_mem=6.17 GB):  88%|████████▊ | 51/58 [02:32<00:01,  4.08it/s]Capturing num tokens (num_tokens=28 avail_mem=6.17 GB):  90%|████████▉ | 52/58 [02:33<00:01,  4.07it/s]Capturing num tokens (num_tokens=24 avail_mem=6.16 GB):  90%|████████▉ | 52/58 [02:33<00:01,  4.07it/s]Capturing num tokens (num_tokens=24 avail_mem=6.16 GB):  91%|█████████▏| 53/58 [02:33<00:01,  4.07it/s]Capturing num tokens (num_tokens=20 avail_mem=6.15 GB):  91%|█████████▏| 53/58 [02:33<00:01,  4.07it/s]Capturing num tokens (num_tokens=20 avail_mem=6.15 GB):  93%|█████████▎| 54/58 [02:33<00:00,  4.07it/s]Capturing num tokens (num_tokens=16 avail_mem=6.14 GB):  93%|█████████▎| 54/58 [02:33<00:00,  4.07it/s]Capturing num tokens (num_tokens=16 avail_mem=6.14 GB):  95%|█████████▍| 55/58 [02:33<00:00,  3.84it/s]Capturing num tokens (num_tokens=12 avail_mem=6.13 GB):  95%|█████████▍| 55/58 [02:33<00:00,  3.84it/s]Capturing num tokens (num_tokens=12 avail_mem=6.13 GB):  97%|█████████▋| 56/58 [02:34<00:00,  3.90it/s]Capturing num tokens (num_tokens=8 avail_mem=6.12 GB):  97%|█████████▋| 56/58 [02:34<00:00,  3.90it/s] Capturing num tokens (num_tokens=8 avail_mem=6.12 GB):  98%|█████████▊| 57/58 [02:34<00:00,  3.92it/s]Capturing num tokens (num_tokens=4 avail_mem=6.12 GB):  98%|█████████▊| 57/58 [02:34<00:00,  3.92it/s]Capturing num tokens (num_tokens=4 avail_mem=6.12 GB): 100%|██████████| 58/58 [02:34<00:00,  3.95it/s]Capturing num tokens (num_tokens=4 avail_mem=6.12 GB): 100%|██████████| 58/58 [02:34<00:00,  2.66s/it]
+[2026-09-08 07:05:38] Capture target prefill CUDA graph end. elapsed=155.32 s, mem usage=2.94 GB, avail mem=8.19 GB.
+[2026-09-08 07:05:38] Capture target decode CUDA graph begin. backend=full, num_tokens_per_req=1, bs=[1, 2, 4, 8, 12, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256], avail mem=8.19 GB
+  0%|          | 0/36 [00:00<?, ?it/s]Capturing batches (bs=256 avail_mem=8.06 GB):   0%|          | 0/36 [00:00<?, ?it/s]Capturing batches (bs=256 avail_mem=8.06 GB):   3%|▎         | 1/36 [00:00<00:10,  3.18it/s]Capturing batches (bs=248 avail_mem=8.03 GB):   3%|▎         | 1/36 [00:00<00:10,  3.18it/s]Capturing batches (bs=248 avail_mem=8.03 GB):   6%|▌         | 2/36 [00:00<00:08,  3.93it/s]Capturing batches (bs=240 avail_mem=8.03 GB):   6%|▌         | 2/36 [00:00<00:08,  3.93it/s]Capturing batches (bs=240 avail_mem=8.03 GB):   8%|▊         | 3/36 [00:00<00:07,  4.27it/s]Capturing batches (bs=232 avail_mem=8.02 GB):   8%|▊         | 3/36 [00:00<00:07,  4.27it/s]Capturing batches (bs=232 avail_mem=8.02 GB):  11%|█         | 4/36 [00:00<00:07,  4.44it/s]Capturing batches (bs=224 avail_mem=8.02 GB):  11%|█         | 4/36 [00:00<00:07,  4.44it/s]Capturing batches (bs=224 avail_mem=8.02 GB):  14%|█▍        | 5/36 [00:01<00:06,  4.54it/s]Capturing batches (bs=216 avail_mem=8.02 GB):  14%|█▍        | 5/36 [00:01<00:06,  4.54it/s]Capturing batches (bs=216 avail_mem=8.02 GB):  17%|█▋        | 6/36 [00:01<00:06,  4.61it/s]Capturing batches (bs=208 avail_mem=8.02 GB):  17%|█▋        | 6/36 [00:01<00:06,  4.61it/s]Capturing batches (bs=208 avail_mem=8.02 GB):  19%|█▉        | 7/36 [00:01<00:06,  4.65it/s]Capturing batches (bs=200 avail_mem=8.01 GB):  19%|█▉        | 7/36 [00:01<00:06,  4.65it/s]Capturing batches (bs=200 avail_mem=8.01 GB):  22%|██▏       | 8/36 [00:01<00:05,  4.68it/s]Capturing batches (bs=192 avail_mem=8.01 GB):  22%|██▏       | 8/36 [00:01<00:05,  4.68it/s]Capturing batches (bs=192 avail_mem=8.01 GB):  25%|██▌       | 9/36 [00:02<00:05,  4.70it/s]Capturing batches (bs=184 avail_mem=8.01 GB):  25%|██▌       | 9/36 [00:02<00:05,  4.70it/s]Capturing batches (bs=184 avail_mem=8.01 GB):  28%|██▊       | 10/36 [00:02<00:05,  4.72it/s]Capturing batches (bs=176 avail_mem=8.01 GB):  28%|██▊       | 10/36 [00:02<00:05,  4.72it/s]Capturing batches (bs=176 avail_mem=8.01 GB):  31%|███       | 11/36 [00:02<00:05,  4.71it/s]Capturing batches (bs=168 avail_mem=8.00 GB):  31%|███       | 11/36 [00:02<00:05,  4.71it/s]Capturing batches (bs=168 avail_mem=8.00 GB):  33%|███▎      | 12/36 [00:02<00:05,  4.74it/s]Capturing batches (bs=160 avail_mem=8.00 GB):  33%|███▎      | 12/36 [00:02<00:05,  4.74it/s]Capturing batches (bs=160 avail_mem=8.00 GB):  36%|███▌      | 13/36 [00:02<00:04,  4.74it/s]Capturing batches (bs=152 avail_mem=8.00 GB):  36%|███▌      | 13/36 [00:02<00:04,  4.74it/s]Capturing batches (bs=152 avail_mem=8.00 GB):  39%|███▉      | 14/36 [00:03<00:04,  4.75it/s]Capturing batches (bs=144 avail_mem=7.99 GB):  39%|███▉      | 14/36 [00:03<00:04,  4.75it/s]Capturing batches (bs=144 avail_mem=7.99 GB):  42%|████▏     | 15/36 [00:03<00:04,  4.74it/s]Capturing batches (bs=136 avail_mem=7.99 GB):  42%|████▏     | 15/36 [00:03<00:04,  4.74it/s]Capturing batches (bs=136 avail_mem=7.99 GB):  44%|████▍     | 16/36 [00:03<00:04,  4.76it/s]Capturing batches (bs=128 avail_mem=7.99 GB):  44%|████▍     | 16/36 [00:03<00:04,  4.76it/s]Capturing batches (bs=128 avail_mem=7.99 GB):  47%|████▋     | 17/36 [00:03<00:04,  4.72it/s]Capturing batches (bs=120 avail_mem=7.98 GB):  47%|████▋     | 17/36 [00:03<00:04,  4.72it/s]Capturing batches (bs=120 avail_mem=7.98 GB):  50%|█████     | 18/36 [00:03<00:03,  4.74it/s]Capturing batches (bs=112 avail_mem=7.98 GB):  50%|█████     | 18/36 [00:03<00:03,  4.74it/s]Capturing batches (bs=112 avail_mem=7.98 GB):  53%|█████▎    | 19/36 [00:04<00:03,  4.74it/s]Capturing batches (bs=104 avail_mem=7.98 GB):  53%|█████▎    | 19/36 [00:04<00:03,  4.74it/s]Capturing batches (bs=104 avail_mem=7.98 GB):  56%|█████▌    | 20/36 [00:04<00:03,  4.73it/s]Capturing batches (bs=96 avail_mem=7.97 GB):  56%|█████▌    | 20/36 [00:04<00:03,  4.73it/s] Capturing batches (bs=96 avail_mem=7.97 GB):  58%|█████▊    | 21/36 [00:04<00:03,  4.72it/s]Capturing batches (bs=88 avail_mem=7.97 GB):  58%|█████▊    | 21/36 [00:04<00:03,  4.72it/s]Capturing batches (bs=88 avail_mem=7.97 GB):  61%|██████    | 22/36 [00:04<00:02,  4.73it/s]Capturing batches (bs=80 avail_mem=7.97 GB):  61%|██████    | 22/36 [00:04<00:02,  4.73it/s]Capturing batches (bs=80 avail_mem=7.97 GB):  64%|██████▍   | 23/36 [00:04<00:02,  4.72it/s]Capturing batches (bs=72 avail_mem=7.96 GB):  64%|██████▍   | 23/36 [00:04<00:02,  4.72it/s]Capturing batches (bs=72 avail_mem=7.96 GB):  67%|██████▋   | 24/36 [00:05<00:02,  4.73it/s]Capturing batches (bs=64 avail_mem=7.96 GB):  67%|██████▋   | 24/36 [00:05<00:02,  4.73it/s]Capturing batches (bs=64 avail_mem=7.96 GB):  69%|██████▉   | 25/36 [00:05<00:02,  4.74it/s]Capturing batches (bs=56 avail_mem=7.96 GB):  69%|██████▉   | 25/36 [00:05<00:02,  4.74it/s]Capturing batches (bs=56 avail_mem=7.96 GB):  72%|███████▏  | 26/36 [00:05<00:02,  4.74it/s]Capturing batches (bs=48 avail_mem=7.96 GB):  72%|███████▏  | 26/36 [00:05<00:02,  4.74it/s]Capturing batches (bs=48 avail_mem=7.96 GB):  75%|███████▌  | 27/36 [00:05<00:01,  4.71it/s]Capturing batches (bs=40 avail_mem=7.95 GB):  75%|███████▌  | 27/36 [00:05<00:01,  4.71it/s]Capturing batches (bs=40 avail_mem=7.95 GB):  78%|███████▊  | 28/36 [00:06<00:01,  4.71it/s]Capturing batches (bs=32 avail_mem=7.95 GB):  78%|███████▊  | 28/36 [00:06<00:01,  4.71it/s]Capturing batches (bs=32 avail_mem=7.95 GB):  81%|████████  | 29/36 [00:06<00:01,  4.71it/s]Capturing batches (bs=24 avail_mem=7.95 GB):  81%|████████  | 29/36 [00:06<00:01,  4.71it/s]Capturing batches (bs=24 avail_mem=7.95 GB):  83%|████████▎ | 30/36 [00:06<00:01,  4.71it/s]Capturing batches (bs=16 avail_mem=7.94 GB):  83%|████████▎ | 30/36 [00:06<00:01,  4.71it/s]Capturing batches (bs=16 avail_mem=7.94 GB):  86%|████████▌ | 31/36 [00:06<00:01,  4.70it/s]Capturing batches (bs=12 avail_mem=7.94 GB):  86%|████████▌ | 31/36 [00:06<00:01,  4.70it/s]Capturing batches (bs=12 avail_mem=7.94 GB):  89%|████████▉ | 32/36 [00:06<00:00,  4.73it/s]Capturing batches (bs=8 avail_mem=7.94 GB):  89%|████████▉ | 32/36 [00:06<00:00,  4.73it/s] Capturing batches (bs=8 avail_mem=7.94 GB):  92%|█████████▏| 33/36 [00:07<00:00,  4.70it/s]Capturing batches (bs=4 avail_mem=7.93 GB):  92%|█████████▏| 33/36 [00:07<00:00,  4.70it/s]Capturing batches (bs=4 avail_mem=7.93 GB):  94%|█████████▍| 34/36 [00:07<00:00,  4.73it/s]Capturing batches (bs=2 avail_mem=7.93 GB):  94%|█████████▍| 34/36 [00:07<00:00,  4.73it/s]Capturing batches (bs=2 avail_mem=7.93 GB):  97%|█████████▋| 35/36 [00:07<00:00,  4.74it/s]Capturing batches (bs=1 avail_mem=7.93 GB):  97%|█████████▋| 35/36 [00:07<00:00,  4.74it/s]Capturing batches (bs=1 avail_mem=7.93 GB): 100%|██████████| 36/36 [00:07<00:00,  4.75it/s]Capturing batches (bs=1 avail_mem=7.93 GB): 100%|██████████| 36/36 [00:07<00:00,  4.67it/s]
+[2026-09-08 07:05:46] Capture target decode CUDA graph end. elapsed=8.47 s, mem usage=0.26 GB, avail mem=7.93 GB.
+[2026-09-08 07:05:46] max_total_num_tokens=284224, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=4096, context_len=32768, available_gpu_mem=7.93 GB
+[2026-09-08 07:05:46] Init Unified Radix Cache. Components: (<ComponentType.FULL: 0>,). Tree Core: UnifiedTreeCore
+[2026-09-08 07:05:46] Allocating kv hierarchical KV host pool: 762944 tokens, 100.00 GB host memory.
+[2026-09-08 07:06:24] Creating storage backend 'nixl' (sglang.srt.mem_cache.storage.nixl.hicache_nixl.HiCacheNixl)
+2026-09-08 07:06:24 NIXL INFO    _api.py:285 Initialized NIXL agent: hicache_nixl_2be40c18-e094-42fe-9c78-094476835988
+2026-09-08 07:06:24 NIXL INFO    _api.py:407 Backend POSIX was instantiated
+[2026-09-08 07:06:24] NixlBackendSelection.create_backend: backend_name POSIX initparams {} customParams {} supported plugins ['AZURE_BLOB', 'GDS', 'GDS_MT', 'GPUNETIO', 'GUSLI', 'INFINIA', 'LIBFABRIC', 'OBJ', 'POSIX', 'UCX']
+E0908 07:06:24.610750  679359 posix_backend.cpp:245] POSIX path-mode open failed: nixl::FileFd("/nonexistent-nixl-probe"): No such file or directory
+E0908 07:06:24.611658  679359 nixl_agent.cpp:545] registerMem: registration failed for the specified or all potential backends
+[2026-09-08 07:06:24] HiCacheNixl: path-mode FILE registration active.
+[2026-09-08 07:06:24] HiCacheNixl: O_DIRECT is active with a file-based backend (POSIX). Page-aligned host buffers are required (needs_page_alignment=True).
+[2026-09-08 07:06:24] HiCacheL3Cleaner started: dirs=['/var/hicache_l3'] high=80.0% low=70.0% interval=30.0s unlink_workers=8
+[2026-09-08 07:06:24] HiCacheNixl: pre-registered host regions for layout=page_first zero_copy=True
+[2026-09-08 07:06:24] Attached hybrid pool stack to UnifiedRadixCache: pools=KV, transfer_layer_num=64
+[2026-09-08 07:06:24] Tree cache initialized: source=default impl=UnifiedRadixCache hybrid_swa=False hybrid_ssm=False hicache_attached=True streaming_wrapped=False
+[2026-09-08 07:06:25] Engine startup timings (s): load_weight=6.92, kv_cache_allocation=0.41, scheduler_e2e=215.86, cuda_graph={prefill=155.32, decode=8.47, target_verify=0.00, draft_prefill=0.00, draft_decode=0.00, draft_extend=0.00}, tokenizer_e2e=229.54
+[2026-09-08 07:06:25] INFO:     Started server process [679015]
+[2026-09-08 07:06:25] INFO:     Waiting for application startup.
+[2026-09-08 07:06:25] Using default chat sampling params from model generation config: {'temperature': 0.6, 'top_k': 20, 'top_p': 0.95}
+[2026-09-08 07:06:25] INFO:     Application startup complete.
+[2026-09-08 07:06:25] INFO:     Uvicorn running on http://0.0.0.0:30000 (Press CTRL+C to quit)
+[2026-09-08 07:06:25] INFO:     127.0.0.1:37300 - "GET /health HTTP/1.1" 503 Service Unavailable
+[2026-09-08 07:06:26] INFO:     127.0.0.1:37310 - "GET /model_info HTTP/1.1" 200 OK
+[2026-09-08 07:06:26] INFO:     127.0.0.1:37322 - "GET /health HTTP/1.1" 503 Service Unavailable
+[2026-09-08 07:06:26] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 38.72
+[2026-09-08 07:06:26] INFO:     127.0.0.1:37314 - "POST /generate HTTP/1.1" 200 OK
+[2026-09-08 07:06:26] INFO:     127.0.0.1:37330 - "POST /freeze_gc HTTP/1.1" 200 OK
+[2026-09-08 07:06:26] The server is fired up and ready to roll!
+[2026-09-08 07:06:27] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 59.62
+[2026-09-08 07:06:28] INFO:     127.0.0.1:37332 - "GET /health HTTP/1.1" 200 OK
+[2026-09-08 07:06:28] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 65.30
+[2026-09-08 07:06:28] INFO:     127.0.0.1:37336 - "POST /generate HTTP/1.1" 200 OK
+[2026-09-08 07:06:28] INFO:     127.0.0.1:37352 - "GET /metrics HTTP/1.1" 200 OK
+[2026-09-08 07:06:39] Cache flushed successfully!
+[2026-09-08 07:06:39] INFO:     127.0.0.1:57236 - "POST /flush_cache HTTP/1.1" 200 OK
+[2026-09-08 07:06:42] Prefill batch, #new-seq: 1, #new-token: 1088, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 78.14
+[2026-09-08 07:06:42] INFO:     127.0.0.1:48466 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:06:42] Prefill batch, #new-seq: 1, #new-token: 1024, #cached-token: 0, token usage: 0.01, #running-req: 1, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2884.69
+[2026-09-08 07:06:42] INFO:     127.0.0.1:48470 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:06:43] Decode batch, #running-req: 2, #token: 3264, token usage: 0.01, cuda graph: True, gen throughput (token/s): 3.65, #queue-req: 0
+[2026-09-08 07:06:43] Prefill batch, #new-seq: 1, #new-token: 1088, #cached-token: 0, token usage: 0.01, #running-req: 2, #queue-req: 1, #pending-token: 0, cuda graph: True, input throughput (token/s): 1443.72
+[2026-09-08 07:06:43] INFO:     127.0.0.1:48484 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:06:43] Prefill batch, #new-seq: 1, #new-token: 1088, #cached-token: 0, token usage: 0.02, #running-req: 3, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 7058.05
+[2026-09-08 07:06:43] INFO:     127.0.0.1:48500 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:06:43] Prefill batch, #new-seq: 1, #new-token: 1088, #cached-token: 0, token usage: 0.02, #running-req: 4, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 5247.89
+[2026-09-08 07:06:43] INFO:     127.0.0.1:48516 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:06:43] Prefill batch, #new-seq: 1, #new-token: 1088, #cached-token: 0, token usage: 0.02, #running-req: 5, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 4866.32
+[2026-09-08 07:06:43] INFO:     127.0.0.1:48532 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:06:44] Prefill batch, #new-seq: 1, #new-token: 1216, #cached-token: 0, token usage: 0.03, #running-req: 6, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6470.35
+[2026-09-08 07:06:44] INFO:     127.0.0.1:48544 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:06:44] Decode batch, #running-req: 7, #token: 8000, token usage: 0.03, cuda graph: True, gen throughput (token/s): 161.35, #queue-req: 0
+[2026-09-08 07:06:45] Prefill batch, #new-seq: 1, #new-token: 1088, #cached-token: 0, token usage: 0.03, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1086.32
+[2026-09-08 07:06:45] INFO:     127.0.0.1:48556 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:06:45] Decode batch, #running-req: 8, #token: 9536, token usage: 0.03, cuda graph: True, gen throughput (token/s): 295.09, #queue-req: 0
+[2026-09-08 07:06:46] Decode batch, #running-req: 8, #token: 9792, token usage: 0.03, cuda graph: True, gen throughput (token/s): 343.48, #queue-req: 0
+[2026-09-08 07:06:47] Decode batch, #running-req: 8, #token: 10048, token usage: 0.04, cuda graph: True, gen throughput (token/s): 342.25, #queue-req: 0
+[2026-09-08 07:06:48] Decode batch, #running-req: 8, #token: 10432, token usage: 0.04, cuda graph: True, gen throughput (token/s): 342.20, #queue-req: 0
+[2026-09-08 07:06:49] Decode batch, #running-req: 8, #token: 10624, token usage: 0.04, cuda graph: True, gen throughput (token/s): 341.78, #queue-req: 0
+[2026-09-08 07:06:50] Decode batch, #running-req: 8, #token: 11072, token usage: 0.04, cuda graph: True, gen throughput (token/s): 343.95, #queue-req: 0
+[2026-09-08 07:06:51] Decode batch, #running-req: 8, #token: 11328, token usage: 0.04, cuda graph: True, gen throughput (token/s): 342.60, #queue-req: 0
+[2026-09-08 07:06:52] Decode batch, #running-req: 8, #token: 11648, token usage: 0.04, cuda graph: True, gen throughput (token/s): 339.67, #queue-req: 0
+[2026-09-08 07:06:53] Decode batch, #running-req: 8, #token: 12096, token usage: 0.04, cuda graph: True, gen throughput (token/s): 337.43, #queue-req: 0
+[2026-09-08 07:06:53] Prefill batch, #new-seq: 1, #new-token: 1088, #cached-token: 0, token usage: 0.04, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 125.12
+[2026-09-08 07:06:53] INFO:     127.0.0.1:59884 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:06:54] Decode batch, #running-req: 8, #token: 11904, token usage: 0.04, cuda graph: True, gen throughput (token/s): 292.80, #queue-req: 0
+[2026-09-08 07:06:55] Decode batch, #running-req: 8, #token: 12096, token usage: 0.04, cuda graph: True, gen throughput (token/s): 337.56, #queue-req: 0
+[2026-09-08 07:06:56] Decode batch, #running-req: 7, #token: 12224, token usage: 0.04, cuda graph: True, gen throughput (token/s): 335.42, #queue-req: 0
+[2026-09-08 07:06:56] Prefill batch, #new-seq: 1, #new-token: 1344, #cached-token: 0, token usage: 0.04, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 503.28
+[2026-09-08 07:06:56] INFO:     127.0.0.1:59890 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:06:57] Decode batch, #running-req: 8, #token: 12416, token usage: 0.04, cuda graph: True, gen throughput (token/s): 291.91, #queue-req: 0
+[2026-09-08 07:06:58] Decode batch, #running-req: 8, #token: 12864, token usage: 0.05, cuda graph: True, gen throughput (token/s): 343.37, #queue-req: 0
+[2026-09-08 07:06:58] Prefill batch, #new-seq: 1, #new-token: 1088, #cached-token: 0, token usage: 0.04, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 468.03
+[2026-09-08 07:06:58] INFO:     127.0.0.1:59902 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:06:59] Decode batch, #running-req: 8, #token: 12608, token usage: 0.04, cuda graph: True, gen throughput (token/s): 296.56, #queue-req: 0
+[2026-09-08 07:07:00] Decode batch, #running-req: 8, #token: 12864, token usage: 0.05, cuda graph: True, gen throughput (token/s): 338.90, #queue-req: 0
+[2026-09-08 07:07:01] Decode batch, #running-req: 8, #token: 13312, token usage: 0.05, cuda graph: True, gen throughput (token/s): 340.28, #queue-req: 0
+[2026-09-08 07:07:02] Prefill batch, #new-seq: 1, #new-token: 1152, #cached-token: 0, token usage: 0.05, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 334.47
+[2026-09-08 07:07:02] INFO:     127.0.0.1:48568 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:07:02] Decode batch, #running-req: 8, #token: 11008, token usage: 0.04, cuda graph: True, gen throughput (token/s): 295.58, #queue-req: 0
+[2026-09-08 07:07:03] Prefill batch, #new-seq: 1, #new-token: 1088, #cached-token: 0, token usage: 0.04, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 938.25
+[2026-09-08 07:07:03] INFO:     127.0.0.1:48572 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:07:03] Decode batch, #running-req: 8, #token: 12352, token usage: 0.04, cuda graph: True, gen throughput (token/s): 265.26, #queue-req: 0
+[2026-09-08 07:07:04] Prefill batch, #new-seq: 1, #new-token: 1152, #cached-token: 0, token usage: 0.04, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1077.48
+[2026-09-08 07:07:04] INFO:     127.0.0.1:48588 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:07:04] Decode batch, #running-req: 8, #token: 11904, token usage: 0.04, cuda graph: True, gen throughput (token/s): 295.59, #queue-req: 0
+[2026-09-08 07:07:05] Decode batch, #running-req: 8, #token: 12032, token usage: 0.04, cuda graph: True, gen throughput (token/s): 343.28, #queue-req: 0
+[2026-09-08 07:07:06] Decode batch, #running-req: 8, #token: 12480, token usage: 0.04, cuda graph: True, gen throughput (token/s): 343.87, #queue-req: 0
+[2026-09-08 07:07:07] Decode batch, #running-req: 8, #token: 12928, token usage: 0.05, cuda graph: True, gen throughput (token/s): 343.67, #queue-req: 0
+[2026-09-08 07:07:08] Decode batch, #running-req: 8, #token: 13056, token usage: 0.05, cuda graph: True, gen throughput (token/s): 342.40, #queue-req: 0
+[2026-09-08 07:07:08] Prefill batch, #new-seq: 1, #new-token: 1280, #cached-token: 0, token usage: 0.04, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 312.22
+[2026-09-08 07:07:08] INFO:     127.0.0.1:48590 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:07:09] Prefill batch, #new-seq: 1, #new-token: 1088, #cached-token: 0, token usage: 0.04, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1612.23
+[2026-09-08 07:07:09] INFO:     127.0.0.1:47044 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:07:09] Decode batch, #running-req: 8, #token: 11904, token usage: 0.04, cuda graph: True, gen throughput (token/s): 257.39, #queue-req: 0
+[2026-09-08 07:07:10] Decode batch, #running-req: 7, #token: 10112, token usage: 0.04, cuda graph: True, gen throughput (token/s): 334.66, #queue-req: 0
+[2026-09-08 07:07:11] Decode batch, #running-req: 7, #token: 10368, token usage: 0.04, cuda graph: True, gen throughput (token/s): 303.68, #queue-req: 0
+[2026-09-08 07:07:12] Decode batch, #running-req: 7, #token: 10688, token usage: 0.04, cuda graph: True, gen throughput (token/s): 302.61, #queue-req: 0
+[2026-09-08 07:07:13] Decode batch, #running-req: 7, #token: 10816, token usage: 0.04, cuda graph: True, gen throughput (token/s): 301.70, #queue-req: 0
+[2026-09-08 07:07:14] Decode batch, #running-req: 7, #token: 11136, token usage: 0.04, cuda graph: True, gen throughput (token/s): 301.46, #queue-req: 0
+[2026-09-08 07:07:15] Decode batch, #running-req: 6, #token: 9984, token usage: 0.04, cuda graph: True, gen throughput (token/s): 290.79, #queue-req: 0
+[2026-09-08 07:07:15] Decode batch, #running-req: 5, #token: 8128, token usage: 0.03, cuda graph: True, gen throughput (token/s): 226.27, #queue-req: 0
+[2026-09-08 07:07:16] Decode batch, #running-req: 5, #token: 8320, token usage: 0.03, cuda graph: True, gen throughput (token/s): 217.18, #queue-req: 0
+[2026-09-08 07:07:17] Decode batch, #running-req: 5, #token: 8576, token usage: 0.03, cuda graph: True, gen throughput (token/s): 216.82, #queue-req: 0
+[2026-09-08 07:07:18] Decode batch, #running-req: 5, #token: 8768, token usage: 0.03, cuda graph: True, gen throughput (token/s): 216.72, #queue-req: 0
+[2026-09-08 07:07:19] Decode batch, #running-req: 5, #token: 8960, token usage: 0.03, cuda graph: True, gen throughput (token/s): 216.70, #queue-req: 0
+[2026-09-08 07:07:20] Decode batch, #running-req: 5, #token: 9088, token usage: 0.03, cuda graph: True, gen throughput (token/s): 216.55, #queue-req: 0
+[2026-09-08 07:07:21] Decode batch, #running-req: 5, #token: 9280, token usage: 0.03, cuda graph: True, gen throughput (token/s): 216.29, #queue-req: 0
+[2026-09-08 07:07:22] Decode batch, #running-req: 4, #token: 7616, token usage: 0.03, cuda graph: True, gen throughput (token/s): 179.86, #queue-req: 0
+[2026-09-08 07:07:23] Decode batch, #running-req: 3, #token: 5632, token usage: 0.02, cuda graph: True, gen throughput (token/s): 172.88, #queue-req: 0
+[2026-09-08 07:07:24] Decode batch, #running-req: 3, #token: 5696, token usage: 0.02, cuda graph: True, gen throughput (token/s): 132.41, #queue-req: 0
+[2026-09-08 07:07:25] Decode batch, #running-req: 3, #token: 5824, token usage: 0.02, cuda graph: True, gen throughput (token/s): 132.39, #queue-req: 0
+[2026-09-08 07:07:26] Decode batch, #running-req: 3, #token: 6016, token usage: 0.02, cuda graph: True, gen throughput (token/s): 132.28, #queue-req: 0
+[2026-09-08 07:07:26] Decode batch, #running-req: 3, #token: 6080, token usage: 0.02, cuda graph: True, gen throughput (token/s): 131.61, #queue-req: 0
+[2026-09-08 07:07:27] Decode batch, #running-req: 2, #token: 4032, token usage: 0.01, cuda graph: True, gen throughput (token/s): 113.27, #queue-req: 0
+[2026-09-08 07:07:28] Decode batch, #running-req: 1, #token: 1920, token usage: 0.01, cuda graph: True, gen throughput (token/s): 70.15, #queue-req: 0
+[2026-09-08 07:07:29] Decode batch, #running-req: 1, #token: 1984, token usage: 0.01, cuda graph: True, gen throughput (token/s): 45.10, #queue-req: 0
+[2026-09-08 07:07:30] Decode batch, #running-req: 1, #token: 2048, token usage: 0.01, cuda graph: True, gen throughput (token/s): 45.11, #queue-req: 0
+[2026-09-08 07:07:31] Decode batch, #running-req: 1, #token: 2048, token usage: 0.01, cuda graph: True, gen throughput (token/s): 45.10, #queue-req: 0
+[2026-09-08 07:07:32] Decode batch, #running-req: 1, #token: 2112, token usage: 0.01, cuda graph: True, gen throughput (token/s): 44.91, #queue-req: 0
+/opt/sglang/lib/python3.12/site-packages/starlette/_exception_handler.py:59: FastAPIDeprecationWarning: ORJSONResponse is deprecated, FastAPI now serializes data directly to JSON bytes via Pydantic when a return type or response model is set, which is faster and doesn't need a custom response class. Read more in the FastAPI docs: https://fastapi.tiangolo.com/advanced/custom-response/#orjson-or-response-model and https://fastapi.tiangolo.com/tutorial/response-model/
+  response = await handler(conn, exc)  # type: ignore[arg-type]
+[2026-09-08 07:07:32] INFO:     127.0.0.1:44734 - "POST /v1/chat/completions HTTP/1.1" 400 Bad Request
+[2026-09-08 07:07:43] Prefill batch, #new-seq: 1, #new-token: 1728, #cached-token: 1024, token usage: 0.01, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 50.91
+[2026-09-08 07:07:43] INFO:     127.0.0.1:37404 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:07:43] Prefill batch, #new-seq: 1, #new-token: 1280, #cached-token: 1024, token usage: 0.02, #running-req: 1, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2652.26
+[2026-09-08 07:07:43] INFO:     127.0.0.1:37414 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:07:44] Prefill batch, #new-seq: 1, #new-token: 1152, #cached-token: 1152, token usage: 0.03, #running-req: 2, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 3290.23
+[2026-09-08 07:07:44] INFO:     127.0.0.1:37422 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:07:44] Decode batch, #running-req: 3, #token: 7360, token usage: 0.03, cuda graph: True, gen throughput (token/s): 4.41, #queue-req: 0
+[2026-09-08 07:07:44] Prefill batch, #new-seq: 1, #new-token: 1536, #cached-token: 1024, token usage: 0.04, #running-req: 3, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1967.66
+[2026-09-08 07:07:44] INFO:     127.0.0.1:37436 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:07:45] Decode batch, #running-req: 4, #token: 10112, token usage: 0.04, cuda graph: True, gen throughput (token/s): 121.20, #queue-req: 0
+[2026-09-08 07:07:46] Prefill batch, #new-seq: 1, #new-token: 1536, #cached-token: 1088, token usage: 0.05, #running-req: 4, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1228.58
+[2026-09-08 07:07:46] INFO:     127.0.0.1:37444 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:07:46] Prefill batch, #new-seq: 1, #new-token: 1856, #cached-token: 1024, token usage: 0.06, #running-req: 5, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 5940.84
+[2026-09-08 07:07:46] INFO:     127.0.0.1:37446 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:07:46] Prefill batch, #new-seq: 1, #new-token: 1088, #cached-token: 1024, token usage: 0.07, #running-req: 6, #queue-req: 0, #pending-token: 2513, cuda graph: True, input throughput (token/s): 5178.55
+[2026-09-08 07:07:46] INFO:     127.0.0.1:37456 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:07:46] Prefill batch, #new-seq: 1, #new-token: 1280, #cached-token: 1280, token usage: 0.07, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 7389.25
+[2026-09-08 07:07:46] INFO:     127.0.0.1:37458 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:07:46] Decode batch, #running-req: 8, #token: 20480, token usage: 0.07, cuda graph: True, gen throughput (token/s): 113.07, #queue-req: 0
+[2026-09-08 07:07:47] Decode batch, #running-req: 8, #token: 20864, token usage: 0.07, cuda graph: True, gen throughput (token/s): 321.82, #queue-req: 0
+[2026-09-08 07:07:48] Decode batch, #running-req: 8, #token: 21120, token usage: 0.07, cuda graph: True, gen throughput (token/s): 326.26, #queue-req: 0
+[2026-09-08 07:07:49] Decode batch, #running-req: 8, #token: 21440, token usage: 0.08, cuda graph: True, gen throughput (token/s): 323.39, #queue-req: 0
+[2026-09-08 07:07:50] Decode batch, #running-req: 8, #token: 21824, token usage: 0.08, cuda graph: True, gen throughput (token/s): 318.98, #queue-req: 0
+[2026-09-08 07:07:51] Decode batch, #running-req: 8, #token: 22144, token usage: 0.08, cuda graph: True, gen throughput (token/s): 315.85, #queue-req: 0
+[2026-09-08 07:07:52] Decode batch, #running-req: 8, #token: 22400, token usage: 0.08, cuda graph: True, gen throughput (token/s): 315.71, #queue-req: 0
+[2026-09-08 07:07:53] Decode batch, #running-req: 8, #token: 22720, token usage: 0.08, cuda graph: True, gen throughput (token/s): 314.98, #queue-req: 0
+[2026-09-08 07:07:54] Decode batch, #running-req: 8, #token: 23040, token usage: 0.08, cuda graph: True, gen throughput (token/s): 318.16, #queue-req: 0
+[2026-09-08 07:07:55] Decode batch, #running-req: 8, #token: 23424, token usage: 0.08, cuda graph: True, gen throughput (token/s): 318.37, #queue-req: 0
+[2026-09-08 07:07:57] Decode batch, #running-req: 8, #token: 23680, token usage: 0.08, cuda graph: True, gen throughput (token/s): 316.19, #queue-req: 0
+[2026-09-08 07:07:58] Decode batch, #running-req: 8, #token: 24000, token usage: 0.08, cuda graph: True, gen throughput (token/s): 312.89, #queue-req: 0
+[2026-09-08 07:07:59] Decode batch, #running-req: 8, #token: 24384, token usage: 0.09, cuda graph: True, gen throughput (token/s): 310.68, #queue-req: 0
+[2026-09-08 07:07:59] Prefill batch, #new-seq: 1, #new-token: 1344, #cached-token: 1024, token usage: 0.08, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 105.53
+[2026-09-08 07:07:59] INFO:     127.0.0.1:48198 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:00] Decode batch, #running-req: 8, #token: 24192, token usage: 0.09, cuda graph: True, gen throughput (token/s): 258.46, #queue-req: 0
+[2026-09-08 07:08:01] Decode batch, #running-req: 8, #token: 24448, token usage: 0.09, cuda graph: True, gen throughput (token/s): 316.67, #queue-req: 0
+[2026-09-08 07:08:02] Decode batch, #running-req: 8, #token: 22016, token usage: 0.08, cuda graph: True, gen throughput (token/s): 319.47, #queue-req: 0
+[2026-09-08 07:08:02] Prefill batch, #new-seq: 1, #new-token: 1664, #cached-token: 1088, token usage: 0.09, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 528.56
+[2026-09-08 07:08:02] INFO:     127.0.0.1:48200 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:03] Decode batch, #running-req: 8, #token: 25024, token usage: 0.09, cuda graph: True, gen throughput (token/s): 250.53, #queue-req: 0
+[2026-09-08 07:08:04] Decode batch, #running-req: 8, #token: 25472, token usage: 0.09, cuda graph: True, gen throughput (token/s): 310.68, #queue-req: 0
+[2026-09-08 07:08:05] Decode batch, #running-req: 8, #token: 25664, token usage: 0.09, cuda graph: True, gen throughput (token/s): 308.39, #queue-req: 0
+[2026-09-08 07:08:06] Decode batch, #running-req: 8, #token: 26048, token usage: 0.09, cuda graph: True, gen throughput (token/s): 309.37, #queue-req: 0
+[2026-09-08 07:08:07] Decode batch, #running-req: 8, #token: 26368, token usage: 0.09, cuda graph: True, gen throughput (token/s): 309.58, #queue-req: 0
+[2026-09-08 07:08:08] Decode batch, #running-req: 8, #token: 26688, token usage: 0.09, cuda graph: True, gen throughput (token/s): 314.63, #queue-req: 0
+[2026-09-08 07:08:09] Decode batch, #running-req: 8, #token: 27008, token usage: 0.10, cuda graph: True, gen throughput (token/s): 312.43, #queue-req: 0
+[2026-09-08 07:08:10] Decode batch, #running-req: 8, #token: 23552, token usage: 0.08, cuda graph: True, gen throughput (token/s): 309.49, #queue-req: 0
+[2026-09-08 07:08:11] Prefill batch, #new-seq: 1, #new-token: 1216, #cached-token: 1216, token usage: 0.09, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 145.23
+[2026-09-08 07:08:11] INFO:     127.0.0.1:47320 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:11] Prefill batch, #new-seq: 1, #new-token: 1536, #cached-token: 1024, token usage: 0.09, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2740.54
+[2026-09-08 07:08:11] INFO:     127.0.0.1:47334 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:12] Decode batch, #running-req: 8, #token: 25408, token usage: 0.09, cuda graph: True, gen throughput (token/s): 227.11, #queue-req: 0
+[2026-09-08 07:08:12] Prefill batch, #new-seq: 1, #new-token: 1408, #cached-token: 1024, token usage: 0.09, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1377.83
+[2026-09-08 07:08:12] INFO:     127.0.0.1:47340 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:13] Decode batch, #running-req: 8, #token: 24704, token usage: 0.09, cuda graph: True, gen throughput (token/s): 264.32, #queue-req: 0
+[2026-09-08 07:08:13] Prefill batch, #new-seq: 1, #new-token: 1664, #cached-token: 960, token usage: 0.06, #running-req: 5, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1207.64
+[2026-09-08 07:08:14] INFO:     127.0.0.1:47350 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:14] Prefill batch, #new-seq: 1, #new-token: 2112, #cached-token: 1024, token usage: 0.07, #running-req: 6, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 5400.05
+[2026-09-08 07:08:14] INFO:     127.0.0.1:47366 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:14] Prefill batch, #new-seq: 1, #new-token: 1600, #cached-token: 1024, token usage: 0.08, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 4457.29
+[2026-09-08 07:08:14] INFO:     127.0.0.1:47376 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:15] Decode batch, #running-req: 8, #token: 22144, token usage: 0.08, cuda graph: True, gen throughput (token/s): 168.63, #queue-req: 0
+[2026-09-08 07:08:16] Decode batch, #running-req: 7, #token: 19520, token usage: 0.07, cuda graph: True, gen throughput (token/s): 294.57, #queue-req: 0
+[2026-09-08 07:08:17] Decode batch, #running-req: 7, #token: 19840, token usage: 0.07, cuda graph: True, gen throughput (token/s): 288.20, #queue-req: 0
+[2026-09-08 07:08:18] Decode batch, #running-req: 7, #token: 20096, token usage: 0.07, cuda graph: True, gen throughput (token/s): 287.80, #queue-req: 0
+[2026-09-08 07:08:18] Decode batch, #running-req: 7, #token: 17664, token usage: 0.06, cuda graph: True, gen throughput (token/s): 287.71, #queue-req: 0
+[2026-09-08 07:08:19] Decode batch, #running-req: 6, #token: 17984, token usage: 0.06, cuda graph: True, gen throughput (token/s): 248.05, #queue-req: 0
+[2026-09-08 07:08:20] Decode batch, #running-req: 6, #token: 18112, token usage: 0.06, cuda graph: True, gen throughput (token/s): 247.37, #queue-req: 0
+[2026-09-08 07:08:21] Decode batch, #running-req: 6, #token: 18432, token usage: 0.06, cuda graph: True, gen throughput (token/s): 247.16, #queue-req: 0
+[2026-09-08 07:08:22] Decode batch, #running-req: 6, #token: 18624, token usage: 0.07, cuda graph: True, gen throughput (token/s): 247.07, #queue-req: 0
+[2026-09-08 07:08:23] Decode batch, #running-req: 6, #token: 18880, token usage: 0.07, cuda graph: True, gen throughput (token/s): 246.93, #queue-req: 0
+[2026-09-08 07:08:24] Decode batch, #running-req: 6, #token: 19136, token usage: 0.07, cuda graph: True, gen throughput (token/s): 246.62, #queue-req: 0
+[2026-09-08 07:08:25] Decode batch, #running-req: 6, #token: 19328, token usage: 0.07, cuda graph: True, gen throughput (token/s): 246.47, #queue-req: 0
+[2026-09-08 07:08:26] Decode batch, #running-req: 6, #token: 19584, token usage: 0.07, cuda graph: True, gen throughput (token/s): 245.47, #queue-req: 0
+[2026-09-08 07:08:27] Decode batch, #running-req: 6, #token: 19904, token usage: 0.07, cuda graph: True, gen throughput (token/s): 245.38, #queue-req: 0
+[2026-09-08 07:08:28] Decode batch, #running-req: 6, #token: 20032, token usage: 0.07, cuda graph: True, gen throughput (token/s): 245.14, #queue-req: 0
+[2026-09-08 07:08:29] Decode batch, #running-req: 5, #token: 16576, token usage: 0.06, cuda graph: True, gen throughput (token/s): 234.24, #queue-req: 0
+[2026-09-08 07:08:30] Decode batch, #running-req: 5, #token: 16768, token usage: 0.06, cuda graph: True, gen throughput (token/s): 205.55, #queue-req: 0
+[2026-09-08 07:08:31] Decode batch, #running-req: 3, #token: 10496, token usage: 0.04, cuda graph: True, gen throughput (token/s): 164.04, #queue-req: 0
+[2026-09-08 07:08:32] Decode batch, #running-req: 3, #token: 10560, token usage: 0.04, cuda graph: True, gen throughput (token/s): 126.03, #queue-req: 0
+[2026-09-08 07:08:33] Decode batch, #running-req: 3, #token: 10688, token usage: 0.04, cuda graph: True, gen throughput (token/s): 126.00, #queue-req: 0
+[2026-09-08 07:08:34] Decode batch, #running-req: 2, #token: 7424, token usage: 0.03, cuda graph: True, gen throughput (token/s): 115.18, #queue-req: 0
+[2026-09-08 07:08:35] Decode batch, #running-req: 2, #token: 7488, token usage: 0.03, cuda graph: True, gen throughput (token/s): 84.35, #queue-req: 0
+[2026-09-08 07:08:36] Decode batch, #running-req: 2, #token: 7552, token usage: 0.03, cuda graph: True, gen throughput (token/s): 84.34, #queue-req: 0
+[2026-09-08 07:08:37] Decode batch, #running-req: 2, #token: 7680, token usage: 0.03, cuda graph: True, gen throughput (token/s): 84.36, #queue-req: 0
+[2026-09-08 07:08:38] Decode batch, #running-req: 2, #token: 7744, token usage: 0.03, cuda graph: True, gen throughput (token/s): 84.23, #queue-req: 0
+[2026-09-08 07:08:39] Decode batch, #running-req: 2, #token: 7808, token usage: 0.03, cuda graph: True, gen throughput (token/s): 83.71, #queue-req: 0
+[2026-09-08 07:08:39] INFO:     127.0.0.1:32984 - "POST /v1/chat/completions HTTP/1.1" 400 Bad Request
+[2026-09-08 07:08:50] Prefill batch, #new-seq: 1, #new-token: 1536, #cached-token: 2560, token usage: 0.01, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 43.46
+[2026-09-08 07:08:50] INFO:     127.0.0.1:41396 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:50] Prefill batch, #new-seq: 2, #new-token: 2816, #cached-token: 4736, token usage: 0.04, #running-req: 1, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 5811.86
+[2026-09-08 07:08:50] INFO:     127.0.0.1:41402 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:50] INFO:     127.0.0.1:41412 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:51] Prefill batch, #new-seq: 2, #new-token: 3520, #cached-token: 4864, token usage: 0.07, #running-req: 3, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 3345.89
+[2026-09-08 07:08:51] INFO:     127.0.0.1:41426 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:51] INFO:     127.0.0.1:41432 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:51] Prefill batch, #new-seq: 1, #new-token: 1216, #cached-token: 2304, token usage: 0.08, #running-req: 5, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 4912.02
+[2026-09-08 07:08:51] INFO:     127.0.0.1:41444 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:52] Prefill batch, #new-seq: 1, #new-token: 1600, #cached-token: 2496, token usage: 0.10, #running-req: 6, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 4422.45
+[2026-09-08 07:08:52] INFO:     127.0.0.1:41456 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:52] Decode batch, #running-req: 7, #token: 27776, token usage: 0.10, cuda graph: True, gen throughput (token/s): 10.02, #queue-req: 1
+[2026-09-08 07:08:52] Prefill batch, #new-seq: 1, #new-token: 1472, #cached-token: 2560, token usage: 0.11, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 3923.76
+[2026-09-08 07:08:52] INFO:     127.0.0.1:41466 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:08:53] Decode batch, #running-req: 8, #token: 32064, token usage: 0.11, cuda graph: True, gen throughput (token/s): 252.33, #queue-req: 0
+[2026-09-08 07:08:54] Decode batch, #running-req: 8, #token: 32448, token usage: 0.11, cuda graph: True, gen throughput (token/s): 314.53, #queue-req: 0
+[2026-09-08 07:08:55] Decode batch, #running-req: 8, #token: 32768, token usage: 0.12, cuda graph: True, gen throughput (token/s): 313.66, #queue-req: 0
+[2026-09-08 07:08:56] Decode batch, #running-req: 8, #token: 33088, token usage: 0.12, cuda graph: True, gen throughput (token/s): 312.97, #queue-req: 0
+[2026-09-08 07:08:57] Decode batch, #running-req: 8, #token: 33472, token usage: 0.12, cuda graph: True, gen throughput (token/s): 312.44, #queue-req: 0
+[2026-09-08 07:08:58] Decode batch, #running-req: 8, #token: 33664, token usage: 0.12, cuda graph: True, gen throughput (token/s): 312.35, #queue-req: 0
+[2026-09-08 07:08:59] Decode batch, #running-req: 8, #token: 34048, token usage: 0.12, cuda graph: True, gen throughput (token/s): 312.22, #queue-req: 0
+[2026-09-08 07:09:00] Decode batch, #running-req: 8, #token: 34368, token usage: 0.12, cuda graph: True, gen throughput (token/s): 311.90, #queue-req: 0
+[2026-09-08 07:09:01] Decode batch, #running-req: 8, #token: 34624, token usage: 0.12, cuda graph: True, gen throughput (token/s): 311.10, #queue-req: 0
+[2026-09-08 07:09:02] Decode batch, #running-req: 8, #token: 35008, token usage: 0.12, cuda graph: True, gen throughput (token/s): 310.65, #queue-req: 0
+[2026-09-08 07:09:03] Decode batch, #running-req: 8, #token: 35328, token usage: 0.12, cuda graph: True, gen throughput (token/s): 309.98, #queue-req: 0
+[2026-09-08 07:09:04] Decode batch, #running-req: 8, #token: 35648, token usage: 0.13, cuda graph: True, gen throughput (token/s): 309.76, #queue-req: 0
+[2026-09-08 07:09:05] Decode batch, #running-req: 8, #token: 36032, token usage: 0.13, cuda graph: True, gen throughput (token/s): 309.26, #queue-req: 0
+[2026-09-08 07:09:06] Prefill batch, #new-seq: 1, #new-token: 1280, #cached-token: 2240, token usage: 0.12, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 91.76
+[2026-09-08 07:09:06] INFO:     127.0.0.1:44374 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:07] Decode batch, #running-req: 8, #token: 35648, token usage: 0.13, cuda graph: True, gen throughput (token/s): 256.83, #queue-req: 0
+[2026-09-08 07:09:07] Prefill batch, #new-seq: 1, #new-token: 1728, #cached-token: 2496, token usage: 0.13, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1472.43
+[2026-09-08 07:09:07] INFO:     127.0.0.1:44388 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:08] Decode batch, #running-req: 8, #token: 36096, token usage: 0.13, cuda graph: True, gen throughput (token/s): 238.04, #queue-req: 0
+[2026-09-08 07:09:09] Decode batch, #running-req: 8, #token: 36480, token usage: 0.13, cuda graph: True, gen throughput (token/s): 307.15, #queue-req: 0
+[2026-09-08 07:09:10] Decode batch, #running-req: 8, #token: 36672, token usage: 0.13, cuda graph: True, gen throughput (token/s): 307.05, #queue-req: 0
+[2026-09-08 07:09:11] Decode batch, #running-req: 8, #token: 37056, token usage: 0.13, cuda graph: True, gen throughput (token/s): 307.06, #queue-req: 0
+[2026-09-08 07:09:12] Decode batch, #running-req: 8, #token: 37376, token usage: 0.13, cuda graph: True, gen throughput (token/s): 306.86, #queue-req: 0
+[2026-09-08 07:09:13] Decode batch, #running-req: 8, #token: 37696, token usage: 0.13, cuda graph: True, gen throughput (token/s): 306.57, #queue-req: 0
+[2026-09-08 07:09:14] Prefill batch, #new-seq: 1, #new-token: 1664, #cached-token: 3072, token usage: 0.13, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 230.73
+[2026-09-08 07:09:14] INFO:     127.0.0.1:36652 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:15] Decode batch, #running-req: 8, #token: 37888, token usage: 0.13, cuda graph: True, gen throughput (token/s): 233.16, #queue-req: 0
+[2026-09-08 07:09:16] Decode batch, #running-req: 7, #token: 33280, token usage: 0.12, cuda graph: True, gen throughput (token/s): 303.77, #queue-req: 0
+[2026-09-08 07:09:16] Prefill batch, #new-seq: 1, #new-token: 1792, #cached-token: 2560, token usage: 0.13, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1196.82
+[2026-09-08 07:09:16] INFO:     127.0.0.1:36666 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:17] Decode batch, #running-req: 8, #token: 37952, token usage: 0.13, cuda graph: True, gen throughput (token/s): 237.04, #queue-req: 0
+[2026-09-08 07:09:18] Decode batch, #running-req: 8, #token: 38272, token usage: 0.13, cuda graph: True, gen throughput (token/s): 305.41, #queue-req: 0
+[2026-09-08 07:09:19] Prefill batch, #new-seq: 1, #new-token: 1472, #cached-token: 2368, token usage: 0.10, #running-req: 5, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 451.92
+[2026-09-08 07:09:19] INFO:     127.0.0.1:50312 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:20] Prefill batch, #new-seq: 2, #new-token: 3072, #cached-token: 5376, token usage: 0.13, #running-req: 6, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 5361.67
+[2026-09-08 07:09:20] INFO:     127.0.0.1:50316 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:20] INFO:     127.0.0.1:50318 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:20] Decode batch, #running-req: 8, #token: 36160, token usage: 0.13, cuda graph: True, gen throughput (token/s): 169.90, #queue-req: 0
+[2026-09-08 07:09:20] Prefill batch, #new-seq: 1, #new-token: 1216, #cached-token: 2368, token usage: 0.11, #running-req: 6, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1825.46
+[2026-09-08 07:09:20] INFO:     127.0.0.1:50320 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:21] Decode batch, #running-req: 7, #token: 30336, token usage: 0.11, cuda graph: True, gen throughput (token/s): 236.47, #queue-req: 0
+[2026-09-08 07:09:22] Decode batch, #running-req: 7, #token: 30400, token usage: 0.11, cuda graph: True, gen throughput (token/s): 274.77, #queue-req: 0
+[2026-09-08 07:09:23] Decode batch, #running-req: 7, #token: 30848, token usage: 0.11, cuda graph: True, gen throughput (token/s): 273.89, #queue-req: 0
+[2026-09-08 07:09:24] Decode batch, #running-req: 7, #token: 31104, token usage: 0.11, cuda graph: True, gen throughput (token/s): 273.68, #queue-req: 0
+[2026-09-08 07:09:25] Decode batch, #running-req: 7, #token: 31296, token usage: 0.11, cuda graph: True, gen throughput (token/s): 273.38, #queue-req: 0
+[2026-09-08 07:09:26] Decode batch, #running-req: 7, #token: 31680, token usage: 0.11, cuda graph: True, gen throughput (token/s): 272.93, #queue-req: 0
+[2026-09-08 07:09:27] Decode batch, #running-req: 7, #token: 31936, token usage: 0.11, cuda graph: True, gen throughput (token/s): 272.81, #queue-req: 0
+[2026-09-08 07:09:28] Decode batch, #running-req: 7, #token: 32192, token usage: 0.11, cuda graph: True, gen throughput (token/s): 271.77, #queue-req: 0
+[2026-09-08 07:09:29] Decode batch, #running-req: 7, #token: 28608, token usage: 0.10, cuda graph: True, gen throughput (token/s): 271.74, #queue-req: 0
+[2026-09-08 07:09:30] Decode batch, #running-req: 6, #token: 28672, token usage: 0.10, cuda graph: True, gen throughput (token/s): 235.38, #queue-req: 0
+[2026-09-08 07:09:31] Decode batch, #running-req: 6, #token: 29056, token usage: 0.10, cuda graph: True, gen throughput (token/s): 234.93, #queue-req: 0
+[2026-09-08 07:09:32] Decode batch, #running-req: 5, #token: 24960, token usage: 0.09, cuda graph: True, gen throughput (token/s): 222.53, #queue-req: 0
+[2026-09-08 07:09:33] Decode batch, #running-req: 5, #token: 25088, token usage: 0.09, cuda graph: True, gen throughput (token/s): 196.82, #queue-req: 0
+[2026-09-08 07:09:34] Decode batch, #running-req: 5, #token: 25344, token usage: 0.09, cuda graph: True, gen throughput (token/s): 196.76, #queue-req: 0
+[2026-09-08 07:09:35] Decode batch, #running-req: 4, #token: 20224, token usage: 0.07, cuda graph: True, gen throughput (token/s): 192.06, #queue-req: 0
+[2026-09-08 07:09:36] Decode batch, #running-req: 4, #token: 20416, token usage: 0.07, cuda graph: True, gen throughput (token/s): 159.77, #queue-req: 0
+[2026-09-08 07:09:37] Decode batch, #running-req: 4, #token: 15808, token usage: 0.06, cuda graph: True, gen throughput (token/s): 159.68, #queue-req: 0
+[2026-09-08 07:09:38] Decode batch, #running-req: 3, #token: 15872, token usage: 0.06, cuda graph: True, gen throughput (token/s): 121.19, #queue-req: 0
+[2026-09-08 07:09:39] Decode batch, #running-req: 3, #token: 16064, token usage: 0.06, cuda graph: True, gen throughput (token/s): 119.96, #queue-req: 0
+[2026-09-08 07:09:40] Decode batch, #running-req: 3, #token: 16128, token usage: 0.06, cuda graph: True, gen throughput (token/s): 119.35, #queue-req: 0
+[2026-09-08 07:09:41] Decode batch, #running-req: 3, #token: 16256, token usage: 0.06, cuda graph: True, gen throughput (token/s): 119.35, #queue-req: 0
+[2026-09-08 07:09:42] Decode batch, #running-req: 2, #token: 10624, token usage: 0.04, cuda graph: True, gen throughput (token/s): 100.56, #queue-req: 0
+[2026-09-08 07:09:43] Decode batch, #running-req: 1, #token: 5248, token usage: 0.02, cuda graph: True, gen throughput (token/s): 67.42, #queue-req: 0
+[2026-09-08 07:09:44] INFO:     127.0.0.1:56952 - "POST /v1/chat/completions HTTP/1.1" 400 Bad Request
+[2026-09-08 07:09:54] Prefill batch, #new-seq: 1, #new-token: 1472, #cached-token: 3456, token usage: 0.02, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 43.32
+[2026-09-08 07:09:54] INFO:     127.0.0.1:44622 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:55] Prefill batch, #new-seq: 1, #new-token: 1472, #cached-token: 3520, token usage: 0.03, #running-req: 1, #queue-req: 1, #pending-token: 0, cuda graph: True, input throughput (token/s): 2828.10
+[2026-09-08 07:09:55] INFO:     127.0.0.1:44632 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:55] Prefill batch, #new-seq: 1, #new-token: 1472, #cached-token: 3968, token usage: 0.05, #running-req: 2, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 4634.99
+[2026-09-08 07:09:55] INFO:     127.0.0.1:44638 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:55] Decode batch, #running-req: 3, #token: 15424, token usage: 0.05, cuda graph: True, gen throughput (token/s): 4.07, #queue-req: 0
+[2026-09-08 07:09:56] Prefill batch, #new-seq: 1, #new-token: 1664, #cached-token: 4288, token usage: 0.08, #running-req: 3, #queue-req: 1, #pending-token: 0, cuda graph: True, input throughput (token/s): 2468.36
+[2026-09-08 07:09:56] INFO:     127.0.0.1:44646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:56] Prefill batch, #new-seq: 1, #new-token: 1728, #cached-token: 3840, token usage: 0.09, #running-req: 4, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 4797.24
+[2026-09-08 07:09:56] INFO:     127.0.0.1:44662 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:57] Prefill batch, #new-seq: 1, #new-token: 1920, #cached-token: 4672, token usage: 0.12, #running-req: 5, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 3743.16
+[2026-09-08 07:09:57] INFO:     127.0.0.1:44666 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:57] Prefill batch, #new-seq: 1, #new-token: 1536, #cached-token: 4032, token usage: 0.14, #running-req: 6, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 4419.97
+[2026-09-08 07:09:57] INFO:     127.0.0.1:44668 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:58] Prefill batch, #new-seq: 1, #new-token: 1728, #cached-token: 4736, token usage: 0.16, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 4145.22
+[2026-09-08 07:09:58] INFO:     127.0.0.1:44676 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:09:58] Decode batch, #running-req: 8, #token: 45760, token usage: 0.16, cuda graph: True, gen throughput (token/s): 88.86, #queue-req: 0
+[2026-09-08 07:09:59] Decode batch, #running-req: 8, #token: 46080, token usage: 0.16, cuda graph: True, gen throughput (token/s): 274.52, #queue-req: 0
+[2026-09-08 07:10:01] Decode batch, #running-req: 8, #token: 46400, token usage: 0.16, cuda graph: True, gen throughput (token/s): 271.11, #queue-req: 0
+[2026-09-08 07:10:02] Decode batch, #running-req: 8, #token: 46720, token usage: 0.16, cuda graph: True, gen throughput (token/s): 273.01, #queue-req: 0
+[2026-09-08 07:10:03] Decode batch, #running-req: 8, #token: 47104, token usage: 0.17, cuda graph: True, gen throughput (token/s): 271.59, #queue-req: 0
+[2026-09-08 07:10:04] Decode batch, #running-req: 8, #token: 47360, token usage: 0.17, cuda graph: True, gen throughput (token/s): 272.46, #queue-req: 0
+[2026-09-08 07:10:05] Decode batch, #running-req: 8, #token: 47680, token usage: 0.17, cuda graph: True, gen throughput (token/s): 274.47, #queue-req: 0
+[2026-09-08 07:10:06] Decode batch, #running-req: 8, #token: 48128, token usage: 0.17, cuda graph: True, gen throughput (token/s): 271.63, #queue-req: 0
+[2026-09-08 07:10:08] Decode batch, #running-req: 8, #token: 48320, token usage: 0.17, cuda graph: True, gen throughput (token/s): 268.07, #queue-req: 0
+[2026-09-08 07:10:09] Decode batch, #running-req: 8, #token: 48640, token usage: 0.17, cuda graph: True, gen throughput (token/s): 268.07, #queue-req: 0
+[2026-09-08 07:10:10] Decode batch, #running-req: 8, #token: 48960, token usage: 0.17, cuda graph: True, gen throughput (token/s): 270.24, #queue-req: 0
+[2026-09-08 07:10:11] Prefill batch, #new-seq: 1, #new-token: 1728, #cached-token: 3584, token usage: 0.17, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 128.76
+[2026-09-08 07:10:11] INFO:     127.0.0.1:38434 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:10:11] Decode batch, #running-req: 8, #token: 49152, token usage: 0.17, cuda graph: True, gen throughput (token/s): 209.60, #queue-req: 0
+[2026-09-08 07:10:13] Decode batch, #running-req: 8, #token: 49536, token usage: 0.17, cuda graph: True, gen throughput (token/s): 268.19, #queue-req: 0
+[2026-09-08 07:10:14] Decode batch, #running-req: 8, #token: 49856, token usage: 0.18, cuda graph: True, gen throughput (token/s): 268.98, #queue-req: 0
+[2026-09-08 07:10:15] Decode batch, #running-req: 8, #token: 50112, token usage: 0.18, cuda graph: True, gen throughput (token/s): 267.02, #queue-req: 0
+[2026-09-08 07:10:16] Decode batch, #running-req: 8, #token: 50560, token usage: 0.18, cuda graph: True, gen throughput (token/s): 265.33, #queue-req: 0
+[2026-09-08 07:10:17] Decode batch, #running-req: 8, #token: 50752, token usage: 0.18, cuda graph: True, gen throughput (token/s): 269.46, #queue-req: 0
+[2026-09-08 07:10:19] Decode batch, #running-req: 7, #token: 45376, token usage: 0.16, cuda graph: True, gen throughput (token/s): 265.63, #queue-req: 0
+[2026-09-08 07:10:19] Prefill batch, #new-seq: 1, #new-token: 1280, #cached-token: 3776, token usage: 0.18, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 159.89
+[2026-09-08 07:10:19] INFO:     127.0.0.1:58588 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:10:20] Decode batch, #running-req: 8, #token: 50816, token usage: 0.18, cuda graph: True, gen throughput (token/s): 219.35, #queue-req: 0
+[2026-09-08 07:10:21] Prefill batch, #new-seq: 1, #new-token: 1280, #cached-token: 4032, token usage: 0.18, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 817.64
+[2026-09-08 07:10:21] INFO:     127.0.0.1:58594 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:10:21] Decode batch, #running-req: 8, #token: 50048, token usage: 0.18, cuda graph: True, gen throughput (token/s): 234.31, #queue-req: 0
+[2026-09-08 07:10:23] Decode batch, #running-req: 8, #token: 50560, token usage: 0.18, cuda graph: True, gen throughput (token/s): 290.94, #queue-req: 0
+[2026-09-08 07:10:24] Decode batch, #running-req: 8, #token: 50880, token usage: 0.18, cuda graph: True, gen throughput (token/s): 291.25, #queue-req: 0
+[2026-09-08 07:10:25] Decode batch, #running-req: 8, #token: 51072, token usage: 0.18, cuda graph: True, gen throughput (token/s): 290.58, #queue-req: 0
+[2026-09-08 07:10:26] Prefill batch, #new-seq: 1, #new-token: 1216, #cached-token: 3520, token usage: 0.17, #running-req: 7, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 238.67
+[2026-09-08 07:10:26] INFO:     127.0.0.1:58610 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:10:26] Decode batch, #running-req: 8, #token: 49408, token usage: 0.17, cuda graph: True, gen throughput (token/s): 237.79, #queue-req: 0
+[2026-09-08 07:10:27] Decode batch, #running-req: 8, #token: 49536, token usage: 0.17, cuda graph: True, gen throughput (token/s): 290.57, #queue-req: 0
+[2026-09-08 07:10:28] Decode batch, #running-req: 6, #token: 35072, token usage: 0.12, cuda graph: True, gen throughput (token/s): 283.44, #queue-req: 0
+[2026-09-08 07:10:29] Prefill batch, #new-seq: 1, #new-token: 1664, #cached-token: 4288, token usage: 0.12, #running-req: 6, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 555.93
+[2026-09-08 07:10:29] INFO:     127.0.0.1:58620 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:10:29] Prefill batch, #new-seq: 1, #new-token: 1600, #cached-token: 4032, token usage: 0.12, #running-req: 6, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 4055.68
+[2026-09-08 07:10:29] INFO:     127.0.0.1:58626 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:10:30] Prefill batch, #new-seq: 2, #new-token: 2944, #cached-token: 7616, token usage: 0.15, #running-req: 6, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 4600.44
+[2026-09-08 07:10:30] INFO:     127.0.0.1:57378 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:10:30] INFO:     127.0.0.1:57380 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-08 07:10:31] Decode batch, #running-req: 8, #token: 44096, token usage: 0.16, cuda graph: True, gen throughput (token/s): 128.40, #queue-req: 0
+[2026-09-08 07:10:32] Decode batch, #running-req: 8, #token: 44288, token usage: 0.16, cuda graph: True, gen throughput (token/s): 277.03, #queue-req: 0
+[2026-09-08 07:10:33] Decode batch, #running-req: 8, #token: 44736, token usage: 0.16, cuda graph: True, gen throughput (token/s): 279.49, #queue-req: 0
+[2026-09-08 07:10:34] Decode batch, #running-req: 7, #token: 39552, token usage: 0.14, cuda graph: True, gen throughput (token/s): 273.01, #queue-req: 0
+[2026-09-08 07:10:35] Decode batch, #running-req: 7, #token: 39744, token usage: 0.14, cuda graph: True, gen throughput (token/s): 264.59, #queue-req: 0
+[2026-09-08 07:10:36] Decode batch, #running-req: 7, #token: 40064, token usage: 0.14, cuda graph: True, gen throughput (token/s): 264.46, #queue-req: 0
+[2026-09-08 07:10:37] Decode batch, #running-req: 7, #token: 40320, token usage: 0.14, cuda graph: True, gen throughput (token/s): 264.19, #queue-req: 0
+[2026-09-08 07:10:38] Decode batch, #running-req: 7, #token: 40640, token usage: 0.14, cuda graph: True, gen throughput (token/s): 263.12, #queue-req: 0
+[2026-09-08 07:10:39] Decode batch, #running-req: 7, #token: 40896, token usage: 0.14, cuda graph: True, gen throughput (token/s): 262.50, #queue-req: 0
+[2026-09-08 07:10:40] Decode batch, #running-req: 6, #token: 35904, token usage: 0.13, cuda graph: True, gen throughput (token/s): 242.11, #queue-req: 0
+[2026-09-08 07:10:42] Decode batch, #running-req: 6, #token: 36224, token usage: 0.13, cuda graph: True, gen throughput (token/s): 228.14, #queue-req: 0
+[2026-09-08 07:10:43] Decode batch, #running-req: 4, #token: 24896, token usage: 0.09, cuda graph: True, gen throughput (token/s): 197.34, #queue-req: 0
+[2026-09-08 07:10:44] Decode batch, #running-req: 4, #token: 25088, token usage: 0.09, cuda graph: True, gen throughput (token/s): 156.04, #queue-req: 0
+[2026-09-08 07:10:45] Decode batch, #running-req: 4, #token: 25216, token usage: 0.09, cuda graph: True, gen throughput (token/s): 155.71, #queue-req: 0
+[2026-09-08 07:10:46] Decode batch, #running-req: 4, #token: 25408, token usage: 0.09, cuda graph: True, gen throughput (token/s): 155.74, #queue-req: 0
+[2026-09-08 07:10:47] Decode batch, #running-req: 4, #token: 25600, token usage: 0.09, cuda graph: True, gen throughput (token/s): 155.80, #queue-req: 0
+[2026-09-08 07:10:48] Decode batch, #running-req: 4, #token: 25664, token usage: 0.09, cuda graph: True, gen throughput (token/s): 155.77, #queue-req: 0
+[2026-09-08 07:10:49] Decode batch, #running-req: 4, #token: 25856, token usage: 0.09, cuda graph: True, gen throughput (token/s): 155.55, #queue-req: 0
+[2026-09-08 07:10:50] Decode batch, #running-req: 3, #token: 19712, token usage: 0.07, cuda graph: True, gen throughput (token/s): 146.87, #queue-req: 0
+[2026-09-08 07:10:51] Decode batch, #running-req: 3, #token: 19776, token usage: 0.07, cuda graph: True, gen throughput (token/s): 116.56, #queue-req: 0
+[2026-09-08 07:10:52] Decode batch, #running-req: 3, #token: 19968, token usage: 0.07, cuda graph: True, gen throughput (token/s): 116.36, #queue-req: 0
+[2026-09-08 07:10:53] Decode batch, #running-req: 2, #token: 13248, token usage: 0.05, cuda graph: True, gen throughput (token/s): 103.16, #queue-req: 0
+[2026-09-08 07:10:54] Decode batch, #running-req: 2, #token: 13312, token usage: 0.05, cuda graph: True, gen throughput (token/s): 78.41, #queue-req: 0
+[2026-09-08 07:10:55] Decode batch, #running-req: 2, #token: 13440, token usage: 0.05, cuda graph: True, gen throughput (token/s): 78.52, #queue-req: 0
+[2026-09-08 07:10:56] Decode batch, #running-req: 1, #token: 6848, token usage: 0.02, cuda graph: True, gen throughput (token/s): 63.03, #queue-req: 0
+[2026-09-08 07:10:57] INFO:     127.0.0.1:60992 - "POST /v1/chat/completions HTTP/1.1" 400 Bad Request
+[2026-09-08 07:11:19] Cache flushed successfully!
+[2026-09-08 07:11:19] INFO:     127.0.0.1:56074 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-08 07:11:19] INFO:     127.0.0.1:56090 - "GET /metrics HTTP/1.1" 200 OK
+[2026-09-08 07:11:20] SIGTERM received. signum=None frame=None. Draining requests and shutting down...
+[2026-09-08 07:11:21] Gracefully exiting... Remaining number of requests 0. Remaining requests remaining_rids=[].
+[rank0]:[W908 07:11:23.277872903 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+[2026-09-08 07:11:23] kill_process_tree called: parent_pid=679015, include_parent=False, pid=679015
+[2026-09-08 07:11:23] ERROR:    Traceback (most recent call last):
+  File "/usr/lib/python3.12/asyncio/runners.py", line 194, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "uvloop/loop.pyx", line 1512, in uvloop.loop.Loop.run_until_complete
+  File "uvloop/loop.pyx", line 1505, in uvloop.loop.Loop.run_until_complete
+  File "uvloop/loop.pyx", line 1379, in uvloop.loop.Loop.run_forever
+  File "uvloop/loop.pyx", line 557, in uvloop.loop.Loop._run
+  File "uvloop/loop.pyx", line 476, in uvloop.loop.Loop._on_idle
+  File "uvloop/cbhandles.pyx", line 83, in uvloop.loop.Handle._run
+  File "uvloop/cbhandles.pyx", line 63, in uvloop.loop.Handle._run
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 3688, in print_exception_wrapper
+    await func()
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 3240, in sigterm_watchdog
+    sys.exit(0)
+SystemExit: 0
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 655, in lifespan
+    await receive()
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/lifespan/on.py", line 137, in receive
+    return await self.receive_queue.get()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/queues.py", line 158, in get
+    await getter
+asyncio.exceptions.CancelledError
+
+[2026-09-08 07:11:23] kill_process_tree called: parent_pid=679015, include_parent=False, pid=679015

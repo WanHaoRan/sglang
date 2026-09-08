@@ -11,7 +11,7 @@ import urllib.request
 BASE = os.environ.get("BASE", "http://127.0.0.1:30000")
 L3_DIR = os.environ.get("L3_DIR", "/var/hicache_l3")
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3-8B")
-KV_BYTES_PER_TOKEN = 147456
+KV_BYTES_PER_TOKEN = int(os.environ.get("KV_BYTES_PER_TOKEN", 147456))
 
 _TOK = None
 _WORDS = None
