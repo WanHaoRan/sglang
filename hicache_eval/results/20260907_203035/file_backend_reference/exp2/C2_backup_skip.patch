@@ -1,0 +1,21 @@
+diff --git a/python/sglang/srt/managers/cache_controller.py b/python/sglang/srt/managers/cache_controller.py
+index d42980ca91..1bc1e3d8b1 100644
+--- a/python/sglang/srt/managers/cache_controller.py
++++ b/python/sglang/srt/managers/cache_controller.py
+@@ -15,6 +15,7 @@ limitations under the License.
+ 
+ 
+ import logging
++import os  # EVAL-C2 (revert after)
+ import threading
+ import time
+ from dataclasses import dataclass
+@@ -555,7 +556,7 @@ class HiCacheController:
+             self.storage_config.is_mla_model
+             # todo: load balancing
+             and self.storage_config.tp_rank != 0
+-        )
++        ) or os.environ.get("HICACHE_EVAL_BACKUP_SKIP") == "1"  # EVAL-C2 (revert after)
+ 
+         # Use storage backend factory for dynamic backend creation
+         from sglang.srt.mem_cache.storage import StorageBackendFactory

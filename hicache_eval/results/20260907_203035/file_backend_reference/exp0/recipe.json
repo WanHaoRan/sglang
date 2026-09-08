@@ -1,0 +1,27 @@
+{
+  "max_total_num_tokens_L1": 374784,
+  "hicache_host_total_tokens_L2": 678208,
+  "probe_len": 4096, "probe_seed": 1000,
+  "L1_recipe": "send prompt once, probe again immediately",
+  "L2_recipe": {
+    "fillers": "unique /generate prompts of 8192 tokens until 1.5 x max_total_num_tokens sent",
+    "filler_requests": 69, "filler_tokens": 565248,
+    "verified": "cached_device=0, cached_host=4032"
+  },
+  "L3_recipe": {
+    "steps": ["wait_until_flushable (polls flush_cache?timeout=0 until 200)",
+              "flush_cache", "sync + echo 3 > /proc/sys/vm/drop_caches", "probe"],
+    "verified": "cached_device=0, cached_host=0, cached_storage=4032"
+  },
+  "attribution_field": "top-level sglext.cached_tokens_details; REQUIRES return_cached_tokens_details=true in the request",
+  "page_cache_evict_method": "drop_caches",
+  "measured_ttft_s": {
+    "recompute_4096": 0.373, "L1_4096": 0.059, "L2_4096": 0.068,
+    "L3_4096_pagecache_evicted": 11.581, "L3_4096_pagecache_warm": 8.120
+  },
+  "notes": [
+    "cached_tokens is 4032 not 4096: the final partial 64-token page is never cached (page alignment).",
+    "hicache_host_used_tokens does NOT drop after flush_cache; the gauge is stale. Use per-tier attribution, not this gauge, to verify flush.",
+    "flush_cache is gated on ongoing_backup being empty; hicache_backup_tokens_total goes flat long before files land."
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "_note": "Measured with fio after the first report draft, in response to the question 'what disk is this and what is its bandwidth'. Supersedes the dd-derived numbers in constants.json, which were buffered QD1 sequential and badly understated the device.",
+  "topology": {
+    "L3_dir_in_container": "/var/hicache_l3",
+    "container_fs": "overlay (docker) -> /var/lib/docker -> /dev/vda1 ext4",
+    "device": "/dev/vda1, virtio-blk, 1 TB, VM local disk",
+    "rotational_flag": 1,
+    "rotational_flag_is_meaningless": "virtio-blk does not report rotation; the device scales like NVMe under concurrency",
+    "NOT_used_for_L3": "/lambda/nfs/MLSys-Learn is virtiofs and held only the repo and result CSVs"
+  },
+  "host_dev_vda1_ext4_GBps": {
+    "seq_read_1M_QD1_direct": 1.214,
+    "seq_read_1M_QD32_direct": 17.977,
+    "seq_read_1M_QD32_x4_direct": 40.036,
+    "rand_read_9M_QD1_direct": 6.073,
+    "rand_read_9M_QD16_direct": 16.748,
+    "rand_read_9M_QD8_x4_direct": 21.799,
+    "seq_write_1M_QD1_direct": 1.145,
+    "seq_write_1M_QD32_x4_direct": 12.691
+  },
+  "container_overlay_GBps": {
+    "rand_read_9M_QD1_direct": 6.188,
+    "rand_read_9M_QD16_direct": 16.521,
+    "rand_read_9M_QD8_x4_direct": 22.533,
+    "rand_read_9M_QD1_BUFFERED": 0.643,
+    "seq_write_1M_QD1_direct": 1.145,
+    "seq_write_1M_QD32_x4_direct": 13.026,
+    "_overlay_penalty": "none measurable vs host for O_DIRECT reads (6.19 vs 6.07)"
+  },
+  "virtiofs_GBps": {
+    "rand_read_9M_QD1_buffered": 0.096,
+    "rand_read_9M_QD8_x4_buffered": 2.91,
+    "seq_write_1M_QD1_buffered": 0.497,
+    "_note": "for reference only; L3 never lived here"
+  },
+  "hicache_file_backend_delivered_GBps": {"read": 0.058, "write": 0.068},
+  "gap_decomposition_9MiB_random_read": {
+    "device_ceiling_concurrent_direct": 22.5,
+    "device_at_QD1_direct": 6.19,
+    "device_at_QD1_buffered": 0.643,
+    "hicache_file_delivered": 0.058,
+    "penalty_buffered_vs_direct": "9.6x",
+    "penalty_serial_vs_concurrent": "3.6x",
+    "penalty_python_per_page_and_GIL": "11x",
+    "total_fraction_of_ceiling": "0.26%"
+  },
+  "recompute_bar_GBps": 2.162
+}
