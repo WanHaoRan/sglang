@@ -22,3 +22,16 @@
 6. Harness fix (not blocking): `exp3.py` server tag should include MODEL_KEY --
    the three models currently share `exp3_<condition>/` and overwrite each
    other's server logs. Results are unaffected. See FINDINGS_LIVE.md F20.
+7. **HIGHEST PRIORITY** — re-run Exp 2 with a non-replaying write load.
+   `writeload.py` defaults `--seed 7` / `--pool 64` and `exp2.py` passes
+   neither, so each rate point replays earlier points' prompts, which are by
+   then in L3. The "write load" becomes a read load at high rates (51 prefetch
+   hits of 4032 tokens = 4.09 GB/s during the R=8 probe, with iostat_w at
+   0.02 MB/s). Add `--seed` per invocation and an `--idx-offset`. Until then the
+   high-rate end of the Exp 2 rate axis conflates write rate with accumulated
+   L3 read demand. See FINDINGS_LIVE.md F23.
+8. Re-size the Exp 3 client working set past L1+L2 so L3 is actually read.
+   As specified, Exp 3/4 cannot show a write-policy benefit on any model
+   because dead fraction is 1.0 for capacity reasons (F21).
+9. C3 re-run on 32B and 70B with `c3_dump.sh` (the 8B has 12 samples; the
+   `c3_pyspy.sh` record-based version hangs and should not be used).

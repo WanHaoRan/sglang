@@ -627,3 +627,31 @@ Pass a per-invocation seed and index offset to `writeload.py` so rate points do
 not replay each other:
 `--seed $((7 + rate_index))` plus an `--idx-offset` argument. Without that, the
 Exp 2 rate axis conflates write rate with accumulated L3 read demand.
+
+## F24 — C3 (GIL attribution): the HiCache background threads never held the GIL
+
+Method note: `py-spy record -s` HANGS INDEFINITELY here (4.5 h, killed) because
+`-s` walks the launcher's children and the scheduler carries ~96 GB RSS.
+`py-spy dump --pid <scheduler> --nonblocking` returns in under a second and
+already annotates threads `active+gil` / `active` / `idle`, which is what C3
+needs. Use `c3_dump.sh`, not `c3_pyspy.sh`.
+
+12 samples on the Qwen3-8B scheduler under R=8 write load (achieved 6.08 req/s):
+
+| thread state | count |
+|---|---|
+| idle | 62 |
+| active | 7 |
+| **active+gil** | **3 (all MainThread)** |
+
+Frames holding the GIL: `to_dec_params` (base_prefix_cache.py:148),
+`os.encode`, `check_hicache_events` (unified_radix_cache.py:3002).
+
+`backup_thread_func` and `prefetch_io_aux_func` never appear as GIL holders in
+any sample; the HiCache worker threads are idle in 62 of the observations. The
+plan's hypothesis -- "the scheduler thread is waiting on the GIL held by
+backup/prefetch" -- is NOT supported.
+
+Weak evidence (12 samples over ~25 s, only 3 with any GIL holder), so treat as
+directional. It is nonetheless the only C3 data collected, and it points the
+same way as F23: the bottleneck is the storage read path, not Python contention.
