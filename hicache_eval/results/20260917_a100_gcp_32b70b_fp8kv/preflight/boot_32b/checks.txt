@@ -1,0 +1,14 @@
+# cold probe, then L1 re-probe (expect device 4032)
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+{"target_tokens": 4096, "seed": 424242, "prompt_tokens": 4096, "ttft_s": 2.1544264330004808, "latency_s": 2.1546598580007412, "cached_tokens": null, "cached_device": null, "cached_host": null, "cached_storage": null, "details_path": null, "ts": 1789670887.6543326}
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+{"target_tokens": 4096, "seed": 424242, "prompt_tokens": 4096, "ttft_s": 0.10039127799973357, "latency_s": 0.10066118900067522, "cached_tokens": 4032, "cached_device": 4032, "cached_host": 0, "cached_storage": 0, "details_path": "sglext.cached_tokens_details", "ts": 1789670901.2809849}
+# drain + flush, L3 stats (expect 128 files, 536870912 bytes), then L3 probe (expect storage 4032)
+drain_s 0.6311531066894531
+{'files': 128, 'bytes': 536870912}
+drop_caches
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+{"target_tokens": 4096, "seed": 424242, "prompt_tokens": 4096, "ttft_s": 0.8275605369999539, "latency_s": 0.8279147880002711, "cached_tokens": 4032, "cached_device": 0, "cached_host": 0, "cached_storage": 4032, "details_path": "sglext.cached_tokens_details", "ts": 1789670930.2946482}
+# sanity generations
+The capital of France is Paris.
+391

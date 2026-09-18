@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Re-run Exp 0 and Exp 1 on the nixl backend, so the tier cost curves reflect a
 # storage path that is not software-throttled. Same probes, same recipe.
+export L3_DIR=${L3_DIR:-/var/hicache_nixl}   # hcommon + start_server both follow this
 source /sgl-workspace/sglang/hicache_eval/scripts/env.sh
-export L3_DIR=/var/hicache_nixl          # hcommon + start_server both follow this
 mkdir -p $L3_DIR
 cd $WORK/scripts
 
@@ -31,7 +31,7 @@ bash $WORK/scripts/telemetry.sh stop $RESULTS/exp0_nixl
 boot exp1_nixl
 bash $WORK/scripts/telemetry.sh start $RESULTS/exp1_nixl
 python3 cachectl.py scrape $RESULTS/exp1_nixl/metrics_before.txt
-EXP1_OUT=exp1_nixl python3 exp1.py --reps 3 --tiers recompute,L1,L3,L2 \
+EXP1_OUT=exp1_nixl python3 exp1.py --reps 3 --tiers ${EXP1_TIERS:-recompute,L1,L3,L2} \
   > $RESULTS/exp1_nixl/run.log 2>&1
 python3 cachectl.py scrape $RESULTS/exp1_nixl/metrics_after.txt
 bash $WORK/scripts/telemetry.sh stop $RESULTS/exp1_nixl

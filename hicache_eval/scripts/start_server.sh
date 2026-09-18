@@ -27,13 +27,20 @@ BASE_ARGS=(
 if [ -n "${REASONING_PARSER-qwen3}" ]; then
   BASE_ARGS+=(--reasoning-parser "${REASONING_PARSER:-qwen3}")
 fi
+# The H100 campaigns ran the default backend (fa3). Other GPUs default differently, so a
+# rerun can pin it; unset keeps the launch line byte-identical to the old campaigns.
+if [ -n "${ATTENTION_BACKEND:-}" ]; then
+  BASE_ARGS+=(--attention-backend "$ATTENTION_BACKEND")
+fi
 printf "%s\n" "${BASE_ARGS[@]}" "$@" > "$OUT/server_args.txt"
 python3 -m sglang.launch_server "${BASE_ARGS[@]}" "$@" > "$OUT/server.log" 2>&1 &
 SPID=$!
 echo "$SPID" > "$OUT/server.pid"
 
 ready=0
-for i in $(seq 1 900); do
+# 900 s covers a warm boot; a JIT-cold first boot of a Marlin model on a small CPU needs longer.
+START_TIMEOUT_S=${START_TIMEOUT_S:-900}
+for i in $(seq 1 "$START_TIMEOUT_S"); do
   if curl -sf -o /dev/null --max-time 3 "$BASE/health" 2>/dev/null \
      && grep -q "The server is fired up and ready to roll" "$OUT/server.log" 2>/dev/null; then
     ready=1; break
@@ -43,7 +50,7 @@ for i in $(seq 1 900); do
   fi
   sleep 1
 done
-[ "$ready" -eq 1 ] || { echo "SERVER NOT READY after 900s" >&2; tail -40 "$OUT/server.log" >&2; exit 1; }
+[ "$ready" -eq 1 ] || { echo "SERVER NOT READY after ${START_TIMEOUT_S}s" >&2; tail -40 "$OUT/server.log" >&2; exit 1; }
 
 # Warm-up request, discarded.
 curl -s "$BASE/generate" -H "Content-Type: application/json" \

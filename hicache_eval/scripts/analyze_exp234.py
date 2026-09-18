@@ -20,6 +20,8 @@ LABEL = {"qwen8b": "Qwen3-8B bf16KV", "qwen32b": "Qwen3-32B-FP8 fp8KV",
 # Recompute TTFT at L=16384 from the Exp 1 runs; the Exp 2 headline is the write
 # rate at which an L3 hit crosses this line.
 RECOMPUTE_16384 = {"qwen8b": 0.9199, "qwen32b": 4.2098, "llama70b": 14.0575}
+if os.environ.get("EXP1_RECOMPUTE_QWEN8B"):      # measured on the box under test (Exp 1 median at L=16384)
+    RECOMPUTE_16384["qwen8b"] = float(os.environ["EXP1_RECOMPUTE_QWEN8B"])
 
 
 def load(pattern, tag):

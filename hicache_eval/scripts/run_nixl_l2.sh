@@ -3,8 +3,8 @@
 # probe loads its pages back into the host pool, so by the L2 phase the pool was
 # already 99.5% full and the fillers evicted the probes out of L2 entirely.
 # A fresh server with only recompute+L2 keeps the pool budget predictable.
+export L3_DIR=${L3_DIR:-/var/hicache_nixl}
 source /sgl-workspace/sglang/hicache_eval/scripts/env.sh
-export L3_DIR=/var/hicache_nixl
 cd $WORK/scripts
 bash $WORK/scripts/stop_server.sh >/dev/null 2>&1
 find $L3_DIR -mindepth 1 -delete 2>/dev/null

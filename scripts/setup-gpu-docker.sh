@@ -112,12 +112,12 @@ cleanup() {
 trap cleanup EXIT
 WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/setup-gpu-docker.XXXXXX")
 
-_tmpseq=0
+# Callers use `x=$(mktempfile)`, so this body runs in a subshell and cannot
+# keep a counter in the parent: a counter-based name collided on every call
+# (armored key and dearmored key were the same file, and `gpg --dearmor <a >b`
+# truncated the input before reading it). mktemp is unique per call.
 mktempfile() {
-  _tmpseq=$((_tmpseq + 1))
-  local f="$WORKDIR/f$$.$_tmpseq"
-  : > "$f"
-  printf '%s\n' "$f"
+  mktemp "$WORKDIR/f$$.XXXXXX"
 }
 
 usage() { sed -n '2,/^# ===\+$/p' "$0" | sed 's/^# \{0,1\}//' | sed '$d'; }
@@ -174,7 +174,9 @@ have_root() { [ "$(id -u)" -eq 0 ] || [ -n "$SUDO" ]; }
 # The sglang checkout that lives next to this script. pwd -P resolves the
 # symlink, so ~/MLSys-Learn/... and /lambda/nfs/MLSys-Learn/... agree.
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-SGLANG_REPO="$SCRIPT_DIR/sglang"
+# The script lives in <repo>/scripts/ now; older copies sat beside the repo.
+# Only used for the docker-run hint printed at the end.
+SGLANG_REPO=$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || printf '%s\n' "$SCRIPT_DIR/sglang")
 
 # ------------------------------------------------------------ apt helpers ---
 # Is $1 installable from the configured sources?

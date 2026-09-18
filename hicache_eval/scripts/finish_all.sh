@@ -4,7 +4,8 @@
 # patch revert.
 set -uo pipefail
 S=/sgl-workspace/sglang/hicache_eval/scripts
-MASTER=/sgl-workspace/sglang/hicache_eval/results/20260908_nixl_exp234/FINISH.log
+MASTER=${MASTER:-${RESULTS:+$RESULTS/FINISH.log}}
+MASTER=${MASTER:-/sgl-workspace/sglang/hicache_eval/results/20260908_nixl_exp234/FINISH.log}
 say() { echo -e "\n########## $(date -u +%H:%M) $*" | tee -a "$MASTER"; }
 
 for KEY in qwen8b qwen32b llama70b; do

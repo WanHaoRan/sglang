@@ -1,0 +1,236 @@
+{
+ "_what": "Headline numbers of the OLD campaigns (H100 PCIe, Qwen3-8B, nixl) with their source files, extracted 2026-09-17 as the comparison baseline for this rerun.",
+ "metrics": [
+  {
+   "metric": "sglang git head (repo bind mount)",
+   "old_value": "f3ccd1c0e42926e795a4304d50935b8cbd210169",
+   "unit": "commit",
+   "source": "results/20260907_203035/versions.txt:2; constants.json:17",
+   "how_computed": "manual git rev-parse; no script. HEAD today is 6ec32e6b7, 5 eval-only commits later, no python/ diff"
+  },
+  {
+   "metric": "sglang package version / image",
+   "old_value": "0.0.0.dev1+g30705c004 ; lmsysorg/sglang:nightly-dev-20260907-30705c00 build_commit 30705c004ca4bbfc92216dfaf845da14d84c4c4d",
+   "source": "versions.txt:3,6",
+   "how_computed": "manual"
+  },
+  {
+   "metric": "torch / CUDA / driver / GPU",
+   "old_value": "torch 2.13.0+cu130, cuda 13.0, driver 580.173.02, NVIDIA H100 PCIe",
+   "source": "versions.txt:4-5",
+   "how_computed": "manual"
+  },
+  {
+   "metric": "attention backend (defaulted) / sampling backend",
+   "old_value": "fa3 / flashinfer ; cuda graph enabled, torch.compile off",
+   "source": "nixl/exp1_nixl/server.log:6 and :7 (server_args dict: 'attention_backend': 'fa3', 'sampling_backend': 'flashinfer', 'disable_cuda_graph': False); same line 6 in ab_nixl, exp0_nixl, exp1_nixl_l2, exp2_qwen8b_base, exp2_qwen8b_timeout, finish_qwen8b",
+   "how_computed": "server log"
+  },
+  {
+   "metric": "L1 device pool / L2 host pool",
+   "old_value": "max_total_num_tokens=374784 ; host pool 678208 tokens (100.01 GB pinned); available_gpu_mem 9.55 GB; max_prefill_tokens 16384; max_running_requests 4096",
+   "unit": "tokens",
+   "source": "nixl/exp1_nixl/startup_facts.txt:4-5",
+   "how_computed": "start_server.sh:55 greps server.log into startup_facts.txt"
+  },
+  {
+   "metric": "b = KV bytes/token",
+   "old_value": "147456",
+   "unit": "B/token",
+   "source": "constants.json:4; REPORT.md:39 (confirmed: 4096 tok -> 603,979,776 B backed up; backend_ab/nixl.json:8)",
+   "how_computed": "2*36*8*128*2; literal in analyze_nixl.py:12, analyze.py:10, env.sh:10, models.sh:8. GPU-independent: must be identical on new box"
+  },
+  {
+   "metric": "P = marginal prefill throughput (nixl run)",
+   "old_value": "15010.82",
+   "unit": "tok/s",
+   "source": "nixl/exp1_nixl/tier_fits.csv:2 (tokens_per_s); model_comparison.json:4",
+   "how_computed": "1/slope of np.polyfit(L, median recompute TTFT, 1) over 7 lengths; analyze_nixl.py:29-39 (also analyze_models.py:48-49). File-run P was 15745 (REPORT.md:43)"
+  },
+  {
+   "metric": "recompute bar b*P",
+   "old_value": "2.0614",
+   "unit": "GiB/s",
+   "source": "tier_fits.csv:2 (effective_GBps); model_comparison.json:5",
+   "how_computed": "147456/slope/2^30; analyze_nixl.py:37"
+  },
+  {
+   "metric": "recompute fit slope / intercept",
+   "old_value": "6.6619e-05 s/tok ; -0.03294 s",
+   "source": "tier_fits.csv:2",
+   "how_computed": "analyze_nixl.py:33"
+  },
+  {
+   "metric": "L1 fit: slope / intercept / effective rate",
+   "old_value": "6.9275e-06 ; +0.03614 s ; 19.824 GiB/s (bookkeeping, not a transfer)",
+   "source": "tier_fits.csv:3",
+   "how_computed": "analyze_nixl.py fit()"
+  },
+  {
+   "metric": "L2 delivered (fit): slope / intercept / effective rate",
+   "old_value": "1.06669e-05 ; +0.03085 s ; 12.874 GiB/s (6.2x bar)",
+   "source": "tier_fits.csv:4; REPORT.md:174",
+   "how_computed": "analyze_nixl.py fit()"
+  },
+  {
+   "metric": "L3 delivered (fit, nixl): slope / intercept / effective rate",
+   "old_value": "4.19043e-05 ; +0.19160 s ; 3.2772 GiB/s (1.59x bar)",
+   "source": "tier_fits.csv:5; model_comparison.json:6-7; REPORT.md:175",
+   "how_computed": "analyze_nixl.py fit(); analyze_models.py:52-54"
+  },
+  {
+   "metric": "differential rates L2-L1 (host->device) and L3-L2 (disk read)",
+   "old_value": "36.72 and 4.40",
+   "unit": "GiB/s",
+   "source": "REPORT.md:228-229",
+   "how_computed": "147456/(slope_L2-slope_L1)/2^30 and 147456/(slope_L3-slope_L2)/2^30 from tier_fits.csv; verified by hand; NO script computes it"
+  },
+  {
+   "metric": "fitted break-even L vs recompute: L1 / L2 / L3",
+   "old_value": "1157 / 1140 / 9086",
+   "unit": "tokens",
+   "source": "nixl/exp1_nixl/break_even.csv:2-4",
+   "how_computed": "(icept_rec-icept_tier)/(slope_tier-slope_rec); analyze_nixl.py:42-53"
+  },
+  {
+   "metric": "empirical L3 crossover / speed-up at max L",
+   "old_value": "L3 wins only at 32512 ; 1.521x (2.2187/1.4586)",
+   "source": "model_comparison.json:9-12",
+   "how_computed": "analyze_models.py:58-60 (per-L median compare)"
+  },
+  {
+   "metric": "TTFT median recompute @ 512/1024/2048/4096/8192/16384/32512",
+   "old_value": "0.0431/0.0897/0.1366/0.2481/0.4280/0.9199/2.2187",
+   "unit": "s",
+   "source": "nixl/exp1_nixl/ttft_summary.csv:23-29 (n=3 each; 512 max 0.288 = warm-up)",
+   "how_computed": "groupby(tier,L).median over ttft_by_tier.csv after dropping contaminated recompute rows; analyze_nixl.py:16-26,64-66"
+  },
+  {
+   "metric": "TTFT median L1 @ same 7 lengths",
+   "old_value": "0.0295/0.0345/0.0353/0.0795/0.1126/0.1590/0.2511",
+   "unit": "s",
+   "source": "ttft_summary.csv:2-8",
+   "how_computed": "same"
+  },
+  {
+   "metric": "TTFT median L2 @ same 7 lengths",
+   "old_value": "0.0341/0.0378/0.0462/0.0761/0.1277/0.2129/0.3720",
+   "unit": "s",
+   "source": "ttft_summary.csv:9-15",
+   "how_computed": "same (L2 rows from dedicated pass run_nixl_l2.sh appended to same CSV)"
+  },
+  {
+   "metric": "TTFT median L3 (nixl, page cache dropped) @ same 7 lengths",
+   "old_value": "0.1992/0.2041/0.1587/0.4421/0.5205/1.0722/1.4586 (min-max e.g. 4096: 0.247-0.515; 16384: 0.861-1.082)",
+   "unit": "s",
+   "source": "ttft_summary.csv:16-22",
+   "how_computed": "same"
+  },
+  {
+   "metric": "Exp 0 nixl step TTFTs (n=1): cold recompute / L1 / L2 / L3 evicted / L3 warm",
+   "old_value": "0.3906 / 0.0590 / 0.0671 / 0.2706 / 0.2587 ; attribution 4032 tokens on the right tier each step; evict/warm ratio 1.05x",
+   "unit": "s",
+   "source": "nixl/exp0_nixl/exp0_results.json:7,37,51,69,87; REPORT.md:125-129",
+   "how_computed": "exp0.py writes JSON directly; no analysis script"
+  },
+  {
+   "metric": "Backend A/B nixl: L3 read TTFT / read rate / write rate / drain / files",
+   "old_value": "0.1950 s / 2.8395 GiB/s / 0.0965 GiB/s / 5.83 s / 128 files, 603979776 B; L1 0.1183 s; cold recompute 0.4883 s; harness total 14.8 s",
+   "source": "backend_ab/nixl.json:5-27",
+   "how_computed": "backend_ab.py:59-65: cached_storage(4032)*147456/L3_ttft/2^30; backup_bytes/backup_drain_s/2^30"
+  },
+  {
+   "metric": "Backend A/B file (reference only)",
+   "old_value": "L3 6.693 s / 0.0827 GiB/s read / 0.0517 write / drain 10.87 s / 64 files; total 38.3 s; ratio 34x",
+   "source": "backend_ab/file.json:6-27; AB_SUMMARY.md:9-10",
+   "how_computed": "same script, --hicache-storage-backend file, AB_TAG=file. ~3 min incl. boot per side; cheap to repeat but not needed for nixl-vs-nixl"
+  },
+  {
+   "metric": "Old device fio (L3 dir in container overlay on /dev/vda1)",
+   "old_value": "9M randread QD1 direct 6.188; QD16 16.521; QD8x4 22.533; buffered QD1 0.643; seq write 1M QD1 1.145; QD32x4 13.026; host seq read 1M QD1 1.214, QD32 17.977",
+   "unit": "GiB/s (labelled GB/s)",
+   "source": "device_bandwidth.json:11-28",
+   "how_computed": "manual fio, job files not recorded (unknown). New box per orchestrator: ~0.7 seq read / ~0.4 seq write, i.e. BELOW the old 8B recompute bar of 2.06"
+  },
+  {
+   "metric": "Exp 2 idle (R=0) L3 hit, wait_complete, L=16384 - original sweep",
+   "old_value": "reps 0.883/0.647/0.781 -> median 0.7806 s; probe_read_mb ~2304",
+   "source": "20260908_nixl_exp234/exp2_qwen8b/interference.csv:2-4; exp2_summary.csv:2",
+   "how_computed": "make_report.py:54-59 (all reps at R=0)"
+  },
+  {
+   "metric": "Exp 2 idle L3 hit, timeout policy",
+   "old_value": "reps 0.481/0.532/0.509 -> median 0.5085 s",
+   "source": "exp2_qwen8b/interference.csv:23-25; exp2_summary.csv:9",
+   "how_computed": "make_report.py"
+  },
+  {
+   "metric": "timeout vs wait_complete at idle",
+   "old_value": "1.53x (0.7806/0.5085); unfulfilled_tokens=0",
+   "source": "FINDINGS_LIVE.md:376; exp2_summary.csv:2,9",
+   "how_computed": "ratio of the two medians; not emitted by any script (make_report prints the pivot only, :85-89)"
+  },
+  {
+   "metric": "Exp 2 idle paired (rerun, rep<2): L3 / recompute / speed-up",
+   "old_value": "0.786 s / 0.967 s / 1.23x (all-3-rep medians: 0.694 / 0.974 = 1.40x)",
+   "source": "exp2_qwen8b_rerun/interference.csv:2-7; FINDINGS_LIVE.md:534",
+   "how_computed": "peek.py:17-21 (median over rep<2 = mean of two) with key=qwen8b_rerun arm=baseline"
+  },
+  {
+   "metric": "Exp 2 idle paired (C2_populate stage, all reps)",
+   "old_value": "L3 0.5186 / recompute 0.9542 / 1.84x",
+   "source": "exp2_summary.csv:14; exp2_qwen8b/interference.csv:35-40",
+   "how_computed": "make_report.py"
+  },
+  {
+   "metric": "Exp 2 rerun rep<2 by R: L3 / recompute / speed-up / achieved",
+   "old_value": "R0.5: 0.888/0.938/1.06x/0.50; R1: 0.911/0.952/1.05x/1.09; R2: 0.973/0.933/0.96x/2.05; R4: 1.134/0.981/0.86x/4.08; R8: 7.903/1.919/0.24x/5.97; R16: 6.701/1.724/0.26x/achieved 0",
+   "unit": "s",
+   "source": "FINDINGS_LIVE.md:532-540; raw exp2_qwen8b_rerun/interference.csv:8-43; 0/21 recompute rows had a storage hit",
+   "how_computed": "peek.py"
+  },
+  {
+   "metric": "Exp 2 pooled paired difference L3 - recompute, R in {0.5,1,2,4}, rep<2",
+   "old_value": "+0.026 s, 95% CI [-0.095, +0.146], n=8",
+   "source": "HANDOFF.md:117; recomputed by hand from exp2_qwen8b_rerun/interference.csv",
+   "how_computed": "ad hoc; mean +/- 1.96*sd/sqrt(n) (z not t); no script"
+  },
+  {
+   "metric": "Exp 2 write/read regime at rerun (background iostat, rep<2) and committed write rate",
+   "old_value": "bg writes 230-606 MB/s at R<=4; bg reads 1474 MB/s at R=4, 3340 MB/s at R=8; write_gbps_actual 0.35/0.53/0.79/1.57/1.83/1.86 GiB/s at R=0.5/1/2/4/8/16",
+   "source": "FINDINGS_LIVE.md:601-608; exp2_qwen8b_rerun/interference.csv col write_gbps_actual",
+   "how_computed": "exp2.py iostat_sample (vda) + hicache_backup_bytes_total delta / block duration. New NVMe (~0.4 GiB/s write) cannot sustain the old R>=2 committed write rates"
+  },
+  {
+   "metric": "Exp 2 original sweep L3 medians (all reps) R=0/0.5/1/2/4/8/16 and timeout R=2/8",
+   "old_value": "0.781/0.919/0.902/0.850/0.931/6.643/5.377 ; timeout 1.457/5.213 (R=8: unfulfilled 16320, 2/3 storage hits)",
+   "unit": "s",
+   "source": "exp2_summary.csv:2-11 (L3_all column); FINDINGS_LIVE.md:11-16",
+   "how_computed": "make_report.py"
+  },
+  {
+   "metric": "Exp 3 qwen8b nixl written to L3 / read back: wt100, wt30, wts100, wts30, nohicache",
+   "old_value": "16.92 / 16.84 / 10.50 / 10.43 / 0 GiB written (18166579200 / 18081644544 / 11277434880 / 11201937408 / 0 B); read_L3_tokens = 0 and prefetched_tokens = 0 in all; dead_fraction_L3 = 1.0",
+   "source": "exp34_all_models.csv:14-18; exp3_qwen8b/amplification.csv:2-6",
+   "how_computed": "exp3.py metric deltas; GiB = bytes/2^30 in make_report.py:109-112"
+  },
+  {
+   "metric": "Exp 3/4 savings vs write_through (hicache 100)",
+   "old_value": "write_through_selective -37.9% ; strip-thinking oracle100 -38.1% (11239686144 B = 10.47 GiB); oracle30 11447304192 B",
+   "source": "exp34_all_models.csv:14,16,19,20; FINDINGS_LIVE.md:111-116",
+   "how_computed": "100*(b-a)/a on written_L3_bytes; analyze_exp234.py:129-139"
+  },
+  {
+   "metric": "Exp 3/4 cache hit rate: wt100/wt30/wts100/wts30/nohicache/oracle100/oracle30",
+   "old_value": "0.7333/0.7297/0.6986/0.7222/0.7432/0.7013/0.7183",
+   "source": "exp34_all_models.csv:14-20",
+   "how_computed": "bench_multiturn summary via exp3.py"
+  },
+  {
+   "metric": "Exp 3/4 condition duration (GPU-speed sensitive)",
+   "old_value": "165.3/170.7/171.0/163.6/160.8/168.2/158.4 s; generation_tokens 43360-48050; prompt_tokens ~185-188k",
+   "source": "exp34_all_models.csv:14-20 (duration_s, generation_tokens, prompt_tokens)",
+   "how_computed": "exp3.py"
+  }
+ ]
+}

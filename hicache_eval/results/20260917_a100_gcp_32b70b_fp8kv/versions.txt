@@ -1,0 +1,17 @@
+== versions ==
+sglang_git_head: 6ec32e6b70f10f3b00800c8736430074a5517fa7
+sglang_upstream_base: f3ccd1c0e42926e795a4304d50935b8cbd210169 (same base as campaign 2; commits on top touch only eval dirs and scripts/)
+sglang: 0.0.0.dev1+g30705c004
+torch: 2.13.0+cu130 cuda 13.0
+580.178.04, NVIDIA A100-SXM4-80GB
+pcie: gen 4 x16 (nvidia-smi pcie.link.gen.max / width.max)
+image_tag: lmsysorg/sglang:nightly-dev-20260907-30705c00 (same tag as campaigns 1 and 2)
+flashinfer-python 0.6.18
+nixl 1.4.1
+nixl-cu13 1.4.1
+sglang-kernel 0.4.6.post1
+transformers 5.12.1
+triton 3.7.1
+attention_backend: triton (pinned; campaign 2 resolved to triton from the fa3 default because of fp8_e5m2 KV)
+snapshots: Qwen/Qwen3-32B-FP8 aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df ; casperhansen/llama-3.3-70b-instruct-awq 64d255621f40b42adaf6d1f32a47e1d4534c0f14
+host: GCP a2-ultragpu-1g, 12 vCPU, 167 GB RAM, L3 on local NVMe /dev/nvme0n1 ext4 noatime at /mnt/nvme/hicache_l3

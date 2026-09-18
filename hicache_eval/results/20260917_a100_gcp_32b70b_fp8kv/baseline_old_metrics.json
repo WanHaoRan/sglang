@@ -1,0 +1,280 @@
+{
+ "_what": "Headline numbers of campaign 2 (H100 PCIe; Llama-3.3-70B-AWQ and Qwen3-32B-FP8, fp8_e5m2 KV, nixl) with sources, extracted 2026-09-17 as the comparison baseline for this rerun.",
+ "metrics": [
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "b = KV bytes per token (fp8_e5m2 KV; 64 layers x 8 KV heads x 128 x 2 x 1 B)",
+   "old_value": "131072",
+   "unit": "B/token",
+   "source": "scripts/analyze_models.py:20; model_comparison.json:33; confirmed by exp0_32b/metrics_after.txt hicache_backup_bytes_total 5.7017368576e10 / backup_tokens_total 435008 = 131072; exp0_32b/exp0_results.json:26-29 (536870912 B / 4096 tok)"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "b = KV bytes per token (fp8_e5m2 KV; 80 layers x 8 KV heads x 128 x 2 x 1 B)",
+   "old_value": "163840",
+   "unit": "B/token",
+   "source": "scripts/analyze_models.py:19; model_comparison.json:15; confirmed by exp0_70b/metrics_after.txt 4.863295488e10 / 296832 = 163840; exp0_70b/exp0_results.json:26-29 (671088640 B / 4096 tok)"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "P = marginal prefill rate = 1/slope of np.polyfit(L, per-L median recompute TTFT, 1)",
+   "old_value": "2335.69 (slope 4.281384e-04 s/tok, intercept -0.983510 s)",
+   "unit": "tok/s",
+   "source": "model_comparison.json:34; recomputed from exp1_32b/ttft_by_tier.csv recompute rows (csv lines 2-42 even); REPORT.md:20; HANDOFF.md:35"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "P = marginal prefill rate (Exp 1 fit)",
+   "old_value": "920.17 (slope 1.086758e-03 s/tok, intercept -1.307831 s)",
+   "unit": "tok/s",
+   "source": "model_comparison.json:16; recomputed from exp1_70b/ttft_by_tier.csv recompute rows; REPORT.md:21; HANDOFF.md:36"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "P from the separate p_measure sweep (no HiCache server; 70B only, there is NO 32B p_measure)",
+   "old_value": "919.19 (linear_slope 0.0010879157, intercept -1.3161815; bar 0.140257 GiB/s); medians 512:0.361671 1024:0.722671 2048:1.441418 4096:2.919318 8192:6.131555 16384:14.075477 32512:35.596743 s; quadratic 1.4646e-8*L^2 + 6.156e-4*L + 0.0937 (recomputed, matches REPORT.md:119; not stored in any file)",
+   "unit": "tok/s",
+   "source": "p_measure/P_fit.json:1-16; p_measure/ttft_by_tier.csv lines 2-22; REPORT.md:112-119"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "recompute bar b*P = b/slope/2^30",
+   "old_value": "0.28512",
+   "unit": "GiB/s",
+   "source": "model_comparison.json:35; analyze_models.py:50"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "recompute bar b*P",
+   "old_value": "0.14041",
+   "unit": "GiB/s",
+   "source": "model_comparison.json:17; analyze_models.py:50"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "L3 fitted delivered rate b/slope_L3/2^30, and intercept",
+   "old_value": "3.1761 GiB/s (slope 3.843360e-05 s/tok); intercept 0.139129 s",
+   "unit": "GiB/s",
+   "source": "model_comparison.json:36-37; recomputed from exp1_32b/ttft_by_tier.csv lines 44-64"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "L3 fitted delivered rate and intercept",
+   "old_value": "2.9517 GiB/s (slope 5.169436e-05 s/tok); intercept 0.117902 s",
+   "unit": "GiB/s",
+   "source": "model_comparison.json:18-19; recomputed from exp1_70b/ttft_by_tier.csv lines 44-64"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "L1 fitted rate / intercept (not in model_comparison.json; computed with the compare_campaigns.py:145-149 definition)",
+   "old_value": "10.3634 GiB/s (slope 1.177899e-05); intercept 0.050354 s",
+   "unit": "GiB/s",
+   "source": "exp1_32b/ttft_by_tier.csv L1 rows (lines 3-43 odd), stdlib linear_regression on per-L medians"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "L2 fitted rate / intercept",
+   "old_value": "10.4054 GiB/s (slope 1.173139e-05); intercept 0.044709 s",
+   "unit": "GiB/s",
+   "source": "exp1_32b/ttft_by_tier.csv lines 65-85"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "L1 fitted rate / intercept",
+   "old_value": "13.4365 GiB/s (slope 1.135621e-05); intercept 0.070330 s",
+   "unit": "GiB/s",
+   "source": "exp1_70b/ttft_by_tier.csv L1 rows (lines 3-43 odd)"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "L2 fitted rate / intercept",
+   "old_value": "13.0941 GiB/s (slope 1.165321e-05); intercept 0.073809 s",
+   "unit": "GiB/s",
+   "source": "exp1_70b/ttft_by_tier.csv lines 65-85"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "rate / recompute bar (slope_recompute / slope_tier, compare_campaigns.py:173)",
+   "old_value": "L3 11.14x; L2 36.50x; L1 36.35x",
+   "unit": "x",
+   "source": "derived from the fits above"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "rate / recompute bar",
+   "old_value": "L3 21.02x; L2 93.26x; L1 95.70x",
+   "unit": "x",
+   "source": "derived from the fits above"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "differential disk read rate b/(slope_L3 - slope_L2) (compare_campaigns.py:166-170); L2-L1 differential is NaN (L2 slope < L1 slope)",
+   "old_value": "4.5715",
+   "unit": "GiB/s",
+   "source": "derived from exp1_32b fits"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "differential disk read rate b/(slope_L3 - slope_L2); L2-L1 differential = 513.8 GiB/s (slope difference 3e-7, noise, not meaningful)",
+   "old_value": "3.8108",
+   "unit": "GiB/s",
+   "source": "derived from exp1_70b fits"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "break-even L: fitted crossover (i_rec - i_L3)/(s_L3 - s_rec) and observed first L where median L3 < median recompute",
+   "old_value": "fit 2880.74 tokens; observed wins from 2048 (wins at 2048,4096,8192,16384,32512; loses at 512 and 1024). L2 fit break-even 2469.3, L1 2483.1",
+   "unit": "tokens",
+   "source": "model_comparison.json:38-45; analyze_models.py:56-59"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "break-even L",
+   "old_value": "fit 1377.44 tokens; observed wins at ALL 7 lengths from 512 (fit value is an artefact of the -1.31 s recompute intercept: recompute is convex in L). L2 fit 1285.1, L1 1281.5",
+   "unit": "tokens",
+   "source": "model_comparison.json:20-29"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "speed-up recompute/L3 per L (medians); speedup_at_max_L = 9.690",
+   "old_value": "512:0.555 1024:0.781 2048:1.539 4096:1.628 8192:3.246 16384:6.644 32512:9.690",
+   "unit": "x",
+   "source": "model_comparison.json:46; REPORT.md:90-96; recomputed from exp1_32b/ttft_by_tier.csv"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "speed-up recompute/L3 per L (medians); speedup_at_max_L = 18.343, peak 19.289 at 16384",
+   "old_value": "512:1.470 1024:2.935 2048:5.886 4096:9.607 8192:13.757 16384:19.289 32512:18.343",
+   "unit": "x",
+   "source": "model_comparison.json:30; REPORT.md:78-84; recomputed from exp1_70b/ttft_by_tier.csv"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "median TTFT recompute, n=3, 0 discards, L=512/1024/2048/4096/8192/16384/32512",
+   "old_value": "0.118595 / 0.143908 / 0.273781 / 0.596830 / 1.403745 / 4.209805 / 14.098428 (rep0 at L=512 is an outlier 0.269 s: first request)",
+   "unit": "s",
+   "source": "exp1_32b/ttft_by_tier.csv lines 2,4,6,...,42"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "median TTFT L1",
+   "old_value": "0.047279 / 0.054448 / 0.064683 / 0.105493 / 0.165979 / 0.254474 / 0.423025",
+   "unit": "s",
+   "source": "exp1_32b/ttft_by_tier.csv lines 3,5,...,43"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "median TTFT L2 (rows appended by the dedicated L2 server pass exp1_32b_l2 into exp1_32b/ttft_by_tier.csv)",
+   "old_value": "0.048742 / 0.050469 / 0.058360 / 0.092217 / 0.156352 / 0.250160 / 0.416480",
+   "unit": "s",
+   "source": "exp1_32b/ttft_by_tier.csv lines 65-85; exp1_32b/run_l2.log:6-7"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "median TTFT L3 (all rows full hits: cached_storage = L-64)",
+   "old_value": "0.213503 / 0.184311 / 0.177857 / 0.366574 / 0.432399 / 0.633618 / 1.454907",
+   "unit": "s",
+   "source": "exp1_32b/ttft_by_tier.csv lines 44-64"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "median TTFT recompute",
+   "old_value": "0.380371 / 0.737823 / 1.454231 / 2.923388 / 6.101492 / 14.057454 / 35.577555",
+   "unit": "s",
+   "source": "exp1_70b/ttft_by_tier.csv lines 2,4,...,42"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "median TTFT L1",
+   "old_value": "0.073954 / 0.079227 / 0.090309 / 0.117301 / 0.167745 / 0.264848 / 0.434446",
+   "unit": "s",
+   "source": "exp1_70b/ttft_by_tier.csv lines 3,5,...,43"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "median TTFT L2",
+   "old_value": "0.077309 / 0.078433 / 0.091424 / 0.124879 / 0.179134 / 0.274954 / 0.445286",
+   "unit": "s",
+   "source": "exp1_70b/ttft_by_tier.csv lines 65-85; exp1_70b/run_l2.log:6-7"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "median TTFT L3 (L=32512 reps spread 1.264-2.184 s)",
+   "old_value": "0.258780 / 0.251421 / 0.247072 / 0.304286 / 0.443519 / 0.728765 / 1.939613",
+   "unit": "s",
+   "source": "exp1_70b/ttft_by_tier.csv lines 44-64"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "Exp 0 step TTFTs (one 4096-token prompt, n=1) and attribution device/host/storage",
+   "old_value": "1 cold 0.761549 (none); 3 L1 0.092212 (4032/0/0); 4 L2 0.094223 (0/4032/0) after 53 fillers = 434176 tok; 5 L3 page-cache dropped 0.250448 (0/0/4032); 6 L3 warm 0.233619 (0/0/4032); backup 4096 tok = 536870912 B in 128 files; L3 vs recompute 3.04x",
+   "unit": "s",
+   "source": "exp0_32b/exp0_results.json:3-95"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "Exp 0 step TTFTs and attribution",
+   "old_value": "1 cold 3.031408 (none); 3 L1 0.116182 (4032/0/0); 4 L2 0.123411 (0/4032/0) after 36 fillers = 294912 tok; 5 L3 dropped 0.413029 (0/0/4032); 6 L3 warm 0.296121 (0/0/4032); backup 4096 tok = 671088640 B in 128 files; L3 vs recompute 7.34x",
+   "unit": "s",
+   "source": "exp0_70b/exp0_results.json:3-95"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "device pool (L1) / host pool (L2)",
+   "old_value": "284224 / 762944 (100.00 GB host, --hicache-size 100, --mem-fraction-static 0.85); KV K 17.35 GB + V 17.35 GB; weights 32.05 GB; avail after graphs 7.93 GB",
+   "unit": "tokens",
+   "source": "exp1_32b/startup_facts.txt:4-5; exp1_32b/server.log:17-18,1068,1070; identical in exp0_32b and exp1_32b_l2 startup_facts.txt:4-5"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "device pool (L1) / host pool (L2)",
+   "old_value": "193728 / 610368 (100.00 GB host); KV K 14.79 GB + V 14.79 GB; weights 37.19 GB; avail after graphs 8.02 GB; max_running_requests 3027",
+   "unit": "tokens",
+   "source": "exp1_70b/startup_facts.txt:4-5; exp1_70b/server.log:19-20; REPORT.md:68"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "attention backend actually used on the H100",
+   "old_value": "triton (default fa3 auto-downgraded because KV is fp8_e5m2); sampling_backend flashinfer",
+   "source": "exp1_32b/server.log:6-7 ('Use fa3 backend by default' then 'FlashAttention3 only supports fp8_e4m3 if using FP8; Setting attention backend to triton.'); startup_facts.txt:3 'attention_backend': 'triton'; rule at python/sglang/srt/arg_groups/overrides.py:1361-1369"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "attention backend actually used on the H100",
+   "old_value": "triton (same fa3 -> triton downgrade)",
+   "source": "exp1_70b/server.log:7-8; exp1_70b/startup_facts.txt:3; also p_measure/startup_facts.txt:3"
+  },
+  {
+   "model": "Qwen3-32B-FP8",
+   "metric": "weight quantization path on the H100",
+   "old_value": "'Detected fp8 checkpoint', quant=fp8 fmt=e4m3, --quantization None (auto from checkpoint), fp8_gemm_runner_backend auto -> DeepGEMM JIT <GEMM_NT_F8F8BF16> for 4 shapes (N=10240,K=5120; N=5120,K=8192; N=51200,K=5120; N=5120,K=25600) = native FP8 W8A8 block GEMM. No marlin/cutlass lines.",
+   "source": "exp1_32b/server.log:14,17,22,140,233,786"
+  },
+  {
+   "model": "Llama-3.3-70B-AWQ",
+   "metric": "weight quantization path on the H100",
+   "old_value": "'The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.'; load line quant=awq, bits=4 (REPORT.md:129 caveat says 'AWQ dequantizes to fp16' but the log shows the awq_marlin kernel)",
+   "source": "exp1_70b/server.log:6,10,12,13,19"
+  },
+  {
+   "model": "both",
+   "metric": "KV cache dtype",
+   "old_value": "torch.float8_e5m2 (--kv-cache-dtype fp8_e5m2); host pool inherits it (REPORT.md:46-49)",
+   "source": "exp0_32b/cold_check.txt, exp0_70b/cold_check.txt; exp1_32b/server.log:18; exp1_70b/server.log:20"
+  },
+  {
+   "model": "both",
+   "metric": "HANDOFF idle L3 speed-up @16k",
+   "old_value": "32B 4.6x, 70B 15.1x: these are campaign 3 (Exp 2 R=0) figures, NOT campaign 2; they appear only in HANDOFF.md and I could not trace them to a file (campaign 3 exp2_summary.csv gives 4.28x and 15.66x). Campaign 2 Exp 1 at L=16384 gives 6.64x and 19.29x.",
+   "unit": "x",
+   "source": "HANDOFF.md:35-36; results/20260908_nixl_exp234/exp2_summary.csv lines 15 and 27"
+  },
+  {
+   "model": "both",
+   "metric": "cross-validation anchor (HANDOFF section 2)",
+   "old_value": "32B 4.200 s (campaign 3 Exp 2 R=0 recompute) vs 4.2098 s; 70B 14.089 s vs 14.0575 s. The campaign 2 side is the Exp 1 MEDIAN at L=16384 (4.209805 / 14.057454), not the linear fit (the linear fit at 16384 evaluates to 6.03 s for the 32B).",
+   "unit": "s",
+   "source": "HANDOFF.md:57-60; results/20260908_nixl_exp234/FINDINGS_LIVE.md:135,146-147,315,319-320; exp1_32b/ttft_by_tier.csv lines 32,34,36; exp1_70b/ttft_by_tier.csv lines 32,34,36"
+  }
+ ]
+}

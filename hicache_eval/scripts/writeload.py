@@ -59,7 +59,7 @@ async def run(a):
     sem = asyncio.Semaphore(a.max_inflight)
     results = []
     stop = time.time() + a.duration
-    idx = 0
+    idx = a.idx_offset
     tasks = []
 
     conn = aiohttp.TCPConnector(limit=a.max_inflight * 2)
@@ -67,6 +67,8 @@ async def run(a):
     async with aiohttp.ClientSession(connector=conn, timeout=timeout) as session:
         async def guarded(body):
             async with sem:
+                if _STOP:      # queued when the block ended: never sent
+                    return
                 await one(session, a.base, body, a.out, results)
 
         t_start = time.time()
@@ -108,6 +110,8 @@ def main():
     ap.add_argument("--max-inflight", type=int, default=32)
     ap.add_argument("--pool", type=int, default=64)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--idx-offset", type=int, default=0,
+                    help="first value of the unique prefix counter; give each invocation its own range")
     ap.add_argument("--base", default=hcommon.BASE)
     ap.add_argument("--out-file", default=None)
     ap.add_argument("--timeout", type=float, default=600)

@@ -1,0 +1,157 @@
+{
+ "args": {
+  "parquet_dir": "/tmp/lmcache",
+  "out": "/sgl-workspace/sglang/agent_cache/traces/lmcache_agentic_trace.json",
+  "tokenizer": "Qwen/Qwen3-32B-FP8",
+  "revision": "main",
+  "tool_role_mode": "as_user",
+  "sources": null,
+  "max_sessions": 0,
+  "max_context": 32768,
+  "margin": 512,
+  "min_turns": 5,
+  "seed": null,
+  "workers": 12
+ },
+ "invariants": {
+  "parquet_rows": 24880,
+  "parquet_session_ids": 767,
+  "session_ids_with_several_chains": 1,
+  "chains": 769,
+  "selected_chains": 769,
+  "selected_rows": 24880,
+  "chains_failed": 0,
+  "turns_plus_merged_equals_rows": true,
+  "turn0_pre_gap_zero": true,
+  "turn0_starts_with_system": true,
+  "empty_messages_turns": 0,
+  "rows_merged_forward": 0,
+  "replay_within_context": true
+ },
+ "chains_emitted": 731,
+ "turns_emitted": 17887,
+ "chains_below_min_turns": 38,
+ "midrun_starts_emitted": 102,
+ "turns_without_assistant_after_turn0": 1164,
+ "pre_gap_raw_all_rows_excluding_first": {
+  "n": 24111,
+  "p50": 0.708,
+  "p90": 1.7663,
+  "p95": 3.724,
+  "p99": 11.75999000000044,
+  "mean": 2.0837003027663723,
+  "frac_ge_1s": 0.21334660528389532,
+  "frac_ge_5s": 0.0335531500145162,
+  "frac_ge_30s": 0.006594500435485878
+ },
+ "pre_gap_emitted_after_turn0": {
+  "n": 17156,
+  "p50": 0.70195,
+  "p90": 1.805,
+  "p95": 3.5888,
+  "p99": 10.248235000000001,
+  "mean": 1.4923296689204943,
+  "frac_ge_1s": 0.20208673350431336,
+  "frac_ge_5s": 0.03176731172767545,
+  "frac_ge_30s": 0.004954534856609932
+ },
+ "output_length_emitted": {
+  "mean": 182.011516744004,
+  "p50": 97.0,
+  "p95": 600.0
+ },
+ "prompt_tokens_emitted": {
+  "mean": 18740.10773187231,
+  "p50": 19519.0,
+  "p95": 29002.7
+ },
+ "replay_prompt_tokens_emitted": {
+  "mean": 19665.168390451166,
+  "p50": 20494.0,
+  "p95": 30697.100000000002
+ },
+ "replay_over_recorded_ratio_mean": 1.0466360988770016,
+ "per_source": {
+  "swebench": {
+   "chains": 665,
+   "chains_emitted": 630,
+   "rows": 23356,
+   "chains_truncated_all": 431,
+   "chains_truncated_emitted": 396,
+   "turns_dropped_by_truncation_all": 6902,
+   "midrun_starts_emitted": 101,
+   "chains_failed": 0,
+   "final_prompt_tokens_p50": 33586.0,
+   "final_prompt_tokens_max": 84314,
+   "emitted_prompt_tokens_mean": 19589.078780873584,
+   "emitted_prompt_tokens_p50": 20177.0,
+   "emitted_replay_prompt_tokens_mean": 20570.353327655434,
+   "emitted_output_length_mean": 181.49507239323518,
+   "pre_gap_after_turn0": {
+    "n": 15808,
+    "p50": 0.70025,
+    "p90": 1.2369300000000003,
+    "p95": 2.239895,
+    "p99": 6.795279,
+    "mean": 1.3166801113360325,
+    "frac_ge_1s": 0.16112095141700405,
+    "frac_ge_5s": 0.021002024291497976,
+    "frac_ge_30s": 0.003922064777327935
+   }
+  },
+  "gaia": {
+   "chains": 94,
+   "chains_emitted": 92,
+   "rows": 1377,
+   "chains_truncated_all": 21,
+   "chains_truncated_emitted": 19,
+   "turns_dropped_by_truncation_all": 51,
+   "midrun_starts_emitted": 0,
+   "chains_failed": 0,
+   "final_prompt_tokens_p50": 20994.5,
+   "final_prompt_tokens_max": 55666,
+   "emitted_prompt_tokens_mean": 8700.451099317665,
+   "emitted_prompt_tokens_p50": 7088.0,
+   "emitted_replay_prompt_tokens_mean": 8952.841546626232,
+   "emitted_output_length_mean": 178.1319181197877,
+   "pre_gap_after_turn0": {
+    "n": 1227,
+    "p50": 2.1531,
+    "p90": 6.50872,
+    "p95": 10.466800000000005,
+    "p99": 31.48736,
+    "mean": 3.632167155664222,
+    "frac_ge_1s": 0.7155664221678891,
+    "frac_ge_5s": 0.1621841890790546,
+    "frac_ge_30s": 0.016299918500407497
+   }
+  },
+  "wildclaw": {
+   "chains": 10,
+   "chains_emitted": 9,
+   "rows": 147,
+   "chains_truncated_all": 3,
+   "chains_truncated_emitted": 2,
+   "turns_dropped_by_truncation_all": 17,
+   "midrun_starts_emitted": 1,
+   "chains_failed": 0,
+   "final_prompt_tokens_p50": 15564.5,
+   "final_prompt_tokens_max": 71620,
+   "emitted_prompt_tokens_mean": 13254.884615384615,
+   "emitted_prompt_tokens_p50": 10437.5,
+   "emitted_replay_prompt_tokens_mean": 13896.930769230768,
+   "emitted_output_length_mean": 286.67692307692306,
+   "pre_gap_after_turn0": {
+    "n": 121,
+    "p50": 0.142,
+    "p90": 8.1704,
+    "p95": 10.0357,
+    "p99": 48.11855999999993,
+    "mean": 2.7409876033057854,
+    "frac_ge_1s": 0.34710743801652894,
+    "frac_ge_5s": 0.11570247933884298,
+    "frac_ge_30s": 0.024793388429752067
+   }
+  }
+ }
+}

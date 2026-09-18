@@ -1,0 +1,177 @@
+
+========== [2026-09-17T18:36:55Z] PREFLIGHT 32B (unmeasured): does Qwen/Qwen3-32B-FP8 run on SM80 with triton + fp8_e5m2 KV + HiCache? ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+READY preflight/boot_32b (pid 7249)
+boot facts for preflight/boot_32b:
+'attention_backend': 'triton'
+[2026-09-17 18:37:47] Your GPU does not have native support for FP8 computation but FP8 quantization is being used. Weight-only FP8 compression will be used leveraging the Marlin kernel. This may degr
+[2026-09-17 18:38:01] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 281216, K size: 17.17 GB, V size: 17.17 GB
+[2026-09-17 18:46:22] Allocating kv hierarchical KV host pool: 762944 tokens, 100.00 GB host memory.
+Mem:             167         104           8          93         148          62
+# cold probe, then L1 re-probe (expect device 4032)
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+{"target_tokens": 4096, "seed": 424242, "prompt_tokens": 4096, "ttft_s": 2.1544264330004808, "latency_s": 2.1546598580007412, "cached_tokens": null, "cached_device": null, "cached_host": null, "cached_storage": null, "details_path": null, "ts": 1789670887.6543
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+{"target_tokens": 4096, "seed": 424242, "prompt_tokens": 4096, "ttft_s": 0.10039127799973357, "latency_s": 0.10066118900067522, "cached_tokens": 4032, "cached_device": 4032, "cached_host": 0, "cached_storage": 0, "details_path": "sglext.cached_tokens_details",
+# drain + flush, L3 stats (expect 128 files, 536870912 bytes), then L3 probe (expect storage 4032)
+drain_s 0.6311531066894531
+{'files': 128, 'bytes': 536870912}
+drop_caches
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+{"target_tokens": 4096, "seed": 424242, "prompt_tokens": 4096, "ttft_s": 0.8275605369999539, "latency_s": 0.8279147880002711, "cached_tokens": 4032, "cached_device": 0, "cached_host": 0, "cached_storage": 4032, "details_path": "sglext.cached_tokens_details", "
+# sanity generations
+The capital of France is Paris.
+391
+stopped (gpu procs: 0)
+/dev/nvme0n1    369G  516M  368G   1% /mnt/nvme
+cleaner lines in preflight/boot_32b/server.log: 0
+Mem:             167           5         158           0           4         161
+
+========== [2026-09-17T18:49:19Z] STAGE DONE: preflight_32b ==========
+
+========== [2026-09-17T18:49:44Z] p_measure 70B: pure recompute, no HiCache (also absorbs the 70B's JIT-cold boot) ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+READY p_measure (pid 9192)
+boot facts for p_measure:
+'attention_backend': 'triton'
+[2026-09-17 18:50:08] The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.
+[2026-09-17 18:52:25] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 194816, K size: 14.87 GB, V size: 14.87 GB
+Mem:             167          11         107           0          49         155
+# sanity generations
+The capital of France is Paris.
+391
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/p_measure/metrics_before.txt"}
+stopped (gpu procs: 0)
+/dev/nvme0n1    369G  2.1M  369G   1% /mnt/nvme
+cleaner lines in p_measure/server.log: 0
+Mem:             167           6         111           0          49         160
+
+========== [2026-09-17T19:04:53Z] STAGE DONE: p_measure_70b ==========
+
+========== [2026-09-17T19:04:53Z] Exp 0 70b (casperhansen/llama-3.3-70b-instruct-awq) ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+READY exp0_70b (pid 10913)
+boot facts for exp0_70b:
+'attention_backend': 'triton'
+[2026-09-17 19:05:13] The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.
+[2026-09-17 19:06:09] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 194816, K size: 14.87 GB, V size: 14.87 GB
+[2026-09-17 19:09:08] Allocating kv hierarchical KV host pool: 610368 tokens, 100.00 GB host memory.
+Mem:             167         109           9          93         142          57
+telemetry started -> /sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp0_70b
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp0_70b/metrics_before.txt"}
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp0_70b/metrics_after.txt"}
+telemetry stopped for /sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp0_70b
+stopped (gpu procs: 0)
+/dev/nvme0n1    369G   46G  323G  13% /mnt/nvme
+cleaner lines in exp0_70b/server.log: 0
+Mem:             167           7         160           0           1         159
+
+========== [2026-09-17T19:15:38Z] STAGE DONE: exp0_70b ==========
+
+========== [2026-09-17T19:15:39Z] Exp 1 main pass 70b (recompute, L1, L3) ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+READY exp1_70b (pid 11884)
+boot facts for exp1_70b:
+'attention_backend': 'triton'
+[2026-09-17 19:16:08] The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.
+[2026-09-17 19:18:09] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 194816, K size: 14.87 GB, V size: 14.87 GB
+[2026-09-17 19:21:08] Allocating kv hierarchical KV host pool: 610368 tokens, 100.00 GB host memory.
+Mem:             167         107          21          93         133          59
+telemetry started -> /sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_70b
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_70b/metrics_before.txt"}
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_70b/metrics_after.txt"}
+telemetry stopped for /sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_70b
+stopped (gpu procs: 0)
+/dev/nvme0n1    369G   30G  339G   9% /mnt/nvme
+cleaner lines in exp1_70b/server.log: 0
+Mem:             167           7         160           0           1         160
+
+========== [2026-09-17T19:30:28Z] STAGE DONE: exp1_70b ==========
+
+========== [2026-09-17T19:30:28Z] Exp 1 dedicated L2 pass 70b (fresh server) ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+READY exp1_70b_l2 (pid 13099)
+boot facts for exp1_70b_l2:
+'attention_backend': 'triton'
+[2026-09-17 19:30:58] The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.
+[2026-09-17 19:33:10] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 194816, K size: 14.87 GB, V size: 14.87 GB
+[2026-09-17 19:36:09] Allocating kv hierarchical KV host pool: 610368 tokens, 100.00 GB host memory.
+Mem:             167         107          21          93         132          59
+telemetry started -> /sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_70b_l2
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_70b_l2/metrics_before.txt"}
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_70b_l2/metrics_after.txt"}
+telemetry stopped for /sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_70b_l2
+stopped (gpu procs: 0)
+/dev/nvme0n1    369G   65G  304G  18% /mnt/nvme
+cleaner lines in exp1_70b_l2/server.log: 0
+Mem:             167           7         122           0          39         159
+
+========== [2026-09-17T19:44:28Z] STAGE DONE: exp1_70b_l2 ==========
+
+========== [2026-09-17T19:44:28Z] Exp 0 32b (Qwen/Qwen3-32B-FP8) ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+READY exp0_32b (pid 14215)
+boot facts for exp0_32b:
+'attention_backend': 'triton'
+[2026-09-17 19:46:32] Your GPU does not have native support for FP8 computation but FP8 quantization is being used. Weight-only FP8 compression will be used leveraging the Marlin kernel. This may degr
+[2026-09-17 19:46:35] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 281216, K size: 17.17 GB, V size: 17.17 GB
+[2026-09-17 19:48:27] Allocating kv hierarchical KV host pool: 762944 tokens, 100.00 GB host memory.
+Mem:             167         105          12          93         143          62
+telemetry started -> /sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp0_32b
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp0_32b/metrics_before.txt"}
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp0_32b/metrics_after.txt"}
+telemetry stopped for /sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp0_32b
+stopped (gpu procs: 0)
+/dev/nvme0n1    369G   53G  316G  15% /mnt/nvme
+cleaner lines in exp0_32b/server.log: 0
+Mem:             167           5         161           0           1         161
+
+========== [2026-09-17T19:54:19Z] STAGE DONE: exp0_32b ==========
+
+========== [2026-09-17T19:54:19Z] Exp 1 main pass 32b (recompute, L1, L3) ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+READY exp1_32b (pid 15290)
+boot facts for exp1_32b:
+'attention_backend': 'triton'
+[2026-09-17 19:56:39] Your GPU does not have native support for FP8 computation but FP8 quantization is being used. Weight-only FP8 compression will be used leveraging the Marlin kernel. This may degr
+[2026-09-17 19:56:42] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 281216, K size: 17.17 GB, V size: 17.17 GB
+[2026-09-17 19:58:35] Allocating kv hierarchical KV host pool: 762944 tokens, 100.00 GB host memory.
+Mem:             167         105          28          93         127          62
+telemetry started -> /sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_32b
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_32b/metrics_before.txt"}
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_32b/metrics_after.txt"}
+telemetry stopped for /sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_32b
+stopped (gpu procs: 0)
+/dev/nvme0n1    369G   24G  345G   7% /mnt/nvme
+cleaner lines in exp1_32b/server.log: 0
+Mem:             167           5         161           0           1         161
+
+========== [2026-09-17T20:06:25Z] STAGE DONE: exp1_32b ==========
+
+========== [2026-09-17T20:06:25Z] Exp 1 dedicated L2 pass 32b (fresh server) ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+READY exp1_32b_l2 (pid 16339)
+boot facts for exp1_32b_l2:
+'attention_backend': 'triton'
+[2026-09-17 20:08:49] Your GPU does not have native support for FP8 computation but FP8 quantization is being used. Weight-only FP8 compression will be used leveraging the Marlin kernel. This may degr
+[2026-09-17 20:08:53] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 281216, K size: 17.17 GB, V size: 17.17 GB
+[2026-09-17 20:10:46] Allocating kv hierarchical KV host pool: 762944 tokens, 100.00 GB host memory.
+Mem:             167         105          28          93         127          61
+telemetry started -> /sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_32b_l2
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_32b_l2/metrics_before.txt"}
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_32b_l2/metrics_after.txt"}
+telemetry stopped for /sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/exp1_32b_l2
+stopped (gpu procs: 0)
+/dev/nvme0n1    369G   64G  305G  18% /mnt/nvme
+cleaner lines in exp1_32b_l2/server.log: 0
+Mem:             167           6         127           0          34         160
+
+========== [2026-09-17T20:17:25Z] STAGE DONE: exp1_32b_l2 ==========

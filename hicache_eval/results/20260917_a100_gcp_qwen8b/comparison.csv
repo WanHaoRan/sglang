@@ -1,0 +1,70 @@
+section,metric,unit,old,new,new_over_old
+Setup,device pool (L1),tokens,374784,376000,1.0032445355191257
+Setup,host pool (L2),tokens,678208,678208,1.0
+Setup,attention backend,,fa3,flashinfer,
+"Exp 0: tier attribution, one 4096-token prompt, n=1",TTFT 1 cold recompute,s,0.3905538600010914,0.4264334940016852,1.0918685940026134
+"Exp 0: tier attribution, one 4096-token prompt, n=1",TTFT 3 L1 hit,s,0.059042665001470596,0.06035590299870819,1.0222421870219591
+"Exp 0: tier attribution, one 4096-token prompt, n=1",TTFT 4 L2 hit,s,0.06710529199335724,0.08344070300154272,1.2434295496367487
+"Exp 0: tier attribution, one 4096-token prompt, n=1","TTFT 5 L3 hit, page cache dropped",s,0.27055317600024864,1.0172227610000846,3.759788652413194
+"Exp 0: tier attribution, one 4096-token prompt, n=1","TTFT 6 L3 hit, page cache warm",s,0.25871892199938884,0.8567182440001488,3.3113861072835356
+"Backend A/B, nixl backend, 4096-token probe",L3 hit TTFT,s,0.19500249700286076,0.8448268610009109,4.332389964157827
+"Backend A/B, nixl backend, 4096-token probe",L3 read rate (hit bytes / TTFT),GiB/s,2.8395,0.6554,0.23081528438105298
+"Backend A/B, nixl backend, 4096-token probe",L3 write rate (backup bytes / drain),GiB/s,0.0965,0.0992,1.027979274611399
+"Backend A/B, nixl backend, 4096-token probe",backup drain,s,5.83,5.67,0.9725557461406518
+"Backend A/B, nixl backend, 4096-token probe",cold recompute TTFT,s,0.4883045239985222,0.40214195100088546,0.8235474611373916
+"Backend A/B, file backend, 4096-token probe",L3 hit TTFT,s,6.692856458001188,1.6099049789991113,0.24054078988568464
+"Backend A/B, file backend, 4096-token probe",L3 read rate (hit bytes / TTFT),GiB/s,0.0827,0.3439,4.158403869407497
+"Backend A/B, file backend, 4096-token probe",L3 write rate (backup bytes / drain),GiB/s,0.0517,0.099,1.9148936170212765
+"Backend A/B, file backend, 4096-token probe",backup drain,s,10.87,5.68,0.5225390984360626
+"Backend A/B, file backend, 4096-token probe",cold recompute TTFT,s,0.3258673960008309,1.2212553469998966,3.7477064658434944
+"Backend A/B, nixl over file",L3 read rate ratio nixl/file,x,34.334945586457074,1.9057865658621693,0.0555057400939607
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",P = marginal prefill rate,tok/s,15010.819887535956,8857.791723858569,0.5900937983549802
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",recompute bar b*P,GiB/s,2.0614224088718203,1.2164325792652453,0.5900937983549801
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",recompute fit intercept,s,-0.03294447469981881,-0.12496463708473961,3.793189547667212
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L1 delivered rate (fit),GiB/s,19.82366502626667,15.459144184617282,0.7798327990375983
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L1 fit intercept,s,0.03614064525793786,0.03645924478269848,1.0088155461112207
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L2 delivered rate (fit),GiB/s,12.874290776213911,7.383852316673686,0.573534685911851
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L2 fit intercept,s,0.03084608060702066,0.016948250499345632,0.5494458344729917
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L3 delivered rate (fit),GiB/s,3.2772102176175846,0.62462170199851,0.19059555552484142
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L3 fit intercept,s,0.19159960649264163,-0.0060257232017822005,-0.0314495593810816
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3","host to device, differential (L2 - L1 slopes)",GiB/s,36.724979633451426,14.13546896732131,0.3849006618494033
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3","disk read, differential (L3 - L2 slopes)",GiB/s,4.396311671948603,0.6823431044552398,0.1552080824498962
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L2 rate / recompute bar,x,6.245343371065702,6.070087600854714,0.9719381690007731
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L2 beats recompute above L (fit),tokens,1140.1006531333303,1504.9663755364588,1.3200293951243434
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L3 rate / recompute bar,x,1.5897810189281603,0.5134864953845585,0.32299196510142897
+"Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L3 beats recompute above L (fit),tokens,9085.57759609275,,
+"Exp 1: median TTFT, recompute",L=512,s,0.043115,0.064217,1.489435231357996
+"Exp 1: median TTFT, recompute",L=1024,s,0.089666,0.090954,1.0143644190663128
+"Exp 1: median TTFT, recompute",L=2048,s,0.136649,0.161121,1.1790865648486268
+"Exp 1: median TTFT, recompute",L=4096,s,0.248147,0.306872,1.2366540800412658
+"Exp 1: median TTFT, recompute",L=8192,s,0.42795,0.637008,1.48851033999299
+"Exp 1: median TTFT, recompute",L=16384,s,0.919926,1.463993,1.5914247450338397
+"Exp 1: median TTFT, recompute",L=32512,s,2.21869,3.713063,1.6735384393493458
+"Exp 1: median TTFT, L1",L=512,s,0.029472,0.038442,1.3043566775244297
+"Exp 1: median TTFT, L1",L=1024,s,0.034533,0.041825,1.2111603393855153
+"Exp 1: median TTFT, L1",L=2048,s,0.035323,0.051627,1.461568949409733
+"Exp 1: median TTFT, L1",L=4096,s,0.07951,0.074886,0.9418437932335555
+"Exp 1: median TTFT, L1",L=8192,s,0.112637,0.117342,1.0417713539955786
+"Exp 1: median TTFT, L1",L=16384,s,0.159048,0.184268,1.1585684824707005
+"Exp 1: median TTFT, L1",L=32512,s,0.251144,0.322182,1.2828576434236934
+"Exp 1: median TTFT, L2",L=512,s,0.034127,0.04039,1.183520379757963
+"Exp 1: median TTFT, L2",L=1024,s,0.037801,0.042407,1.1218486283431655
+"Exp 1: median TTFT, L2",L=2048,s,0.046234,0.047697,1.0316433793312283
+"Exp 1: median TTFT, L2",L=4096,s,0.076093,0.087029,1.143718870329728
+"Exp 1: median TTFT, L2",L=8192,s,0.12769,0.16256,1.2730832484924428
+"Exp 1: median TTFT, L2",L=16384,s,0.212879,0.316315,1.485891046087214
+"Exp 1: median TTFT, L2",L=32512,s,0.371974,0.626832,1.685150037368203
+"Exp 1: median TTFT, L3",L=512,s,0.199228,0.113174,0.5680627221073343
+"Exp 1: median TTFT, L3",L=1024,s,0.204067,0.242437,1.1880264814987236
+"Exp 1: median TTFT, L3",L=2048,s,0.15866,0.439603,2.7707235598134377
+"Exp 1: median TTFT, L3",L=4096,s,0.442062,0.878513,1.9873072103008174
+"Exp 1: median TTFT, L3",L=8192,s,0.520493,1.791856,3.442613061078631
+"Exp 1: median TTFT, L3",L=16384,s,1.072168,3.579266,3.338344363942964
+"Exp 1: median TTFT, L3",L=32512,s,1.458575,7.15284,4.903991909912072
+Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=512,x,4.620851211875217,1.762368220253204,0.3813947126719984
+Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=1024,x,2.2758570695692906,2.6654902478175786,1.1712028331911137
+Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=2048,x,1.1610769196993758,2.7284028773406326,2.349889857467037
+Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=4096,x,1.781452123136689,2.862799473396074,1.607003318368952
+Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=8192,x,1.2162472251431242,2.8129254263682713,2.3127908275698266
+Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=16384,x,1.1654937462361104,2.4448655150673533,2.0977079653690933
+Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=32512,x,0.6574036931702941,1.9263987710415902,2.930313277906358

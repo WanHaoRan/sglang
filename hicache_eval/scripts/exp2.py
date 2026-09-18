@@ -28,9 +28,13 @@ SCRIPTS = "/sgl-workspace/sglang/hicache_eval/scripts"
 # Fresh per invocation: guarantees the recompute control has never been sent to
 # this store by any earlier stage, so it cannot silently become an L3 hit.
 RC_SALT = random.randrange(10 ** 6, 10 ** 7)
+NVME_DEV = os.environ.get("NVME_DEV", "vda")
+# HANDOFF §3 / PENDING 7: writeload defaulted to --seed 7 with idx restarting at 0, so every
+# rate point replayed earlier points' prompts and the "write" load turned into an L3 read load.
+LEGACY_WRITELOAD = os.environ.get("EXP2_LEGACY_WRITELOAD", "") == "1"
 
 
-def diskstats(dev="vda"):
+def diskstats(dev=NVME_DEV):
     """Sectors read/written for one device, straight from /proc/diskstats.
 
     iostat_sample() measures the interval *before* the probe, so it captures the
@@ -47,9 +51,9 @@ def diskstats(dev="vda"):
 def iostat_sample(seconds=5):
     """Mean r/w MB/s, awaits and %util for vda over one interval."""
     try:
-        o = subprocess.run(["iostat", "-x", "-d", str(seconds), "2", "vda"],
+        o = subprocess.run(["iostat", "-x", "-d", str(seconds), "2", NVME_DEV],
                            capture_output=True, text=True, timeout=seconds * 3).stdout
-        rows = [l.split() for l in o.splitlines() if l.startswith("vda")]
+        rows = [l.split() for l in o.splitlines() if l.startswith(NVME_DEV)]
         if len(rows) < 2:
             return {}
         r = rows[-1]
@@ -63,8 +67,9 @@ def iostat_sample(seconds=5):
 class WriteLoad:
     """writeload.py in a subprocess for the life of one sweep point."""
 
-    def __init__(self, rate, duration, length=4096):
+    def __init__(self, rate, duration, length=4096, point=0):
         self.rate, self.duration, self.length = rate, duration, length
+        self.point = point
         self.proc = None
         self.summary = {}
 
@@ -74,7 +79,11 @@ class WriteLoad:
         self.proc = subprocess.Popen(
             ["python3", os.path.join(SCRIPTS, "writeload.py"),
              "--len", str(self.length), "--out", "1", "--rate", str(self.rate),
-             "--duration", str(self.duration), "--max-inflight", "32"],
+             "--duration", str(self.duration), "--max-inflight", "32"]
+            + ([] if LEGACY_WRITELOAD else
+               # fresh word pool per process and per point, plus a disjoint prefix-counter range
+               ["--seed", str(RC_SALT + 1 + self.point),
+                "--idx-offset", str(10000 * (self.point + 1))]),
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         return self
 
@@ -105,7 +114,7 @@ def prepopulate(bodies, seeds):
 
 def run_point(rate, bodies, seeds, reps, control, duration, offset, rc_bodies=None):
     rows = []
-    with WriteLoad(rate, duration) as wl:
+    with WriteLoad(rate, duration, point=offset) as wl:
         time.sleep(30 if rate > 0 else 2)  # warm-up excluded
         b0 = hcommon.parse_metrics(hcommon.scrape())
         t_blk = time.time()

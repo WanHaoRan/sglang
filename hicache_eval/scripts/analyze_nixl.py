@@ -54,7 +54,8 @@ def breakeven(rows, rec):
 
 
 nx = load("exp1_nixl")
-fl = load("exp1")
+# The file-backend run only exists in campaign 1; a nixl-only campaign skips the comparison figure.
+fl = load("exp1") if os.path.exists(os.path.join(R, "exp1", "ttft_by_tier.csv")) else None
 
 rows = [r for r in (fit(nx, t) for t in ["recompute", "L1", "L2", "L3"]) if r]
 pd.DataFrame(rows).to_csv(os.path.join(OUT, "tier_fits.csv"), index=False)
@@ -89,6 +90,10 @@ for ax, logy in zip(axes, (False, True)):
 fig.suptitle("HiCache tier cost curves — nixl storage backend")
 fig.tight_layout(); fig.savefig(os.path.join(OUT, "ttft_vs_len.png"), dpi=130)
 print("\nwrote exp1_nixl/ttft_vs_len.png")
+
+if fl is None:
+    print("\nno file-backend exp1/ under RESULTS: skipping the file-vs-nixl figure and csv")
+    raise SystemExit(0)
 
 # --- figure 2: the backend comparison ------------------------------------
 fig, ax = plt.subplots(figsize=(9, 6))

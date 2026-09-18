@@ -21,6 +21,8 @@ LABEL = {"qwen8b": "Qwen3-8B (bf16 KV)",
 KV = {"qwen8b": 147456, "qwen32b": 131072, "llama70b": 163840}
 # Idle recompute at L=16384 from the Exp 1 fits, for cross-validation only.
 EXP1_RECOMPUTE = {"qwen8b": 0.9199, "qwen32b": 4.2098, "llama70b": 14.0575}
+if os.environ.get("EXP1_RECOMPUTE_QWEN8B"):      # measured on the box under test (Exp 1 median at L=16384)
+    EXP1_RECOMPUTE["qwen8b"] = float(os.environ["EXP1_RECOMPUTE_QWEN8B"])
 
 
 def read(pattern):

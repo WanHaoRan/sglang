@@ -16,8 +16,15 @@ discovering that measurements were wrong, not into taking them.
 | `results/20260908_llama70b_awq_fp8kv/` | campaign 2: Exp 0/1 on Llama-70B-AWQ + Qwen3-32B-FP8, fp8 KV |
 | `results/20260908_nixl_exp234/` | campaign 3: Exp 2/3/4 on nixl, all three models. `FINDINGS_LIVE.md` is the running log (24 findings), `PENDING.md` is the todo |
 | `../bench-local/CODEMAP.md` | 78 verified code anchors for the radix tree + HiCache movement paths |
+| `results/20260917_a100_gcp_qwen8b/` | campaign 4: Qwen3-8B rerun on a GCP A100 box with L3 on a local NVMe. Backend A/B, Exp 0, Exp 1 (Exp 2-4 not run). `REPORT.md`, `COMPARISON.md` (old vs new, same statistics both sides), `DEVIATIONS.md` |
+| `results/20260917_a100_gcp_32b70b_fp8kv/` | campaign 5: Exp 0/1 for the 70B and the 32B on the same A100 box. Its `REPORT.md` has the three-model table for both boxes |
+| `scripts/run_a100_rerun.sh`, `run_a100_rerun_c2.sh` | drivers for campaigns 4 and 5; every box-specific setting lives in them, the shared scripts keep their old behaviour when the env vars are unset |
+| `scripts/compare_campaigns.py` | side-by-side old vs new tables (`CAMPAIGN=8b` or `c2`); run on an old campaign alone it must reproduce that campaign's published numbers |
+| `scripts/plot_tier_ttft.py` | the three-model figure: TTFT by tier vs prompt length, A100 row over H100 row (`results/20260917_a100_gcp_32b70b_fp8kv/ttft_by_tier_3models.png`, plus a dark variant) |
 
-`.current_results` holds the active results dir; `scripts/env.sh` reads it.
+`.current_results` holds the active results dir; `scripts/env.sh` reads it (a pre-set `RESULTS` wins).
+`.frozen_results` lists finished campaigns; `env.sh` refuses to run a driver against one, so a rerun
+cannot append to or overwrite old evidence. Start a new campaign by pointing `.current_results` at a new dir.
 
 ---
 
@@ -111,7 +118,10 @@ whole experiment once.
 itself (`wait_until_flushable`), never the counter.
 
 **`pkill -f <pattern>` matches your own shell.** Cost two self-kills. Collect
-explicit PIDs first.
+explicit PIDs first. The same holds for waiting: `while pgrep -f name; do sleep 5; done`
+passed through `bash -lc '...'` matches its own command line and never exits (cost an idle
+server and a 20-minute telemetry tail in campaign 4). Wait on a marker file or a log line, or
+use the bracket form `pgrep -f '[n]ame'`.
 
 **`py-spy record -s` hangs forever** on the scheduler (~96 GB RSS; `-s` walks
 children). Killed after 4.5 h. Use `py-spy dump --pid <sglang::scheduler>

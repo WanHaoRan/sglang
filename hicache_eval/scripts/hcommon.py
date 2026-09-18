@@ -129,12 +129,17 @@ def metrics_delta(before_text, after_text):
 
 
 # ------------------------------------------------------------ cache control --
-def flush_cache(timeout_s=120.0):
+def flush_cache(timeout_s=None):
     """Flush L1+L2. Leaves the L3 files on disk.
+
+    Default wait is 120 s (HICACHE_FLUSH_TIMEOUT overrides): the flush is gated on the
+    L3 backup queue draining, which takes minutes on a disk slower than the old box's.
 
     The endpoint 400s while requests are running or waiting, so pass a timeout
     and let it wait for quiescence rather than racing it.
     """
+    if timeout_s is None:
+        timeout_s = float(os.environ.get("HICACHE_FLUSH_TIMEOUT", 120.0))
     req = urllib.request.Request(
         f"{BASE}/flush_cache?timeout={timeout_s}", method="POST"
     )
