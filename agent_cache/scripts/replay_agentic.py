@@ -97,9 +97,10 @@ class Replayer:
             g = min(g, self.args.gap_cap)
         return max(0.0, g)
 
-    async def chat_turn(self, session: aiohttp.ClientSession, messages: list, max_tokens: int) -> dict:
+    async def chat_turn(self, session: aiohttp.ClientSession, messages: list, max_tokens: int, rid: str = "") -> dict:
         """One streamed chat completion; returns text, timings, usage and sglext fields."""
         body = {
+            "rid": rid or None,   # shows up in the server's --log-requests and HICACHE_EVT lines
             "model": self.args.model,
             "messages": messages,
             "stream": True,
@@ -192,7 +193,8 @@ class Replayer:
                        "output_length": turn.get("output_length"),
                        "replay_prompt_tokens": turn.get("replay_prompt_tokens")}
                 try:
-                    r = await self.chat_turn(session, history, int(turn.get("output_length") or 1))
+                    r = await self.chat_turn(session, history, int(turn.get("output_length") or 1),
+                                             rid=f"{self.args.tag or 'replay'}-c{conv}-t{turn_idx}")
                 except Exception as e:  # noqa: BLE001
                     rec["error"] = str(e)[:300]
                     self.stats["errors"] += 1

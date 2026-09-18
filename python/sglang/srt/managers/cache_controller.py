@@ -822,6 +822,8 @@ class HiCacheController:
                 num_bytes=self._transfer_num_bytes(op),
             )
         )
+        logger.info("HICACHE_EVT d2h_submit nodes=%d tokens=%d bytes=%d",
+                    len(op.node_ids), len(op.device_indices), self._transfer_num_bytes(op))  # EVAL-PATCH
 
     def _transfer_num_bytes(self, op: CacheOperation) -> int:
         return len(op.device_indices) * self.mem_pool_host.size_per_token
@@ -948,6 +950,8 @@ class HiCacheController:
                 num_bytes=self._transfer_num_bytes(op),
             )
         )
+        logger.info("HICACHE_EVT h2d_submit nodes=%d tokens=%d bytes=%d",
+                    len(op.node_ids), len(op.device_indices), self._transfer_num_bytes(op))  # EVAL-PATCH
         return producer_id
 
     def evict_device(self, device_indices: torch.Tensor) -> int:
@@ -1132,7 +1136,11 @@ class HiCacheController:
                 operation = self.prefetch_buffer.get(block=True, timeout=1)
                 if operation is None:
                     continue
+                _t0 = time.perf_counter()  # EVAL-PATCH
                 self._page_transfer(operation)
+                logger.info("HICACHE_EVT s2h_io rid=%s pages=%d tokens=%d ms=%.0f",
+                            operation.request_id, len(operation.hash_value), operation.completed_tokens,
+                            (time.perf_counter() - _t0) * 1000)  # EVAL-PATCH
 
                 self.prefetch_sync_queue.put(
                     PrefetchAck(
@@ -1218,6 +1226,8 @@ class HiCacheController:
                     : (storage_hit_count // self.page_size)
                 ]
                 operation.storage_hit_count = storage_hit_count
+                logger.info("HICACHE_EVT s2h_query rid=%s tokens_req=%d storage_hit=%d",
+                            operation.request_id, len(operation.token_ids), storage_hit_count)  # EVAL-PATCH
                 self.prefetch_hit_queue.put(operation)
 
             except Empty:

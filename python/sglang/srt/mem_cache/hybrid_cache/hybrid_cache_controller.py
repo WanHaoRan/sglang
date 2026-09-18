@@ -748,7 +748,11 @@ class HybridCacheController(BaseHiCacheController):
                 operation = self.backup_queue.get(block=True, timeout=1)
                 if operation is None:
                     continue
+                _t0 = time.perf_counter()  # EVAL-PATCH
                 self._page_backup(operation)
+                logger.info("HICACHE_EVT h2s_io op=%d pages=%d tokens=%d ms=%.0f",
+                            operation.id, len(operation.hash_value or []), operation.completed_tokens,
+                            (time.perf_counter() - _t0) * 1000)  # EVAL-PATCH
                 self.ack_backup_queue.put(operation)
             except Empty:
                 continue

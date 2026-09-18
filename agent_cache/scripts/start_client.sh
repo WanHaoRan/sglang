@@ -5,29 +5,34 @@
 #   container: bash /sgl-workspace/sglang/agent_cache/scripts/start_client.sh
 #
 # Knobs (environment variables, defaults = the 4-conversation observation run):
-#   NCONV=4  TURNS=10  C=4  GAP=1.0  K=0  THINKING=off  CHECK_IDS=1  ARRIVAL=0  TAG=observe_c4  OFFSET=0  SEED=0
+#   NCONV=4  TURNS=10  C=4  GAP=1.0  GAP_CAP=0  K=0  THINKING=off  CHECK_IDS=1  ARRIVAL=0  TAG=observe_c4  OFFSET=0  SEED=0
+#   GAP_CAP>0 caps every (scaled) sleep at that many seconds (the trace has 300 s gaps that GAP=10 turns into 50 min).
 #   THINKING must match the server's template (nothink -> off, think -> on). CHECK_IDS=1 returns ~20K ids per turn: fine for a
 #   short run, set 0 for a measured cell. ARRIVAL>0 = open loop (conversations/s), C becomes the cap.
-# Output: $RUNDIR/client_<TAG>/client.jsonl (one line per turn) and client.log (RUNDIR = agent_cache/results/<stamp>).
+# Output: <server run dir>/client_<UTC HHMMSS>_<TAG>/client.jsonl (one line per turn) + client.log, where the server run dir is the one
+# named by agent_cache/results/.current_run (written by start_server.sh), so every client run sits under the boot it measured.
 set -euo pipefail
 
 AC=/sgl-workspace/sglang/agent_cache
 PORT=30000
 NCONV=${NCONV:-4}; TURNS=${TURNS:-10}; C=${C:-4}; GAP=${GAP:-1.0}; K=${K:-0}
-THINKING=${THINKING:-off}; CHECK_IDS=${CHECK_IDS:-1}; ARRIVAL=${ARRIVAL:-0}
+THINKING=${THINKING:-off}; CHECK_IDS=${CHECK_IDS:-1}; ARRIVAL=${ARRIVAL:-0}; GAP_CAP=${GAP_CAP:-0}
 TAG=${TAG:-observe_c${C}}; OFFSET=${OFFSET:-0}; SEED=${SEED:-0}
 
 [ -d "$AC" ] || { echo "STOP: $AC not found; run inside the container (docker exec -it sglang_hicache bash $0)"; exit 1; }
-[ -s "$AC/.current_results" ] || { echo "STOP: $AC/.current_results missing (RUNBOOK 2.4 block 6)"; exit 1; }
-RUNDIR="$AC/results/$(cat "$AC/.current_results")"
-OUT="$RUNDIR/client_$TAG"; mkdir -p "$OUT"
+RESULTS="$AC/results"
+[ -s "$RESULTS/.current_run" ] || { echo "STOP: $RESULTS/.current_run missing: no server booted by start_server.sh yet"; exit 1; }
+RUN="$RESULTS/$(cat "$RESULTS/.current_run")"
+[ -f "$RUN/server.pid" ] && kill -0 "$(cat "$RUN/server.pid")" 2>/dev/null || { echo "STOP: the server of $RUN is not running (start_server.sh first)"; exit 1; }
+OUT="$RUN/client_$(date -u +%H%M%S)_$TAG"; mkdir -p "$OUT"
 curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$PORT/health" || { echo "STOP: no server on port $PORT (start_server.sh first)"; exit 1; }
 
 EXTRA=()
 [ "$CHECK_IDS" = 1 ] && EXTRA+=(--check-ids)
 [ "$ARRIVAL" != 0 ] && EXTRA+=(--arrival-rate "$ARRIVAL")
+[ "$GAP_CAP" != 0 ] && EXTRA+=(--gap-cap "$GAP_CAP")
 
-echo "client: $NCONV conversations x <= $TURNS turns, concurrency $C, gap x$GAP, controls every ${K:-0}, thinking $THINKING -> $OUT"
+echo "client: $NCONV conversations x <= $TURNS turns, concurrency $C, gap x$GAP cap ${GAP_CAP}s, controls every ${K:-0}, thinking $THINKING -> $OUT"
 cd "$AC/scripts"
 python3 replay_agentic.py \
   --url "http://127.0.0.1:$PORT" --model Qwen/Qwen3-32B-FP8 \

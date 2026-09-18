@@ -3271,12 +3271,13 @@ class UvicornAccessLogFilter(logging.Filter):
 def set_uvicorn_logging_configs(server_args=None):
     from uvicorn.config import LOGGING_CONFIG
 
+    maybe_ms = ".%(msecs)03d" if envs.SGLANG_LOG_MS.get() else ""  # EVAL-PATCH: ms on the access log too
     LOGGING_CONFIG["formatters"]["default"]["fmt"] = (
-        "[%(asctime)s] %(levelprefix)s %(message)s"
+        f"[%(asctime)s{maybe_ms}] %(levelprefix)s %(message)s"
     )
     LOGGING_CONFIG["formatters"]["default"]["datefmt"] = "%Y-%m-%d %H:%M:%S"
     LOGGING_CONFIG["formatters"]["access"]["fmt"] = (
-        '[%(asctime)s] %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s'
+        f'[%(asctime)s{maybe_ms}] %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s'
     )
     LOGGING_CONFIG["formatters"]["access"]["datefmt"] = "%Y-%m-%d %H:%M:%S"
 

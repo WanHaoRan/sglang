@@ -2220,6 +2220,54 @@ pool bins or repeat the cell with a new salt and a cold L3; never lower K on a t
 line the restore has to beat under the same queue. With the 32B each control costs a 25K recompute plus 3.05 GiB of write-through, so K trades
 statistical power against cell time and L3 disk (§5.3, §7.3): a CI that does not exclude 0 over >= 30 pairs is a dead heat, not a small win (§9.3).
 
+### 6.6 HiCache event log: millisecond timestamps and tier-transfer events (eval patch 0002)
+
+**Status:** patch written, applied to the working tree and verified on a booted `hbm_host` P0 server 2026-09-18 (64 events over 4 conversations x 4 turns); L3 events (`s2h_*`, `h2s_*`) and evictions not yet observed (need a three-tier boot under pressure)
+**Goal:** a per-event timeline of the tiers in the server log (when and how much KV is offloaded device->host, backed up host->L3, prefetched L3->host, loaded host->device, evicted), with millisecond timestamps, so a cell's client turns can be joined to what the cache did between them; the stock log has none of this (the controller logs nothing at INFO/DEBUG, the cache only prefetch completion).
+**Runs on:** host for apply/revert (`/home/wanhr/sglang`); the server reads the patched modules at boot (`container: sglang_hicache`, same bind mount)
+**Touches:** working tree under `python/` while applied (`managers/cache_controller.py`, `mem_cache/unified_radix_cache.py`, `mem_cache/hybrid_cache/hybrid_cache_controller.py`: 28 added lines, every one tagged `# EVAL-PATCH`); archive `agent_cache/patches/0002-hicache-event-log.patch`; **must be reverted before any commit** (§11 revert block; HANDOFF §7)
+**Takes:** apply/revert < 1 s; the server must be (re)booted to load it (§5.2 times); GPU idle for the apply itself
+
+Millisecond timestamps need no patch: `SGLANG_LOG_MS=1` in the server environment turns `[%(asctime)s]` into `[... HH:MM:SS.mmm]` (`utils/common.py:2399-2400`, env `environ.py:339`); `scripts/start_server.sh` sets it on every arm. The events are `logger.info("HICACHE_EVT <event> k=v ...")` lines, one per transfer or eviction, greppable with `HICACHE_EVT`:
+
+| event | emitted where | meaning and fields |
+|---|---|---|
+| `d2h_submit nodes tokens bytes` | `cache_controller.py` `start_writing` | device->host write-through copy submitted (one line per merged write batch; `nodes` = radix nodes it covers) |
+| `d2h_done nodes tokens bytes ms` | `unified_radix_cache.py` `writing_check` | that copy acknowledged; `ms` from the CUDA events (`timing_enabled`, needs `--enable-metrics`; -1 otherwise) |
+| `h2d_submit nodes tokens bytes` / `h2d_done ... ms` | `start_loading` / `loading_check` | host->device load-back (a returning turn whose prefix lives in L2) |
+| `load_back_init rid tokens host_hit node` | `unified_radix_cache.py` `init_load_back` | the scheduler decided to load a request's host-resident prefix; `rid` is the client's `<tag>-c<conv>-t<turn>` |
+| `prefetch_start rid tokens` | `prefetch_from_storage` | L3 prefetch requested for a request (storage arms only) |
+| `s2h_query rid tokens_req storage_hit` | `prefetch_thread_func` | the storage lookup result: how many of the requested tokens exist in L3 |
+| `s2h_io rid pages tokens ms` | `prefetch_io_aux_func` | the L3->host read itself, wall time |
+| `h2s_submit op node tokens` / `h2s_io op pages tokens ms` / `h2s_done op tokens` | `write_backup_storage` / `backup_thread_func` (hybrid) / `_drain_backup` | host->L3 backup: queued, written (wall time), acknowledged (`tokens` at done = completed tokens) |
+| `evict_device tokens requested ms` | `_evict` | device eviction for an allocation: tokens freed vs asked |
+| `evict_host tokens requested` | `evict_host` | host-pool eviction |
+
+The stock `HiCache prefetch success|dropped req= completed= matched= loaded=` INFO line (`unified_radix_cache.py:2028`) completes the prefetch story and stays as is.
+
+```bash
+# host: apply the patch for the session (refuses if python/ is not clean), or revert it (the -R form); the server must be rebooted afterwards
+cd /home/wanhr/sglang \
+  && { [ -z "$(git status --short -- python/)" ] || { echo "STOP: python/ is not clean; revert first: git apply -R agent_cache/patches/0002-hicache-event-log.patch"; false; }; } \
+  && git apply agent_cache/patches/0002-hicache-event-log.patch \
+  && echo "applied: $(git diff -- python/ | grep -c 'EVAL-PATCH') EVAL-PATCH lines in $(git diff --stat -- python/ | tail -1)"
+# revert:  cd /home/wanhr/sglang && git apply -R agent_cache/patches/0002-hicache-event-log.patch && git status --short -- python/   (prints nothing)
+```
+-> prints `applied: 15 EVAL-PATCH lines in 3 files changed, 28 insertions(+), 5 deletions(-)` (verified 2026-09-18). `error: patch does not apply` means the checkout moved past `6ec32e6b7`: re-anchor the 11 hunks by hand.
+
+```bash
+# host: after a cell, count events by type and print the timeline of one conversation's turn (rid from client.jsonl), read-only
+R=/home/wanhr/sglang/agent_cache/results/$(cat /home/wanhr/sglang/agent_cache/.current_results); L=$R/$(cat $R/.current_run)/server.log   # the latest boot (scripts layout, §11)
+echo "events by type:"; grep -o "HICACHE_EVT [a-z2_]*" "$L" | sort | uniq -c
+echo "tier transfers with durations (first 5):"; grep -E "HICACHE_EVT (d2h|h2d|s2h|h2s)_(done|io)" "$L" | head -5
+echo "per-request events for rid evt_host-c1-t2:"; grep "rid=evt_host-c1-t2" "$L"
+```
+-> the type counts (2026-09-18, `hbm_host` P0, 4 conv x 4 turns: `32 d2h_submit`, `32 d2h_done`, nothing else: at P0 nothing is evicted, so no `h2d_*`, and no L3 on arm (b)); a `d2h_done` line reads like `HICACHE_EVT d2h_done nodes=1 tokens=7808 bytes=1023410176 ms=81.2` (the shared system prompt: 1.02 GB in 81 ms = 12.6 GB/s device->host, measured); per-request lines appear only for `load_back_init` / `prefetch_*` / `s2h_*`, so at P0 the last block prints nothing.
+
+**Expected result:** every server log line carries milliseconds; on `hbm_host` at P0 the count of `d2h_done` equals `d2h_submit`, their `tokens` sum equals the prefilled-token volume that was inserted (write-through backs up every inserted node), and each `ms` is consistent with ~10-13 GB/s. On a pressure cell (§5.3 PH/PL): `h2d_*` lines appear before returning turns whose `cached_details.host > 0` in `client.jsonl`, `load_back_init rid=` names those turns, and on three-tier arms `h2s_*` follows every `d2h_done` and `s2h_*` precedes L3 hits.
+**If it differs:** no `HICACHE_EVT` at all on a HiCache arm: the server booted before the patch was applied (it imports the modules at start) or the patch was reverted; `grep -c EVAL-PATCH python/sglang/srt/mem_cache/unified_radix_cache.py` on the host must print 8 (5 in `cache_controller.py`, 2 in the hybrid controller). `ms=-1.0` on every `*_done`: `--enable-metrics` missing (the timing events are created only then). `d2h_submit` without a matching `d2h_done` at the end of a run: the ack is polled by the scheduler in `check_hicache_events`, so an idle server drains it on the next scheduling iteration; wait one request or check `/metrics`.
+**Expected lessons:** write-through granularity is the radix node, not the request: the first conversation's 7,808-token system prompt is one `d2h` of 1 GB, and later conversations' branches produce 256-3,712-token fragments as nodes split; so backup volume per turn is the new tokens only (once), which is what `hicache_eval` measured as "bar" in aggregate and this log now resolves per node with a wall-clock stamp. Joining `t_send`/`ttft` from `client.jsonl` with `load_back_init`/`h2d_done` stamps gives the restore latency each returning turn actually waited for, which §6.4 could only infer from tier splits before.
+
 ---
 
 ## 7. Experiment matrix (execution order) and per-run checklist
@@ -2965,12 +3013,15 @@ agent_cache/
   agent-kv-tiering-evaluation-starter-kit.md   RUNBOOK.md (this)
   .gitignore            copy of dflash_eval/.gitignore (!*.log !*.csv !*.png !*.jsonl; root ignores them at .gitignore:62,173,182,187) + traces/*.parquet (+ data/)
   .current_results      bare stamp, e.g. 20260917_0900 (dflash convention, dflash_eval/scripts/run_track.sh:44-51); NOT a full path (hicache_eval/.current_results style)
-  patches/              0001-agentic-trace-pre-gap.patch, 0002-eval-tier-log.patch (git apply per §4.3 block 2 / reverse-applied by the §11 revert block)
+  patches/              0002-hicache-event-log.patch (§6.6; git apply / git apply -R); 0001-agentic-trace-pre-gap.patch only if the §4.1 fallback is taken; 0003-eval-tier-log.patch only for §6.3
   traces/               lmcache_agentic_trace.json (+ .stats.json, on disk as lmcache_agentic_trace.json.stats.json), gaptest.json; converter output only
   templates/            qwen3_replay_nothink.jinja (the §5.2 default), qwen3_replay_think.jinja; generated by scripts/replay_template.py make (§4.5), tracked
   scripts/
     replay_template.py  §4.5: make (write the two templates from the model's tokenizer_config) | check (print cross-turn reply reuse, stock vs patched); host venv312
     replay_agentic.py   §4.6: the gap-faithful closed-loop replay client (per-turn JSONL, reply re-fed verbatim, /generate controls, --check-ids); container, stdlib + aiohttp
+    start_server.sh     [ARM] [LEVEL]: one boot into a fresh results/<stamp>/<time>_<arm>_<level>/ dir, refuses a busy port or a live .current_run, waits for READY, prints the startup facts; SGLANG_LOG_MS=1
+    start_client.sh     env knobs NCONV TURNS C GAP K THINKING CHECK_IDS ARRIVAL TAG OFFSET SEED: replay_agentic.py against the .current_run boot, output client_<time>_<tag>/ inside it, per-turn table
+    stop_server.sh      kills the .current_run server, waits for the pid to exit and port 30000 to free
     env.sh              from dflash env.sh:7-29 (DOCKER/CONTAINER=sglang_hicache/PORT/BASE_URL, stamp -> RESULTS, readlink guard) + hicache env.sh, whose knobs now come from the environment:
                         L3_DIR (:4, default /var/hicache_l3), RESULTS (:5), frozen-dir guard (:6-12), MODEL (:15), NVME_DEV (:16, default vda), KV_BYTES_PER_TOKEN (:17, default 147456),
                         PAGE_SIZE=64 (:18), l3_wipe (:22). Set L3_DIR=/mnt/nvme/hicache_l3 NVME_DEV=nvme0n1 MODEL=Qwen/Qwen3-32B-FP8 KV_BYTES_PER_TOKEN=131072 as
@@ -2989,7 +3040,10 @@ agent_cache/
     hcommon.py probe.py cachectl.py exp0.py exp1.py telemetry.sh   copy the CURRENT working-tree versions of hicache_eval/scripts (uncommitted; they carry the env knobs: hcommon.py HICACHE_FLUSH_TIMEOUT
                         :132-151, writeload.py --idx-offset :113 + SIGTERM stop :119, exp2.py NVME_DEV :31), changing only the sys.path / source-path constants (cachectl.py:5, probe.py:14,
                         telemetry.sh:5,9,11 -> 1 s). probe.py:49 fixes max_tokens=1: it cannot measure a decode rate (§5.4)
-  results/<stamp>/      versions.txt constants.json b_measure/ p_measure/ traces/ server_<arm>.log <arm>_<trace>_c<N>/{...§9} summary.csv failures.log run.log patches/
+  results/<stamp>/      versions.txt constants.json b_measure/ p_measure/ traces/ summary.csv failures.log run.log patches/  .current_run (name of the latest boot dir, written by start_server.sh)
+    <UTC yyyymmdd_HHMMSS>_<arm>_<level>/   one per server boot (scripts/start_server.sh): server.log (ms timestamps), server.pid, server_args.txt, run.txt, l3_extra.json
+      client_<UTC HHMMSS>_<tag>/            one per client run against that boot (scripts/start_client.sh): client.jsonl (one line per turn), client.log
+    <arm>_<trace>_c<N>/{...§9}             the §7.2 checklist cells (manual form)
 ```
 
 ```bash

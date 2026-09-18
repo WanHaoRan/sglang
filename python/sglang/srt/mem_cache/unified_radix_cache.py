@@ -633,6 +633,9 @@ class UnifiedRadixCache(BasePrefixCache):
 
         # Report full-layer tokens only
         self.update_eviction_metrics(tracker[BASE_COMPONENT_TYPE], start_time)
+        if tracker[BASE_COMPONENT_TYPE] > 0:
+            logger.info("HICACHE_EVT evict_device tokens=%d requested=%d ms=%.1f", tracker[BASE_COMPONENT_TYPE],
+                        params.num_tokens, (time.perf_counter() - start_time) * 1000)  # EVAL-PATCH
         return EvictResult(
             num_tokens_evicted=tracker[BASE_COMPONENT_TYPE],
             swa_num_tokens_evicted=tracker.get(ComponentType.SWA, 0),
@@ -1134,6 +1137,8 @@ class UnifiedRadixCache(BasePrefixCache):
             return 0
         result = self.tree_core.drive_host_eviction(component_type, num_tokens)
         self._free_values(result.device_frees, result.host_frees)
+        if result.tracker.get(component_type, 0) > 0:
+            logger.info("HICACHE_EVT evict_host tokens=%d requested=%d", result.tracker.get(component_type, 0), num_tokens)  # EVAL-PATCH
         return result.tracker.get(component_type, 0)
 
     # ---- Decode retraction ----
@@ -1655,6 +1660,7 @@ class UnifiedRadixCache(BasePrefixCache):
             node_id,
             self.inc_host_lock_ref(node_id).to_dec_params(),
         )
+        logger.info("HICACHE_EVT h2s_submit op=%d node=%d tokens=%d", operation_id, node_id, len(spec.token_ids))  # EVAL-PATCH
 
     def is_backuped(self, node_id: NodeId) -> bool:
         return self.tree_core.is_backuped(node_id)
@@ -1726,6 +1732,7 @@ class UnifiedRadixCache(BasePrefixCache):
         if not self.enable_storage or self.cache_controller is None:
             return
 
+        logger.info("HICACHE_EVT prefetch_start rid=%s tokens=%d", req_id, len(new_input_tokens))  # EVAL-PATCH
         buffer_mode = self.host_memory_mode == "buffer_only"
         # Key the span by the request's namespace, not the anchor's (a root
         # anchor has none): a span published under the wrong namespace gets
@@ -2578,6 +2585,7 @@ class UnifiedRadixCache(BasePrefixCache):
                     if entry is not None:
                         node_id, lock_params = entry
                         self.dec_host_lock_ref(node_id, lock_params)
+                logger.info("HICACHE_EVT h2s_done op=%d tokens=%d", operation.id, operation.completed_tokens)  # EVAL-PATCH
                 if (
                     log_metrics
                     and self.enable_storage_metrics
@@ -2833,6 +2841,8 @@ class UnifiedRadixCache(BasePrefixCache):
             for ack_id in ack.node_ids:
                 self._finish_write_through_ack(ack_id)
             self._log_write_ack_metrics(ack)
+            logger.info("HICACHE_EVT d2h_done nodes=%d tokens=%d bytes=%d ms=%.1f", len(ack.node_ids), ack.num_tokens,
+                        ack.num_bytes, ack.start_event.elapsed_time(ack.finish_event) if ack.timing_enabled else -1.0)  # EVAL-PATCH
             finish_count -= 1
 
     def _log_write_ack_metrics(self, ack: HiCacheAck) -> None:
@@ -2888,6 +2898,8 @@ class UnifiedRadixCache(BasePrefixCache):
                 # Unpin the loaded nodes; host copies stay as reclaimable duplicates.
                 self.tree_core.finish_load_back(node)
 
+            logger.info("HICACHE_EVT h2d_done nodes=%d tokens=%d bytes=%d ms=%.1f", len(ack.node_ids), ack.num_tokens,
+                        ack.num_bytes, ack.start_event.elapsed_time(ack.finish_event) if ack.timing_enabled else -1.0)  # EVAL-PATCH
             if self.metrics_collector is not None:
                 for pool, num_tokens in (ack.num_tokens_by_pool or {}).items():
                     if num_tokens > 0:
@@ -2940,11 +2952,8 @@ class UnifiedRadixCache(BasePrefixCache):
                         last_best_match_device_node_id,
                     )
 
-                logger.debug(
-                    "init_load_back success: loaded %d tokens for node %d",
-                    len(new_indices),
-                    best_match_node_id,
-                )
+                logger.info("HICACHE_EVT load_back_init rid=%s tokens=%d host_hit=%d node=%d", req.rid, len(new_indices),
+                            params.host_hit_length, best_match_node_id)  # EVAL-PATCH
                 return new_indices, best_match_node_id
 
         return (
