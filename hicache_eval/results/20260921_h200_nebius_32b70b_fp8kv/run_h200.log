@@ -1,0 +1,152 @@
+
+========== [2026-09-21T20:46:48Z] p_measure 70B: pure recompute, no HiCache (also absorbs the 70B's JIT-cold boot) ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+READY p_measure (pid 4052)
+boot facts for p_measure:
+'attention_backend': 'triton'
+[2026-09-21 20:47:08] The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.
+[2026-09-21 20:49:05] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 531008, K size: 40.52 GB, V size: 40.52 GB
+Mem:             196           7         150           0          39         188
+# sanity generations
+The capital of France is Paris.
+391
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/p_measure/metrics_before.txt"}
+stopped (gpu procs: 0)
+/dev/vdc        2.3T   36K  2.3T   1% /mnt/ssd
+cleaner lines in p_measure/server.log: 0
+Mem:             196           2         155           0          39         193
+
+========== [2026-09-21T20:53:07Z] STAGE DONE: p_measure_70b ==========
+
+========== [2026-09-21T20:53:07Z] Exp 0 70b (casperhansen/llama-3.3-70b-instruct-awq) ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+l3 cleaner watermarks: 30,20 (%% of /dev/vdc)
+READY exp0_70b (pid 4851)
+boot facts for exp0_70b:
+'attention_backend': 'triton'
+[2026-09-21 20:53:17] The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.
+[2026-09-21 20:53:48] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 531008, K size: 40.52 GB, V size: 40.52 GB
+[2026-09-21 20:55:29] Allocating kv hierarchical KV host pool: 976576 tokens, 160.00 GB host memory.
+Mem:             196         158           2         149         186          37
+telemetry started -> /sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp0_70b
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp0_70b/metrics_before.txt"}
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp0_70b/metrics_after.txt"}
+telemetry stopped for /sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp0_70b
+stopped (gpu procs: 0)
+/dev/vdc        2.3T  123G  2.2T   6% /mnt/ssd
+cleaner lines in exp0_70b/server.log: 0
+Mem:             196           2         194           0           1         193
+
+========== [2026-09-21T21:04:13Z] STAGE DONE: exp0_70b ==========
+
+========== [2026-09-21T21:04:13Z] Exp 1 main pass 70b (recompute, L1, L3) ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+l3 cleaner watermarks: 30,20 (%% of /dev/vdc)
+READY exp1_70b (pid 5622)
+boot facts for exp1_70b:
+'attention_backend': 'triton'
+[2026-09-21 21:04:35] The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.
+[2026-09-21 21:06:33] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 531008, K size: 40.52 GB, V size: 40.52 GB
+[2026-09-21 21:08:16] Allocating kv hierarchical KV host pool: 976576 tokens, 160.00 GB host memory.
+Mem:             196         159           2         149         186          37
+telemetry started -> /sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_70b
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_70b/metrics_before.txt"}
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_70b/metrics_after.txt"}
+telemetry stopped for /sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_70b
+stopped (gpu procs: 0)
+/dev/vdc        2.3T   30G  2.3T   2% /mnt/ssd
+cleaner lines in exp1_70b/server.log: 0
+Mem:             196           2         194           0           0         193
+
+========== [2026-09-21T21:15:24Z] STAGE DONE: exp1_70b ==========
+
+========== [2026-09-21T21:15:24Z] Exp 1 dedicated L2 pass 70b (fresh server) ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+l3 cleaner watermarks: 30,20 (%% of /dev/vdc)
+READY exp1_70b_l2 (pid 6687)
+boot facts for exp1_70b_l2:
+'attention_backend': 'triton'
+[2026-09-21 21:15:45] The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.
+[2026-09-21 21:17:41] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 531008, K size: 40.52 GB, V size: 40.52 GB
+[2026-09-21 21:19:24] Allocating kv hierarchical KV host pool: 976576 tokens, 160.00 GB host memory.
+Mem:             196         159           2         149         186          37
+telemetry started -> /sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_70b_l2
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_70b_l2/metrics_before.txt"}
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_70b_l2/metrics_after.txt"}
+telemetry stopped for /sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_70b_l2
+stopped (gpu procs: 0)
+/dev/vdc        2.3T  123G  2.2T   6% /mnt/ssd
+cleaner lines in exp1_70b_l2/server.log: 0
+Mem:             196           3         158           0          36         193
+
+========== [2026-09-21T21:27:55Z] STAGE DONE: exp1_70b_l2 ==========
+
+========== [2026-09-21T21:27:55Z] Exp 0 32b (Qwen/Qwen3-32B-FP8) ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+l3 cleaner watermarks: 30,20 (%% of /dev/vdc)
+READY exp0_32b (pid 7631)
+boot facts for exp0_32b:
+'attention_backend': 'triton'
+  0%|          | 0/58 [00:00<?, ?it/s]Capturing num tokens (num_tokens=8192 avail_mem=20.16 GB):   0%|          | 0/58 [00:00<?, ?it/s][2026-09-21 21:30:17] Entering DeepGEMM JIT Pre-Compile session
+[2026-09-21 21:30:09] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 705856, K size: 43.09 GB, V size: 43.09 GB
+[2026-09-21 21:33:38] Allocating kv hierarchical KV host pool: 1220736 tokens, 160.00 GB host memory.
+Mem:             196         158           1         149         187          37
+telemetry started -> /sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp0_32b
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp0_32b/metrics_before.txt"}
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp0_32b/metrics_after.txt"}
+telemetry stopped for /sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp0_32b
+stopped (gpu procs: 0)
+/dev/vdc        2.3T  130G  2.2T   6% /mnt/ssd
+cleaner lines in exp0_32b/server.log: 0
+Mem:             196           2         194           0           1         193
+
+========== [2026-09-21T21:37:35Z] STAGE DONE: exp0_32b ==========
+
+========== [2026-09-21T21:37:35Z] Exp 1 main pass 32b (recompute, L1, L3) ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+l3 cleaner watermarks: 30,20 (%% of /dev/vdc)
+READY exp1_32b (pid 9341)
+boot facts for exp1_32b:
+'attention_backend': 'triton'
+  0%|          | 0/58 [00:00<?, ?it/s]Capturing num tokens (num_tokens=8192 avail_mem=20.16 GB):   0%|          | 0/58 [00:00<?, ?it/s][2026-09-21 21:39:31] Entering DeepGEMM JIT Pre-Compile session
+[2026-09-21 21:39:30] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 705856, K size: 43.09 GB, V size: 43.09 GB
+[2026-09-21 21:41:38] Allocating kv hierarchical KV host pool: 1220736 tokens, 160.00 GB host memory.
+Mem:             196         158           5         149         183          38
+telemetry started -> /sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_32b
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_32b/metrics_before.txt"}
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_32b/metrics_after.txt"}
+telemetry stopped for /sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_32b
+stopped (gpu procs: 0)
+/dev/vdc        2.3T   24G  2.3T   2% /mnt/ssd
+cleaner lines in exp1_32b/server.log: 0
+Mem:             196           2         194           0           1         193
+
+========== [2026-09-21T21:47:09Z] STAGE DONE: exp1_32b ==========
+
+========== [2026-09-21T21:47:09Z] Exp 1 dedicated L2 pass 32b (fresh server) ==========
+stopped (gpu procs: 0)
+L3 wiped: 0 files remain
+l3 cleaner watermarks: 30,20 (%% of /dev/vdc)
+READY exp1_32b_l2 (pid 10415)
+boot facts for exp1_32b_l2:
+'attention_backend': 'triton'
+  0%|          | 0/58 [00:00<?, ?it/s]Capturing num tokens (num_tokens=8192 avail_mem=20.16 GB):   0%|          | 0/58 [00:00<?, ?it/s][2026-09-21 21:49:05] Entering DeepGEMM JIT Pre-Compile session
+[2026-09-21 21:49:04] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 705856, K size: 43.09 GB, V size: 43.09 GB
+[2026-09-21 21:51:12] Allocating kv hierarchical KV host pool: 1220736 tokens, 160.00 GB host memory.
+Mem:             196         158           5         149         183          38
+telemetry started -> /sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_32b_l2
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_32b_l2/metrics_before.txt"}
+{"written": "/sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_32b_l2/metrics_after.txt"}
+telemetry stopped for /sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_32b_l2
+stopped (gpu procs: 0)
+/dev/vdc        2.3T  123G  2.2T   6% /mnt/ssd
+cleaner lines in exp1_32b_l2/server.log: 0
+Mem:             196           3         160           0          34         193
+
+========== [2026-09-21T21:54:52Z] STAGE DONE: exp1_32b_l2 ==========

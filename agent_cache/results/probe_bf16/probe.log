@@ -1,0 +1,108 @@
+=== boot 2026-09-22T01:45:03Z ===
+arm: hbm_lru  level: NAT64 (L1=natural tokens, host=64 GB)  model: Qwen/Qwen3-32B  ctx: 40960  run dir: /sgl-workspace/sglang/agent_cache/results/20260922_014503_hbm_lru_NAT64
+launched hbm_lru: pid 13250   (watch: tail -f /sgl-workspace/sglang/agent_cache/results/20260922_014503_hbm_lru_NAT64/server.log)
+READY: hbm_lru after 66s
+template loaded:  1   (want 1)
+device pool:      max_total_num_tokens=468288   (want the profiled pool; record it)
+weight kernel:    mem usage=61.04 GB   marlin lines: 0 (want 0 on SM90)
+profiled warning: 0   (want 0)
+=== sanity generation ===
+  reply: 391
+=== P: recompute sweep 2026-09-22T01:46:10Z ===
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+### phase A/B: populate (emitting only requested tiers)
+{"tier": "recompute", "L": 512, "rep": 0, "ttft_s": 0.06441521800297778, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 512, "rep": 1, "ttft_s": 0.07319872800144367, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 512, "rep": 2, "ttft_s": 0.07330975700097042, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 1024, "rep": 0, "ttft_s": 0.12220423800317803, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 1024, "rep": 1, "ttft_s": 0.1265227589974529, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 1024, "rep": 2, "ttft_s": 0.12357728600181872, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 2048, "rep": 0, "ttft_s": 0.24464400799843133, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 2048, "rep": 1, "ttft_s": 0.24555608100126847, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 2048, "rep": 2, "ttft_s": 0.24276652600019588, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 4096, "rep": 0, "ttft_s": 0.5118747029991937, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 4096, "rep": 1, "ttft_s": 0.5062513859993487, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 4096, "rep": 2, "ttft_s": 0.512063856000168, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 8192, "rep": 0, "ttft_s": 1.1788868069997989, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 8192, "rep": 1, "ttft_s": 1.172452566002903, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 8192, "rep": 2, "ttft_s": 1.1708763319984428, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 16384, "rep": 0, "ttft_s": 3.4131498809983896, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 16384, "rep": 1, "ttft_s": 3.4151831189992663, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 16384, "rep": 2, "ttft_s": 3.41606895500081, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 32512, "rep": 0, "ttft_s": 11.27610480000294, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 32512, "rep": 1, "ttft_s": 11.278770515997167, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 32512, "rep": 2, "ttft_s": 11.257220301002235, "cached_device": null, "cached_host": null, "cached_storage": null}
+
+DONE exp1
+=== decode: one_batch_server 2026-09-22T01:47:16Z ===
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+max_running_requests_per_dp=64
+dp_size=1
+skip_max_running_requests_threshold=64
+skip_token_capacity_threshold=468288
+#Input tokens: 25600
+#Output tokens: 220
+Warming up cache with 96.0% hit rate (24576 tokens per request)
+Cache warmup completed
+batch size: 1
+input_len: 25600
+output_len: 220
+latency: 7.69 s
+input throughput: 46643.38 tok/s
+output throughput: 30.80 tok/s
+last_ttft: 0.55 s
+last generation throughput: 30.66 tok/s
+cache hit rate: 0.9600
+#Input tokens: 102400
+#Output tokens: 880
+Warming up cache with 96.0% hit rate (24576 tokens per request)
+Cache warmup completed
+batch size: 4
+input_len: 25600
+output_len: 220
+latency: 9.25 s
+input throughput: 47425.85 tok/s
+output throughput: 124.13 tok/s
+last_ttft: 2.16 s
+last generation throughput: 123.51 tok/s
+cache hit rate: 0.9600
+#Input tokens: 204800
+#Output tokens: 1760
+Warming up cache with 96.0% hit rate (24576 tokens per request)
+Cache warmup completed
+batch size: 8
+input_len: 25600
+output_len: 220
+latency: 11.75 s
+input throughput: 49065.40 tok/s
+output throughput: 232.27 tok/s
+last_ttft: 4.17 s
+last generation throughput: 231.05 tok/s
+cache hit rate: 0.9600
+#Input tokens: 409600
+#Output tokens: 3520
+Warming up cache with 96.0% hit rate (24576 tokens per request)
+Cache warmup completed
+batch size: 16
+input_len: 25600
+output_len: 220
+latency: 19.14 s
+input throughput: 49395.29 tok/s
+output throughput: 324.40 tok/s
+last_ttft: 8.29 s
+last generation throughput: 322.62 tok/s
+cache hit rate: 0.9600
+
+Results are saved to /sgl-workspace/sglang/agent_cache/results/probe_bf16/warm_prefix.jsonl
+
+Input lens: [25600]. Output lens: [220]. Cache hit rate: 96.0%.
+|   batch size |   input len |   latency (s) |   input throughput (tok/s) |   output throughput (tok/s) | acc length   |   ITL (ms) |   input cost ($/1M) |   output cost ($/1M) |   cache hit rate |
+|--------------|-------------|---------------|----------------------------|-----------------------------|--------------|------------|---------------------|----------------------|------------------|
+|            1 |       25600 |          7.69 |                    46643.4 |                       30.8  | n/a          |      32.47 |                0.02 |                18.04 |             0.96 |
+|            4 |       25600 |          9.25 |                    47425.8 |                      124.13 | n/a          |      32.22 |                0.02 |                 4.48 |             0.96 |
+|            8 |       25600 |         11.75 |                    49065.4 |                      232.27 | n/a          |      34.44 |                0.02 |                 2.39 |             0.96 |
+|           16 |       25600 |         19.14 |                    49395.3 |                      324.4  | n/a          |      49.32 |                0.02 |                 1.71 |             0.96 |
+
+stopped: 20260922_014503_hbm_lru_NAT64 (pid 13250); port 30000 free
+PROBE DONE 2026-09-22T01:51:35Z

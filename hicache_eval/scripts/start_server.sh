@@ -8,9 +8,12 @@ TAG="$1"; shift
 OUT="$RESULTS/$TAG"; mkdir -p "$OUT"
 
 export SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR=$L3_DIR
+# file backend only: nixl has no byte cap (lru_file_evictor.py is the sole reader of MAX_SIZE).
 export SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE=${L3_MAX_SIZE:-380G}
 # nixl reads a different env var; exporting both keeps one launcher for both backends
 export SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR=${NIXL_DIR:-$L3_DIR}
+# POSIX was auto-selected on every previous box; pin it so the choice is in the log, not implicit.
+export SGLANG_HICACHE_NIXL_BACKEND_PLUGIN=${NIXL_PLUGIN:-POSIX}
 
 BASE_ARGS=(
   --model-path "$MODEL"
@@ -22,6 +25,21 @@ BASE_ARGS=(
   --enable-cache-report
   --enable-metrics
 )
+# nixl cleaner watermarks are a PERCENTAGE OF THE FILESYSTEM. The 80/70 default is 1.82/1.59 TiB on this
+# box's 2.27 TiB SSD, i.e. it would never fire within a campaign and then would fire mid-cell; on the A100's
+# 368 GiB NVMe the same default meant 294/258 GiB. Pin it so the budget is a stated number rather than an
+# accident of disk size. L3_CLEANER_PCT="" keeps the backend default; it is written only when this boot
+# actually has a storage backend and the caller did not pass its own extra-config.
+_want_cleaner=0
+case " $* " in *" --hicache-storage-backend "*) _want_cleaner=1 ;; esac
+case " $* " in *" --hicache-storage-backend-extra-config "*) _want_cleaner=0 ;; esac
+if [ "$_want_cleaner" = 1 ] && [ -n "${L3_CLEANER_PCT-30,20}" ]; then
+  _pct=${L3_CLEANER_PCT:-30,20}
+  printf '{"l3_cleaner_high_watermark": %s, "l3_cleaner_low_watermark": %s}\n' "${_pct%%,*}" "${_pct##*,}" \
+    > "$OUT/l3_extra.json"
+  BASE_ARGS+=(--hicache-storage-backend-extra-config "@$OUT/l3_extra.json")
+  echo "l3 cleaner watermarks: $_pct (%% of $(findmnt -n -o SOURCE -T "$L3_DIR" 2>/dev/null || echo '?'))"
+fi
 # Llama 3.3 has no reasoning channel; passing a parser it never emits is
 # harmless but misreports the config. Default keeps earlier callers identical.
 if [ -n "${REASONING_PARSER-qwen3}" ]; then
@@ -59,6 +77,6 @@ curl -s "$BASE/generate" -H "Content-Type: application/json" \
 {
   echo "tag: $TAG"
   echo "pid: $SPID"
-  grep -iE "max_total_num_tokens|KV cache size|Allocating .* host memory|HiCache|storage backend|hicache" "$OUT/server.log" | head -40
+  grep -iE "max_total_num_tokens|KV cache size|Allocating .* host memory|HiCache|storage backend|hicache|Marlin|attention_backend" "$OUT/server.log" | head -60
 } > "$OUT/startup_facts.txt"
 echo "READY $TAG (pid $SPID)"

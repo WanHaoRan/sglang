@@ -1,27 +1,43 @@
-# Agent KV tiering evaluation on the A100 box — runbook
+# Agent KV tiering evaluation on the H200 box — runbook
 
-Written 2026-09-16 for GCP VM `agent-cache` (a2-ultragpu-1g, 1x A100-SXM4-80GB); **updated 2026-09-17 for `Qwen/Qwen3-32B-FP8`** (`--kv-cache-dtype fp8_e5m2 --attention-backend triton`;
-user decision 2026-09-17) after bring-up and the HiCache Exp 0/1 rerun on this box; HiCache Exp 2-4 are dropped. Restructured 2026-09-18 into the per-step format of
-`.claude/skills/runbook-authoring/SKILL.md`; the previous text is archived at `agent_cache/archive/RUNBOOK.20260918-before-step-format.md`. Results dirs, abbreviated below: `R32/` =
-`hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/`, `R8/` = `hicache_eval/results/20260917_a100_gcp_qwen8b/`. Flags, paths and line numbers were checked against this checkout
-(`main` @ `6ec32e6b7`) and the live host, last on 2026-09-18; "Evidence:" gives the file:line or command. The plan being executed is `agent_cache/agent-kv-tiering-evaluation-starter-kit.md` (cited
-against the 0.5.19 wheel; re-verified here, mismatches called out).
+Written 2026-09-16 for GCP VM `agent-cache` (a2-ultragpu-1g, 1x A100-SXM4-80GB); **ported 2026-09-21 to Nebius instance
+`computeinstance-u00jtv5xqvxttejgvw` (1x H200, 143,771 MiB, SM90)**. The A100 text is archived verbatim at
+`agent_cache/archive/RUNBOOK.20260921-a100-box.md` (and the pre-step-format text at `archive/RUNBOOK.20260918-before-step-format.md`).
+The evaluation model is unchanged (`Qwen/Qwen3-32B-FP8`, `--kv-cache-dtype fp8_e5m2 --attention-backend triton`) so that the A100 campaign
+stays the comparison baseline. Results dirs, abbreviated below: `R32/` = `hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/` (A100 campaign 5,
+2026-09-17), `R8/` = `hicache_eval/results/20260917_a100_gcp_qwen8b/`, `C18/` = `agent_cache/results/compare_20260918_final/` (the A100 three-arm
+comparison of 2026-09-18, §7.0). Flags, paths and line numbers were checked against this checkout (`main` @ `d608a20d4`) and the live host on
+2026-09-21; "Evidence:" gives the file:line or command. The plan being executed is `agent_cache/agent-kv-tiering-evaluation-starter-kit.md`.
+
+**What the port changes, in one paragraph.** The box is different in four ways that matter and one that does not. (1) **The GPU is Hopper, not
+Ampere:** SM90 runs the FP8 checkpoint on native FP8 tensor cores, not the A100's weight-only Marlin W8A16 fallback (`can_auto_enable_marlin_fp8()`
+is `80 <= sm < 89`, `layers/quantization/fp8_utils.py:2126-2132`), so **every prefill- and decode-derived constant measured on the A100 is invalid
+here** (§5.4) — `P`, the recompute bar `b x P`, the TTFT-vs-length curve, the tier fits, every cell time. (2) **HBM is 143,771 MiB, not 81,920:**
+the profiled device pool roughly doubles (~700K tokens estimated, §5.3), so the old pressure pins are still available but no longer near the
+ceiling. (3) **The L3 disk is a 2.27 TiB attached SSD at `/mnt/ssd`, not a 375 GiB ephemeral local NVMe at `/mnt/nvme`:** it sustains **1.88 GiB/s in
+both directions** against the A100 NVMe's 0.68 read / 0.38 write, i.e. **2.8x on read and 5.0x on write** (measured, §1), is **persistent across
+restarts** — so the daily format-and-mount step is gone — and is 6x larger, which makes the nixl cleaner's percentage watermarks nearly inert (§5.3). (4) **The box is bare:** no docker images, no containers, no HF cache, no datasets, no host
+venv; §2 and §3 are now first-run procedures, not daily checks. What does **not** change: the model, the converted trace (`traces/`), the replay
+client (`scripts/replay_agentic.py`, §4.6), the replay templates (`templates/`), the instrumentation (§6), the experiment design (§7) and every
+`path:line` fact that is not GPU- or disk-specific.
 
 **How to read this file.**
 - Every step (each `###`, and each `##` that has no `###` children) carries the same fields in the same order: **Status** (done / not started / provisional / redo-every-time, with dates; never in the heading, so `§` references stay stable), **Goal** (the decision the step enables or the artifact it produces), **Runs on** (`host` or `container: <name>`, plus user and working directory when they matter), **Touches** (everything the step changes; `read-only` when nothing; a destructive step names what it destroys), **Takes** (wall time, and whether the GPU is busy), the command blocks, **Expected result** (checkable values, not "it works"), **If it differs** (the likely cause and the fix, when a failure has been seen), **Expected lessons** (what the outcome teaches, or the trap the step prevents).
 - The first line of every command block says where it runs: `# host` is a login shell on the VM as `wanhr` (zsh with `interactivecomments` set, so comment lines paste cleanly); `# container: <name>` is a shell inside that container, opened with `docker exec -it <name> bash`; when a container command is shown from the host it uses the `docker exec -i <name> bash -c '...'` form.
 - `-> prints:` after a block gives the output that means pass, and what another output means. A block that prints several values labels each one.
-- Every number is tagged **measured** (date and results path), **derived** (formula and inputs) or **estimate** (and what would make it wrong). Code facts carry `path:line` in this checkout (`/home/wanhr/sglang` @ `6ec32e6b7`); results-dir facts carry `R32/...` or `R8/...` paths.
-- Paths: the host directory `/home/wanhr/sglang/agent_cache` is `/sgl-workspace/sglang/agent_cache` inside both containers (the whole repo is bind-mounted at `/sgl-workspace/sglang`, so every repo path maps the same way). `/home/wanhr/data` is NOT visible from either container.
+- Every number is tagged **measured** (date and results path), **derived** (formula and inputs) or **estimate** (and what would make it wrong). A number measured on the **A100** is tagged `measured-A100` and is a *prior*, never a value for this box: §5.4 lists exactly which ones must be re-measured before they may be used. Code facts carry `path:line` in this checkout (`/home/wanhr/sglang` @ `d608a20d4`).
+- Paths: the host directory `/home/wanhr/sglang/agent_cache` is `/sgl-workspace/sglang/agent_cache` inside the container (the whole repo is bind-mounted at `/sgl-workspace/sglang`, so every repo path maps the same way). `/home/wanhr/data` is NOT visible from the container. `/mnt/ssd` is bind-mounted into the container at the same path.
 - Placeholders look like `<ANGLE_BRACKETS>` and are defined next to their first use. Cross references are `§N.M`.
 
-**State 2026-09-18 01:33 UTC** (checked with read-only commands; the VM has been up since 2026-09-17 15:20 UTC, GPU idle at 0 MiB, both containers `Up` since 2026-09-17 17:17 / 17:24 UTC):
-- **Done:** §2.1 (2026-09-16); §2.2 (filesystem created 2026-09-17 15:35 UTC per `dumpe2fs -h /dev/nvme0n1`, mounted at `/mnt/nvme`, 369G free, `/mnt/nvme/hicache_l3` empty; the guarded form of the block has not yet run after a wipe because no VM stop has happened since); §2.3 (two containers, use `sglang_hicache`); §2.4 blocks 1-6, including the results stamp (`agent_cache/.current_results` = `20260917_2303`, written 2026-09-17 23:03 UTC; `agent_cache/results/20260917_2303/` exists and is EMPTY: `versions.txt` is not written); §2.6 (three models in the HF cache). §3.1 downloads (host, 2026-09-17 23:09-23:12 UTC: `/home/wanhr/data/{lmcache,mooncake,agentx}`, AgentX 568,864,747 B = complete). §3.3 converter (`agent_cache/scripts/convert_lmcache.py`, 20,837 B) built and run: `agent_cache/traces/lmcache_agentic_trace.json` (68,429,742 B = 65 MiB, 731 sessions / 17,887 turns, written 2026-09-18 01:09 UTC) plus `lmcache_agentic_trace.json.stats.json` (4,276 B). §3.5 in part: host `uv` (`/home/wanhr/.local/bin/uv`), `/home/wanhr/venv312` (Python 3.12.14 with numpy 2.5.3, pandas 3.0.6, pyarrow 25.0.1, orjson 3.12.0, transformers 5.17.0, huggingface_hub 1.32.0), the `agentic-kv-cache` clone at `/home/wanhr/agentic-kv-cache` with `.venv -> /home/wanhr/venv312`, its `data/` symlinks, `data/agentx.pkl` (433,729,974 B) and `results/{01_validate,02_characterize,03_gap,04_ablation}.txt` from `make repro` (2026-09-18 00:13-00:52 UTC). The `pre_gap` script and the memory-time bound of §3.5 have no recorded output.
-- **Not started:** §2.4 block 7 (`versions.txt`); §2.5 (no `/opt/aiperf` in `sglang_hicache`); §3.4; §4 (no `agent_cache/patches/`, nothing modified under `python/`); everything from §5 on (no GPU job of this study has run; `agent_cache/results/20260917_2303/` is empty).
-- **Daily:** the local SSD is wiped at every VM stop/start and the VM is stopped between working days: redo §2.2 every morning before any `docker start`.
-- **Numbers:** tagged **measured** (with source), **derived** (arithmetic shown) or **estimate**. For the 32B, b, P, pool sizes and tier rates are measured on this box (§5.4). **Decode rate and the cost of extending a long cached prefix are NOT measured**: every concurrency and time figure in §3.4, §5.3, §7.1 and §7.3 is provisional until they are. The third input, the mean per-turn `output_length` of the converted trace (the patched client replays it per turn), is now in `agent_cache/traces/lmcache_agentic_trace.json.stats.json` (`output_length_emitted`: mean 182.0, p50 97, p95 600 tokens; measured 2026-09-18, converter output); 220 is only the unpatched loader default and is still the placeholder in the §5.3 / §7.3 arithmetic until those sections are re-derived.
+**State 2026-09-21 19:30 UTC** (checked with read-only commands; the instance has been up since 2026-09-21 18:17 UTC, GPU idle at 0 MiB, no containers):
+- **Done on this box:** §2.2 (the attached SSD: `/dev/vdc` formatted ext4 `label=ssd` and mounted at `/mnt/ssd` 2026-09-21 19:20 UTC, `/mnt/ssd/hicache_l3` created and empty, `/etc/fstab:5` by UUID with `nofail`, throughput measured). Nothing else.
+- **Carried over in the checkout (no work needed):** the converted trace `agent_cache/traces/lmcache_agentic_trace.json` (68,429,742 B, 731 conversations / 17,887 turns) and its `.stats.json`; the replay templates `agent_cache/templates/*.jinja`; the replay client `agent_cache/scripts/replay_agentic.py` and the `start_server.sh` / `start_client.sh` / `stop_server.sh` / `run_compare.sh` / `timeline.py` drivers; the HiCache event-log patch, which is now **committed** at `5b881454b` and therefore already in the working tree (§6.6, §11 — this is a change from the A100 box, where it was an unapplied patch file).
+- **Not started:** §2.1 docker group; §2.3 image pull and container creation (no images, no containers); §2.4; §2.5; §2.6 (HF cache is empty); §3.1 (`/home/wanhr/data` does not exist); §3.5 (no `uv`, no venv, no `agentic-kv-cache` clone); §4.4 / §4.6 dry run; everything from §5 on. No GPU job has ever run on this box.
+- **Daily:** nothing. The SSD is a persistent volume with an `fstab` entry, so there is no morning format-and-mount step; `§2.2` is now a one-line check. This is the single biggest procedural difference from the A100 box.
+- **Numbers:** every GPU-derived constant in §5.4 is `measured-A100` and must be re-measured here before any row is sized (§5.4 lists the four commands). The disk constants ARE measured on this box (§1). The trace constants (mean gap 1.49 s, mean `output_length` 182.0, mean replay context 19.7K / 20.6K swebench) are properties of the trace file, not of the box, and carry over unchanged.
 
-Inherited lessons: `hicache_eval/HANDOFF.md` §2-§7 (read it first), style from `dflash_eval/RUNBOOK.md`.
+Inherited lessons: `hicache_eval/HANDOFF.md` §2-§7 (read it first), the A100 three-arm result `C18/README.md` (read it second: it is the only end-to-end
+result this study has, and it is a null result with four named causes, §7.0), style from `dflash_eval/RUNBOOK.md`.
 
 ---
 
@@ -29,105 +45,107 @@ Inherited lessons: `hicache_eval/HANDOFF.md` §2-§7 (read it first), style from
 
 This section is the whole runbook for a reader who already knows the box: the plan in four phases, then the ordered list of everything that actually gets run, with where it runs and how long it takes. At its end the reader knows which step is next today and what blocks it.
 
-**Status:** current as of 2026-09-18 01:33 UTC (matches the state paragraph above)
+**Status:** current as of 2026-09-21 19:30 UTC (matches the state paragraph above)
 **Goal:** let a reader pick the next step and its cost without reading §2-§9.
 **Runs on:** none (reading only)
 **Touches:** read-only
 **Takes:** none; GPU idle
 
 **The plan in four phases** (the starter kit, made concrete for this box):
-1. **Characterize (Week 1, CPU-only, runs on this host today, §3.5):** `pre_gap` distributions per source/model from the LMCache parquet; `agentic-kv-cache` `make repro` on AgentX + Mooncake toolagent; memory-time behind gaps >= {1,5,30} s at concurrency {4,8,12,16} (32/64/128 as an analytic row) using b = 131,072 B/token (measured; Qwen3-32B-FP8, fp8_e5m2 KV, §5.4). Decision: upper bound on what any parking policy can free.
-2. **Simulate (Weeks 2-3):** extend the simulator with tiers and per-tier restore cost from the measured constants (§5.4: P, bar, L1/L2/L3 rates and intercepts; recompute is superlinear, so use the measured TTFT(L) curve, not L/P). Decision: go/no-go (§9.3).
-3. **Serve (Weeks 4-6, needs §2 bring-up):** SGLang + HiCache, patched gap-faithful `agentic-trace` client (§4) on LMCache traces, then AIPerf/AgentX; sweep HBM pressure and tiers (§5, §7).
+1. **Characterize (CPU-only, runs on this host today, §3.5):** `pre_gap` distributions per source/model from the LMCache parquet; `agentic-kv-cache` `make repro` on AgentX + Mooncake toolagent; memory-time behind gaps >= {1,5,30} s at concurrency {4,8,12,16} using b = 131,072 B/token (a model property, `measured-A100` but dtype-derived and unchanged here, §5.4). Decision: upper bound on what any parking policy can free.
+2. **Simulate:** extend the simulator with tiers and per-tier restore cost from the **re-measured** constants of §5.4 (recompute is superlinear, so use the measured TTFT(L) curve, not L/P). Decision: go/no-go (§9.3).
+3. **Serve (needs §2 bring-up):** SGLang + HiCache, the gap-faithful `replay_agentic.py` client (§4.6) on LMCache traces, then AIPerf/AgentX; sweep HBM pressure and tiers (§5, §7).
 4. **Validate (later):** live agents (mini-swe-agent, BFCL) recording traces through a proxy.
 
-**Run order** (one line per step; times tagged; "GPU busy" marks the steps that occupy the GPU; every GPU cell in steps 11-17 is one pass of the §7.2 checklist, whose launch block is the arm's §5.2 command, and pays a server boot of 278-285 s warm or ~633 s JIT-cold, measured, §2.6):
+**Run order** (one line per step; times tagged; "GPU busy" marks the steps that occupy the GPU; every GPU cell in steps 12-18 is one pass of the §7.2 checklist, whose launch block is the arm's §5.2 command and which pays a server boot — boot time on this box is **not yet measured**, budget the A100's 278-285 s warm / ~633 s JIT-cold until it is, §2.6):
 
 Every working day, before anything else:
-1. §2.2 format + mount the local NVMe, then the gate that starts `sglang_hicache` — host, sudo — ~2 min (estimate: neither the 2026-09-16 nor the 2026-09-17 format was timed; mount and mkdir are instant) — GPU idle.
-2. §2.4 block 4 (memlock / L3 mount source / shm / RAM seen from inside the container) — host via `docker exec` — ~5 s (estimate) — GPU idle.
+1. §2.2 one-line SSD check (`findmnt /mnt/ssd`) — host — ~1 s — GPU idle. **No format, no mount, no daily gate:** the volume is persistent.
+2. §2.3 `docker start sglang_hicache`, then §2.4 block 4 (memlock / L3 mount source / shm / RAM seen from inside the container) — host — ~5 s (estimate) — GPU idle.
 
-Once, the remaining bring-up (not done as of 2026-09-18):
-3. §2.4 block 7 `versions.txt` into `agent_cache/results/20260917_2303/` — host — ~5 s (estimate) — GPU idle.
-4. §2.5 AIPerf venv at `/opt/aiperf` in `sglang_hicache` — container — 2-5 min (estimate: pip download of aiperf and its deps; not yet run) — GPU idle.
+Once, the bring-up (nothing below is done on this box as of 2026-09-21):
+3. §2.1 add `wanhr` to the `docker` group so `docker` works without `sudo` — host, sudo, needs a new login shell — ~10 s — GPU idle.
+4. §2.3 pull `lmsysorg/sglang:nightly-dev-20260907-30705c00` and create `sglang_hicache` — host — 10-25 min (estimate: a ~20 GB image pull) — GPU idle.
+5. §2.4 blocks 1-7 incl. the results stamp and `versions.txt` — host — ~15 s (estimate) — GPU idle.
+6. §2.6 `hf download Qwen/Qwen3-32B-FP8` (32 GB onto `/`) — container — 5-30 min (estimate, HF throughput) — GPU idle.
+7. §2.5 AIPerf venv at `/opt/aiperf` in the container — container — 2-5 min (estimate) — GPU idle. Only needed for §7.1 row 7.
 
 Data and CPU-only work (GPU idle):
-5. §3.1 downloads to `/home/wanhr/data` — host — done 2026-09-17 23:09-23:12 UTC (LMCache 2.37 GB + AgentX-256k 0.57 GB + Mooncake 13 MB; re-run only if the directory is lost).
-6. §3.3 converter — container `sglang_hicache` — done 2026-09-18 01:09 UTC; 13.5 min (measured, §3.3); re-run only if the trace format changes.
-7. §3.5 Week-1 characterization — host, `/home/wanhr/venv312` — `make data` + `make repro` done 2026-09-18 00:13-00:52 UTC; the `pre_gap` script and the memory-time bound: minutes (estimate), not yet recorded.
-8. §4.6 standalone replay client `agent_cache/scripts/replay_agentic.py` — written and mock-tested 2026-09-18; nothing to apply (the §4.1-§4.3 patch is the fallback only).
-   §4.5 replay templates: generated and checked 2026-09-18 (`agent_cache/templates/`); re-run `replay_template.py make && check` only after a model snapshot change — host — ~40 s (estimate: two tokenizer loads) — GPU idle.
+8. §3.1 downloads to `/home/wanhr/data` (2.95 GB) — host — ~3 min (measured-A100; network-bound) — GPU idle.
+9. §3.3 converter — **not needed**: `agent_cache/traces/lmcache_agentic_trace.json` is committed and byte-identical to the A100 output; re-run only to change `--max-context`, `--sources`, `--tool-role-mode` or `--min-turns`.
+10. §3.5 Week-1 characterization — host, `/home/wanhr/venv312` — `uv` + venv ~2 min, `make data` ~1 min, `make repro` ~40 min (measured-A100) — GPU idle.
+11. §4.5 replay templates: already generated and committed (`agent_cache/templates/`); re-run `replay_template.py make && check` only after a model snapshot change — host — ~40 s (estimate) — GPU idle.
 
 GPU jobs, in matrix order (§7.1); c, f, K, gap scales and cell times are re-derived after row 1:
-9. §4.4 blocks 1-2 + the §4.6 dry-run block = row 0: gap-test dry run, arm (a) at P0, c=2 — container, GPU busy — ~1 min of client time + boot (estimate; pass = wall >= 10 s and every returning turn reuses its reply, §4.6).
-10. §5.4 = row 1: the two open constants (`one_batch_server` warm-prefix run at B = 1, 4, 8; decode rate and prefix-extension TTFT) — container, GPU busy — ~6 min + boot (estimate, §5.4). Rows 0-1 together ~1 h (estimate, §7.3). Optional re-checks of b and P in the same section: ~1 min (arm (b) up) + ~5 min (arm (a) up), GPU busy (§5.4).
-11. §7.1 row 2: arms (a),(b),(c) at P0, LMCache real gaps, c = 4 and 8 — 6 cells, GPU busy — 55-70 min per c=4 cell, 85-105 min per c=8 cell (estimate, §7.3).
-12. §7.1 row 3: arms (e),(g),(d) at PH, real gaps, c=8, overload reference — 3 cells, GPU busy — cap each by wall time (e.g. 90 min, §7.3; an uncapped (e) cell is GPU-bound at ~3.6-8.4 h, estimate).
-13. §7.1 row 4: (e),(g),(d) at PH, gap scale s_H, c=8, host-restore case — 3 cells, GPU busy — 100-125 min per tiered cell (estimate, §7.3).
-14. §7.1 row 5: (e),(g),(d) at PL, gap scale s_L, c=12, L3 case — 3 cells, GPU busy — 165-205 min per cell (estimate, §7.3).
-15. §7.1 row 6: (d) vs (f), (g) at PL, `timeout` vs `wait_complete` — 2 more cells, GPU busy — as row 5 (estimate).
-16. §7.1 row 7: (d) at PL, AgentX via AIPerf, 1800 s — 1 cell, GPU busy — 35 min (estimate: 1800 s client + boot, §7.3), plus one extra boot (278-285 s warm, measured, §2.6) if the §6.3 log patch is applied first.
-17. §7.1 row 8: (a) at P0, Mooncake toolagent with `--mooncake-slowdown-factor` — GPU busy — wall-time-capped slice only (§3.4, §7.3).
-18. §8 profiling windows — optional, inside a cell, GPU busy — minutes each.
-19. §9 report, `constants.json`, go/no-go — host, CPU.
+12. §5.4 = **row 1, and the first GPU job on this box**: the full constant re-measurement (device pool from the boot log, b, P sweep, tier fits, decode rate, prefix-extension TTFT) — container, GPU busy — ~25 min + boot (estimate, §5.4). **Nothing after this may be sized until it has run.**
+13. §4.6 dry-run block = row 0: gap-test dry run, arm (a) at P0, c=2 — container, GPU busy — ~1 min of client time + boot (estimate).
+14. §7.1 row 2: arms (a),(b),(c) at P0, LMCache real gaps, c = 4 and 8 — 6 cells, GPU busy — cell times re-derived after row 1.
+15. §7.1 row 3: arms (e),(g),(d) at PH, real gaps, c=8, overload reference — 3 cells, GPU busy — wall-time capped.
+16. §7.1 row 4: (e),(g),(d) at PH, gap scale s_H, c=8, host-restore case — 3 cells, GPU busy.
+17. §7.1 row 5: (e),(g),(d) at PL, gap scale s_L, c=12, L3 case — 3 cells, GPU busy.
+18. §7.1 row 6: (d) vs (f), (g) at PL, `timeout` vs `wait_complete` — 2 more cells, GPU busy.
+19. §7.1 row 7 (AgentX via AIPerf, needs step 7) and row 8 (Mooncake toolagent) — GPU busy — 35 min / wall-time-capped slice.
+20. §8 profiling windows — optional, inside a cell, GPU busy — minutes each.
+21. §9 report, `constants.json`, go/no-go — host, CPU.
 
-Rows 2-6 are ~17 cells: **4-5 days** at 40 turns per conversation, about half of them with 20 (estimate, §7.3); reserve a day for re-runs.
+**What is unblocked today (2026-09-21):** steps 3, 4, 5, 8, 10 (no GPU, no model needed). Step 6 (the 32 GB model download) can run in parallel with 8 and 10.
+The first GPU job is step 12 (§5.4): it needs steps 3-6 and nothing else — not the trace, not the datasets, not AIPerf.
 
-**What is unblocked today (2026-09-18):** steps 3, 4 (minutes, no GPU); step 7's remaining script (host, CPU); step 8 (patch authoring on the host, reviewable without the GPU; its runtime test needs the container). §5 onward is unblocked as soon as the patch exists, because the trace (§3.3) already does. First GPU job: step 10 (§5.4, matrix row 1: it needs no patch), then step 9 (§4.4, row 0) as soon as §4 is applied.
-
-**Expected result:** the reader can say which numbered step is next (today: 3, 4 and 8) and what it costs.
-**Expected lessons:** the GPU is idle for everything before step 9; the daily §2.2 gate is the only step that can silently corrupt every later L3 number (§2.2), so it heads the list every morning.
+**Expected result:** the reader can say which numbered step is next (today: 3, then 4, with 8 and 10 in parallel) and what it costs.
+**Expected lessons:** the GPU is idle for everything before step 12, and step 12 is not optional bookkeeping — it is the step that turns every
+provisional figure in §3.5, §5.3, §7.1 and §7.3 from an A100 prior into a number for this box. On the A100 the equivalent step was never run, and
+the one campaign that did run (`C18/`) ended in a three-way tie that could not be attributed, because the cell was sized from estimates (§7.0).
 
 ---
 
 ## 1. What is on this box
 
-This section records the hardware, software and disk state every later step assumes, with the date it was checked and a re-check block per group so a reader on a different day can confirm it in under a minute. At its end the reader knows whether the box still matches the runbook, and which container to use.
+This section records the hardware, software and disk state every later step assumes, with the date it was checked and a re-check block per group so a reader on a different day can confirm it in under a minute. At its end the reader knows whether the box still matches the runbook, and what is missing from it.
 
-**Status:** verified 2026-09-17 21:06 UTC; re-verified 2026-09-18 01:33 UTC with the blocks below (GPU idle, no server running, both containers `Up`)
-**Goal:** confirm the box matches the assumptions behind every number in §5.4 (same GPU, driver, image, pins, NVMe) before running anything.
-**Runs on:** host, as `wanhr`; container rows through `docker exec`
+**Status:** verified 2026-09-21 19:10-19:30 UTC with the blocks below (GPU idle, no server, **no containers and no images**)
+**Goal:** confirm the box matches the assumptions behind §5, and make the gap between this box and the A100 explicit, so no `measured-A100` number is used here by accident.
+**Runs on:** host, as `wanhr`; container rows through `docker exec` once §2.3 has run
 **Touches:** read-only
 **Takes:** ~30 s for all six blocks (estimate); GPU idle
 
 | | |
 |---|---|
-| GPU | NVIDIA A100-SXM4-80GB, 81920 MiB, SM80, PCIe Gen4 x16. **Not Hopper**: `fa3` needs `is_hopper_with_cuda_12_3` (`arg_groups/model_override_base.py:323-329`) and, when pinned, FAILS here: decode CUDA-graph capture dies with `scheduler_metadata must have shape (metadata_size)` (`R8/preflight/boot_fa3/server.log:100,127`). Default MHA backend on SM80 is `flashinfer` (`model_override_base.py:347-351`; the 8B runs used it); every fp8_e5m2-KV measurement pinned `--attention-backend triton` (flashinfer + fp8_e5m2 KV was never booted here). FP8 checkpoints run as weight-only FP8 Marlin (W8A16), selected automatically, no flag (`R32/exp1_32b/server.log:15`). Campaigns 1-3 ran on an H100; campaigns 4 (8B) and 5 (32B, 70B) on this box. |
-| Driver | **580.178.04 loaded**, CUDA 13.0 (nvidia-driver-580-server-open, open kernel module). No reboot needed. Secure Boot disabled (checked 2026-09-16, again 2026-09-18). |
-| Docker | docker-ce 29.8.1, **`Live Restore Enabled: false`** (a dockerd restart kills both containers). NVIDIA Container Toolkit 1.20.0 (`/etc/docker/daemon.json` registers the `nvidia` runtime; `docker info` -> `Runtimes: io.containerd.runc.v2 nvidia runc` (order varies between calls, §1 block B)). Group `docker` is live in new login shells (`id -nG` lists it): plain `docker` works. `docker.service` `LimitMEMLOCK=8388608` (8 MiB). |
-| Containers | Two, RestartPolicy `no` (Exited after a VM stop: `docker start` only after the §2.2 gate), identical flags: `--gpus all --ipc=host --network=host --privileged --ulimit memlock=-1:-1 --ulimit nofile=1048576:1048576`, binds repo -> `/sgl-workspace/sglang`, HF cache -> `/root/.cache/huggingface`, `/mnt/nvme:/mnt/nvme:rshared`, cmd `/bin/zsh`. **`sglang_hicache`** = `lmsysorg/sglang:nightly-dev-20260907-30705c00` (created 2026-09-17 17:24 UTC): sglang-kernel 0.4.6.post1 (= this checkout's pin), flashinfer-python 0.6.18, torch 2.13.0+cu130, nixl 1.4.1, triton 3.7.1, transformers 5.12.1, datasets 5.0.1, pyarrow 25.0.1, pandas 3.0.5; ran every 2026-09-17 measurement and holds the warm JIT cache (`/root/.cache/sglang`; survives `docker stop/start`, lost on `docker rm`): **USE THIS ONE**. Its writable layer also holds `/tmp/lmcache/` (a 2.3 GB copy of the LMCache parquet made 2026-09-17 23:52 UTC for §3.3; lost on `docker rm`). `sglang_dev` = `lmsysorg/sglang:dev` (built 2026-09-17 00:53Z, created 17:17 UTC): sglang-kernel 0.4.7 (newer than the pin), sgl-deep-gemm 0.2.0, never booted a server: spare only. Both: Python 3.12.3, import `/sgl-workspace/sglang/python/sglang`, have `iostat` and `/opt/sglang/bin/{py-spy,hf,uv}`; no `fio`, no `/opt/aiperf`; **`/home/wanhr/data` is NOT bound** into either. (A 57 GB `vsc-sglang-*` devcontainer image is also on disk, no container.) |
-| Host | Ubuntu 26.04.1, kernel 7.0.0-1011-gcp, 12 vCPU, 167 GB RAM (idle: 160 GB available), **no swap**, Python 3.14.4 only (no pip/hf/py-spy; `uv` at `/home/wanhr/.local/bin/uv` and a Python 3.12 venv at `/home/wanhr/venv312` exist since §3.5 started); **`fio` and `iostat` (sysstat) are installed**. `/tmp` and `/dev/shm` are 84 GB tmpfs. No `nvidia_fs` module (no GDS). |
-| Disks | `/` ext4 on PD-SSD, 793 GB free (measured 2026-09-18 `df -h /`; 741 GB on 2026-09-17; 3 images + 86 GB of models). **`/dev/nvme0n1` 375 GiB local SSD: ext4, label `localssd`, LBA 4096, mounted `/mnt/nvme` (`rw,noatime,discard`), 368.0 GiB (395,188,764,672 B; `df -h` rounds it to 369G); `/mnt/nvme` owned `wanhr:wanhr`, `/mnt/nvme/hicache_l3` exists, root-owned, empty**; by-id `/dev/disk/by-id/google-local-nvme-ssd-0`. `/etc/fstab:4` HAS the by-id `nofail` line (`cat -n /etc/fstab`, mtime 2026-09-17 16:41): never append it again. **Ephemeral**: wiped at every VM stop/start, i.e. every morning (§2.2). Device ceilings, measured (iostat, 5 s samples, `R32/exp1_32b/iostat.log`; no fio output was saved): 704 MiB/s = ~0.68 GiB/s read at 97 % util, 391 MiB/s = ~0.38 GiB/s write at 99 % util; nixl L3 delivers 0.62-0.63 GiB/s for every model (`R32/REPORT.md:47-49`). |
-| Repo | `/home/wanhr/sglang` @ `6ec32e6b7`, upstream ~2026-09-07. Uncommitted: `scripts/setup-gpu-docker.sh`, 12 files under `hicache_eval/scripts/` (env knobs, §11), `hicache_eval/.current_results`, `HANDOFF.md`; untracked: `agent_cache/` (this file, the starter kit, `archive/`, `scripts/convert_lmcache.py`, `traces/`, `results/20260917_2303/`, `.current_results`, `.gitignore`), `.claude/skills/runbook-authoring/`, `hicache_eval/.frozen_results`, the `R32/` and `R8/` dirs, 4 new scripts. Nothing modified under `python/`. `hicache_eval/.current_results` points at a frozen campaign (`.../20260917_a100_gcp_32b70b_fp8kv`, listed in `hicache_eval/.frozen_results`): every hicache_eval driver refuses to run until `RESULTS` points at a new dir (`hicache_eval/scripts/env.sh:6-12`). |
-| HF cache | `~/.cache/huggingface/hub`: **`Qwen/Qwen3-32B-FP8` 32G (snapshot `aa55da1ecc13...`, the evaluation model)**, `Qwen/Qwen3-8B` 16G (`b968826d`), `casperhansen/llama-3.3-70b-instruct-awq` 38G (`64d25562`). The three `models--*` dirs are `root:root` on the host (2026-09-18; written by `hf download` inside a container; readable, §2.6). The 8B and 32B-FP8 tokenizer files (tokenizer.json, tokenizer_config.json incl. chat template, vocab.json, merges.txt) are byte-identical (sha256 of both snapshots, re-checked 2026-09-18). |
+| GPU | **NVIDIA H200, 143,771 MiB, compute capability 9.0 (SM90, Hopper), PCIe Gen5 x16, persistence mode on** (measured 2026-09-21). **Hopper, so unlike the A100:** the default MHA backend resolves to `fa3` (`arg_groups/model_override_base.py:323-329`), not `flashinfer`; and FP8 checkpoints run on **native FP8 tensor cores**, because Marlin auto-enable is gated on `80 <= sm < 89` (`layers/quantization/fp8_utils.py:2126-2132`), so the A100's weight-only FP8 Marlin (W8A16) path is NOT taken here. `fa3` + `fp8_e5m2` is still auto-rewritten to `triton` (`arg_groups/overrides.py:_attention_backend_fa3_fp8_fallback`), so the §5.2 `--attention-backend triton` pin now agrees with the automatic resolution instead of overriding it — keep it anyway, so the log is unambiguous. **Consequence: every prefill/decode constant in §5.4 is A100-only and must be re-measured (§5.4).** |
+| Driver | **580.173.02**, CUDA 13.0. Secure Boot: not applicable (`mokutil` reports `EFI variables are not supported on this system`). No `nvidia_fs` module (no GDS). |
+| Docker | docker-ce **29.8.0**, `Live Restore Enabled: false` (a dockerd restart kills containers), storage driver `overlay2`, root dir `/var/lib/docker` (on `/`). NVIDIA Container Toolkit 1.20.0 **already installed**, and `/etc/docker/daemon.json` **already registers the `nvidia` runtime** (`docker info` -> `Runtimes: nvidia runc io.containerd.runc.v2`), so §2.1 is a no-op check. `docker.service` **`LimitMEMLOCK=infinity`** (the A100 box had 8 MiB; `--ulimit memlock=-1:-1` in §2.3 is kept anyway, it costs nothing and makes the container independent of the daemon setting). **`wanhr` is NOT in the `docker` group** (`id -nG` -> `wanhr` only; the group exists, gid 986, and is empty): plain `docker` fails with `permission denied ... /var/run/docker.sock` until §2.1 runs. Passwordless `sudo` works. |
+| Containers | **None. No images at all** (`docker images` is empty). §2.3 creates `sglang_hicache` from `lmsysorg/sglang:nightly-dev-20260907-30705c00`, the image every A100 measurement used, so the compiled pins stay comparable to `R32/` and `C18/`. There is no `sglang_dev` on this box and none is needed. |
+| Host | **Ubuntu 24.04.4 LTS, kernel 6.11.0-1016-nvidia, 16 vCPU** (Intel Xeon Platinum 8468, 1 socket, 8 cores x 2 threads, **1 NUMA node**, GPU NUMA affinity node 0, CPU affinity 0-15), **196 GB RAM** (idle: 193 GB available), **no swap**, **Python 3.12.3 only** — and `python3` has **no `pip` and no `ensurepip`** (`python3 -m venv` exists but cannot bootstrap pip), so the §3.5 `uv` route is mandatory, exactly as on the A100 box but for a different reason. `iostat` is present; **`fio`, `uv`, `pip`, `hf`, `py-spy` are NOT**. `/dev/shm` is a **99 GB** tmpfs. **`/tmp` is NOT a tmpfs here: it is on `/` (`/dev/vda1`, ext4)** — the A100 box's "the nixl default `/tmp/hicache_storage` lands on tmpfs" trap therefore does not apply in the same form, but the default is still the wrong device (the root disk, not the SSD), so `SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR` is still mandatory (§5.2). |
+| Disks | **`/` = `/dev/vda1`, ext4 on a 1.3 TB virtio volume, 1.2 TB free** (measured 2026-09-21; holds docker images, the HF cache, `/home/wanhr/data` and the results). Single-stream `dd` O_DIRECT on it: 594 MB/s write, 457 MB/s read (measured 2026-09-21) — **use the SSD for L3, not this**. **`/dev/vdc` = the attached 2.27 TiB SSD (2,496,449,740,800 B), ext4 label `ssd`, LBA 512 B logical / 4096 B physical, mounted `/mnt/ssd` (`rw,noatime,discard`), `/mnt/ssd` owned `wanhr:wanhr`, `/mnt/ssd/hicache_l3` exists, root-owned, empty**; by-id `/dev/disk/by-id/virtio-disk-b8`; `/etc/fstab:5` holds the UUID line with `nofail` (`UUID=2feca542-a3be-4758-9855-860d3bbdc295 /mnt/ssd ext4 discard,defaults,noatime,nofail 0 2`). **Persistent** (a network-attached volume, not an ephemeral local SSD): it survives restarts, so there is no daily re-format (this is the A100 box's §2.2, deleted). Device ceilings, **measured 2026-09-21** (4 concurrent `dd` streams, 4 MiB blocks, O_DIRECT, with `iostat -x -d 2` sampling alongside; there is no `fio` on this box): the sustained steady state is **1,973,500 kB/s = 1,927 MiB/s = 1.88 GiB/s at 100 % `%util`, in BOTH directions** (5,300 IOPS of ~372 kB, `aqu-sz` 35-38); single stream reaches 946 MB/s read and 988 MB/s write at 1 MiB blocks, 1.6 GB/s write at 4 MiB. **Take the 1.88 GiB/s steady state as the ceiling, not the short-burst `dd` aggregates** (a 4 GiB-per-stream run reports up to 2,205 MiB/s because the first seconds are not yet at 100 % util). At b = 131,072 B/token that is **15,418 tok/s each way** (derived). For comparison the A100's local NVMe was 0.68 GiB/s read (5,571 tok/s) and 0.38 GiB/s write (3,113 tok/s): **this disk is 2.8x on read and 5.0x on write, and unlike that one it is symmetric**. |
+| Repo | `/home/wanhr/sglang` @ **`d608a20d4`**, working tree **clean**. The three commits since the A100 runbook's base (`6ec32e6b7`) are `d4280b4ff` (a100 trials), `5b881454b` (agent evaluation) and `d608a20d4` (ttft figures); under `python/` they contain **only** the HiCache event-log eval patch (31 added lines tagged `# EVAL-PATCH` across `managers/cache_controller.py`, `mem_cache/unified_radix_cache.py`, `mem_cache/hybrid_cache/hybrid_cache_controller.py`, `utils/common.py`), which is therefore **already in the tree and needs no `git apply`** (§6.6, §11). `git apply --check -R agent_cache/patches/0002-hicache-event-log.patch` succeeds, which is how you confirm it. `hicache_eval/.current_results` points at the frozen A100 campaign (`.../20260917_a100_gcp_32b70b_fp8kv`, listed in `hicache_eval/.frozen_results`): every hicache_eval driver refuses to run until `RESULTS` points at a new dir (`hicache_eval/scripts/env.sh:6-12`). |
+| HF cache | **Empty: `~/.cache/huggingface` does not exist.** §2.6 downloads `Qwen/Qwen3-32B-FP8` (32 GB) onto `/`. The 8B and the 70B AWQ of the A100 box are not needed (the 8B was the documented negative case there; on this GPU its bar changes too, so it says nothing until re-measured). |
+| Datasets | **Absent: `/home/wanhr/data` does not exist**; §3.1 downloads 2.95 GB. The converted trace `agent_cache/traces/lmcache_agentic_trace.json` (68,429,742 B) IS present, committed, and needs no re-run. |
+| Network | Outbound HTTPS works (`huggingface.co` and `github.com` both answer 200, checked 2026-09-21). |
 
-**A100 constants are measured** (`R32/{REPORT,COMPARISON}.md`; table in §5.4). Qwen3-32B-FP8, fp8_e5m2 KV, triton, mem-fraction 0.85: b = 131,072 B/token,
-P = 1,226 tok/s (H100 2,336: 0.53x; part of it is the weight kernel, W8A16 Marlin here vs DeepGEMM W8A8 there, `R32/DEVIATIONS.md` D4), bar 0.150 GiB/s, device pool
-281,216 tokens (H100 284,224: `hicache_eval/scripts/models.sh:21` still holds the H100 value), L3 0.623 GiB/s = 4.2x the bar, L3 hit faster than recompute at 7 of 7
-lengths. **Negative case:** Qwen3-8B here has P 8,858 tok/s, bar 1.22 GiB/s, L3 0.625 GiB/s = 0.51x the bar: an L3 hit loses at 7 of 7 lengths (`R8/COMPARISON.md:123-133`),
-so the 8B cannot show an L3 benefit on this box; that is why the 32B is the evaluation model. Llama-70B-AWQ: P 820, bar 0.125, L3 0.629 (5.0x).
+**Which A100 constants survive the port.** Three groups:
+- **Survive unchanged** (properties of the model, the dtype or the trace file, not of the GPU): `b` = 131,072 B/token (2 x 64 layers x 8 KV heads x 128 x 1 byte); the host-pool sizing rule; the converted trace's gap, output-length and context distributions (§3.3); the page/O_DIRECT arithmetic, except that this disk's logical sector size is 512 B, not 4,096, so the alignment constraint is strictly weaker (§2.2).
+- **Survive as an upper-bounded prior:** the disk-side numbers, now superseded by this box's own measurements (§1 Disks row).
+- **Do NOT survive, must be re-measured (§5.4):** `P` (1,226 tok/s), the recompute bar (0.150 GiB/s), the whole recompute TTFT-vs-length curve, the L1/L2/L3 tier fits, the device pool (281,216 tokens), the weight-load size, boot time, and both open constants (decode rate, prefix-extension TTFT). **Nine numbers.** Every one of them is Hopper-vs-Ampere sensitive, and three of them (`P`, the bar, the tier fits) decide whether L3 is admissible at all on this box (§9.3).
 
-Re-check blocks (all read-only; values in `-> prints:` are the 2026-09-18 01:33 UTC readings):
+Re-check blocks (all read-only; values in `-> prints:` are the 2026-09-21 19:10-19:30 UTC readings):
 
 ```bash
-# host. Block A: GPU, driver, PCIe, Secure Boot, GDS module
-echo "gpu: $(nvidia-smi --query-gpu=name,memory.total,pcie.link.gen.max,pcie.link.width.max --format=csv,noheader)"
+# host. Block A: GPU, driver, compute capability, PCIe, GDS module
+echo "gpu: $(nvidia-smi --query-gpu=name,memory.total,compute_cap,pcie.link.gen.max,pcie.link.width.max --format=csv,noheader)"
 echo "driver: $(nvidia-smi --query-gpu=driver_version --format=csv,noheader)"
 echo "gpu mem used: $(nvidia-smi --query-gpu=memory.used --format=csv,noheader)"
-echo "secure boot: $(mokutil --sb-state 2>&1 | head -1)"
 echo "nvidia_fs module loaded: $(lsmod | grep -c '^nvidia_fs')"
 ```
--> prints `gpu: NVIDIA A100-SXM4-80GB, 81920 MiB, 4, 16`; `driver: 580.178.04`; `gpu mem used: 0 MiB` (a larger value means a server is running: find it before any measurement); `secure boot: SecureBoot disabled`; `nvidia_fs module loaded: 0`.
+-> prints `gpu: NVIDIA H200, 143771 MiB, 9.0, 5, 16`; `driver: 580.173.02`; `gpu mem used: 0 MiB` (a larger value means a server is running: find it before any measurement); `nvidia_fs module loaded: 0`. A `compute_cap` of `9.0` is the load-bearing value: it is what makes §5.4's A100 constants inapplicable and what selects the native-FP8 and `fa3` paths (§5.1).
 
 ```bash
-# host. Block B: docker daemon, docker group, dockerd memlock, the two containers and their ulimits
+# host. Block B: docker daemon, docker group membership, dockerd memlock, the measurement container
 echo "docker: $(docker info 2>/dev/null | grep -E 'Server Version|Live Restore|Runtimes' | tr -s ' ' | paste -sd ';')"
 echo "docker group in this shell: $(id -nG | tr ' ' '\n' | grep -cx docker)"
 echo "dockerd memlock: $(systemctl show docker -p LimitMEMLOCK)"
-docker ps -a --format 'container: {{.Names}} | {{.Status}} | {{.Image}}' | grep -E 'sglang_(hicache|dev)'
-docker inspect -f 'ulimits: {{.Name}} restart={{.HostConfig.RestartPolicy.Name}} {{range .HostConfig.Ulimits}}{{.Name}}={{.Soft}}:{{.Hard}} {{end}}' sglang_hicache sglang_dev
+echo "nvidia runtime in daemon.json: $(sudo grep -c '"nvidia"' /etc/docker/daemon.json)"
+docker ps -a --format 'container: {{.Names}} | {{.Status}} | {{.Image}}' 2>/dev/null | grep sglang_hicache || echo "container: sglang_hicache NOT CREATED (§2.3)"
 ```
--> prints `docker: Server Version: 29.8.1; Runtimes: io.containerd.runc.v2 nvidia runc; Live Restore Enabled: false` (the runtime order varies between calls; pass: `nvidia` present); `docker group in this shell: 1`; `dockerd memlock: LimitMEMLOCK=8388608`; two `container:` lines, `sglang_hicache | Up ... | lmsysorg/sglang:nightly-dev-20260907-30705c00` and `sglang_dev | Up ... | lmsysorg/sglang:dev` (`Exited` after a VM stop is normal: §2.2 then §2.3); two `ulimits:` lines each with `restart=no memlock=-1:-1 nofile=1048576:1048576`.
+-> prints `docker: Server Version: 29.8.0; Runtimes: nvidia runc io.containerd.runc.v2; Live Restore Enabled: false` (the runtime order varies between calls; pass: `nvidia` present); `docker group in this shell: 1` **after §2.1 and a new login shell** (`0` today, and then the `docker info`/`docker ps` lines are empty because the socket is refused: that is the §2.1 symptom, not a broken daemon); `dockerd memlock: LimitMEMLOCK=infinity`; `nvidia runtime in daemon.json: 1`; and `container: sglang_hicache NOT CREATED (§2.3)` until §2.3 has run, then `container: sglang_hicache | Up ... | lmsysorg/sglang:nightly-dev-20260907-30705c00`.
 
 ```bash
 # host. Block C: OS, RAM, swap, tmpfs sizes, host python and tools
@@ -135,251 +153,287 @@ echo "os: $(grep PRETTY_NAME /etc/os-release | cut -d= -f2), kernel $(uname -r),
 echo "ram total/available GiB: $(free -g | awk '/^Mem:/{print $2"/"$7}')"
 echo "swap GiB: $(free -g | awk '/^Swap:/{print $2}')"
 echo "shm size: $(df -h --output=size /dev/shm | tail -1 | tr -d ' ')"
-echo "tmp size: $(df -h --output=size /tmp | tail -1 | tr -d ' ')"
+echo "tmp device: $(findmnt -n -o SOURCE,FSTYPE -T /tmp | tr -s ' ')"
 echo "host python: $(python3 --version)"
+echo "host ensurepip: $(python3 -c 'import ensurepip' 2>&1 | tail -1 | cut -c1-40)"
 for t in pip uv hf py-spy fio iostat; do echo "tool $t: $(command -v $t || echo none)"; done
 ```
--> prints `os: "Ubuntu 26.04.1 LTS", kernel 7.0.0-1011-gcp, 12 vCPU`; `ram total/available GiB: 167/160` (available drops to 57-62 with a 100 GB host pool up, §5.3); `swap GiB: 0`; `shm size: 84G`; `tmp size: 84G`; `host python: Python 3.14.4`; `tool pip: none`, `tool uv: /home/wanhr/.local/bin/uv`, `tool hf: none`, `tool py-spy: none`, `tool fio: /usr/bin/fio`, `tool iostat: /usr/bin/iostat`.
+-> prints `os: "Ubuntu 24.04.4 LTS", kernel 6.11.0-1016-nvidia, 16 vCPU`; `ram total/available GiB: 196/193` (available drops with a large host pool up, §5.3); `swap GiB: 0`; `shm size: 99G`; `tmp device: /dev/vda1 ext4` (**not tmpfs**: different from the A100 box); `host python: Python 3.12.3`; `host ensurepip: ModuleNotFoundError: No module named 'ens` (so `python3 -m venv` cannot make a usable venv: §3.5 uses `uv`); `tool pip: none`, `tool uv: none` (until §3.5), `tool hf: none`, `tool py-spy: none`, **`tool fio: none`** (the A100 box had it; disk numbers here come from `dd` + `iostat`), `tool iostat: /usr/bin/iostat`.
 
 ```bash
-# host. Block D: root disk, the local NVMe (device, by-id link, mount, free space, L3 dir) and the fstab line
+# host. Block D: root disk, the attached SSD (device, by-id link, mount, free space, L3 dir) and the fstab line
 echo "root free: $(df -h --output=avail / | tail -1 | tr -d ' ')"
-echo "nvme device: $(lsblk -dn -o NAME,SIZE,FSTYPE,LABEL,LOG-SEC /dev/nvme0n1)"
-echo "nvme by-id resolves to: $(readlink -f /dev/disk/by-id/google-local-nvme-ssd-0)"
-echo "nvme mount: $(findmnt -n -o SOURCE,FSTYPE,SIZE,OPTIONS /mnt/nvme || echo NOT MOUNTED)"
-echo "nvme free: $(df -h --output=avail /mnt/nvme | tail -1 | tr -d ' ')"
-echo "l3 dir owner: $(stat -c '%U:%G' /mnt/nvme/hicache_l3 2>/dev/null || echo missing)"
-echo "l3 files: $(find /mnt/nvme/hicache_l3 -type f 2>/dev/null | wc -l)"
-echo "fstab nvme line: $(grep -n google-local-nvme-ssd-0 /etc/fstab)"
+echo "ssd device: $(lsblk -dn -o NAME,SIZE,FSTYPE,LABEL,LOG-SEC,PHY-SEC /dev/vdc | tr -s ' ')"
+echo "ssd by-id resolves to: $(readlink -f /dev/disk/by-id/virtio-disk-b8)"
+echo "ssd mount: $(findmnt -n -o SOURCE,FSTYPE,SIZE,OPTIONS /mnt/ssd || echo NOT MOUNTED)"
+echo "ssd free: $(df -h --output=avail /mnt/ssd | tail -1 | tr -d ' ')"
+echo "l3 dir owner: $(stat -c '%U:%G' /mnt/ssd/hicache_l3 2>/dev/null || echo missing)"
+echo "l3 files: $(find /mnt/ssd/hicache_l3 -type f 2>/dev/null | wc -l)"
+echo "fstab ssd line: $(grep -n /mnt/ssd /etc/fstab)"
 ```
--> prints `root free: 793G` (792-793G on 2026-09-18; `df -h` rounding, it moves with every write); `nvme device: nvme0n1 375G ext4 localssd 4096`; `nvme by-id resolves to: /dev/nvme0n1`; `nvme mount: /dev/nvme0n1 ext4 368G rw,noatime,discard`; `nvme free: 369G`; `l3 dir owner: root:root`; `l3 files: 0` (between cells; a cell leaves 2 files per page, §7.2); `fstab nvme line: 4:/dev/disk/by-id/google-local-nvme-ssd-0  /mnt/nvme  ext4  discard,defaults,noatime,nofail  0  2`. `nvme mount: NOT MOUNTED` or an empty FSTYPE in `nvme device` means the VM was restarted and the SSD is blank: do §2.2 before any `docker start`. `nvme free` showing `84G` is `/dev/shm` or `/tmp`, not the NVMe.
+-> prints `root free: 1.2T`; `ssd device: vdc 2.3T ext4 ssd 512 4096`; `ssd by-id resolves to: /dev/vdc`; `ssd mount: /dev/vdc ext4 2.3T rw,noatime,discard`; `ssd free: 2.3T` (between cells; a cell leaves 2 files per page, §7.2); `l3 dir owner: root:root`; `l3 files: 0`; `fstab ssd line: 5:UUID=2feca542-a3be-4758-9855-860d3bbdc295  /mnt/ssd  ext4  discard,defaults,noatime,nofail  0  2`. `ssd mount: NOT MOUNTED` means the volume was detached or the `nofail` mount failed: `sudo mount -a` and re-run, and do not start the container until it prints the mount (§2.2). `ssd free` showing `99G` is `/dev/shm`, not the SSD.
 
 ```bash
 # host. Block E: checkout and study state
 echo "head: $(git -C /home/wanhr/sglang rev-parse --short HEAD)"
-echo "files modified under python/: $(git -C /home/wanhr/sglang status --short | grep -c '^ M python/')"
+echo "working tree dirty files: $(git -C /home/wanhr/sglang status --short | wc -l)"
+echo "files modified under python/: $(git -C /home/wanhr/sglang status --short -- python/ | wc -l)"
+echo "event-log patch in tree: $(git -C /home/wanhr/sglang apply --check -R /home/wanhr/sglang/agent_cache/patches/0002-hicache-event-log.patch >/dev/null 2>&1 && echo yes || echo NO)"
 echo "agent_cache stamp: $(cat /home/wanhr/sglang/agent_cache/.current_results 2>/dev/null || echo none)"
-echo "agent_cache results files: $(find /home/wanhr/sglang/agent_cache/results -type f 2>/dev/null | wc -l)"
 echo "trace bytes: $(stat -c %s /home/wanhr/sglang/agent_cache/traces/lmcache_agentic_trace.json 2>/dev/null || echo missing)"
-echo "patch files: $(ls /home/wanhr/sglang/agent_cache/patches 2>/dev/null | wc -l)"
 echo "hicache_eval stamp: $(cat /home/wanhr/sglang/hicache_eval/.current_results)"
 ```
--> prints `head: 6ec32e6b7`; `files modified under python/: 0` (anything else: a patch is applied, §4.3); `agent_cache stamp: 20260917_2303`; `agent_cache results files: 0` (until §2.4 block 7 writes `versions.txt`); `trace bytes: 68429742`; `patch files: 0` (until §4.3); `hicache_eval stamp: /sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv` (frozen: never point an agent_cache run at it).
+-> prints `head: d608a20d4`; `working tree dirty files: 0`; `files modified under python/: 0`; **`event-log patch in tree: yes`** (it is committed at `5b881454b`, so `git status` is clean *and* the patch is active — on the A100 box those two facts were mutually exclusive, §6.6); `agent_cache stamp: none` (until §2.4 block 6 writes one); `trace bytes: 68429742`; `hicache_eval stamp: /sgl-workspace/sglang/hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv` (frozen: never point an agent_cache run at it).
 
 ```bash
-# host. Block F: models in the HF cache (size, host-side owner, snapshot)
-for m in Qwen--Qwen3-32B-FP8 Qwen--Qwen3-8B casperhansen--llama-3.3-70b-instruct-awq; do
-  d=/home/wanhr/.cache/huggingface/hub/models--$m
-  echo "model $m: size $(du -sh $d 2>/dev/null | cut -f1), owner $(stat -c %U:%G $d), snapshot $(ls $d/snapshots | head -1 | cut -c1-8)"
-done
+# host. Block F: the evaluation model in the HF cache (size, owner, snapshot)
+D=/home/wanhr/.cache/huggingface/hub/models--Qwen--Qwen3-32B-FP8
+echo "hf cache dir: $([ -d /home/wanhr/.cache/huggingface/hub ] && echo present || echo MISSING)"
+echo "model Qwen3-32B-FP8: $([ -d $D ] && echo "size $(du -sh $D | cut -f1), owner $(stat -c %U:%G $D), snapshot $(ls $D/snapshots | head -1 | cut -c1-8)" || echo MISSING)"
 ```
--> prints `model Qwen--Qwen3-32B-FP8: size 32G, owner root:root, snapshot aa55da1e`; `model Qwen--Qwen3-8B: size 16G, owner root:root, snapshot b968826d`; `model casperhansen--llama-3.3-70b-instruct-awq: size 38G, owner root:root, snapshot 64d25562`. A missing 32B snapshot means the cache is lost: §2.6.
+-> prints `hf cache dir: MISSING` and `model Qwen3-32B-FP8: MISSING` today; after §2.6, `hf cache dir: present` and `model Qwen3-32B-FP8: size 32G, owner root:root, snapshot aa55da1e` (the snapshot pin is `aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df`, the one every A100 measurement used).
 
-**Expected result:** every `-> prints:` value above; in particular `sglang_hicache` exists with `memlock=-1:-1`, `/mnt/nvme` is `/dev/nvme0n1 ext4`, `head: 6ec32e6b7`, `files modified under python/: 0`, and the 32B snapshot `aa55da1e` is present.
-**If it differs:** `Exited` containers plus `NOT MOUNTED`: a VM restart; run §2.2 (which starts the container) and nothing else first. `files modified under python/` > 0: a §4 patch is still applied; run the §11 revert block before any commit (§4.3 step 3). A different `head`: every `path:line` in this file must be re-checked before it is trusted.
-**Expected lessons:** the two facts that cannot be recovered after the fact are the NVMe mount (a run against the root PD looks identical in every log, §2.2) and the container's compiled-dependency pins (a run in `sglang_dev` is not comparable to `R32/`): both are checked here, and block D is repeated in the §2.2 gate and in §7.2 step 0b.
+**Expected result:** every `-> prints:` value above; in particular `compute_cap 9.0`, `driver 580.173.02`, `/mnt/ssd` on `/dev/vdc ext4` with `/mnt/ssd/hicache_l3` empty, `head: d608a20d4` with a clean tree and `event-log patch in tree: yes`, and — today — `docker group in this shell: 0`, no container, no HF cache and no `/home/wanhr/data`.
+**If it differs:** `docker: ` empty and `docker ps` silent: §2.1 has not run (or the shell predates it); use `sudo docker` for one-off reads, but do §2.1 before §2.3. `ssd mount: NOT MOUNTED`: `sudo mount -a`; if that fails the volume is detached at the hypervisor and no L3 cell may run. `head` not `d608a20d4`: every `path:line` in this file must be re-checked before it is trusted; the four files the eval patch touches are the ones whose anchors shift first. `gpu:` naming anything but an H200: this runbook's §5.3/§5.4 do not describe that box — go back to the archive and port again.
+**Expected lessons:** two facts cannot be recovered after the fact and are therefore checked here: the L3 store's device (a cell that ran against `/` instead of `/mnt/ssd` looks identical in every log, §2.2) and the container's compiled-dependency pins (a run in a different image is not comparable to `R32/` or `C18/`, §2.4 block 7). The third, new on this box, is `compute_cap`: an A100 constant used on SM90 produces a plausible-looking but wrong cell size, and nothing in any log would say so.
 
 ---
 
 ## 2. Bring-up
 
-This section makes the box able to serve the 32B with HiCache on the local NVMe: the container toolkit (§2.1), the daily NVMe format and mount (§2.2), the two containers (§2.3), the in-container checks and the results stamp (§2.4), the AIPerf venv (§2.5) and the models (§2.6). At its end `sglang_hicache` is running with the GPU, the repo bind, `memlock unlimited` and `/mnt/nvme/hicache_l3` on `/dev/nvme0n1`, and the reader knows which lines are one-time and which are daily. Status per step: §2.1 done 2026-09-16; §2.2, §2.3, §2.4 (except block 7) and §2.6 done 2026-09-17; §2.5 not started; §2.2 is repeated after every VM stop/start.
+This section takes the box from bare to "able to serve the 32B with HiCache on the attached SSD": the docker group and the container toolkit (§2.1),
+the SSD check (§2.2), the image and the container (§2.3), the in-container checks and the results stamp (§2.4), the AIPerf venv (§2.5) and the model (§2.6).
+At its end `sglang_hicache` is running with the GPU, the repo bind, `memlock unlimited` and `/mnt/ssd/hicache_l3` on `/dev/vdc`, and the 32B is on disk.
+**Everything in this section is a first run on this box**, except §2.2, which is already done. Status per step: §2.1 not started (the toolkit half is
+already satisfied, the group half is not); §2.2 done 2026-09-21; §2.3-§2.6 not started.
 
-### 2.1 Container toolkit
+### 2.1 Docker access and container toolkit
 
-**Status:** done 2026-09-16 18:15 UTC; a re-run is a no-op while `/etc/docker/daemon.json` already registers the `nvidia` runtime (it does)
-**Goal:** make dockerd able to hand the GPU to a container, so `--gpus all` in §2.3 and `nvidia-smi -L` in §2.4 work.
-**Runs on:** host, as `wanhr` (the script uses sudo when it needs root)
-**Touches:** nothing when the runtime is already registered; otherwise `/etc/docker/daemon.json` and a `systemctl restart docker`, which kills both containers (live-restore is off, §1)
-**Takes:** ~5 s when idempotent (estimate); GPU idle
+**Status:** the toolkit half is **already satisfied** on this box (NVIDIA Container Toolkit 1.20.0 installed, `nvidia` runtime registered in `/etc/docker/daemon.json`, verified 2026-09-21); the group half is **not started** (`wanhr` is not in the `docker` group)
+**Goal:** make `docker` usable by `wanhr` without `sudo`, and confirm dockerd can hand the GPU to a container, so `--gpus all` in §2.3 and `nvidia-smi -L` in §2.4 work.
+**Runs on:** host, as `wanhr` (needs sudo for the group change)
+**Touches:** the `docker` group's member list (`/etc/group`). Nothing else: the toolkit is installed and the runtime is registered, so no `daemon.json` edit and **no dockerd restart**.
+**Takes:** ~10 s, plus a new login shell for the group to take effect; GPU idle
 
+Block 1 of 3: look first. These three values decide whether block 2 or block 3 is needed.
 ```bash
-# host. Check that the toolkit stage would be a no-op: nvidia runtime registered, nvidia-ctk present, no GPU process running
-echo "nvidia runtime entries in daemon.json: $(grep -c '"nvidia"' /etc/docker/daemon.json)"
+# host. Check both halves: is wanhr in the docker group, and is the nvidia runtime already registered?
+echo "wanhr in docker group: $(id -nG wanhr | tr ' ' '\n' | grep -cx docker)"
+echo "docker group members:  $(getent group docker | cut -d: -f4)"
+echo "nvidia runtime entries in daemon.json: $(sudo grep -c '"nvidia"' /etc/docker/daemon.json)"
 echo "nvidia-ctk: $(nvidia-ctk --version 2>/dev/null | head -1 || echo none)"
 echo "gpu processes: $(nvidia-smi --query-compute-apps=pid --format=csv,noheader | wc -l)"
 ```
--> prints `nvidia runtime entries in daemon.json: 1`; `nvidia-ctk: NVIDIA Container Toolkit CLI version 1.20.0`; `gpu processes: 0`. A `0` on the first line means the act block below WOULD restart dockerd: do not run it while a server is up, and expect both containers to die (`docker start` them again after the §2.2 gate).
+-> prints, today, `wanhr in docker group: 0`, `docker group members:` (empty), `nvidia runtime entries in daemon.json: 1`, `nvidia-ctk: NVIDIA Container Toolkit CLI version 1.20.0`, `gpu processes: 0`. The `1` on the third line is what makes block 3 unnecessary: **do not run block 3 while that line is 1**, it would restart dockerd for nothing.
 
+Block 2 of 3: add the group membership (the only change this step makes).
 ```bash
-# host. Re-run the toolkit stage (idempotent); the guard refuses when the runtime is not registered, because that path restarts dockerd
-[ "$(grep -c '"nvidia"' /etc/docker/daemon.json)" -ge 1 ] || { echo "STOP: nvidia runtime not registered; this run would restart dockerd and kill both containers"; false; } \
+# host, sudo. Add wanhr to the docker group; the membership only reaches NEW login shells, so this shell still needs sudo afterwards
+sudo usermod -aG docker wanhr \
+  && echo "docker group members now: $(getent group docker | cut -d: -f4)" \
+  && echo "this shell sees the group: $(id -nG | tr ' ' '\n' | grep -cx docker)   (0 is expected: log out and back in, or start a new shell)"
+```
+-> prints `docker group members now: wanhr` and `this shell sees the group: 0`. Open a new login shell (or `exec sg docker -c zsh` for a one-off), then `docker ps` must work without `sudo`; until then every `docker` line in this runbook needs a `sudo` prefix.
+
+Block 3 of 3: the toolkit installer. **Not needed on this box** — kept because it is the recovery path if `daemon.json` ever loses the runtime.
+```bash
+# host. Re-run the toolkit stage (idempotent); the guard refuses when the runtime is ALREADY registered, because a
+# re-run in that state is pointless, and the path that is not a no-op restarts dockerd and kills every container
+[ "$(sudo grep -c '"nvidia"' /etc/docker/daemon.json)" -eq 0 ] || { echo "STOP: nvidia runtime already registered; nothing to do (this is the normal case on this box)"; false; } \
 && /home/wanhr/sglang/scripts/setup-gpu-docker.sh --skip-driver --skip-docker
 ```
--> prints `Skipped (--skip-driver)` for the driver stage (`scripts/setup-gpu-docker.sh:257`), `Already installed: NVIDIA Container Toolkit CLI version 1.20.0` (`:478-479`), `Docker already has the 'nvidia' runtime registered` (`:455-457`); NO apt repo added, NO dockerd restart, NO reboot request (`NEED_REBOOT` is set only by a driver install, `:304,315`, so `maybe_reboot`, `:602-611`, does nothing; without `--skip-driver` the driver stage prints `Driver 580.178.04 is already loaded`, `:266-271`).
+-> prints `STOP: nvidia runtime already registered; nothing to do (this is the normal case on this box)` and runs nothing. If the guard ever passes, the script prints `Skipped (--skip-driver)` (`scripts/setup-gpu-docker.sh:257`), installs the toolkit and then **restarts dockerd** (`configure_docker_runtime`, `:459-466`): with live-restore off that kills every running container and any server in them.
 
-Evidence: toolkit stage `scripts/setup-gpu-docker.sh:415-490`. `configure_docker_runtime` restarts dockerd (`:459-466`) only when `daemon.json` lacks the `nvidia` runtime (it has it); with
-live-restore off a restart kills both containers, so never re-run this after a hand edit of `daemon.json` or while a server is up. The printed "Next" `docker run` hint (`:589`) is right only with
-the **uncommitted** `scripts/setup-gpu-docker.sh:179` edit (`SGLANG_REPO=$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel ...)`; commit it); use §2.3 anyway. The `docker` group is live in new login shells (`id -nG | tr ' ' '\n' | grep -x docker`).
+**Expected result:** after block 2 and a new login shell, `id -nG | grep -c docker` prints `1` and `docker ps` prints a header with no error; `docker info | grep Runtimes` lists `nvidia`; `nvidia-smi` still shows 0 GPU processes (nothing was restarted).
+**If it differs:** `docker ps` still says `permission denied while trying to connect to the docker API at unix:///var/run/docker.sock`: the shell predates the group change — open a new one; the group is on the *process*, not on the user, once the shell exists. Block 3 actually runs and prints `Registering the 'nvidia' runtime`: `daemon.json` was hand-edited and lost the runtime; dockerd restarts, so re-`docker start` the container afterwards.
+**Expected lessons:** on this box the toolkit is pre-provisioned and the only missing piece is a group membership — a one-line change whose failure mode (`permission denied` on the socket) looks like a broken daemon and is not. The destructive path in this step is the dockerd restart, and it is triggered by the *content* of `daemon.json`, not by a flag, which is why block 1 reads that file before block 3 is offered at all.
 
-**Expected result:** the three `-> prints:` lines of the check block, then the three `Already ...` / `Skipped` lines of the script and its exit status 0; `docker ps -a` still shows both containers with their previous status (no restart happened).
-**If it differs:** the script prints `Registering the 'nvidia' runtime in /etc/docker/daemon.json`: the guard was bypassed or `daemon.json` was hand-edited; dockerd restarts, both containers stop, and any running server is gone: rerun §2.2's gate block to start `sglang_hicache` again.
-**Expected lessons:** the only destructive path in this stage is the dockerd restart, and it is triggered by the content of `daemon.json`, not by a flag; checking that file first is what makes the re-run safe.
+### 2.2 The attached SSD for L3
 
-### 2.2 Local NVMe for L3
+**Status:** **done 2026-09-21 19:20 UTC** and **persistent**: `/dev/vdc` (2.27 TiB, hot-plugged 19:17:30 UTC) formatted ext4 label `ssd`, mounted at `/mnt/ssd`, `/mnt/ssd/hicache_l3` created, `/etc/fstab:5` UUID line with `nofail`, throughput measured. **There is no daily step.** This replaces the A100 box's format-and-mount-every-morning procedure, which existed only because that box's local NVMe was wiped at every VM stop.
+**Goal:** give HiCache an L3 directory on the fast attached SSD, never on the root disk, and be able to prove in one line which device it is on before any cell.
+**Runs on:** host, as `wanhr` (the one-line check needs no sudo; the recreate blocks need sudo)
+**Touches:** nothing in the normal case (the check is read-only). The recreate blocks touch `/dev/vdc` (the format block DESTROYS everything on it), `/mnt/ssd`, `/mnt/ssd/hicache_l3` and `/etc/fstab`.
+**Takes:** the check ~1 s; a full recreate ~1 min (measured 2026-09-21: `mkfs.ext4` with `lazy_itable_init=0` on 2.27 TiB took **19 s**); GPU idle
 
-**Status:** done 2026-09-17 15:35 UTC (filesystem creation time 15:35:47 UTC from `dumpe2fs -h /dev/nvme0n1`; the mount time itself was not recorded, the fstab line's mtime is 16:41 UTC); **redo after EVERY VM stop/start** (the SSD is blank after each one; the VM is stopped between working days, so every morning). The guarded blocks below are new (2026-09-17 21:06 UTC) and have not yet been exercised after a wipe: the VM has been up since 2026-09-17 15:20 UTC.
-**Goal:** give HiCache an L3 directory on the local SSD (`/dev/nvme0n1`), never on the root PD, and make it impossible to start the measurement container while that is not true.
-**Runs on:** host, as `wanhr` (needs sudo); after every VM start and BEFORE any `docker start` (both containers have RestartPolicy `no`, so they are `Exited` after a stop)
-**Touches:** `/dev/nvme0n1` (the format block DESTROYS everything on it), `/mnt/nvme` (mount point, chown to `wanhr:wanhr`), `/mnt/nvme/hicache_l3` (created, stays root-owned), `/etc/fstab` (read-only: the line is already there); the gate block starts `sglang_hicache`
-**Takes:** ~2 min (estimate: the 2026-09-16 and 2026-09-17 formats were not timed; `lazy_itable_init=0` writes every inode table up front); GPU idle
-
-Block 1 of 4: look before touching anything. The three values decide which of the next blocks run.
+The daily reality on this box is one block:
 ```bash
-# host. Check: is /mnt/nvme already mounted, does the by-id link point at /dev/nvme0n1, and does the SSD already hold a filesystem?
-DEV=/dev/disk/by-id/google-local-nvme-ssd-0
-echo "mounted now: $(findmnt -n -o SOURCE /mnt/nvme || echo none)"
+# host. The only routine SSD check: is /mnt/ssd really /dev/vdc, and is the L3 dir there and empty?
+echo "ssd mount:    $(findmnt -n -o SOURCE,FSTYPE,OPTIONS /mnt/ssd || echo NOT MOUNTED)"
+echo "l3 dir on:    $(findmnt -n -o SOURCE -T /mnt/ssd/hicache_l3 2>/dev/null || echo missing)"
+echo "l3 files:     $(find /mnt/ssd/hicache_l3 -type f 2>/dev/null | wc -l)"
+echo "ssd free:     $(df -h --output=avail /mnt/ssd 2>/dev/null | tail -1 | tr -d ' ')"
+```
+-> prints `ssd mount: /dev/vdc ext4 rw,noatime,discard`, `l3 dir on: /dev/vdc`, `l3 files: 0` (between cells) and `ssd free: 2.3T`. `l3 dir on: /dev/vda1` means `/mnt/ssd` is a plain directory on the root disk and the mount is gone: `sudo mount -a`, and run nothing until this block prints `/dev/vdc`.
+
+Recreate blocks — **only** if the volume is replaced or the filesystem is lost. Block R1 of 3: look before touching anything.
+```bash
+# host. Check: is /mnt/ssd already mounted, does the by-id link point at /dev/vdc, and does the SSD already hold a filesystem?
+DEV=/dev/disk/by-id/virtio-disk-b8
+echo "mounted now: $(findmnt -n -o SOURCE /mnt/ssd || echo none)"
 echo "by-id resolves to: $(readlink -f $DEV)"
 echo "existing filesystem: $(sudo blkid -o value -s TYPE $DEV 2>/dev/null || echo none)"
 ```
--> prints, on a normal morning after a VM start, `mounted now: none`, `by-id resolves to: /dev/nvme0n1`, `existing filesystem: none`: run blocks 2, 3, 4. `mounted now: /dev/nvme0n1`: nothing to format or mount, run block 4 only. `existing filesystem: ext4` with `mounted now: none` (a plain reboot, where the `nofail` fstab line did not mount it): skip block 2, run 3 and 4. `by-id resolves to:` anything other than `/dev/nvme0n1`: STOP, the block-2 guard will refuse; find out what the disk is before formatting anything.
+-> prints, today, `mounted now: /dev/vdc`, `by-id resolves to: /dev/vdc`, `existing filesystem: ext4`: **nothing to do, do not run R2 or R3.** `mounted now: none` with `existing filesystem: ext4`: the fstab mount did not happen, run R3 only. `existing filesystem: none`: the volume is blank, run R2 then R3. `by-id resolves to:` anything other than `/dev/vdc`: STOP — the volume letter moved (a second attached disk); find out which device is the SSD before formatting anything, because the R2 guard compares against `/dev/vdc` by name.
 
-Block 2 of 4: the destructive one. Every guard is re-evaluated inside the block, so pasting it on the wrong day does nothing.
+Block R2 of 3: the destructive one. Every guard is re-evaluated inside the block, so pasting it on the wrong day does nothing.
 ```bash
-# host, sudo. Format the local NVMe as ext4: DESTROYS everything on /dev/nvme0n1. Runs only when nothing is mounted at
-# /mnt/nvme, the by-id link is /dev/nvme0n1 and blkid finds no filesystem; each failed guard prints STOP and the mkfs does not run
-DEV=/dev/disk/by-id/google-local-nvme-ssd-0
-{ ! findmnt /mnt/nvme >/dev/null || { echo "STOP: /mnt/nvme is already mounted, nothing to format"; false; }; } \
-&& { [ "$(readlink -f "$DEV")" = /dev/nvme0n1 ] || { echo "STOP: $DEV is not /dev/nvme0n1; refusing to format"; false; }; } \
-&& { ! sudo blkid "$DEV" >/dev/null 2>&1 || { echo "STOP: $DEV already holds a filesystem; skip to block 3"; false; }; } \
-&& sudo mkfs.ext4 -F -m 0 -L localssd -E lazy_itable_init=0,lazy_journal_init=0,discard "$DEV"
+# host, sudo. Format the attached SSD as ext4: DESTROYS everything on /dev/vdc. Runs only when nothing is mounted
+# from /dev/vdc, the by-id link is /dev/vdc and blkid finds no filesystem; each failed guard prints STOP and the mkfs does not run
+DEV=/dev/disk/by-id/virtio-disk-b8
+{ [ -z "$(findmnt -n --source /dev/vdc)" ] || { echo "STOP: something is mounted from /dev/vdc; nothing to format"; false; }; } \
+&& { [ "$(readlink -f "$DEV")" = /dev/vdc ] || { echo "STOP: $DEV is not /dev/vdc; refusing to format"; false; }; } \
+&& { ! sudo blkid "$DEV" >/dev/null 2>&1 || { echo "STOP: $DEV already holds a filesystem; skip to block R3"; false; }; } \
+&& sudo mkfs.ext4 -F -m 0 -L ssd -E lazy_itable_init=0,lazy_journal_init=0,discard "$DEV"
 ```
--> prints the `mke2fs` progress ending in `Writing superblocks and filesystem accounting information: done`; any `STOP:` line means nothing was formatted (the message says why). The mkfs flags are the 2026-09-16 ones (label `localssd`, `-m 0`, no lazy init, discard); today's label, mount options and owner match them.
+-> prints the `mke2fs` progress ending in `Writing superblocks and filesystem accounting information: done`; any `STOP:` line means nothing was formatted (the message says why). Took **19 s** on 2026-09-21 (measured: 609,484,800 4K blocks, 152,371,200 inodes, all inode tables written up front). The flags are the A100 box's, unchanged: label `ssd`, `-m 0` (no 5 % reserve — 116 GiB on a disk this size), no lazy init (so no first-write penalty during a measurement), `discard`.
 
-Block 3 of 4: mount and prepare the L3 directory (nothing is destroyed).
+Block R3 of 3: mount, prepare the L3 directory, and persist the mount (nothing is destroyed).
 ```bash
-# host, sudo. Mount the NVMe at /mnt/nvme, create the L3 directory, hand /mnt/nvme to wanhr; then show what is mounted
-DEV=/dev/disk/by-id/google-local-nvme-ssd-0
-sudo mkdir -p /mnt/nvme \
-&& sudo mount -o discard,defaults,noatime "$DEV" /mnt/nvme \
-&& sudo mkdir -p /mnt/nvme/hicache_l3 \
-&& sudo chown wanhr:wanhr /mnt/nvme \
-&& echo "mounted: $(findmnt -n -o SOURCE,FSTYPE,OPTIONS /mnt/nvme)" \
-&& echo "size/free: $(df -h --output=size,avail /mnt/nvme | tail -1 | tr -s ' ')"
+# host, sudo. Mount the SSD at /mnt/ssd, create the L3 directory, hand /mnt/ssd to wanhr, and add the fstab line
+# by UUID with nofail if it is not already there; then show what is mounted
+DEV=/dev/disk/by-id/virtio-disk-b8
+sudo mkdir -p /mnt/ssd \
+&& sudo mount -o discard,defaults,noatime "$DEV" /mnt/ssd \
+&& sudo mkdir -p /mnt/ssd/hicache_l3 \
+&& sudo chown wanhr:wanhr /mnt/ssd \
+&& UUID=$(sudo blkid -o value -s UUID /dev/vdc) \
+&& { grep -q "$UUID" /etc/fstab \
+     || echo "UUID=$UUID  /mnt/ssd  ext4  discard,defaults,noatime,nofail  0  2" | sudo tee -a /etc/fstab >/dev/null; } \
+&& echo "mounted:   $(findmnt -n -o SOURCE,FSTYPE,OPTIONS /mnt/ssd)" \
+&& echo "size/free: $(df -h --output=size,avail /mnt/ssd | tail -1 | tr -s ' ')" \
+&& echo "fstab:     $(grep -n /mnt/ssd /etc/fstab)"
 ```
--> prints `mounted: /dev/nvme0n1 ext4 rw,noatime,discard` and `size/free: 369G 369G` (measured 2026-09-18; `findmnt -o SIZE` shows the same filesystem as `368G`, 395,188,764,672 B). `mount: ... already mounted` means block 1 was misread; `mount: wrong fs type` means block 2 did not run.
+-> prints `mounted: /dev/vdc ext4 rw,noatime,discard`, `size/free: 2.3T 2.3T` (measured 2026-09-21) and one `fstab:` line, `5:UUID=2feca542-a3be-4758-9855-860d3bbdc295  /mnt/ssd  ext4  discard,defaults,noatime,nofail  0  2`. `mount: ... already mounted` means R1 was misread; `mount: wrong fs type` means R2 did not run. Verify the fstab line with `sudo mount -a` (exit 0, no new mount): a bad line there is the one way this step can break the next boot, and `nofail` is what keeps a detached volume from blocking it.
 
-Block 4 of 4: the HARD GATE. It is the only sanctioned way to start the container, every day.
+**Why by-UUID and not by-id.** `/dev/disk/by-id/virtio-disk-b8` encodes the hypervisor's attachment slot, which changes if the volume is detached and re-attached; the filesystem UUID does not. The by-id link is still the right thing for the *format* guard (it is a name the operator chose deliberately), and the UUID is the right thing for `fstab`.
+
+**No chown of `hicache_l3`:** the server (root in the container) pre-creates 256 root-owned bucket dirs `00..ff` and writes 0o644 files in them
+(`python/sglang/srt/mem_cache/storage/nixl/nixl_utils.py:257-266,277,298-303`; `nixl_routing.py:5-6`), so the L3 wipe runs as root (§7.2 step 1).
+**O_DIRECT alignment is not a constraint on this disk:** logical sector size is **512 B** (`lsblk -o LOG-SEC /dev/vdc`), not the A100 NVMe's 4,096, so
+every nixl file size is trivially a multiple of it. For the record the arithmetic still holds with room to spare: Qwen3-32B-FP8 + fp8_e5m2 KV at page 64
+gives 64 x 131,072 = 8,388,608 B per page = 2 files (K and V) x 4,194,304 B. The code falls back to buffered I/O only when `O_DIRECT` is absent,
+never on `EINVAL` (`nixl_utils.py:286-296`). Record `lsblk -o LOG-SEC /dev/vdc` in `constants.json` (§9.2) anyway: it is the value the claim rests on.
+
+**Throughput, measured 2026-09-21** (`dd` O_DIRECT on `/mnt/ssd`, 4 MiB blocks, with `iostat -x -d 2 vdc` sampling alongside; there is no `fio` on this box):
+
+| | sustained steady state (`iostat`, 100 % `%util`) | derived at b = 131,072 | single stream (`dd`) |
+|---|---|---|---|
+| read | **1,973,500 kB/s = 1,927 MiB/s = 1.88 GiB/s** | **15,418 tok/s** | 946 MB/s at 1 MiB blocks |
+| write | **1,973,500 kB/s = 1,927 MiB/s = 1.88 GiB/s** | **15,418 tok/s** | 988 MB/s at 1 MiB, 1.6 GB/s at 4 MiB |
+
+The device is **symmetric**, reaches 100 % `%util` at 4 concurrent streams (5,300 IOPS of ~372 kB, `aqu-sz` 35-38), and does not go faster at 8.
+**Use the `iostat` steady state, not the `dd` aggregate:** a 4 GiB-per-stream `dd` run reports up to 2,205 MiB/s because its first seconds are below
+100 % util, and an early measurement here overstated the read ceiling as 1.94 GiB/s for exactly that reason. The A100's local NVMe delivered
+5,571 tok/s read and 3,113 tok/s write, so this disk is **2.8x** and **5.0x**.
+These two numbers are what §5.1's prefetch-timeout budget and §5.3's write-through capacity argument are re-derived from, and they are the main
+mechanical reason to expect a different answer from `C18/` on this box.
+
+**Expected result:** the routine check prints `ssd mount: /dev/vdc ext4 rw,noatime,discard`, `l3 dir on: /dev/vdc`, `l3 files: 0`, `ssd free: 2.3T`; `/mnt/ssd` is `wanhr:wanhr` and `/mnt/ssd/hicache_l3` is `root:root` with 0 files.
+**If it differs:** `findmnt /mnt/ssd` prints nothing: `sudo mount -a` (the `fstab` line is `nofail`, so a boot with the volume detached leaves `/mnt/ssd` as an empty directory on `/` with no error anywhere). `l3 dir on: /dev/vda1`: same cause, and it is the dangerous one — a container started in that state bind-mounts a root-disk directory and nixl `os.makedirs` the store there (`nixl_utils.py:229-231`), so every "L3" write lands on the wrong device, 4x slower, with no error in any log. `ssd free` far below 2.3T between cells: a previous cell's L3 store was not wiped (§7.2 step 1), or the cleaner never fired (§5.3).
+**Expected lessons:** the A100 box's central daily risk — an ephemeral disk silently replaced by the root filesystem — is **structurally gone** here, because the volume is persistent and `fstab`-mounted; what remains is the same *failure mode* with a much lower probability, so the check survives as one read-only block at the top of §7.2 rather than as a hard gate that starts the container. The disk is also 2.8x (read) to 5.0x (write) faster than the one every A100 L3 number was taken on, which is why §5.4 re-measures the tier fits rather than scaling them.
+
+### 2.3 Image and container
+
+**Status:** **not started** — there are no images and no containers on this box (`docker images` and `docker ps -a` are both empty, checked 2026-09-21). The A100 box's `sglang_dev` spare is not recreated: it was never used for a measurement.
+**Goal:** have one long-lived container whose compiled dependencies match this checkout's pins and the A100 campaign's, so that every 32B number stays comparable to `R32/` and `C18/`, and whose warm JIT cache is kept between measured stages.
+**Runs on:** host, as `wanhr` (after §2.1; otherwise prefix every `docker` with `sudo`); shells inside the container via `docker exec -it sglang_hicache bash` (cwd `/sgl-workspace/sglang`, user root)
+**Touches:** pulls ~20 GB into `/var/lib/docker` (on `/`, 1.2 TB free); creates the container; creates `~/.cache/huggingface` on the host
+**Takes:** pull 10-25 min (estimate: image size over this box's network, not yet measured); `docker run` ~10 s (estimate); `docker start` ~2 s. A NEW container pays a JIT-cold first boot and a one-time first-long-prefill cost — **both `measured-A100` (10.6 min and 9.0 s, `R8/DEVIATIONS.md` D9) and not yet measured here**; budget them and record the real values in §2.6
+
+**Which image.** `lmsysorg/sglang:nightly-dev-20260907-30705c00` — the image that ran every 2026-09-17 A100 measurement and the 2026-09-18 comparison. Its compiled deps match this checkout's pin (sglang-kernel 0.4.6.post1, `docker/Dockerfile:7`). The bind mount shadows only the `sglang` Python package; the compiled dependencies come from the image, which is why "which image" is a measured-constant question and not a preference (§2.4 block 7).
+
 ```bash
-# host. Start sglang_hicache ONLY if /mnt/nvme is really the NVMe, then show what the container sees (the guard ends in
-# `false`, never in a shell-terminating command, so pasting it into a login shell cannot close the SSH session)
-[ "$(findmnt -n -o SOURCE /mnt/nvme)" = /dev/nvme0n1 ] || { echo "STOP: NVMe NOT MOUNTED - redo §2.2 blocks 1-3; container NOT started"; false; } \
-&& docker start sglang_hicache \
-&& docker exec -i sglang_hicache bash -c 'echo "l3 dir on: $(findmnt -n -o SOURCE -T /mnt/nvme/hicache_l3)"; echo "memlock: $(ulimit -l)"'
+# host. Pull the measurement image (~20 GB into /var/lib/docker on /); skipped when it is already local
+IMAGE=lmsysorg/sglang:nightly-dev-20260907-30705c00
+docker image inspect "$IMAGE" >/dev/null 2>&1 && echo "image present: skip" \
+  || { time docker pull "$IMAGE"; }
+echo "image: $(docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep 30705c00 || echo MISSING)"
 ```
--> prints `sglang_hicache` (also when the container was already running: `docker start` is then a no-op), `l3 dir on: /dev/nvme0n1`, `memlock: unlimited`. `l3 dir on: /dev/sda1` (or `/dev/root`) means the container bind-mounted an empty directory on the root PD: `docker stop sglang_hicache`, redo blocks 1-3, then this block.
-
-**fstab:** `/etc/fstab:4` already holds the by-id line (`/dev/disk/by-id/google-local-nvme-ssd-0  /mnt/nvme  ext4  discard,defaults,noatime,nofail  0  2`; verified with
-`cat -n /etc/fstab`, although an earlier status note said it had not been added): never `tee -a` it again. It helps only across a plain reboot; after a stop/start (or a
-host-maintenance restart: `automaticRestart=TRUE`, `onHostMaintenance=TERMINATE`) the SSD has no filesystem, the `nofail` mount fails silently, `/mnt/nvme` is an empty
-dir on the root PD, a container started then bind-mounts it and nixl `os.makedirs` the store there (`python/sglang/srt/mem_cache/storage/nixl/nixl_utils.py:229-231`): every "L3" write lands on `/dev/sda` with no
-error. Hence the hard gate; reusable form: `gate()` in `hicache_eval/scripts/run_a100_rerun_c2.sh:48-54` (also requires >= 110 GiB RAM available, stops a stale server).
-
-No chown of `hicache_l3`: the server (root in the container) pre-creates 256 root-owned bucket dirs `00..ff` and writes 0o644 files in them
-(`nixl_utils.py:257-266,277,298-303`; `nixl_routing.py:5-6`), so the L3 wipe runs as root (§7.2 step 1).
-NVMe LBA is 4 KiB (`lsblk -o LOG-SEC` = 4096): O_DIRECT needs every nixl FILE to be a multiple of 4096, and nixl writes K and V as separate files (2 per page).
-Qwen3-32B-FP8 + fp8_e5m2 KV, page 64: 64 x 131,072 = 8,388,608 B per page = 2 files x 4,194,304 B (1024 x 4096): fine, and measured (4,096 tokens -> 128 files,
-536,870,912 B, `R32/exp0_32b/exp0_results.json` step2_backup; log `O_DIRECT is active ... (POSIX)`). The code falls back to buffered I/O only when `O_DIRECT` is absent,
-never on EINVAL (`nixl_utils.py:286-296`), so any other model/page size passes that check or sets `SGLANG_HICACHE_NIXL_USE_DIRECT_IO=0`. HF cache and results stay on `/`. Never `mkfs` `/dev/sda*`: the block-2 guard compares the by-id link against `/dev/nvme0n1` for exactly that reason.
-
-**Expected result:** block 4 prints `l3 dir on: /dev/nvme0n1` and `memlock: unlimited`; `findmnt /mnt/nvme` shows `SOURCE=/dev/nvme0n1 FSTYPE=ext4` with `rw,noatime,discard`; `df -h /mnt/nvme` shows `369G` available (measured 2026-09-18; 2.1M used when `hicache_l3` is empty); `/mnt/nvme` is `wanhr:wanhr`, `/mnt/nvme/hicache_l3` exists, is `root:root` and has 0 files.
-**If it differs:** `findmnt` prints nothing: block 3 was skipped or its mount failed, rerun block 3. `df` shows the root disk (`/dev/root` or `/dev/sda1`, ~1 TB): `/mnt/nvme` is a plain directory, the mount failed. A `df` line with `84G` is `/dev/shm` or `/tmp` (tmpfs), not the NVMe: the NVMe is 375 GiB raw (`lsblk`), 368.0 GiB formatted, `369G` in `df -h`. Block 2 says `STOP: ... already holds a filesystem` on a morning after a stop/start: the SSD was not wiped this time (a plain reboot); mount it with block 3 and check that `hicache_l3` still holds only what the last cell left.
-**Expected lessons:** the local SSD does not survive a VM stop/start, and the failure mode is silent: a container started without this gate writes "L3" to the root PD and every tier number taken afterwards measures the wrong device with no error in any log. The gate, not the fstab line, is the defence; it is repeated in §7.2 step 0b before every cell.
-
-### 2.3 Containers
-
-**Status:** done 2026-09-17 (`sglang_hicache` created 17:24 UTC, `sglang_dev` 17:17 UTC); do not re-run `docker run`, the names are taken; daily = `docker start sglang_hicache` through the §2.2 gate block
-**Goal:** have one long-lived container whose compiled dependencies match this checkout's pins and whose warm JIT cache is kept between measured stages, so every 32B number stays comparable to `R32/`.
-**Runs on:** host, as `wanhr`; shells inside the container via `docker exec -it sglang_hicache bash` (cwd `/sgl-workspace/sglang`, user root)
-**Touches:** creates the containers (one-time) and `~/.cache/huggingface` on the host; the daily start touches nothing else
-**Takes:** `docker start` ~2 s (estimate); creation ~10 s (estimate); GPU idle. A NEW container pays a 10.6 min JIT-cold first boot and a one-time 9.0 s first long prefill (measured, `R8/DEVIATIONS.md` D9)
-
-**Use `sglang_hicache`**: its compiled deps match this checkout's pins (sglang-kernel 0.4.6.post1, `docker/Dockerfile:7`) and it ran every
-2026-09-17 measurement. `sglang_dev` (sglang-kernel 0.4.7) never booted a server with this checkout: unproven, not comparable. Never recreate the
-container between measured stages: a new one pays the 10.6 min JIT-cold boot and the one-time 9.0 s first long prefill (`R8/DEVIATIONS.md` D9), and `docker rm` drops the warm JIT cache (`/root/.cache/sglang`) and the writable layer (`/opt/aiperf` of §2.5, `/tmp/lmcache` of §3.3).
+-> prints the pull progress and then `image: lmsysorg/sglang:nightly-dev-20260907-30705c00 <size>`. Record the pull time and size here after the first run (not yet measured on this box). A pull failure on this box is a network problem, not an auth one: the image is public.
 
 ```bash
-# host. Both containers must already exist; this is the daily check before `docker start` (read-only)
-docker ps -a --format 'container: {{.Names}} | {{.Status}} | {{.Image}}' | grep -E 'sglang_(hicache|dev)'
-```
--> prints two lines: `container: sglang_hicache | Up ... | lmsysorg/sglang:nightly-dev-20260907-30705c00` and `container: sglang_dev | Up ... | lmsysorg/sglang:dev`; `Exited (...)` after a VM stop is normal and is fixed by the §2.2 gate block, never by `docker run`. No line at all: the container is gone (`docker rm`), recreate it with the block below and budget the JIT-cold boot.
-
-```bash
-# host. Open a shell in the measurement container (after the §2.2 gate started it)
-docker exec -it sglang_hicache bash
-```
--> prints a root prompt with cwd `/sgl-workspace/sglang`; `Error response from daemon: ... is not running` means the §2.2 gate did not run or refused.
-
-How `sglang_hicache` was created (record; the guard refuses while the name exists):
-```bash
-# host, bash or zsh (both accept this array form). Create sglang_hicache exactly as on 2026-09-17; refuses if the name exists.
-# For sglang_dev the same block was run with IMAGE=lmsysorg/sglang:dev and --name sglang_dev.
+# host, bash or zsh (both accept this array form). Create sglang_hicache; refuses if the name exists.
 IMAGE=lmsysorg/sglang:nightly-dev-20260907-30705c00
 mkdir -p "$HOME/.cache/huggingface"          # else dockerd creates it root-owned (dflash RUNBOOK 2.2)
 RUN_ARGS=(
   # GPU, IPC, network, privileges
   --gpus all --ipc=host --network=host --privileged
-  # limits: memlock unlimited is mandatory for the pinned host pool; nofile for many L3 files
+  # limits: memlock unlimited for the pinned host pool; nofile for many L3 files
   --ulimit memlock=-1:-1 --ulimit nofile=1048576:1048576
-  # bind mounts: repo, HF cache, the NVMe (rshared so a host re-mount propagates)
+  # bind mounts: repo, HF cache, the attached SSD (rshared so a host re-mount propagates)
   -v /home/wanhr/sglang:/sgl-workspace/sglang
   -v /home/wanhr/.cache/huggingface:/root/.cache/huggingface
-  -v /mnt/nvme:/mnt/nvme:rshared
+  -v /mnt/ssd:/mnt/ssd:rshared
 )
-{ ! docker inspect sglang_hicache >/dev/null 2>&1 || { echo "STOP: sglang_hicache exists; use docker start (§2.2 gate), never recreate"; false; }; } \
-&& docker run -itd --name sglang_hicache "${RUN_ARGS[@]}" "$IMAGE" /bin/zsh
+{ ! docker inspect sglang_hicache >/dev/null 2>&1 || { echo "STOP: sglang_hicache exists; use docker start, never recreate"; false; }; } \
+&& docker run -itd --name sglang_hicache "${RUN_ARGS[@]}" "$IMAGE" /bin/zsh \
+&& echo "created: $(docker ps --format '{{.Names}} {{.Status}}' | grep sglang_hicache)"
 ```
--> prints the new container id (64 hex chars) on creation, or `STOP: sglang_hicache exists ...` (the normal case since 2026-09-17).
+-> prints the new container id (64 hex chars) then `created: sglang_hicache Up <N> seconds`, or `STOP: sglang_hicache exists ...` on any later run.
 
-`/home/wanhr/data` is not bound: copy what a container must read under the repo bind (`agent_cache/traces/`, §3). `--ulimit memlock=-1:-1` is mandatory: the daemon's
-8 MiB `LimitMEMLOCK` is inherited and the pinned host pool (`cudaHostRegister`) fails otherwise (`hicache_eval/hicache_eval_plan.md:55-62`). `--ipc=host` shares the host's
-84 GB `/dev/shm`, so the hint's `--shm-size 32g` is inert (dropped). `:rshared` lets a host re-mount of `/mnt/nvme` propagate into a running container (verified 2026-09-16:
-`findmnt -o PROPAGATION /` is `shared` and `docker run -v <dir>:/x:rshared ubuntu:24.04` starts); the §2.2 gate remains the defence. The image's editable install is
+```bash
+# host. The daily check before `docker start` (read-only)
+docker ps -a --format 'container: {{.Names}} | {{.Status}} | {{.Image}}' | grep sglang_hicache || echo "container: sglang_hicache MISSING"
+```
+-> prints `container: sglang_hicache | Up ... | lmsysorg/sglang:nightly-dev-20260907-30705c00`. `Exited (...)` after an instance restart is normal: `docker start sglang_hicache` (the container has RestartPolicy `no`). No line at all: the container is gone (`docker rm`), recreate it with the block above and budget the JIT-cold boot.
+
+```bash
+# host. Open a shell in the measurement container
+docker exec -it sglang_hicache bash
+```
+-> prints a root prompt with cwd `/sgl-workspace/sglang`; `Error response from daemon: ... is not running` means it needs `docker start`.
+
+`--ulimit memlock=-1:-1` is kept even though this box's dockerd already has `LimitMEMLOCK=infinity` (§1): the pinned host pool (`cudaHostRegister`) fails
+without it on a box where the daemon limit is small (`hicache_eval/hicache_eval_plan.md:55-62`), and pinning it on the container makes the arm independent
+of the daemon. `--ipc=host` shares the host's 99 GB `/dev/shm`. `:rshared` lets a host re-mount of `/mnt/ssd` propagate into a running container.
+`/home/wanhr/data` is **not** bound: copy what the container must read under the repo bind (`agent_cache/traces/`, §3). The image's editable install is
 shadowed by the bind mount (`docker/Dockerfile:639-646`, WORKDIR `:685`).
 
-**Expected result:** `docker ps -a` lists both containers; `docker inspect` shows `restart=no memlock=-1:-1 nofile=1048576:1048576` for each (§1 block B); inside `sglang_hicache`, `pip list` shows `sglang-kernel 0.4.6.post1` (§2.4 block 7) and `ls /root/.cache/sglang` is non-empty (the warm JIT cache; measured: present since the 2026-09-17 boots).
-**If it differs:** `docker run` fails with `Conflict. The container name ... is already in use`: the guard was bypassed; nothing happened, use `docker start`. A container without `memlock=-1:-1`: the server dies at host-pool pinning; recreate it with the block (and pay the JIT-cold boot).
-**Expected lessons:** comparability with `R32/` rests on the image's compiled packages, not on the bind-mounted `sglang` source; the container is state (JIT cache, `/opt/aiperf`, `/tmp/lmcache`), so `docker rm` is a measured cost (10.6 min + 9.0 s per recreation), never a cleanup.
+**Expected result:** `docker ps -a` lists `sglang_hicache` `Up`; `docker inspect -f '{{.HostConfig.RestartPolicy.Name}} {{range .HostConfig.Ulimits}}{{.Name}}={{.Soft}}:{{.Hard}} {{end}}' sglang_hicache` prints `no memlock=-1:-1 nofile=1048576:1048576`; inside it `pip list | grep sglang-kernel` shows `0.4.6.post1` (§2.4 block 7); `ls /root/.cache/sglang` is empty on a fresh container and fills on the first boot.
+**If it differs:** `docker run` fails with `Conflict. The container name ... is already in use`: the guard was bypassed; nothing happened, use `docker start`. `docker: permission denied ... docker.sock`: §2.1 block 2 has not run, or this shell predates it. A container without `memlock=-1:-1`: the server dies at host-pool pinning; recreate it and pay the JIT-cold boot.
+**Expected lessons:** comparability with `R32/` and `C18/` rests on the image's compiled packages, not on the bind-mounted `sglang` source, so the image tag is pinned to the A100 campaign's even though a newer nightly exists. The container is state (JIT cache in `/root/.cache/sglang`, the §2.5 `/opt/aiperf` venv), so `docker rm` is a measured cost per recreation, never a cleanup.
 
 ### 2.4 In-container checks
 
-**Status:** blocks 1-5 passed in `sglang_hicache` on 2026-09-17 and again 2026-09-18 01:30 UTC; block 6 (results stamp) done 2026-09-17 23:03 UTC (`20260917_2303`); block 7 (`versions.txt`) NOT run: `agent_cache/results/20260917_2303/` is empty. Re-run block 4 after every daily `docker start`; run block 7 before §5.2.
-**Goal:** prove that the container imports THIS checkout's `sglang`, sees the A100 through CUDA 13, has the nixl POSIX plugin, unlimited memlock and the NVMe-backed L3 directory, and that the results directory that every later step writes into exists with its version record.
+**Status:** **not started** (there is no container yet). Re-run block 4 after every `docker start`; run block 7 before §5.2.
+**Goal:** prove that the container imports THIS checkout's `sglang`, sees the H200 through CUDA 13, has the nixl POSIX plugin, unlimited memlock and the SSD-backed L3 directory, and that the results directory every later step writes into exists with its version record.
 **Runs on:** host, as `wanhr`, through `docker exec -i sglang_hicache ...`; blocks 6-7 also write on the host under `/home/wanhr/sglang/agent_cache` (= `/sgl-workspace/sglang/agent_cache` in the container)
-**Touches:** read-only, except block 5 (writes the container's `/root/.gitconfig`, already set), block 6 (creates `agent_cache/.current_results` only if absent, and `agent_cache/results/<stamp>/`) and block 7 (writes `agent_cache/results/<stamp>/versions.txt`)
+**Touches:** read-only, except block 5 (writes the container's `/root/.gitconfig`), block 6 (creates `agent_cache/.current_results` only if absent, and `agent_cache/results/<stamp>/`) and block 7 (writes `agent_cache/results/<stamp>/versions.txt`)
 **Takes:** ~15 s for all seven (estimate); GPU idle
 
 ```bash
 # host. Block 1: the container sees the GPU
 docker exec -i sglang_hicache nvidia-smi -L
 ```
--> prints `GPU 0: NVIDIA A100-SXM4-80GB (UUID: GPU-68c3a530-...)`; an NVML error or no line means the container lacks `--gpus all` (§2.3) or the toolkit is not wired into docker (§2.1).
+-> prints `GPU 0: NVIDIA H200 (UUID: GPU-...)`; an NVML error or no line means the container lacks `--gpus all` (§2.3) or the toolkit is not wired into docker (§2.1).
 
 ```bash
-# host. Block 2: python inside the container imports the bind-mounted checkout, CUDA 13 torch, and names the A100
-docker exec -i sglang_hicache python3 -c 'import sglang, torch; print("sglang file:", sglang.__file__); print("torch cuda:", torch.version.cuda); print("gpu:", torch.cuda.get_device_name(0))'
+# host. Block 2: python inside the container imports the bind-mounted checkout, CUDA 13 torch, and names the H200 with its compute capability
+docker exec -i sglang_hicache python3 -c 'import sglang, torch; print("sglang file:", sglang.__file__); print("torch cuda:", torch.version.cuda); print("gpu:", torch.cuda.get_device_name(0)); print("capability:", torch.cuda.get_device_capability(0))'
 ```
--> prints `sglang file: /sgl-workspace/sglang/python/sglang/__init__.py` (the path MUST be under `/sgl-workspace`: anything under `/usr/lib` or `site-packages` means the bind mount is missing and the image's own copy would be measured), `torch cuda: 13.0`, `gpu: NVIDIA A100-SXM4-80GB`.
+-> prints `sglang file: /sgl-workspace/sglang/python/sglang/__init__.py` (the path MUST be under `/sgl-workspace`: anything under `/usr/lib` or `site-packages` means the bind mount is missing and the image's own copy would be measured), `torch cuda: 13.0`, `gpu: NVIDIA H200`, `capability: (9, 0)`. The `(9, 0)` is the line that selects the native-FP8 and `fa3` code paths (§1, §5.1).
 
 ```bash
 # host. Block 3: the nixl plugin list contains POSIX (the L3 backend used by every measurement)
 docker exec -i sglang_hicache python3 -c 'from nixl._api import nixl_agent, nixl_agent_config; a=nixl_agent("probe", nixl_agent_config(backends=[])); print("nixl plugins:", a.get_plugin_list())'
 ```
--> prints `nixl plugins: ['AZURE_BLOB', 'GDS', 'GDS_MT', 'GPUNETIO', 'GUSLI', 'INFINIA', 'LIBFABRIC', 'OBJ', 'POSIX', 'UCX']` (measured 2026-09-18); pass = `POSIX` in the list (`python/sglang/srt/mem_cache/storage/nixl/hicache_nixl.py:29`; `nixl_utils.py:143`). GDS/GDS_MT are listed but unusable: no `nvidia_fs` module here (§1 block A).
+-> prints a list containing `POSIX` (`measured-A100`: `['AZURE_BLOB', 'GDS', 'GDS_MT', 'GPUNETIO', 'GUSLI', 'INFINIA', 'LIBFABRIC', 'OBJ', 'POSIX', 'UCX']`; it is a property of the image, so the same list is expected here). Pass = `POSIX` in the list (`python/sglang/srt/mem_cache/storage/nixl/hicache_nixl.py:29`; `nixl_utils.py:143`). GDS/GDS_MT are listed but unusable: no `nvidia_fs` module (§1 block A).
 
 ```bash
-# host. Block 4: limits and mounts as the server will see them; RE-RUN AFTER EVERY DAILY docker start
-docker exec -i sglang_hicache bash -c 'echo "memlock: $(ulimit -l)"; echo "l3 dir on: $(findmnt -n -o SOURCE -T /mnt/nvme/hicache_l3)"; echo "shm size: $(df -h --output=size /dev/shm | tail -1 | tr -d " ")"; echo "mem total GiB: $(free -g | awk "/^Mem:/{print \$2}")"'
+# host. Block 4: limits and mounts as the server will see them; RE-RUN AFTER EVERY docker start
+docker exec -i sglang_hicache bash -c 'echo "memlock: $(ulimit -l)"; echo "l3 dir on: $(findmnt -n -o SOURCE -T /mnt/ssd/hicache_l3)"; echo "shm size: $(df -h --output=size /dev/shm | tail -1 | tr -d " ")"; echo "mem total GiB: $(free -g | awk "/^Mem:/{print \$2}")"'
 ```
--> prints `memlock: unlimited`, `l3 dir on: /dev/nvme0n1`, `shm size: 84G`, `mem total GiB: 167`. `l3 dir on: /dev/root` or `/dev/sda1`: the container was started before the NVMe was mounted, stop it and redo §2.2. The `84G` belongs to `/dev/shm`, not to the NVMe (the unlabelled 2026-09-17 form of this block invited exactly that misreading).
+-> prints `memlock: unlimited`, `l3 dir on: /dev/vdc`, `shm size: 99G`, `mem total GiB: 196`. `l3 dir on: /dev/vda1` (or `/dev/root`): the container was started while `/mnt/ssd` was unmounted; `docker stop sglang_hicache`, fix the mount (§2.2), start it again. The `99G` belongs to `/dev/shm`, not to the SSD — each value is labelled for exactly that reason.
 
 ```bash
 # host. Block 5: git inside the container trusts the bind-mounted repo (safe.directory) and sees the same working tree as the host
 docker exec -i sglang_hicache git config --global --add safe.directory /sgl-workspace/sglang
 echo "safe.directory: $(docker exec -i sglang_hicache git config --global --get-all safe.directory | paste -sd,)"
-echo "status lines: $(docker exec -i sglang_hicache git -C /sgl-workspace/sglang status --short | wc -l)"
+echo "status lines container: $(docker exec -i sglang_hicache git -C /sgl-workspace/sglang status --short | wc -l)"
+echo "status lines host:      $(git -C /home/wanhr/sglang status --short | wc -l)"
 ```
--> prints `safe.directory: /sgl-workspace/sglang` (one entry, or the same entry repeated if the `--add` was run more than once: harmless) and `status lines: <N>` equal to `git status --short | wc -l` on the host (24 on 2026-09-18); a `dubious ownership` error means the first line did not take.
+-> prints `safe.directory: /sgl-workspace/sglang` (one entry, or the same entry repeated if `--add` ran more than once: harmless) and two equal counts, `0` on a clean tree (today). A `dubious ownership` error means the first line did not take.
 
 ```bash
 # host. Block 6: create the results stamp ONCE (never overwrites an existing one) and its directory; absolute paths, no cd
@@ -389,7 +443,7 @@ mkdir -p "$AC/results/$(cat "$AC/.current_results")"
 echo "stamp: $(cat "$AC/.current_results")"
 echo "results dir: $(ls -d "$AC/results/$(cat "$AC/.current_results")")"
 ```
--> prints `stamp: 20260917_2303` (the existing stamp, written 2026-09-17 23:03 UTC; a bare stamp, not a path: §11) and `results dir: /home/wanhr/sglang/agent_cache/results/20260917_2303`. A new stamp appears only if `.current_results` was deleted; do not do that mid-study, every `RUNDIR` in §5.2 and §7.2 derives from it.
+-> prints a fresh `stamp: 20260921_HHMM` on the first run (a bare stamp, not a path: §11) and its `results dir:`. **This box has no stamp yet** (`.current_results` does not exist), so the first run of this block creates one; do not delete it mid-study, every `RUNDIR` in §5.2 and §7.2 derives from it. Note that `agent_cache/results/` already holds the A100 run dirs (`20260918_*`, `compare_*`): those are a different box's results and are never written into again.
 
 ```bash
 # host. Block 7: record the container's package versions in the results dir (the pins every measurement depends on)
@@ -398,61 +452,61 @@ docker exec -i sglang_hicache pip list 2>/dev/null \
   | grep -Ei '^sgl|^sglang|flashinfer|^torch |nixl|^triton |transformers' \
   | tee "$AC/results/$(cat "$AC/.current_results")/versions.txt"
 ```
--> prints (and writes to `versions.txt`) `sglang-kernel 0.4.6.post1`, `flashinfer-python 0.6.18`, `torch 2.13.0+cu130`, `nixl 1.4.1`, `triton 3.7.1`, `transformers 5.12.1`, plus `flashinfer-cubin 0.6.18`, `flashinfer-jit-cache 0.6.18+cu130`, `nixl-cu13 1.4.1`, `sgl-deep-ep 0.1.2`, `sgl-deep-gemm 0.1.7`, `sglang 0.0.0.dev1+g30705c004 /sgl-workspace/sglang/python`, `sglang-router 0.3.2` (measured 2026-09-18). Pass = the six pinned versions match `docker/Dockerfile:7,17`, `python/pyproject.toml:6` and `R32/versions.txt`.
+-> prints (and writes to `versions.txt`) the pins of the image: `sglang-kernel 0.4.6.post1`, `flashinfer-python 0.6.18`, `torch 2.13.0+cu130`, `nixl 1.4.1`, `triton 3.7.1`, `transformers 5.12.1`, plus `flashinfer-cubin`, `flashinfer-jit-cache`, `nixl-cu13`, `sgl-deep-ep`, `sgl-deep-gemm 0.1.7`, `sglang 0.0.0.dev1+g...`, `sglang-router` (13 lines, `measured-A100` on the same image). Pass = the six pinned versions match `docker/Dockerfile:7,17`, `python/pyproject.toml:6` and `R32/versions.txt` — the image is the same, so they must.
 
-The package is named `sglang-kernel` (the old `sgl-kernel` grep matched nothing). The bind mount shadows only the `sglang` package;
-compiled deps come from the image, which is why `sglang_dev` (sglang-kernel 0.4.7, sgl-deep-gemm 0.2.0) is not used. `sglang.__version__` differs per container (image metadata only).
+The package is named `sglang-kernel` (an `sgl-kernel` grep matches nothing). `sglang.__version__` differs per container (image metadata only).
 
-**Expected result:** all seven `-> prints:` values; after block 7, `agent_cache/results/20260917_2303/versions.txt` exists (13 lines, measured 2026-09-18 from the same grep) and its six pinned versions equal `R32/versions.txt`.
-**If it differs:** block 2 shows a path outside `/sgl-workspace`: the repo bind is missing, recreate the container (§2.3). Block 4 shows `memlock: 8192` (KiB): the container was created without `--ulimit memlock=-1:-1`; the host pool will fail to pin. Block 7 shows `sglang-kernel 0.4.7`: this is `sglang_dev`, not the measurement container.
-**Expected lessons:** the bind mount makes source edits visible instantly but cannot change compiled packages, so "which container" is a measured-constant question; `versions.txt` in the results dir is what lets a later reader tell whether a number is comparable to `R32/`.
+**Expected result:** all seven `-> prints:` values; in particular block 2's `capability: (9, 0)`, block 4's `l3 dir on: /dev/vdc` and `memlock: unlimited`, and after block 7 a `versions.txt` whose six pinned versions equal `R32/versions.txt`.
+**If it differs:** block 2 shows a path outside `/sgl-workspace`: the repo bind is missing, recreate the container (§2.3). Block 2 shows `capability: (8, 0)`: you are not on this box. Block 4 shows `memlock: 8192` (KiB): the container was created without `--ulimit memlock=-1:-1`; the host pool will fail to pin. Block 7 shows a different `sglang-kernel`: the image tag is not the pinned one and nothing measured is comparable to `R32/` or `C18/`.
+**Expected lessons:** the bind mount makes source edits visible instantly but cannot change compiled packages, so "which image" is a measured-constant question; `versions.txt` in the results dir is what lets a later reader tell whether a number is comparable across the two boxes. And because the image is deliberately the A100 campaign's, `versions.txt` should be **identical** across the boxes — every difference between this box's numbers and `R32/` is then attributable to hardware, which is the whole point of pinning it.
 
 ### 2.5 Python extras
 
-**Status:** not started (verified 2026-09-18: no `/opt/aiperf` in `sglang_hicache`); only the AIPerf venv is missing, everything else listed below is already in the image
-**Goal:** make `aiperf` runnable inside `sglang_hicache` for matrix row 7 (§3.4, §7.1) without touching the image's pinned packages.
-**Runs on:** container `sglang_hicache` (shown from the host with `docker exec`); needs network access to PyPI
+**Status:** not started (no container yet, so no `/opt/aiperf`). Needed only for §7.1 row 7 (AgentX via AIPerf); everything else in this runbook runs on the image's own Python.
+**Goal:** make `aiperf` runnable inside `sglang_hicache` without touching the image's pinned packages.
+**Runs on:** `container: sglang_hicache` (shown from the host with `docker exec`); needs network access to PyPI
 **Touches:** `/opt/aiperf` in the container's writable layer (survives `docker stop/start`, lost on `docker rm`)
-**Takes:** 2-5 min (estimate: pip download and install of aiperf and its dependencies; not yet run); GPU idle
+**Takes:** 2-5 min (estimate: pip download and install of aiperf and its dependencies; never yet run on either box); GPU idle
 
 ```bash
 # host. Create an isolated venv in the container and install aiperf into it, then show its help
 docker exec -i sglang_hicache bash -c 'python3 -m venv /opt/aiperf && /opt/aiperf/bin/pip install -q -U pip aiperf && /opt/aiperf/bin/aiperf --help | head -20'
 ```
--> prints the `aiperf` usage text (first 20 lines); pass = a `profile` subcommand is listed (the entry-point name is unverified until this runs: §3.4 uses `aiperf profile`). A `requires_python` error means the venv did not use the container's Python 3.12.3.
+-> prints the `aiperf` usage text (first 20 lines); pass = a `profile` subcommand is listed (the entry-point name is unverified until this runs: §3.4 uses `aiperf profile`).
 
-Already in `sglang_hicache`: datasets 5.0.1, pyarrow 25.0.1, pandas 3.0.5, huggingface_hub 1.30.0 with `hf`, py-spy, `iostat`, and `uv` (`/opt/sglang/bin/uv`; the earlier "image has no
-uv" was wrong). `/opt/aiperf` lives in the container's writable layer (survives stop/start, lost on `docker rm`). `aiperf` 0.12.0 declares `requires_python <3.14,>=3.11` (PyPI): not
-installable on the host's 3.14, and isolated in its own venv because its `~=` pins would downgrade image packages. Host venv for CPU-only work: §3.5 (`/home/wanhr/venv312`, exists since 2026-09-18). `huggingface-cli` is a dead shim; use `hf download`.
+Already in the image: datasets, pyarrow, pandas, huggingface_hub with `hf`, `py-spy`, `iostat`, and `uv` at `/opt/sglang/bin/uv`. `aiperf` declares
+`requires_python <3.14,>=3.11`, so unlike on the A100 box (host Python 3.14) **this box's host Python 3.12.3 could host it** — but the host has no `pip`
+and no `ensurepip` (§1), so the container venv remains the path of least resistance and keeps the image's pins isolated from aiperf's `~=` constraints.
+`huggingface-cli` is a dead shim; use `hf download`.
 
-**Expected result:** `docker exec -i sglang_hicache ls /opt/aiperf/bin/aiperf` prints the path; `aiperf --help` lists `profile`; `docker exec -i sglang_hicache pip list | grep -c aiperf` prints `0` (the image's own environment is untouched). Installed version: not yet measured (expected 0.12.0, the PyPI release checked 2026-09-17; record the value here after the run).
+**Expected result:** `docker exec -i sglang_hicache ls /opt/aiperf/bin/aiperf` prints the path; `aiperf --help` lists `profile`; `docker exec -i sglang_hicache pip list | grep -c aiperf` prints `0` (the image's own environment is untouched). Installed version: not yet measured on either box; record it here after the run.
 **If it differs:** `aiperf --help` has no `profile` subcommand: the §3.4 command line was written from NVIDIA's tutorial without running it; read the printed help and fix §3.4 before row 7. The install downgraded something in the image: the venv was created with `--system-site-packages` by mistake; `rm -rf /opt/aiperf` in the container and rerun the block as written.
-**Expected lessons:** the container is the only Python that can run AIPerf on this box (host 3.14 is excluded by its `requires_python`), and keeping it in a venv is what protects the measured pins of §2.4 block 7.
+**Expected lessons:** keeping AIPerf in its own venv is what protects the measured pins of §2.4 block 7; the isolation matters more than which Python hosts it.
 
-### 2.6 Models
+### 2.6 Model
 
-**Status:** done; all three are in the HF cache (re-checked 2026-09-18: 32G / 16G / 38G), nothing to download. The `chown` block has not been run since the last container-side download: the three `models--*` dirs are `root:root` on the host (readable; only matters for host-side writes into the cache).
-**Goal:** have the evaluation model (`Qwen/Qwen3-32B-FP8`, snapshot `aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df`) on disk and know that it boots on this A100 with the flags every later step uses.
+**Status:** **not started — the HF cache does not exist on this box.** §2.6 is a 32 GB download.
+**Goal:** have the evaluation model (`Qwen/Qwen3-32B-FP8`, snapshot `aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df`) on disk, and record what it costs to boot on **this** GPU — a number the A100 measured and this box has not.
 **Runs on:** host (`du`, `chown`); the download runs inside `sglang_hicache` (it has `hf`; the host does not)
-**Touches:** read-only, unless the cache is lost (download writes 32G under `~/.cache/huggingface/hub`, on `/`) or the `chown` block is run (changes owner of the whole HF cache to `wanhr:wanhr`)
-**Takes:** check ~5 s; download of 32G: not timed on this box (estimate: minutes to tens of minutes, HF throughput); GPU idle
+**Touches:** writes 32 GB under `~/.cache/huggingface/hub` on `/` (1.2 TB free); the `chown` block changes the cache's owner to `wanhr:wanhr`
+**Takes:** download 5-30 min (estimate, HF throughput; not yet measured on this box); GPU idle
 
 ```bash
-# host. Check that the evaluation model's snapshot is present (read-only)
+# host. Check whether the evaluation model's snapshot is present (read-only)
 S=/home/wanhr/.cache/huggingface/hub/models--Qwen--Qwen3-32B-FP8/snapshots/aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df
 echo "32B snapshot dir: $([ -d "$S" ] && echo present || echo MISSING)"
-echo "32B safetensors files: $(ls "$S"/*.safetensors 2>/dev/null | wc -l)"
-du -sh /home/wanhr/.cache/huggingface/hub/models--* | sed 's/^/model size: /'
+echo "32B safetensors files: $(ls "$S"/*.safetensors 2>/dev/null | wc -l)   (expect 7)"
+echo "hf cache size: $(du -sh /home/wanhr/.cache/huggingface 2>/dev/null | cut -f1 || echo none)"
 ```
--> prints `32B snapshot dir: present`, `32B safetensors files: 7` (measured 2026-09-18), and three `model size:` lines: `32G ...Qwen3-32B-FP8`, `16G ...Qwen3-8B`, `38G ...llama-3.3-70b-instruct-awq` (measured 2026-09-18). `MISSING` means the cache is lost: run the next block.
+-> prints `32B snapshot dir: MISSING`, `32B safetensors files: 0   (expect 7)` and `hf cache size: none` today; after the download, `present`, `7` and `32G`.
 
 ```bash
-# host. Re-download the 32B ONLY when the snapshot is missing (guarded; 32G onto /, inside the container because the host has no hf)
+# host. Download the 32B ONLY when the snapshot is missing (guarded; 32 GB onto /, inside the container because the host has no hf)
 S=/home/wanhr/.cache/huggingface/hub/models--Qwen--Qwen3-32B-FP8/snapshots/aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df
 { [ ! -d "$S" ] || { echo "STOP: snapshot already present, nothing to download"; false; }; } \
-&& docker exec -i sglang_hicache bash -c 'hf download Qwen/Qwen3-32B-FP8'
+&& time docker exec -i sglang_hicache bash -c 'hf download Qwen/Qwen3-32B-FP8'
 ```
--> prints the `hf download` progress and finally the snapshot path `/root/.cache/huggingface/hub/models--Qwen--Qwen3-32B-FP8/snapshots/aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df`; `STOP:` is the normal case.
+-> prints the `hf download` progress and finally the snapshot path `/root/.cache/huggingface/hub/models--Qwen--Qwen3-32B-FP8/snapshots/aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df`. Record the wall time here after the first run. Watch from another host shell with `du -sh ~/.cache/huggingface`; stop with Ctrl-C (`hf download` resumes).
 
 ```bash
 # host, sudo. Give the HF cache back to wanhr after a container-side download (container writes are root:root on the host)
@@ -461,15 +515,16 @@ sudo chown -R wanhr:wanhr "$HOME/.cache/huggingface" \
 ```
 -> prints `hub owner: wanhr:wanhr`. Not required for serving (the server runs as root in the container); required before any host-side write into the cache.
 
-Primary = `Qwen/Qwen3-32B-FP8`; Qwen3-8B (16G) only for smoke tests (negative case, §1); the 70B AWQ (38G) optional. Qwen3-32B-FP8 +
-`--kv-cache-dtype fp8_e5m2 --attention-backend triton` is **verified on this A100** (`R32/preflight/boot_32b/checks.txt`, `R32/DEVIATIONS.md` D4, D6):
-weight-only FP8 Marlin (automatic), coherent generations, tier round trip 4032/4032/4032 cached tokens (device/host/storage). Boot, measured:
-~633 s (10.6 min) JIT-cold (first boot in a new container; prefill CUDA-graph capture 488 s while Marlin/Triton kernels compile; `R32/preflight/boot_32b/server.log:6,51`, 18:37:20 -> 18:47:53), 278-285 s warm with a 100 GB
-host pool (first log line to `fired up`; `tokenizer_e2e` 277-284 s; weights 83-91 s, prefill capture ~100 s, decode capture 12-13 s, host-pool pinning 52-64 s; `Engine startup timings` in `R32/*/server.log`).
+**Why this model, still.** `Qwen/Qwen3-32B-FP8` + `--kv-cache-dtype fp8_e5m2 --attention-backend triton` is the configuration of every A100 number
+(`R32/`) and of the only end-to-end comparison this study has (`C18/`), so keeping it is what makes the two boxes comparable. Note what changes
+underneath it: on SM90 the checkpoint runs on **native FP8**, not the A100's weight-only FP8 Marlin (W8A16) — the boot log will say so, and it is the
+single change most likely to move `P` (§5.4). The A100's model-choice argument ("the 32B clears the L3 admission bar 4.2x, the 8B loses at 7/7 lengths")
+is a statement about that GPU's `bar = b x P` against that disk's 0.62 GiB/s: **both sides of it change here** and it must be re-derived in §5.4 before
+it is quoted again.
 
-**Expected result:** the check block prints `present` and the three sizes 32G / 16G / 38G; a §5.2 boot of the 32B reaches `The server is fired up and ready to roll!` in 278-285 s (measured, warm container) and logs `Weight-only FP8 compression will be used leveraging the Marlin kernel` and `Load weight end. ... quant=fp8, fmt=e4m3, ... mem usage=32.59 GB` (`R32/exp1_32b/server.log:15-16`).
-**If it differs:** a boot takes ~633 s: the JIT cache is cold (new container, or `/root/.cache/sglang` lost); expected once per container, and the readiness timeout must be >= 2400 s (`START_TIMEOUT_S`, §5.2). The 8B and 32B tokenizers are byte-identical (§1), so a tokenizer-related difference between the two models is not a cache problem.
-**Expected lessons:** the model choice is a measured decision, not a preference: the 32B clears the L3 admission bar 4.2x and the 8B loses at every length on this SSD (§1), so any smoke test on the 8B says nothing about tiering; and the boot cost (278-285 s warm, 633 s cold) is a per-cell tax that §7.3 budgets at 5 min.
+**Expected result:** the check block prints `present` and `7` safetensors, and `hf cache size: 32G`; a §5.2 boot of the 32B reaches `The server is fired up and ready to roll!` (time **not yet measured on this box**; `measured-A100`: 278-285 s warm, ~633 s JIT-cold) and logs a `Load weight end. ... quant=fp8 ...` line. **Record here, after the first boot:** the weight-load size, whether the log says Marlin (it should NOT on SM90), the JIT-cold boot time and the warm boot time. Those four values replace the A100's in §5.4 and §7.3.
+**If it differs:** the boot log contains `Weight-only FP8 compression will be used leveraging the Marlin kernel`: something forced it (`SGLANG_FORCE_FP8_MARLIN` in the environment), because `can_auto_enable_marlin_fp8()` is false at SM90 (`fp8_utils.py:2126-2132`); unset it — the run would be measuring the A100's kernel on Hopper silicon. A boot far longer than 633 s: the JIT cache is cold (a new container); expected once per container, and the readiness timeout must be >= 2400 s (`START_TIMEOUT_S`, §5.2).
+**Expected lessons:** the model is held fixed across the port precisely so that the GPU is the only variable; the boot is where that variable first shows itself, so the four values above are recorded before any cell rather than after.
 
 ---
 
@@ -483,22 +538,24 @@ later step. At its end the reader has `/home/wanhr/data/` (raw downloads, root d
 
 Disk budget (measured 2026-09-17/18, `ls -l` / `du -sh` on the host): LMCache parquet 2.37 GB (2,370,186,947 B) +
 AgentX-256k 0.57 GB (568,864,747 B) + Mooncake 13 MB + converted JSON 65 MiB (68,429,742 B); the AgentX full corpus
-(1.85 GB) is not downloaded. Models (86 GB) were already on disk; `/` had 741 GB free on 2026-09-17 and 792-793 GB on 2026-09-18 (measured, `df -h /`, §1 Disks row and block D).
+(1.85 GB) is not downloaded. The model (32 GB, §2.6) and the docker image (~20 GB, §2.3) share the same disk; `/` had **1.2 TB free on 2026-09-21** (measured, `df -h /`, §1 Disks row and block D), so none of this is tight here.
 `/home/wanhr/data` is **not bind-mounted** into either container (§2.3), so anything a container must read is copied:
 the converted trace lives under `agent_cache/traces/` (repo bind = `/sgl-workspace/sglang/agent_cache/traces/`),
 the parquet was `docker cp`'d to the container's `/tmp/lmcache` (§3.3), the Mooncake jsonl is copied under
 `agent_cache/traces/` before §3.4.
 
-**State 2026-09-18:** §3.1 done (all files present); §3.2 verified; §3.3 built and run (output + stats present);
-§3.4 not run (needs a server and, for AgentX, the §2.5 AIPerf venv); §3.5 partly done (venv, clone, `make data`,
-`make repro` done; the `pre_gap` script has no saved output and the memory-time bound is not computed).
+**State 2026-09-21 (this box):** §3.1 **not started** (`/home/wanhr/data` does not exist); §3.2 verified against `d608a20d4`;
+§3.3 **needs no run** — its output `agent_cache/traces/lmcache_agentic_trace.json` (68,429,742 B) and `.stats.json` are committed and
+carried over unchanged, because the trace is a property of the parquet and the tokenizer, not of the box; §3.4 not run; §3.5 **not started**
+(no `uv`, no venv, no `agentic-kv-cache` clone). The A100 box had all of this; none of it survived the port, except the two files under `traces/`.
+Only §3.1 and §3.5 actually need running here, and only §3.5 for the Week-1 gate.
 
 ### 3.1 Downloads
 
-**Status:** done 2026-09-17 23:10-23:12 UTC (file mtimes); re-run only if `/home/wanhr/data` is lost (`wget -c` resumes, existing complete files are skipped)
+**Status:** **not started on this box** (`/home/wanhr/data` does not exist, checked 2026-09-21); `measured-A100`: the same four downloads took 3 min there. `wget -c` resumes and skips complete files, so the block is safe to re-run
 **Goal:** put the LMCache parquet (the converter's input, §3.3), the Mooncake traces (§3.4, §3.5) and the AgentX-256k corpus (§3.5) on the root disk, verified complete, so no later step waits on the network.
 **Runs on:** host, as `wanhr`; plain `wget`, no HF CLI needed
-**Touches:** creates `/home/wanhr/data/{lmcache,mooncake,agentx}` (~2.95 GB total, root PD, outside git); network
+**Touches:** creates `/home/wanhr/data/{lmcache,mooncake,agentx}` (~2.95 GB total, on the root disk `/dev/vda1`, outside git); network
 **Takes:** ~3 min (measured 2026-09-17 from mtimes 23:10-23:12 UTC); GPU idle
 
 ```bash
@@ -552,13 +609,13 @@ echo "agentx bytes:          $(stat -c %s /home/wanhr/data/agentx/traces-062126-
 **If it differs:** AgentX smaller than 568,864,747 B: the download was cut (HF serves it in one stream); re-run the `wget -c` line, it resumes.
 A truncated AgentX is the one failure that surfaces late: `make data` in §3.5 skips existing files and `prep.py` then crashes on JSON parse.
 **Expected lessons:** the Mooncake URLs are exactly what `bench_serving` auto-downloads (`python/sglang/benchmark/datasets/common.py:13-18`),
-but its default cache path is `/tmp/<workload>_trace.jsonl` (`datasets/mooncake.py:33-36`) = the 84 GB tmpfs on this host (§1), so a Mooncake
-replay must always pass `--dataset-path` to the copy under `agent_cache/traces/` (§3.4); and because `/home/wanhr/data` is not bound into the
-containers, every container-side consumer reads a copy, never this directory.
+but its default cache path is `/tmp/<workload>_trace.jsonl` (`datasets/mooncake.py:33-36`); on this box `/tmp` is on the root disk, not a tmpfs
+(§1 block C), so that default merely writes to the wrong disk instead of to RAM — pass `--dataset-path` to the copy under `agent_cache/traces/` anyway
+(§3.4); and because `/home/wanhr/data` is not bound into the container, every container-side consumer reads a copy, never this directory.
 
 ### 3.2 What the `agentic-trace` loader actually reads (this checkout)
 
-**Status:** verified 2026-09-17 against `main` @ `6ec32e6b7`; anchors re-checked 2026-09-18 (all resolve)
+**Status:** verified 2026-09-17 against `main` @ `6ec32e6b7`; anchors re-checked 2026-09-21 against `d608a20d4` (all resolve: the three commits in between touch nothing under `python/sglang/benchmark/`)
 **Goal:** know exactly which per-turn keys the stock loader and client consume, so the converter (§3.3) emits what is read, the analysis does not rely on a field that is silently ignored, and the §4 patch targets the right lines.
 **Runs on:** host, read-only (`sed -n` on the repo)
 **Touches:** read-only
@@ -586,11 +643,11 @@ emit one, or `pre_gap` desyncs from the turn index (§3.3 checks the invariant `
 
 ### 3.3 Converter: LMCache parquet -> agentic-trace JSON (`agent_cache/scripts/convert_lmcache.py`)
 
-**Status:** built and run 2026-09-18 (script mtime 00:56, output 01:09 UTC); output and `.stats.json` present; re-run only to change `--max-context`, `--sources`, `--tool-role-mode` or `--min-turns`
+**Status:** built and run on the A100 box 2026-09-18; **its output is committed and carried over, so there is nothing to run here.** `agent_cache/traces/lmcache_agentic_trace.json` (68,429,742 B) and `lmcache_agentic_trace.json.stats.json` (4,276 B) are in the checkout and were verified present 2026-09-21. Re-run only to change `--max-context`, `--sources`, `--tool-role-mode` or `--min-turns` — and note that would require §3.1 first (the parquet is not on this box)
 **Goal:** produce the one replayable trace for §7: real message deltas with real per-turn `pre_gap` and `output_length`, truncated to what a 32K-context server can replay, plus a `.stats.json` whose numbers feed §5.3 (live context, mean gap, mean output length).
 **Runs on:** `container: sglang_hicache` (pyarrow, transformers and the Qwen tokenizer files are there; the host has no pip); cwd `/sgl-workspace/sglang/agent_cache/scripts` = host `/home/wanhr/sglang/agent_cache/scripts`; the chown runs on the host
 **Touches:** reads `/tmp/lmcache` in the container (a `docker cp` of the parquet, 2.37 GB in the container's overlay layer: survives `docker stop/start`, lost on `docker rm`); writes `agent_cache/traces/lmcache_agentic_trace.json` and `.stats.json` (root-owned on the host until the chown); RAM about 10 GiB of Python objects plus the tokenizer (`convert_lmcache.py:33-35`)
-**Takes:** 13.5 min (measured 2026-09-18 by the run itself; consistent with the mtimes script 00:56 -> output 01:09; the two chat-template token counts per turn dominate; 12 fork workers on the 12 vCPU); GPU idle, but do not run it while a measured cell is in flight (the client and scheduler share the same 12 vCPU, §10)
+**Takes:** 13.5 min (`measured-A100` by the run itself; the two chat-template token counts per turn dominate; 12 fork workers on that box's 12 vCPU — use `--workers 16` here, §1). GPU idle, but do not run it while a measured cell is in flight (the client and scheduler share the same 16 vCPU, §10)
 
 ```bash
 # host: put the parquet where the converter's default --parquet-dir expects it (2.37 GB into the container's overlay; skipped when already there)
@@ -627,7 +684,7 @@ sudo chown -R wanhr:wanhr /home/wanhr/sglang/agent_cache
 -> prints nothing; `ls -l /home/wanhr/sglang/agent_cache/traces/` then shows `wanhr wanhr` on both files.
 
 ```bash
-# host: check the output shape and the headline stats (read-only; host python 3.14, stdlib json only)
+# host: check the output shape and the headline stats (read-only; host python 3.12.3, stdlib json only)
 T=/home/wanhr/sglang/agent_cache/traces/lmcache_agentic_trace.json
 echo "trace bytes:     $(stat -c %s $T)   (expect 68429742)"
 echo "trace newlines:  $(wc -l < $T)   (expect 0: one JSON document, not JSONL)"
@@ -805,27 +862,27 @@ measures how fast the 32B falls behind a 6.6 req/s trace, so it is row 8 and wal
 
 ### 3.5 Week-1 CPU-only characterization
 
-**Status:** partly done 2026-09-18: `uv` 0.12.15 at `~/.local/bin/uv`, `/home/wanhr/venv312` (Python 3.12.14; numpy 2.5.3, pandas 3.0.6, pyarrow 25.0.1, orjson 3.12.0, transformers 5.17.0, huggingface_hub 1.32.0), `/home/wanhr/agentic-kv-cache` cloned @ `73e7e46` with the data symlinks, `make data` (`data/agentx.pkl` 00:13 UTC) and `make repro` (`results/0{1,2,3,4}_*.txt`, 00:13-00:52 UTC) done. Not done: the `pre_gap` script below has no saved output on the box (its per-(source, model) split is not in `.stats.json`, which splits by source only), and the memory-time upper bound is not computed.
+**Status:** **not started on this box** (no `uv`, no `/home/wanhr/venv312`, no `/home/wanhr/agentic-kv-cache`, checked 2026-09-21). All three blocks below must run here; the `-> prints:` values are `measured-A100` from the 2026-09-18 run and are trace properties, so they must reproduce exactly. The memory-time upper bound (the third artifact) was never computed on either box and is still the open Week-1 deliverable.
 **Goal:** the Week-1 decision of §9.3: the upper bound on what any parking policy can free, from the traces alone: `fraction(g)` of session-token-seconds idle behind gaps >= 1 / 5 / 30 s at c = 4/8/12/16, plus the mean gap and mean `output_length` that §5.3 turns into `--agentic-gap-scale` and the turn-time model.
-**Runs on:** host, as `wanhr`, with `/home/wanhr/venv312/bin/python` (the host's own Python 3.14 has no pip/venv; the venv is symlinked as `/home/wanhr/agentic-kv-cache/.venv`)
+**Runs on:** host, as `wanhr`, with `/home/wanhr/venv312/bin/python` (the host's own Python 3.12.3 has no `pip` and no `ensurepip`, so `python3 -m venv` cannot bootstrap one; the venv is symlinked as `/home/wanhr/agentic-kv-cache/.venv`)
 **Touches:** creates `~/.local/bin/uv`, `~/.local/share/uv/python/`, `/home/wanhr/venv312`, `/home/wanhr/agentic-kv-cache` (+ `data/agentx.pkl` 433,729,974 B, `results/*.txt`); writes `agent_cache/results/<stamp>/week1_pre_gap.txt`; GPU untouched
 **Takes:** install + venv ~2 min (estimate); `make data` ~1 min and `make repro` ~40 min (measured 2026-09-18 from mtimes: 01-03 by 00:14, `04_ablation.txt` at 00:52; the ablation dominates); the `pre_gap` script < 1 min (estimate: 4 columns projected from 2.37 GB of parquet, no message content loaded); GPU idle throughout
 
 ```bash
-# host: 1. uv + a Python 3.12 venv with the analysis deps (skipped when /home/wanhr/venv312 exists; the host 3.14 cannot host aiperf or a pip)
+# host: 1. uv + a Python 3.12 venv with the analysis deps (skipped when /home/wanhr/venv312 exists; the host python3 has no ensurepip, so uv is the only route to a venv with pip)
 [ -x /home/wanhr/venv312/bin/python ] && echo "venv312 exists: skip" || {
   curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH=$HOME/.local/bin:$PATH \
   && uv python install 3.12 && uv venv /home/wanhr/venv312 --python 3.12 \
   && uv pip install --python /home/wanhr/venv312/bin/python numpy pandas pyarrow orjson transformers huggingface_hub; }
 echo "venv python: $(/home/wanhr/venv312/bin/python -c 'import sys, pyarrow, pandas; print(sys.version.split()[0], "pyarrow", pyarrow.__version__, "pandas", pandas.__version__)')"
 ```
--> prints `venv312 exists: skip` (today) and `venv python: 3.12.14 pyarrow 25.0.1 pandas 3.0.6` (measured 2026-09-18); a fresh install prints newer pins, which is fine (`requirements.txt` of the clone only needs `numpy>=2.0`).
+-> on this box the first run installs (no `venv312` yet) and then prints `venv python: 3.12.x pyarrow ... pandas ...`; the A100 run printed `3.12.14 pyarrow 25.0.1 pandas 3.0.6` (`measured-A100`). Newer pins are fine (`requirements.txt` of the clone only needs `numpy>=2.0`).
 
 ```bash
 # host: 2. clone the simulator, point it at the downloads and the venv, prep AgentX, run the four experiments (~40 min; skipped when results exist).
 # Watch: `ls -l /home/wanhr/agentic-kv-cache/results/`, 04_ablation.txt appears last. Stop: Ctrl-C (make stops at the current experiment; re-run to continue).
-# `make setup` would fail (host python3 -m venv has no ensurepip): the .venv symlink replaces it. `make data` skips existing data/*.jsonl (fetch_data.sh `[ -f ]`),
-# so a truncated AgentX from §3.1 passes and its final bare `python3 experiments/prep.py` (host 3.14, stdlib-only, fine) crashes on JSON parse: check the size in §3.1 first.
+# `make setup` would fail (host python3 -m venv has no ensurepip, §1 block C): the .venv symlink replaces it. `make data` skips existing data/*.jsonl (fetch_data.sh `[ -f ]`),
+# so a truncated AgentX from §3.1 passes and its final bare `python3 experiments/prep.py` (host 3.12, stdlib-only, fine) crashes on JSON parse: check the size in §3.1 first.
 [ -f /home/wanhr/agentic-kv-cache/results/04_ablation.txt ] && echo "repro results exist: skip" || {
   git clone https://github.com/gauravapiscean/agentic-kv-cache /home/wanhr/agentic-kv-cache \
   && cd /home/wanhr/agentic-kv-cache && mkdir -p data \
@@ -836,7 +893,7 @@ echo "venv python: $(/home/wanhr/venv312/bin/python -c 'import sys, pyarrow, pan
   && ln -sfn /home/wanhr/venv312 .venv && make data && make repro; }
 echo "repro result files: $(ls /home/wanhr/agentic-kv-cache/results/*.txt 2>/dev/null | wc -l)   (expect 4)"
 ```
--> prints `repro results exist: skip` (today) and `repro result files: 4`; a fresh run prints the four `=== N. ... ===` banners of the Makefile targets `validate`, `characterize`, `gap`, `ablation` and tees each into `results/0N_*.txt`.
+-> on this box the first run clones and runs (~40 min, `measured-A100`), printing the four `=== N. ... ===` banners of the Makefile targets `validate`, `characterize`, `gap`, `ablation` and teeing each into `results/0N_*.txt`, then `repro result files: 4`; a later run prints `repro results exist: skip`.
 
 ```bash
 # host: 3. pre_gap distribution per (source, model) and output_length per source from the parquet (no message content loaded); saved next to the results
@@ -911,13 +968,16 @@ can ever be parked in a lower tier; this section adds the per-turn `pre_gap` sle
 that §6.5 and §7 depend on. At its end the reader has a reviewed ~50-line patch archived under `agent_cache/patches/`, applied to the bind-mounted
 checkout, and proven end to end by a two-conversation dry run (matrix row 0, §7.1) before any measured cell is started.
 
-Facts this section rests on (verified against `main @ 6ec32e6b7` on 2026-09-18): `wrap_multi_turn_request_func` loops rounds with no sleep
+Facts this section rests on (verified against `main @ 6ec32e6b7` on 2026-09-18, re-checked against `d608a20d4` on 2026-09-21 — nothing under
+`python/sglang/benchmark/` changed in between, so every anchor in this section still resolves): `wrap_multi_turn_request_func` loops rounds with no sleep
 (`python/sglang/benchmark/serving.py:1311-1333`); the only `asyncio.sleep` calls in the file are inter-conversation pacing at `serving.py:1078,1093`.
+**Nothing in §4 is box-specific**: the client, the templates and the patch design port unchanged, and §4.6's client is already in the checkout.
+Only the *dry run* (§4.4, §4.6) must be repeated here, because it is a measurement against a booted server.
 Starter kit §3.1 ("add a per-turn `pre_gap` field and an `await asyncio.sleep(gap)` between rounds") is confirmed.
 
 ### 4.1 Diff-level design (7 hunks, ~50 lines)
 
-**Status:** superseded 2026-09-18 by the standalone client of §4.6 (same three functions, no edit under `python/`); kept as the reference design and as the fallback if §4.6 fails its dry run. Not applied (`git status --short -- python/` is empty)
+**Status:** superseded 2026-09-18 by the standalone client of §4.6 (same three functions, no edit under `python/`); kept as the reference design and as the fallback if §4.6 fails its dry run. Not applied, and on this box `git status --short -- python/` is empty **while the §6.6 event-log patch is nevertheless active**, because that one is committed (§1 Repo row) — the two facts are no longer equivalent, so never read "clean tree" as "no eval patch" 
 **Goal:** give the client three things the study needs and the stock loader lacks: the recorded gap before each turn, the recorded per-turn output
 length, and a paired recompute control fired at the returning turn's instant, so that §7's cells measure tiering and not a no-idle-window burst.
 **Runs on:** host, editor on `/home/wanhr/sglang/python/sglang/benchmark/` (= container `/sgl-workspace/sglang/python/sglang/benchmark/`: one bind, one working tree)
@@ -959,7 +1019,7 @@ length, and a paired recompute control fired at the returning turn's instant, so
 +            ctl = asyncio.create_task(request_func(replace(inner_input, prompt=salted_random_chat(n_tokens=meta["prompt_tokens"],
 +                       seed=SEED ^ conv_idx ^ round_index ^ RC_SALT), output_len=1)))   # TTFT is all that is compared; NOT via prev_messages, NOT via the semaphore
              ... after the round's await: control_outputs[(conv_idx, round_index)] = await ctl
-   (in-slot is impossible: every round extends prev_messages and appends the reply, 1319/1329-1331; RC_SALT per process as hicache_eval/scripts/exp2.py:28-30)
+   (in-slot is impossible: every round extends prev_messages and appends the reply, 1319/1329-1331; RC_SALT per process as hicache_eval/scripts/archive/exp2.py:28-30)
 @@ result_details at 1883-1896: + "start_times" (o.start_time, set at 467, never dumped today), "conv_idx", "round_idx", "control_ttfts", "control_details" keyed (conv, round) (stringified for JSON)
 @@ cli_main (near --agentic-max-turns, 2267-2274): --agentic-gap-scale (float, 1.0); --agentic-control-every K (int, 0 = off)
 ```
@@ -1012,7 +1072,7 @@ every later prefix, which is why it is a separate task outside the semaphore, an
 
 ### 4.2 Per-turn cached-token capture (stock path plus one optional hunk)
 
-**Status:** capture path present in this checkout (verified 2026-09-18, anchors below); the optional `usage_prompt_tokens` hunk is not applied
+**Status:** capture path present in this checkout (verified 2026-09-18, anchors re-checked against `d608a20d4` on 2026-09-21); the optional `usage_prompt_tokens` hunk is not applied
 **Goal:** establish that per-turn tier splits already reach the client JSONL with no server change, and that the client's printed hit rate has the
 wrong denominator for multi-turn, so §6.2, §6.4 and §9.1 compute hit rates from per-turn fields and not from `result["cache_report"]`.
 **Runs on:** host, read-only source check (`/home/wanhr/sglang/python/sglang/benchmark/serving.py`); the optional hunk is edited together with §4.1
@@ -1041,7 +1101,7 @@ echo "chat stream-chunk call:  $(grep -n '^ *_extract_cache_from_sglext(data, ou
 echo "cache-report injection:  $(grep -n 'extra_request_body\[\"return_cached_tokens_details\"\]' $F | cut -d: -f1)"
 echo "prompt_len copied from:  $(grep -n 'output.prompt_len = request_func_input.prompt_len' $F | cut -d: -f1)"
 ```
--> prints `245`, `522`, `1995`, `121` (verified 2026-09-18; the completions backend has its own call at 332, hence `tail -1`). Different numbers mean the
+-> prints `245`, `522`, `1995`, `121` (verified 2026-09-18, unchanged at `d608a20d4` on 2026-09-21; the completions backend has its own call at 332, hence `tail -1`). Different numbers mean the
 file moved under this section: re-anchor before editing.
 
 **Expected result:** the block prints the four line numbers above; after a `--cache-report --output-details` run the JSONL carries one
@@ -1054,13 +1114,13 @@ against `replay_prompt_tokens` from the trace, or against `usage_prompt_tokens` 
 
 ### 4.3 Where the patch lives, how it is applied and reverted
 
-**Status:** not needed while §4.6 is the client (nothing under `python/` to apply or revert); applies only if the §4.1 fallback is taken. `agent_cache/patches/` does not exist and `python/` is clean (checked 2026-09-18)
+**Status:** not needed while §4.6 is the client (nothing under `python/` to apply or revert); applies only if the §4.1 fallback is taken. `agent_cache/patches/` holds only `0002-hicache-event-log.patch`, which is **committed, not applied** (§6.6), and `python/` is clean (checked 2026-09-21)
 **Goal:** keep the eval patch active for the container's client during a session while guaranteeing it never reaches a commit (HANDOFF §7:
 `91d480573` committed one by accident, `2cb739b9a` reverted it).
 **Runs on:** host as `wanhr` (author, archive, revert check); container `sglang_hicache` for the per-session apply (shown as `docker exec` from the host). Both
 containers and the host share the one bind-mounted repo (`/home/wanhr/sglang` = `/sgl-workspace/sglang`): applied once = applied everywhere.
 **Touches:** `agent_cache/patches/0001-agentic-trace-pre-gap.patch` (created), the three files of §4.1 under `python/sglang/benchmark/` (applied / reverted),
-`agent_cache/results/<STAMP>/patches/` (copy). `<STAMP>` = the bare stamp in `agent_cache/.current_results` (today `20260917_2303`, checked 2026-09-18).
+`agent_cache/results/<STAMP>/patches/` (copy). `<STAMP>` = the bare stamp in `agent_cache/.current_results`, created by §2.4 block 6 (this box has none until that block runs, checked 2026-09-21).
 **Takes:** seconds per block; GPU idle
 
 1. Author once, then archive the diff and clean the tree (the archive is the source of truth; the working tree is disposable):
@@ -1092,7 +1152,7 @@ docker exec sglang_hicache bash -c 'cd /sgl-workspace/sglang \
   && echo "applied: $(git status --short -- python/ | wc -l) files modified under python/"'
 ```
 -> prints `applied: 3 files modified under python/`. `error: patch failed` / `patch does not apply` means either it is already applied (check with
-`git status --short -- python/`) or the checkout moved off `6ec32e6b7` (re-anchor §4.1). Applying from the host as `wanhr` (`git apply` in
+`git status --short -- python/`) or the checkout moved off `d608a20d4` (re-anchor §4.1). Applying from the host as `wanhr` (`git apply` in
 `/home/wanhr/sglang`) is equivalent and leaves the files `wanhr`-owned.
 
 3. Before every commit, on the host: run the §11 revert block (the one revert procedure of this runbook; it reverse-applies every archived patch under
@@ -1113,20 +1173,20 @@ STAMP=$(cat "$AC/.current_results" 2>/dev/null)     # bare stamp, e.g. 20260917_
 
 **Expected result:** `agent_cache/patches/0001-agentic-trace-pre-gap.patch` exists (size and sha recorded); after block 2 the container's `--help` shows the
 §4.1 flags; after the §11 revert block `git status --short -- python/` prints nothing; the stamp dir holds a copy of the patch.
-**If it differs:** `git apply --check` fails on a clean tree: the patch was taken from a different base (diff against `6ec32e6b7`). Files under
+**If it differs:** `git apply --check` fails on a clean tree: the patch was taken from a different base (diff against `d608a20d4`). Files under
 `python/sglang/benchmark/` show as root-owned on the host after block 2: expected (container writes, §10); `chown -R wanhr:wanhr python/` before editing them from the host or if the §11 revert block stops on them.
 **Expected lessons:** the working tree is shared by host and both containers, so there is exactly one apply and one revert per session, and the archived
 file (not the tree) is what a commit or a results dir must carry; `git status` under `python/` before every commit is the only guard against repeating `91d480573`.
 
 ### 4.4 Validating the patch (2-conversation dry run with a visible gap)
 
-**Status:** not started. Block 1 (the gap trace) and block 2 (the probe) still apply; blocks 3-5 are the patched-`bench_serving` form and are replaced by the §4.6 dry-run block when §4.6 is the client (matrix row 0 of §7.1 either way; needs an arm (a) P0 server up per §5.2)
+**Status:** **not started on this box** (no server has ever run here). Block 1 (the gap trace) and block 2 (the probe) still apply; blocks 3-5 are the patched-`bench_serving` form and are replaced by the §4.6 dry-run block when §4.6 is the client (matrix row 0 of §7.1 either way; needs an arm (a) P0 server up per §5.2)
 **Goal:** prove on real output that the sleep, the per-turn `output_len`, the side-channel control and the new JSONL fields all work, and settle the
 §5.2 history note (is a regenerated reply ever a cache hit?) that §5.3 and §6.2 depend on, before any measured cell.
 **Runs on:** container `sglang_hicache` (`docker exec -it sglang_hicache bash`), any cwd unless stated; server = arm (a) P0 of §5.2 on `127.0.0.1:30000`
 **Touches:** `/tmp/gaptest.json`, `/tmp/gaptest.jsonl`, `/tmp/gaptest_scale0.jsonl` (container filesystem); the server's radix cache (one probe + 16 dry-run requests: 6 rounds + 4 controls in block 3, 6 rounds in block 4; no L2/L3 on arm (a))
-**Takes:** ~1 min per run, two runs plus one probe (estimate: 2 x 5 s gaps in series, six prefills of ~300-1,100 tokens at 0.24-0.46 s each
-[measured, §5.4 rows 512 / 1,024], four control prefills, 16 decoded tokens per request at the unmeasured decode rate); GPU busy for seconds only
+**Takes:** ~1 min per run, two runs plus one probe (estimate: the 2 x 5 s gaps in series dominate; the six prefills of ~300-1,100 tokens cost 0.24-0.46 s each
+on the A100 [`measured-A100`, §5.4 rows 512 / 1,024] and are expected to be faster here, which does not change the ~1 min); GPU busy for seconds only
 
 1. Build a trace with two conversations of three turns and two 5 s gaps each:
 ```bash
@@ -1316,7 +1376,7 @@ re-feeds `generated_text` unchanged (`serving.py:1329-1331`): keep it that way, 
 
 ### 4.6 Standalone replay client (`scripts/replay_agentic.py`, supersedes the §4.1-§4.3 patch)
 
-**Status:** written and mock-tested 2026-09-18; run against the booted arm (a) at P0 the same day: 4 conversations x 8 turns, closed loop c=4, `--check-ids`, 28/28 returning turns reused their full reply after the §4.5 fixes (template verbatim + no reasoning parser). The 5 s-gap dry run below is still owed.
+**Status:** the client is committed and carried over unchanged (`agent_cache/scripts/replay_agentic.py`, 16,028 B). On the A100 box it was mock-tested 2026-09-18 and run against a booted arm (a) at P0: 4 conversations x 8 turns, closed loop c=4, `--check-ids`, 28/28 returning turns reused their full reply after the §4.5 fixes (template verbatim + no reasoning parser); it then drove the whole `C18/` comparison (381 turns x 3 arms, §7.0). **On this box it has never run:** the 5 s-gap dry run below is matrix row 0 and is still owed. It is the cheapest end-to-end proof that the port works.
 **Goal:** replay the converted trace with the recorded gaps and with every generated reply re-fed verbatim, so a returning turn's uncached tokens are only its tool results + new prompt, with no edit under `python/` and one JSON line per turn for §6.4.
 **Runs on:** `container: sglang_hicache` (aiohttp is in the image); host path `agent_cache/scripts/replay_agentic.py` = container `/sgl-workspace/sglang/agent_cache/scripts/replay_agentic.py`
 **Touches:** appends to the `--output` JSONL only; sends chat requests to the booted server (and `/generate` requests for controls)
@@ -1380,9 +1440,9 @@ any arm at any level and check, from the log alone, that the server is the one t
 
 ### 5.1 Verified flag table (this checkout)
 
-**Status:** verified against `main` @ `6ec32e6b7` on 2026-09-17; every `path:line` anchor below re-checked on 2026-09-18 (all resolve; the re-check block prints the load-bearing ones).
+**Status:** flag semantics verified against `main` @ `6ec32e6b7` on 2026-09-17 and re-checked against `d608a20d4` on 2026-09-21 (all anchors resolve; the re-check block prints the load-bearing ones). **Two rows changed with the GPU** and are marked SM90 below: the attention-backend row and the FP8-weight row. One row changed with the disk: the prefetch-timeout budget.
 **Goal:** pin the exact flags, defaults and env vars that the §5.2 launch blocks rely on, so a starter-kit flag that does not exist here, or one that is silently rewritten, is caught before a boot instead of after a cell.
-**Runs on:** host, read-only. Paths in the table are relative to `/home/wanhr/sglang/python/sglang/srt/` unless they begin with `R32/`, `R8/`, `test/` or `hicache_eval/` (`R32/` = `hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/`, `R8/` = `hicache_eval/results/20260917_a100_gcp_qwen8b/`).
+**Runs on:** host, read-only. Paths in the table are relative to `/home/wanhr/sglang/python/sglang/srt/` unless they begin with `R32/`, `R8/`, `C18/`, `test/` or `hicache_eval/` (`R32/` = `hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/`, `R8/` = `.../20260917_a100_gcp_qwen8b/`, `C18/` = `agent_cache/results/compare_20260918_final/`; all three are **A100** results). **One abbreviation to know:** the server-args files (`choices.py`, `overrides.py`, `memory_hook.py`, `hicache_hook.py`, `validation_hook.py`, `model_override_base.py` and everything under `fields/`) all live under `arg_groups/`, and the table writes them without that prefix — so `fields/memory.py:104` is `python/sglang/srt/arg_groups/fields/memory.py:104`. The re-check block below `cd`s into `srt/` and uses the full paths, so it resolves them for you.
 **Touches:** read-only
 **Takes:** reading time; the re-check block < 1 s; GPU idle
 
@@ -1391,23 +1451,23 @@ any arm at any level and check, from the log alone, that the server is the one t
 | `--radix-eviction-policy` | `lru` | `lru, lfu, slru, priority`. **`fifo` is NOT a CLI choice** (factory has it, argparse rejects it). `--radix-eviction-policy-config` JSON kwargs, only `slru` reads `protected_threshold`. `--disable-radix-cache` is exclusive with hierarchical cache | `arg_groups/choices.py:188`; `mem_cache/utils.py:59-67`; `fields/memory.py:46-60`; `kv_cache_hook.py:168-172` |
 | `--enable-hierarchical-cache` | False | builds `UnifiedRadixCache` + `init_hicache` (**not** `HiRadixCache`, which only tests instantiate) | `mem_cache/registry.py:190-198`; `test/registered/unit/mem_cache/test_hiradix_cache_unit.py:76` |
 | `--hicache-ratio` | None -> 2.0 (cache mode) | host pool = device tokens x ratio | `fields/memory.py:104-107`; `hicache_hook.py:62-81` |
-| `--hicache-size` | 0 | int, decimal GB; **overrides ratio when > 0**; raises if > host budget. Tokens = `(int(GB x 1e9 // b) // page + 1) x page`: at b = 131,072, 100 -> 762,944 (**measured**; the rule reproduces it), 64 -> 488,320, 48 -> 366,272, 32 -> 244,160, 18 -> 137,344 (derived). Default ratio 2.0 would be int(2 x 281,216) = 562,432 -> 562,496 tok after the same +1-page alignment = 73.7 GB (derived). A host pool <= device pool only logs `L2 cache effectiveness is reduced` (`:163-171`) | `pool_host/base.py:150-180`; `fields/memory.py:108-111`; `R32/exp1_32b/startup_facts.txt:5` |
+| `--hicache-size` | 0 | int, decimal GB; **overrides ratio when > 0**; raises if > host budget. Tokens = `(int(GB x 1e9 // b) // page + 1) x page`: at b = 131,072, 100 -> 762,944 (**measured**; the rule reproduces it), 64 -> 488,320, 48 -> 366,272, 32 -> 244,160, 18 -> 137,344 (derived). Default ratio 2.0 would be int(2 x 281,216) = 562,432 -> 562,496 tok after the same +1-page alignment = 73.7 GB (derived). A host pool <= device pool only logs `L2 cache effectiveness is reduced` (`:163-171`) | `mem_cache/pool_host/base.py:150-166`; `arg_groups/fields/memory.py:108-111`; `R32/exp1_32b/startup_facts.txt:5` |
 | `--hicache-write-policy` | `write_through` | `write_back, write_through, write_through_selective` | `fields/memory.py:112-118` |
 | `--hicache-io-backend` / `--hicache-mem-layout` | `kernel` / `page_first` | `page_first_direct`+`kernel` is silently rewritten to `direct` (starter kit §3.2 combo does not run as kernel); keep `kernel`+`page_first` | `hicache_hook.py:127-150` |
 | `--hicache-storage-backend` | None | `file, sim, mooncake, hf3fs, nixl, aibrix, dynamic, eic, simm, mori, shm` | `fields/memory.py:139-157` |
 | `--hicache-storage-prefetch-policy` | `timeout` | `best_effort, wait_complete, timeout` | `fields/memory.py:158-164`; `unified_radix_cache.py:1871-1893` |
-| `--hicache-storage-backend-extra-config` | None | JSON or `@file`. **No `--hicache-storage-prefetch-timeout` flag exists.** Live-path keys: `prefetch_threshold` (256), `prefetch_timeout_base` (**1.0** s), `prefetch_timeout_per_ki_token` (**0.25**), `hicache_storage_pass_prefix_keys`; timeout = base + pages x (page_size/1024 x per_ki_token), **no max cap** (the 2.0/0.1/30 `PrefetchTimeoutConfig` in `hicache_storage.py:50-55` is the dead HiRadixCache path). **32B on this box (derived):** the default budget is 1.0 s + 0.25 s per 1,024 tokens = 4,096 tok/s; measured single-stream L3 delivery is 0.623 GiB/s = 5,104 tok/s with the SSD already at its read ceiling, so ONE idle 25K restore fits (~5.0 s needed, 7.1 s allowed) but two overlapping L3 restores share the device and hit the cut-off (partial hit + recompute of the rest). Every L3 number measured here used `wait_complete`; `timeout` is unmeasured. Record `storage_prefetch_unfulfilled_tokens_total{reason}`; if the timeout reason dominates, raise `prefetch_timeout_per_ki_token` (e.g. 1.0) in `l3_extra.json` (§5.2) for the whole row | `hybrid_cache/hybrid_cache_controller.py:181-215`; `unified_cache/storage_attachment.py:241-245`; `unified_radix_cache.py:1864-1869`; `R32/COMPARISON.md:146-147` |
+| `--hicache-storage-backend-extra-config` | None | JSON or `@file`. **No `--hicache-storage-prefetch-timeout` flag exists.** Live-path keys: `prefetch_threshold` (256), `prefetch_timeout_base` (**1.0** s), `prefetch_timeout_per_ki_token` (**0.25**), `hicache_storage_pass_prefix_keys`; timeout = base + pages x (page_size/1024 x per_ki_token), **no max cap** (the 2.0/0.1/30 `PrefetchTimeoutConfig` in `hicache_storage.py:50-55` is the dead HiRadixCache path). **32B, re-derived for THIS disk (2026-09-21):** the default budget is 1.0 s + 0.25 s per 1,024 tokens = 4,096 tok/s, so a 25K restore is allowed **7.10 s**. This SSD delivers **15,418 tok/s at its sustained read ceiling** (1.88 GiB/s at 100 % util, measured §2.2) against the A100 NVMe's 5,571 tok/s, and a 25K restore moves 3.052 GiB. Alone it takes **1.62 s here vs 4.90 s there** (derived). Sharing the device, each of N concurrent restores takes N x 1.62 s, so **four fit inside the 7.10 s budget here (6.49 s) and a fifth does not (8.11 s)** — where on the A100 exactly one fit (4.90 s) and two did not (9.80 s). That is a prediction from the disk alone, not a measurement: the nixl read path may not reach the device ceiling (§5.4 block D decides). `C18/` showed the A100 failing this three ways at once (167 of 209 lookups returned zero usable tokens, cause 3, §7.0), so this row is a primary thing to re-check. Every A100 L3 number used `wait_complete`; `timeout` is unmeasured on both boxes. Record `storage_prefetch_unfulfilled_tokens_total{reason}`; if the timeout reason dominates, raise `prefetch_timeout_per_ki_token` (e.g. 1.0) in `l3_extra.json` (§5.2) for the whole row | `hybrid_cache/hybrid_cache_controller.py:181-215`; `unified_cache/storage_attachment.py:241-245`; `unified_radix_cache.py:1864-1869`; `R32/COMPARISON.md:146-147` |
 | `--hicache-storage-prefetch-retry-poll-interval` / `-max-attempts` | 0 / 4 | HANDOFF §2 suspects this path for `timeout` > `wait_complete` | `fields/memory.py:169-183` |
 | `--page-size` | None -> 1 on CUDA | use 64 (nixl README example; storage hits truncated to page multiples) | `overrides.py:1453-1476` |
 | `--max-total-tokens` | None | upper bound: `min(profiled, user)`, floored to the page size; the memory-pressure knob. A value above the profiled pool is ignored with `max_total_tokens=... is larger than the profiled value`: grep for it, it means the pin did not take | `kv_cache_configurator.py:2153-2168` |
-| `--mem-fraction-static` | None | auto `(gpu_mem - reserved)/gpu_mem`, reserved >= 10 GiB on >60 GB GPUs. **Pass 0.85**: every pool measured on this box (32B: 281,216 tok, weights 32.59 GB, `available_gpu_mem=7.66 GB` left) used it; the auto value would give a different, unmeasured pool | `memory_hook.py:246-293`; `R32/exp1_32b/server_args.txt`; `R32/exp1_32b/startup_facts.txt:4` |
-| `--kv-cache-dtype` | `auto` (bf16) | **`fp8_e5m2` for the 32B**: 1 byte/element, b = 2 x 64 layers x 8 KV heads x 128 = 131,072 B/token (bf16 would be 262,144); measured 536,870,912 B / 4,096 tok. Every byte-derived number (pools, O_DIRECT file size, bar) depends on it | `arg_groups/fields/model.py:196-216`; `R32/exp0_32b/exp0_results.json` step2_backup; server.log `KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 281216, K size: 17.17 GB, V size: 17.17 GB` |
-| `--attention-backend` | None -> `flashinfer` on SM80 MHA | **pin `triton`** with fp8_e5m2 KV. The only automatic rewrite is `fa3` + fp8_e5m2 -> `triton`; SM80 never resolves to `fa3`, so without the flag this box would run flashinfer + fp8_e5m2, **never booted here**: b, P, the pool and every TTFT in §5.4 hold only for triton. `fa3` itself fails at decode CUDA-graph capture on this GPU | `arg_groups/overrides.py:1362`; `model_override_base.py:323-329,347-351`; `R32/DEVIATIONS.md` D3; `R8/preflight/boot_fa3/server.log:100,127` |
-| FP8 weights on SM80 (no flag) | auto | weight-only FP8 Marlin (W8A16, bf16 activations) is enabled automatically when the GPU lacks native FP8 (`can_auto_enable_marlin_fp8()`; env `SGLANG_FORCE_FP8_MARLIN` forces it); linear = `apply_fp8_marlin_linear` -> `gptq_marlin_gemm` (JIT module) | `layers/quantization/fp8.py:480-484,1019-1020`; `marlin_utils_fp8.py:58-78`; `R32/exp1_32b/server.log:15` |
+| `--mem-fraction-static` | None | auto `(gpu_mem - reserved)/gpu_mem`, reserved >= 10 GiB on >60 GB GPUs. **Pass 0.85**: every A100 pool used it (32B: 281,216 tok, weights 32.59 GB, `available_gpu_mem=7.66 GB` left, `measured-A100`), so keeping it is what makes the two boxes' pools comparable; the auto value would give a different, unmeasured pool. The pool it yields **here** is §5.4 constant 1 (estimate ~700,000 tok) | `memory_hook.py:246-293`; `R32/exp1_32b/server_args.txt`; `R32/exp1_32b/startup_facts.txt:4` |
+| `--kv-cache-dtype` | `auto` (bf16) | **`fp8_e5m2` for the 32B**: 1 byte/element, b = 2 x 64 layers x 8 KV heads x 128 = 131,072 B/token (bf16 would be 262,144); `measured-A100` 536,870,912 B / 4,096 tok, and a dtype/architecture property, so it is the one constant expected to port unchanged (§5.4 block B re-measures it anyway). Every byte-derived number (pools, O_DIRECT file size, bar) depends on it | `arg_groups/fields/model.py:196-216`; `R32/exp0_32b/exp0_results.json` step2_backup; server.log `KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 281216, K size: 17.17 GB, V size: 17.17 GB` |
+| `--attention-backend` (**SM90: changed**) | None -> **`fa3`** on Hopper MHA | **pin `triton`** with fp8_e5m2 KV, as on the A100 — but for a different reason. On SM90 the default MHA resolution is `fa3` (`model_override_base.py:323-329`), and `fa3` + `fp8_e5m2` is then auto-rewritten to `triton` with a warning (`_attention_backend_fa3_fp8_fallback`), so on this box the pin **agrees with** the automatic resolution instead of overriding it. Keep it explicit anyway: it makes the `server_args=` log line unambiguous and it is what `R32/`/`C18/` ran. The A100's extra hazards do not apply here (SM80 defaulted to `flashinfer`, and `fa3` pinned there died at decode CUDA-graph capture with `scheduler_metadata must have shape (metadata_size)`, `R8/preflight/boot_fa3/server.log:100,127`). **If a future arm wants `fa3` for real, it must also change the KV dtype** — and then b, the pools and every §5.4 constant change with it | `arg_groups/overrides.py` `_attention_backend_fa3_fp8_fallback`; `model_override_base.py:323-329,347-351`; `R32/DEVIATIONS.md` D3 |
+| FP8 weights on **SM90** (no flag) (**changed**) | auto | **native FP8, NOT Marlin.** `can_auto_enable_marlin_fp8()` returns `80 <= sm < 89`, which is false at SM90, so the A100's weight-only FP8 Marlin (W8A16, bf16 activations) path is not taken and the `Weight-only FP8 compression will be used leveraging the Marlin kernel` log line must be **absent** (§5.4 block A asserts that). `SGLANG_FORCE_FP8_MARLIN=1` would force it back on: never set it. This is the single change most likely to move `P`, and the reason §5.4 re-measures the whole recompute curve instead of scaling the A100's | `layers/quantization/fp8_utils.py:2126-2132`; `layers/quantization/fp8.py:480-484`; `marlin_utils_fp8.py:58-78`; `R32/exp1_32b/server.log:15` (the A100 line) |
 | `--chunked-prefill-size` | None (auto) | must be a multiple of page size | `validation_hook.py:104-107` |
 | `--enable-cache-report`, `--enable-metrics`, `--stream-response-default-include-usage` | False | usage `cached_tokens`; gates every HiCache Prometheus metric; usage chunk on every stream | `fields/serving.py:181-184,255-258`; `fields/observability.py:77` |
-| env `SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR` / `SGLANG_HICACHE_NIXL_BACKEND_PLUGIN` / `SGLANG_HICACHE_NIXL_USE_DIRECT_IO` (**no `BACKEND` in the third**; `..._BACKEND_USE_DIRECT_IO` matches nothing and is silently ignored) | None -> `/tmp/hicache_storage` (tmpfs here!) / `auto` (3FS > POSIX > GDS_MT > GDS) / True | dir is a comma list, the only one of the three in `environ.py` (`:738`); plugin read by `os.getenv` (`nixl_utils.py:82`), set `POSIX`; direct-IO: extra-config `use_direct_io` first, then the EnvBool (`environ.py:742`; `nixl_utils.py:38-46`); O_DIRECT **confirmed** on this NVMe for the 32B (`O_DIRECT is active with a file-based backend (POSIX)`, `path-mode FILE registration active`, `R32/exp1_32b/startup_facts.txt:8-10`; POSIX was auto-selected there, the explicit `PLUGIN=POSIX` is untested), not on tmpfs | `environ.py:738-742`; `storage/nixl/hicache_nixl.py:88-90`; `storage/nixl/nixl_utils.py:70-82,122` |
-| env `SGLANG_HICACHE_FILE_BACKEND_{STORAGE_DIR,MAX_SIZE,EVICTION_RATIO}`; nixl L3 cleaner | None / None / 0.9; high 80 % / low 70 % | **file backend only** (`lru_file_evictor.py:133-135` is the sole reader of `MAX_SIZE`; `hicache_eval/scripts/start_server.sh:11`'s `L3_MAX_SIZE` does nothing for nixl). nixl has **no byte cap**: only extra-config `l3_cleaner_enabled`, `l3_cleaner_high_watermark`, `l3_cleaner_low_watermark` (% of the filesystem) | `environ.py:725-729`; `storage/file/lru_file_evictor.py:127-148`; `storage/nixl/nixl_utils.py:49-63`; `nixl_cleaner.py:21-22`; `hicache_nixl.py:167-168` |
+| env `SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR` / `SGLANG_HICACHE_NIXL_BACKEND_PLUGIN` / `SGLANG_HICACHE_NIXL_USE_DIRECT_IO` (**no `BACKEND` in the third**; `..._BACKEND_USE_DIRECT_IO` matches nothing and is silently ignored) | None -> `/tmp/hicache_storage` (tmpfs here!) / `auto` (3FS > POSIX > GDS_MT > GDS) / True | dir is a comma list, the only one of the three in `environ.py` (`:738`); plugin read by `os.getenv` (`nixl_utils.py:82`), set `POSIX`; direct-IO: extra-config `use_direct_io` first, then the EnvBool (`environ.py:742`; `nixl_utils.py:38-46`). **On this box `/tmp` is on the root disk, not a tmpfs** (§1 block C), so the default store dir is the *wrong device* rather than RAM — still fatal to an L3 measurement, still silent, so `SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR=/mnt/ssd/hicache_l3` is mandatory. O_DIRECT was **confirmed on the A100's NVMe** for the 32B (`O_DIRECT is active with a file-based backend (POSIX)`, `path-mode FILE registration active`, `R32/exp1_32b/startup_facts.txt:8-10`); on **this** disk it is expected to hold a fortiori (512 B logical sectors vs 4,096, §2.2) but is **not yet confirmed** — the §5.2 assert block checks for the line on every three-tier boot | `environ.py:738-742`; `storage/nixl/hicache_nixl.py:88-90`; `storage/nixl/nixl_utils.py:70-82,122` |
+| env `SGLANG_HICACHE_FILE_BACKEND_{STORAGE_DIR,MAX_SIZE,EVICTION_RATIO}`; nixl L3 cleaner | None / None / 0.9; high 80 % / low 70 % | **file backend only** (`lru_file_evictor.py:133-135` is the sole reader of `MAX_SIZE`; `hicache_eval/scripts/start_server.sh:11`'s `L3_MAX_SIZE` does nothing for nixl). nixl has **no byte cap**: only extra-config `l3_cleaner_enabled`, `l3_cleaner_high_watermark`, `l3_cleaner_low_watermark` (**% of the filesystem** — and this filesystem is 2.27 TiB, so the 80/70 default means 1.82/1.59 TiB and is effectively inert; §5.2 sets 30/20 explicitly, §5.3 derives why) | `environ.py:725-729`; `storage/file/lru_file_evictor.py:127-148`; `storage/nixl/nixl_utils.py:49-63`; `nixl_cleaner.py:21-22`; `hicache_nixl.py:167-168` |
 | `priority` in request body | None -> 0 | reaches `Req.priority` without `--enable-priority-scheduling` unless `--abort-on-priority-when-disabled`; node priority is max-propagated along the insert path, lower evicted first | `scheduler.py:3172-3195`; `radix_cache.py:769-802`; `evict_policy.py:41-46` |
 
 ```bash
@@ -1420,32 +1480,43 @@ echo "nixl env vars in environ.py: $(grep -c '^ *SGLANG_HICACHE_NIXL_BACKEND_STO
 echo "page_first_direct+kernel rewrite: $(grep -c 'hicache_io_backend="direct"' arg_groups/hicache_hook.py) of 1"
 echo "max_total_tokens pin warning: $(grep -c 'is larger than the profiled value' mem_cache/kv_cache_configurator.py) of 1"
 echo "page_size default on CUDA: $(grep -c 'return {"page_size": 1}' arg_groups/overrides.py) of 1"
+# the four rows that changed with the H200 and its disk
+echo "marlin gate: $(grep -A4 'def can_auto_enable_marlin_fp8' layers/quantization/fp8_utils.py | grep -o 'return .*')"
+echo "hopper MHA default: $(grep -c 'is_hopper_with_cuda_12_3 and is_no_spec_infer_or_topk_one' arg_groups/model_override_base.py) of 1"
+echo "fa3+fp8_e5m2 rewrite: $(grep -c 'attention_backend == \"fa3\" and view.kv_cache_dtype == \"fp8_e5m2\"' arg_groups/overrides.py) of 1"
+echo "nixl cleaner defaults: $(grep -o '_DEFAULT_\(HIGH\|LOW\)_WATERMARK = [0-9.]*' mem_cache/storage/nixl/nixl_cleaner.py | paste -sd'; ')"
 ```
--> prints `eviction choices: RADIX_EVICTION_POLICY_CHOICES = ["lru", "lfu", "slru", "priority"]` (no `fifo`), `prefetch policy default: ] = "timeout"`, and
-`3 of 3`, `2 of 2; ... 1 of 1`, `1 of 1`, `1 of 1`, `1 of 1` on the remaining lines (verified 2026-09-18). Any `0 of N`, or a different choices list, means the checkout
-moved under the table: re-grep the symbol, fix the anchor and re-verify the row before booting an arm.
+-> prints, all **verified by running this block on 2026-09-21 at `d608a20d4`**: `eviction choices: RADIX_EVICTION_POLICY_CHOICES = ["lru", "lfu", "slru", "priority"]`
+(no `fifo`); `prefetch policy default: ] = "timeout"`; then `3 of 3`, `2 of 2; ... 1 of 1`, `1 of 1`, `1 of 1`, `1 of 1`; then the four H200 rows:
+`marlin gate: return 80 <= sm < 89` (**so SM90 does not take the Marlin path**, §5.4 constant 2), `hopper MHA default: 1 of 1`,
+`fa3+fp8_e5m2 rewrite: 1 of 1` (together: the default resolves to `fa3` and is then rewritten to `triton`, which is why the pin is a no-op here),
+and `nixl cleaner defaults: _DEFAULT_HIGH_WATERMARK = 80.0; _DEFAULT_LOW_WATERMARK = 70.0` (the values §5.2 overrides to 30/20, §5.3).
+Any `0 of N`, a different choices list, or a marlin gate whose upper bound is above 89, means the checkout moved under the table: re-grep the symbol,
+fix the anchor and re-verify the row before booting an arm.
 
 **Expected result:** the table matches the checkout (the block prints exactly the values above); in particular `fifo` is absent, the prefetch
 policy default is `timeout` with the live-path budget 1.0 s + 0.25 s/Ki-token and no cap, and the nixl store dir/plugin/direct-IO env vars
 are the three names spelled in the table.
-**If it differs:** a `0 of N` line: the file was refactored since `6ec32e6b7`; find the symbol with `grep -rn <symbol> python/sglang/srt`, fix
+**If it differs:** a `0 of N` line: the file was refactored since `d608a20d4`; find the symbol with `grep -rn <symbol> python/sglang/srt`, fix
 the anchor, and re-check the claim (a moved default is a changed server). A `page_size default` of 0: the default may no longer be 1 on
 CUDA, but §5.2 passes `--page-size 64` explicitly so the arms are unaffected.
 **Expected lessons:** four starter-kit assumptions do not hold in this checkout (`--hicache-storage-prefetch-timeout` does not exist,
-`page_first_direct`+`kernel` becomes `direct`, `fifo` is rejected, the timeout defaults are 1.0/0.25/no cap rather than 2.0/0.1/30), the nixl
-store defaults to an 84 GB tmpfs, and SM80 defaults to flashinfer: each one would silently produce a server other than the one §5.4 measured,
-which is why every one of them is passed explicitly in §5.2 and asserted from the log after each boot.
+`page_first_direct`+`kernel` becomes `direct`, `fifo` is rejected, the timeout defaults are 1.0/0.25/no cap rather than 2.0/0.1/30); the nixl
+store defaults to the wrong device; and **SM90 defaults to `fa3`, which the fp8_e5m2 rule then rewrites to `triton`** — the same end state as the
+explicit pin, reached by a different route, which is exactly the kind of agreement that stops being true after an upgrade. Each of these would
+silently produce a server other than the one §5.4 measures, which is why every one of them is passed explicitly in §5.2 and asserted from the log
+after each boot.
 
 ### 5.2 Launch commands
 
-**Status:** not started in this exact form. The base line (COMMON without `--max-running-requests 64` and without the `--max-total-tokens` pin, HOST at `--hicache-size 100`, nixl with `wait_complete`) is the measured 2026-09-17 launch line (`R32/exp1_32b/server_args.txt`). **Not yet booted with the 32B:** `--max-running-requests 64`, any `--max-total-tokens` pin, any `--hicache-size` other than 100, the `timeout` policy with the extra-config (`@file` form: `hybrid_cache_controller.py:186-191`), the explicit `PLUGIN=POSIX`, and arm (a) without HiCache (its profiled pool is unverified, which is why P0 pins 262,144 < 281,216 for every arm). Today (2026-09-18 01:31 UTC) `agent_cache/.current_results` = `20260917_2303` and its stamp dir exists but is empty (`versions.txt` from §2.4 not written yet).
+**Status:** **no server has ever been booted on this box** (checked 2026-09-21: GPU idle at 0 MiB, no container). The flag set below is the A100 launch line (`R32/exp1_32b/server_args.txt`) plus `--max-running-requests 64` and the `--max-total-tokens` pin, and it is exactly what the three `C18/` arms ran, so it ports unchanged — only the L3 path (`/mnt/ssd`, was `/mnt/nvme`) and the cleaner watermarks differ. Every **expected log value** below that mentions a token count, a GB figure or a boot time is `measured-A100` and is flagged as such: the pool assertions still work (they compare against `$L1` and the host rule, both arithmetic), but the boot time and the weight line must be recorded fresh (§2.6, §5.4 block A). `agent_cache/.current_results` does not exist yet — run §2.4 block 6 before pasting the variables block.
 **Goal:** boot exactly one server per arm (a)-(g) at one pressure level, with the same L1 on every arm and a known L2 and L3, so a §7 cell compares tiering policy and not pool size; then prove from the log that the intended tiers came up before any client runs. Never re-attach or re-configure tiers at runtime: a new configuration is a new boot.
-**Runs on:** `container: sglang_hicache`, under `bash` (`docker exec -it sglang_hicache bash`). The container's login shell is zsh, which does not word-split `$COMMON` strings, and the earlier string-with-inline-JSON form was split at the JSON's spaces: the arrays below are bash. Host path `/home/wanhr/sglang/agent_cache` = container `/sgl-workspace/sglang/agent_cache`.
-**Touches:** the GPU (one server: 32.59 GB weights + the L1 pool); host RAM (the `--hicache-size` GB are pinned: 64 / 48 / 18); `$RUNDIR/l3_extra.json`; `$RUNDIR/server_<arm>.log` and `$RUNDIR/server_<arm>.pid` (overwritten by a second boot of the same arm: copy the log into the cell dir as `server.log`, §9, before rebooting the same arm at another level); on arms (c), (d), (f) `/mnt/nvme/hicache_l3` (written through during the run; wiped as root between arms, §7.2 step 1).
-**Takes:** to `fired up`: 278-285 s warm, ~633 s (10.6 min) JIT-cold in a new container (measured, §2.6); the GPU is busy from launch until the server is stopped. Watch: `tail -f $RUNDIR/server_<arm>.log`. Stop: `bash /sgl-workspace/sglang/hicache_eval/scripts/stop_server.sh` (a script file, so its `pkill -f` cannot match its own shell, §10), or `kill $(cat $RUNDIR/server_<arm>.pid)`.
+**Runs on:** `container: sglang_hicache`, under `bash` (`docker exec -it sglang_hicache bash`). The container's login shell is zsh, which does not word-split `$COMMON` strings, and the earlier string-with-inline-JSON form was split at the JSON's spaces: the arrays below are bash. Host path `/home/wanhr/sglang/agent_cache` = container `/sgl-workspace/sglang/agent_cache`; `/mnt/ssd` is the same path on both sides.
+**Touches:** the GPU (one server: ~32.6 GB weights + the L1 pool); host RAM (the `--hicache-size` GB are pinned: 64 / 48 / 18 / 96 of 196 GB); `$RUNDIR/l3_extra.json`; `$RUNDIR/server_<arm>.log` and `$RUNDIR/server_<arm>.pid` (overwritten by a second boot of the same arm: copy the log into the cell dir as `server.log`, §9, before rebooting the same arm at another level); on arms (c), (d), (f) `/mnt/ssd/hicache_l3` (written through during the run; wiped as root between arms, §7.2 step 1).
+**Takes:** to `fired up`: **not yet measured on this box**; `measured-A100` 278-285 s warm and ~633 s (10.6 min) JIT-cold in a new container (§2.6) — use those as the budget and the readiness timeout, and record the real values on the first two boots. The GPU is busy from launch until the server is stopped. Watch: `tail -f $RUNDIR/server_<arm>.log`. Stop: `bash /sgl-workspace/sglang/agent_cache/scripts/stop_server.sh` (a script file, so its `pkill -f` cannot match its own shell, §10), or `kill $(cat $RUNDIR/server_<arm>.pid)`.
 
 **Variables block.** Paste it first in every container shell; every arm block below uses only names defined here plus its own `set_level` call.
-`set_level <L1 tokens> <host GB>` builds `COMMON` and `HOST` for one pressure level (§5.3: P0 = `262144 64`, PH = `131072 48`, PL = `131072 18`).
+`set_level <L1 tokens> <host GB>` builds `COMMON` and `HOST` for one pressure level (§5.3: P0 = `262144 64`, PH = `131072 48`, PL = `131072 18`, PW = `655360 96`).
 The arrays capture `$L1` / `$HSIZE` when they are DEFINED: re-assigning `L1` or `HSIZE` afterwards changes nothing (the previously built arrays boot,
 i.e. the old level), so always go through `set_level`. `RUNDIR` is the stamp dir written by §2.4; `$OUT`, one cell's dir, is set in §7.2 step 0.
 
@@ -1457,12 +1528,12 @@ MODEL=Qwen/Qwen3-32B-FP8
   && RUNDIR=/sgl-workspace/sglang/agent_cache/results/$(cat /sgl-workspace/sglang/agent_cache/.current_results) \
   && mkdir -p "$RUNDIR" && echo "RUNDIR: $RUNDIR"
 # knobs read by hicache_eval/scripts/hcommon.py:11-14,142 (its defaults are the 8B's: 147456 B/token, /var/hicache_l3, 120 s flush timeout)
-export MODEL KV_BYTES_PER_TOKEN=131072 L3_DIR=/mnt/nvme/hicache_l3 NVME_DEV=nvme0n1 HICACHE_FLUSH_TIMEOUT=1800
+export MODEL KV_BYTES_PER_TOKEN=131072 L3_DIR=/mnt/ssd/hicache_l3 NVME_DEV=vdc HICACHE_FLUSH_TIMEOUT=1800
 # set_level <L1 tokens> <host GB>: one pressure level (§5.3) -> COMMON (every arm) and HOST (HiCache arms). Arrays capture L1/HSIZE now.
 set_level() {
   L1=$1; HSIZE=$2
   COMMON=(
-    # model; quantization is automatic (weight-only FP8 Marlin on SM80, §5.1); the reasoning parser is in the measured launch line
+    # model; quantization is automatic: native FP8 on this SM90 GPU, NOT the A100's weight-only FP8 Marlin (§5.1); the boot log must show no Marlin line
     --model-path "$MODEL"
     --host 0.0.0.0
     --port 30000
@@ -1496,9 +1567,10 @@ set_level() {
   )
   echo "level set: L1=$L1 tokens, host pool=$HSIZE GB"
 }
-# L3 storage backend: nixl on the NVMe; the extra-config file spells the live-path timeout defaults explicitly (budget caveat: §5.1).
+# L3 storage backend: nixl on the attached SSD; the extra-config file spells the live-path timeout defaults explicitly (budget caveat: §5.1)
+# AND pins the cleaner watermarks, because the defaults (80 %/70 %) are 1.82/1.59 TiB on this 2.27 TiB filesystem and would never fire (§5.3).
 # Every use of RUNDIR below is `${RUNDIR:?}`-guarded: after the STOP above these lines abort too, instead of writing /l3_extra.json at the container root.
-[ -n "${RUNDIR:-}" ] && printf '{"prefetch_threshold": 256, "prefetch_timeout_base": 1.0, "prefetch_timeout_per_ki_token": 0.25}\n' > "${RUNDIR:?STOP: RUNDIR unset, see the stamp check above}/l3_extra.json"
+[ -n "${RUNDIR:-}" ] && printf '{"prefetch_threshold": 256, "prefetch_timeout_base": 1.0, "prefetch_timeout_per_ki_token": 0.25, "l3_cleaner_high_watermark": 30, "l3_cleaner_low_watermark": 20}\n' > "${RUNDIR:?STOP: RUNDIR unset, see the stamp check above}/l3_extra.json"
 L3=(
   --hicache-storage-backend nixl
   --hicache-storage-prefetch-policy timeout
@@ -1509,18 +1581,21 @@ L3WC=(
   --hicache-storage-prefetch-policy wait_complete
   --hicache-storage-backend-extra-config "@${RUNDIR:?STOP: RUNDIR unset, see the stamp check above}/l3_extra.json"
 )
-# env for the nixl store: dir on the NVMe (the default /tmp/hicache_storage is tmpfs here); plugin pinned to POSIX (auto-selected POSIX on 2026-09-17; the explicit pin is untested)
-L3ENV=(SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR=/mnt/nvme/hicache_l3 SGLANG_HICACHE_NIXL_BACKEND_PLUGIN=POSIX)
+# env for the nixl store: dir on the attached SSD (the default /tmp/hicache_storage is the ROOT disk here, 4x slower and silent, §5.1);
+# plugin pinned to POSIX (POSIX was auto-selected on the A100; the explicit pin is untested on both boxes)
+L3ENV=(SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR=/mnt/ssd/hicache_l3 SGLANG_HICACHE_NIXL_BACKEND_PLUGIN=POSIX)
 echo "l3_extra.json: $(cat "${RUNDIR:?STOP: RUNDIR unset, see the stamp check above}/l3_extra.json")"
 ```
--> prints `RUNDIR: /sgl-workspace/sglang/agent_cache/results/20260917_2303` (today's stamp; any stamp is fine, an empty value is not) and
-`l3_extra.json: {"prefetch_threshold": 256, "prefetch_timeout_base": 1.0, "prefetch_timeout_per_ki_token": 0.25}`. A `STOP:` line means §2.4's
+-> prints `RUNDIR: /sgl-workspace/sglang/agent_cache/results/<stamp>` (any stamp is fine, an empty value is not) and
+`l3_extra.json: {"prefetch_threshold": 256, "prefetch_timeout_base": 1.0, "prefetch_timeout_per_ki_token": 0.25, "l3_cleaner_high_watermark": 30, "l3_cleaner_low_watermark": 20}`. A `STOP:` line means §2.4's
 stamp block 6 was skipped; the guards then skip the `l3_extra.json` write and abort both L3 arrays and the last echo (three more
 `bash: RUNDIR: STOP: RUNDIR unset ...` lines, verified 2026-09-18 in an interactive bash; `L3` / `L3WC` stay undefined), so nothing else in this
 section may run before §2.4 block 6 has.
 
-COMMON = the measured launch line (`R32/exp1_32b/server_args.txt`) plus `--max-running-requests 64` (the measured runs left it unset -> 4096) and the
-`--max-total-tokens` pin. Every arm carries fp8_e5m2 KV + triton + mem-fraction 0.85: record it in `config.json`.
+COMMON = the A100 launch line (`R32/exp1_32b/server_args.txt`) plus `--max-running-requests 64` (the A100 runs left it unset -> 4096) and the
+`--max-total-tokens` pin; it is also exactly what `C18/` ran. Every arm carries fp8_e5m2 KV + triton + mem-fraction 0.85: record it in `config.json`.
+The `# KV dtype + attention backend` comment inside the array says "the only combination measured on this A100" — on **this** box read it as: the
+combination every prior number was taken with, and the one whose automatic resolution on SM90 happens to agree with the pin (§5.1).
 
 **Arm blocks.** One block per arm; each names its log and its level. Arms (d), (e), (f), (g) exist at two levels: pick the `set_level` line for the
 level of the row (§7.1) and delete the other. After the arm block, run the readiness block and then the assert block below it.
@@ -1532,9 +1607,9 @@ python3 -m sglang.launch_server "${COMMON[@]}" > "$RUNDIR/server_$ARM.log" 2>&1 
 echo $! > "$RUNDIR/server_$ARM.pid"; echo "launched $ARM: pid $(cat "$RUNDIR/server_$ARM.pid"), log $RUNDIR/server_$ARM.log"
 ```
 -> prints `level set: L1=262144 tokens, host pool=64 GB` (the 64 is unused on this arm: HOST is not passed) and `launched hbm_lru: pid <N>, log ...`.
-Log, once ready (expected: this arm has not booted with the 32B): the Marlin, `Load weight end ... mem usage=32.59 GB`, `KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 262144`
-and `max_total_num_tokens=262144 ... max_running_requests=64` lines; NO `Allocating kv hierarchical KV host pool` line, NO `Backend POSIX` / `O_DIRECT` / `HiCacheL3Cleaner` lines;
-`Tree cache initialized: ... impl=UnifiedRadixCache ... hicache_attached=False`.
+Log, once ready: `Load weight end ... quant=fp8 ... mem usage=<N> GB` (**no Marlin line on SM90**, §5.1; the A100 printed one and `mem usage=32.59 GB`),
+`KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 262144` and `max_total_num_tokens=262144 ... max_running_requests=64`; NO `Allocating kv hierarchical KV host pool` line,
+NO `Backend POSIX` / `O_DIRECT` / `HiCacheL3Cleaner` lines; `Tree cache initialized: ... impl=UnifiedRadixCache ... hicache_attached=False`.
 
 ```bash
 # container: sglang_hicache, bash; paste the §5.2 variables block first. Arm (b) hbm_host at P0: L1 + 64 GB host pool, no L3
@@ -1542,20 +1617,20 @@ ARM=hbm_host; set_level 262144 64
 python3 -m sglang.launch_server "${COMMON[@]}" "${HOST[@]}" > "$RUNDIR/server_$ARM.log" 2>&1 &
 echo $! > "$RUNDIR/server_$ARM.pid"; echo "launched $ARM: pid $(cat "$RUNDIR/server_$ARM.pid"), log $RUNDIR/server_$ARM.log"
 ```
--> prints `level set: L1=262144 tokens, host pool=64 GB` and the `launched hbm_host` line. Log (expected at these pools; measured form at 100 GB: `R32/exp1_32b/startup_facts.txt:4-5`):
+-> prints `level set: L1=262144 tokens, host pool=64 GB` and the `launched hbm_host` line. Log (expected at these pools; the 100 GB form is `measured-A100`, `R32/exp1_32b/startup_facts.txt:4-5`):
 `max_total_num_tokens=262144 ... max_running_requests=64`; `Allocating kv hierarchical KV host pool: 488320 tokens, 64.00 GB host memory.`; `Tree cache initialized: ... hicache_attached=True`;
 NO `Backend POSIX` / `O_DIRECT` / `HiCacheL3Cleaner` lines (no storage backend).
 
 ```bash
-# container: sglang_hicache, bash; paste the §5.2 variables block first. Arm (c) three_tier at P0: L1 + 64 GB host pool + nixl L3 on the NVMe, prefetch policy timeout
+# container: sglang_hicache, bash; paste the §5.2 variables block first. Arm (c) three_tier at P0: L1 + 64 GB host pool + nixl L3 on the attached SSD, prefetch policy timeout
 ARM=three_tier; set_level 262144 64
 env "${L3ENV[@]}" python3 -m sglang.launch_server "${COMMON[@]}" "${HOST[@]}" "${L3[@]}" > "$RUNDIR/server_$ARM.log" 2>&1 &
 echo $! > "$RUNDIR/server_$ARM.pid"; echo "launched $ARM: pid $(cat "$RUNDIR/server_$ARM.pid"), log $RUNDIR/server_$ARM.log"
 ```
--> prints `level set: L1=262144 tokens, host pool=64 GB` and the `launched three_tier` line. Log (measured lines from `R32/exp1_32b/startup_facts.txt:5-12` with the pool values expected at this level):
+-> prints `level set: L1=262144 tokens, host pool=64 GB` and the `launched three_tier` line. Log (line shapes are `measured-A100`, `R32/exp1_32b/startup_facts.txt:5-12`, with the pool values expected at this level and the cleaner dir on the SSD):
 `Allocating kv hierarchical KV host pool: 488320 tokens, 64.00 GB host memory.`; `Creating storage backend 'nixl'`; `Backend POSIX was instantiated`; `HiCacheNixl: path-mode FILE registration active.`;
-`HiCacheNixl: O_DIRECT is active with a file-based backend (POSIX).`; `HiCacheL3Cleaner started: dirs=['/mnt/nvme/hicache_l3'] high=80.0% low=70.0%`; `Tree cache initialized: ... hicache_attached=True`;
-and in the `server_args=` line `'hicache_storage_prefetch_policy': 'timeout'` with `'hicache_storage_backend_extra_config': '@/sgl-workspace/.../l3_extra.json'`.
+`HiCacheNixl: O_DIRECT is active with a file-based backend (POSIX).`; `HiCacheL3Cleaner started: dirs=['/mnt/ssd/hicache_l3'] high=30.0% low=20.0%` (**the watermarks come from `l3_extra.json`, §5.3; `high=80.0% low=70.0%` means the extra-config did not reach the cleaner**);
+`Tree cache initialized: ... hicache_attached=True`; and in the `server_args=` line `'hicache_storage_prefetch_policy': 'timeout'` with `'hicache_storage_backend_extra_config': '@/sgl-workspace/.../l3_extra.json'`.
 
 ```bash
 # container: sglang_hicache, bash; paste the §5.2 variables block first. Arm (d) three_tier_p: arm (c) at a pressure level (§5.3). Keep ONE set_level line.
@@ -1596,8 +1671,8 @@ echo $! > "$RUNDIR/server_$ARM.pid"; echo "launched $ARM: pid $(cat "$RUNDIR/ser
 -> prints `level set: L1=131072 tokens, host pool=48 GB` (PH) or `... 18 GB` (PL) and the `launched hbm_host_p` line. Log: as arm (b) but `max_total_num_tokens=131072`
 and `Allocating kv hierarchical KV host pool: 366272 tokens, 48.00 GB` (PH) or `137344 tokens, 18.00 GB` (PL).
 
-**Readiness.** Poll `/health` **and** grep `The server is fired up and ready to roll` (the loop mirrors `hicache_eval/scripts/start_server.sh:40-53`; if that script is
-used instead, pass `START_TIMEOUT_S=2400`, not its default 900, which is too short for a JIT-cold boot: ~633 s JIT-cold, 278-285 s warm, §2.6).
+**Readiness.** Poll `/health` **and** grep `The server is fired up and ready to roll` (the loop mirrors `agent_cache/scripts/start_server.sh`, which already waits 2400 s; if
+`hicache_eval/scripts/start_server.sh:40-53` is used instead, pass `START_TIMEOUT_S=2400`, not its default 900, which is too short for a JIT-cold boot: `measured-A100` ~633 s JIT-cold, 278-285 s warm, §2.6).
 
 ```bash
 # container: sglang_hicache, bash; paste the §5.2 variables block first. Wait (up to 2400 s) for the arm just launched; ARM = its log name (hbm_lru | hbm_host | three_tier | three_tier_p | hbm_lru_p | three_tier_wc | hbm_host_p)
@@ -1609,8 +1684,9 @@ for i in $(seq 1 2400); do
   sleep 1
 done
 ```
--> prints `READY: <arm> after <N>s` with N in 278-285 warm (measured on 2026-09-17 with the 100 GB pool; smaller pools pin less host memory, so expect
-the same or a little less) or up to ~633 JIT-cold; a `STOP:` line means the server exited: read the tail (an OOM on `--hicache-size`, or a flag
+-> prints `READY: <arm> after <N>s`. **N is not yet measured on this box**; `measured-A100` was 278-285 s warm (with the 100 GB pool; smaller pools pin
+less host memory, so expect the same or a little less) and up to ~633 s JIT-cold. **Record the first warm and the first JIT-cold N here and in
+`constants.json`** — they are the per-cell tax §7.3 budgets. A `STOP:` line means the server exited: read the tail (an OOM on `--hicache-size`, or a flag
 rejected by argparse, shows there). Watch meanwhile with `tail -f $RUNDIR/server_$ARM.log`.
 
 **Startup facts and the pool assertion.** Assert BOTH pools after every boot, and no `larger than the profiled value` warning, before trusting a §5.3 cell:
@@ -1627,18 +1703,20 @@ echo "host pool:     $(grep -aoE 'host pool: [0-9]+ tokens' "$RUNDIR/server_$ARM
 echo "pin ignored:   $(grep -ac 'larger than the profiled value' "$RUNDIR/server_$ARM.log") warnings   (want 0)"
 echo "running reqs:  $(grep -aoE 'max_running_requests=[0-9]+' "$RUNDIR/server_$ARM.log" | head -1)   (want max_running_requests=64)"
 echo "storage:       $(grep -ao "'hicache_storage_backend': '[a-z]*'" "$RUNDIR/server_$ARM.log" | head -1); $(grep -ao "'hicache_storage_prefetch_policy': '[a-z_]*'" "$RUNDIR/server_$ARM.log" | head -1)   (want 'nixl' + 'timeout' on (c)(d), 'nixl' + 'wait_complete' on (f), nothing printed = None otherwise)"
-echo "nixl lines:    $(grep -ac 'Backend POSIX was instantiated' "$RUNDIR/server_$ARM.log") POSIX, $(grep -ac 'O_DIRECT is active' "$RUNDIR/server_$ARM.log") O_DIRECT, $(grep -ac "HiCacheL3Cleaner started: dirs=\['/mnt/nvme/hicache_l3'\]" "$RUNDIR/server_$ARM.log") cleaner-on-nvme   (want 1 1 1 on (c)(d)(f), 0 0 0 otherwise)"
+echo "nixl lines:    $(grep -ac 'Backend POSIX was instantiated' "$RUNDIR/server_$ARM.log") POSIX, $(grep -ac 'O_DIRECT is active' "$RUNDIR/server_$ARM.log") O_DIRECT, $(grep -ac "HiCacheL3Cleaner started: dirs=\['/mnt/ssd/hicache_l3'\]" "$RUNDIR/server_$ARM.log") cleaner-on-ssd   (want 1 1 1 on (c)(d)(f), 0 0 0 otherwise)"
+echo "cleaner marks:  $(grep -aoE 'high=[0-9.]+% low=[0-9.]+%' "$RUNDIR/server_$ARM.log" | head -1)   (want high=30.0% low=20.0% on (c)(d)(f); 80/70 means l3_extra.json did not reach the cleaner, §5.3)"
 ```
--> prints the labelled lines; pass when every `(want ...)` matches its value: `max_total_num_tokens=$L1`, the host pool equals 488320 / 366272 / 137344
-at 64 / 48 / 18 GB (derived, §5.1 rule; 762944 at 100 GB is the measured anchor, `R32/exp1_32b/startup_facts.txt:5`), 0 warnings, 64 running requests,
-the storage/policy pair of the arm, and `1 1 1` nixl lines on the three-tier arms. Expected lines for this model on this box (`R32/exp1_32b/{startup_facts.txt,server.log}`):
-`Weight-only FP8 compression will be used leveraging the Marlin kernel`; `Load weight end. ... quant=fp8, fmt=e4m3, ... mem usage=32.59 GB`;
-`KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 281216` and `max_total_num_tokens=281216` [= $L1 with the pin] `... max_running_requests=4096` [64 with the flag];
-`Allocating kv hierarchical KV host pool: 762944 tokens, 100.00 GB host memory.` [scales with HSIZE]; `Backend POSIX was instantiated`; `O_DIRECT is active ... (POSIX)`;
-`HiCacheL3Cleaner started: dirs=['/mnt/nvme/hicache_l3'] high=80.0% low=70.0%`; `Tree cache initialized: ... impl=UnifiedRadixCache ... hicache_attached=True`.
+-> prints the labelled lines; pass when every `(want ...)` matches its value: `max_total_num_tokens=$L1`, the host pool equals 488320 / 366272 / 137344 / 732480
+at 64 / 48 / 18 / 96 GB (derived, §5.1 rule; 762944 at 100 GB is the `measured-A100` anchor, `R32/exp1_32b/startup_facts.txt:5`), 0 warnings, 64 running requests,
+the storage/policy pair of the arm, `1 1 1` nixl lines on the three-tier arms and `high=30.0% low=20.0%` on the cleaner.
+Expected line **shapes** (`measured-A100`, `R32/exp1_32b/{startup_facts.txt,server.log}`; the values in brackets are what this box must supply):
+`Load weight end. ... quant=fp8, fmt=e4m3, ... mem usage=<N> GB` [32.59 on the A100] and **no** `Weight-only FP8 compression ... Marlin kernel` line (§5.1);
+`KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: <L1>` and `max_total_num_tokens=<L1> ... max_running_requests=64`;
+`Allocating kv hierarchical KV host pool: <tokens> tokens, <HSIZE>.00 GB host memory.`; `Backend POSIX was instantiated`; `O_DIRECT is active ... (POSIX)`;
+`HiCacheL3Cleaner started: dirs=['/mnt/ssd/hicache_l3'] high=30.0% low=20.0%`; `Tree cache initialized: ... impl=UnifiedRadixCache ... hicache_attached=True`.
 The two E-lines at nixl init, `posix_backend.cpp:245] POSIX path-mode open failed: nixl::FileFd("/nonexistent-nixl-probe")` followed by
-`nixl_agent.cpp:545] registerMem: registration failed for the specified or all potential backends`, are the path-mode probe: benign (one pair per boot in
-`R32/{exp0_32b,exp1_32b,preflight/boot_32b}/server.log`, e.g. `R32/exp1_32b/server.log:32-33`, re-checked 2026-09-18).
+`nixl_agent.cpp:545] registerMem: registration failed for the specified or all potential backends`, are the path-mode probe: benign (one pair per boot,
+`measured-A100` in `R32/{exp0_32b,exp1_32b,preflight/boot_32b}/server.log`, e.g. `R32/exp1_32b/server.log:32-33`).
 
 `--reasoning-parser qwen3` is dropped for replay (see the COMMON comment; §4.5 has the evidence). The client re-feeds `content` only, so nothing may be routed to `reasoning_content`; the stock `bench_serving` client would concatenate `reasoning_content + content` into
 `generated_text` (`serving.py:143-149,531,548`) and the multi-turn wrapper re-feeds that as the assistant `content` (`:1329-1331`). Without `--chat-template` that re-fed reply is
@@ -1647,168 +1725,246 @@ of a returning turn ends at the previous prompt (page-floored) and `recompute >=
 closes that gap; the §4.4 dry run confirms it on a booted server (its round 1-2 `device` check). Expected log line: `Detected user specified Jinja chat template with content format: string`.
 
 **Expected result:** one `sglang.launch_server` process on the GPU (`nvidia-smi --query-compute-apps=pid --format=csv,noheader | wc -l` prints 1), `/health` answers,
-`READY: <arm> after <N>s` with N in 278-285 warm (measured, 100 GB pool) or ~633 JIT-cold, and the assert block passes every `(want ...)`: device pool = the level's L1
-(262144 at P0, 131072 at PH/PL), host pool = 488320 / 366272 / 137344 tokens at 64 / 48 / 18 GB (derived), 0 pin warnings, 64 running requests, the arm's storage/policy
-pair, and the three nixl lines only on (c), (d), (f) with the cleaner dir on `/mnt/nvme/hicache_l3`.
+`READY: <arm> after <N>s` (N to be recorded on this box), and the assert block passes every `(want ...)`: device pool = the level's L1
+(262144 at P0, 131072 at PH/PL, 655360 at PW), host pool = 488320 / 366272 / 137344 / 732480 tokens at 64 / 48 / 18 / 96 GB (derived), 0 pin warnings, 64 running requests,
+the arm's storage/policy pair, and the three nixl lines only on (c), (d), (f) with the cleaner dir on `/mnt/ssd/hicache_l3` at `high=30.0% low=20.0%`.
 **If it differs:** `max_total_num_tokens` below `$L1` with a `larger than the profiled value` warning: the pin exceeded the profiled pool (possible on arm (a), whose
 profiled pool is unverified): lower L1 for every arm of the row, never for one. Host pool at the previous level's value: `set_level` was bypassed (the arrays captured the
 old `HSIZE`): re-run the arm block from its `set_level` line. No `Backend POSIX` on a three-tier arm, or `HiCacheL3Cleaner ... dirs=['/tmp/hicache_storage']`: `env "${L3ENV[@]}"`
-was dropped from the launch line, so L3 is on tmpfs: stop the server (`stop_server.sh`) and relaunch; nothing measured on it counts. `STOP: ... died`: read the tail;
-`Not enough host memory available` means `--hicache-size` exceeds what `free -g` shows available (keep <= 64 with a client on the box, §5.3). No `READY` in 2400 s in a fresh
-container: the JIT-cold boot is 10.6 min, wait for the prefill CUDA-graph capture lines before assuming a hang.
-**Expected lessons:** the only launch line ever measured is the 100 GB `wait_complete` one, so every deviation an arm introduces (the pin, the smaller host pool, `timeout`
-with the `@file` extra-config, the explicit POSIX plugin, no HiCache at all) is exactly the set of things the assert block checks from the log; a boot that passes it is the
-server §5.3's arithmetic describes, and a boot that does not was a different experiment. The arrays-capture-at-definition trap means "I changed L1" is not the same as
-"the server got a new L1": only the log line is.
+was dropped from the launch line, so L3 is on the root disk: stop the server (`stop_server.sh`) and relaunch; nothing measured on it counts. A cleaner line reading
+`high=80.0% low=70.0%`: `l3_extra.json` did not reach the cleaner — the store will then grow to 1.82 TiB before anything is deleted (§5.3). `STOP: ... died`: read the tail;
+`Not enough host memory available` means `--hicache-size` exceeds what `free -g` shows available (196 GB here, so 96 is comfortable and 128 would still boot, §5.3). No `READY`
+in 2400 s in a fresh container: the JIT-cold boot was 10.6 min on the A100, wait for the prefill CUDA-graph capture lines before assuming a hang.
+**Expected lessons:** the launch line is held identical to the A100's on purpose, so that the assert block's `(want ...)` values are the *same arithmetic* on both boxes and
+any difference in a cell's result is attributable to hardware rather than to flags; every deviation an arm introduces (the pin, the smaller host pool, `timeout` with the
+`@file` extra-config, the explicit POSIX plugin, no HiCache at all) is exactly the set of things the block checks from the log. Two things the log now has to tell you that it
+did not before: that **no Marlin line appears** (§5.1) and that the **cleaner watermarks are 30/20, not 80/70** (§5.3) — both are silent-by-default and both would produce a
+server other than the one §5.3 describes. The arrays-capture-at-definition trap still means "I changed L1" is not the same as "the server got a new L1": only the log line is.
 
 ### 5.3 Memory pressure: make the live working set exceed HBM
 
-**Status:** provisional. Pool sizes are measured or derived; every f, saturation point, required gap and c is an ESTIMATE resting on the two unmeasured constants (decode rate, prefix-extension cost, §5.4). The trace inputs are now measured (§3.3: mean per-turn `output_length` 182.0, emitted-turn mean gap 1.49 s); the gap-scale multipliers below use them, the turn-time arithmetic still uses the 220-token loader-default placeholder. Redo this section's turn-time numbers after matrix row 1.
+**Status:** **provisional, and more provisional than it was on the A100.** The pool arithmetic below is exact (it is the `pool_host/base.py` rule and a division), and the pins are chosen so that the P0/PH/PL levels are **numerically identical to the A100 box's**, which is what keeps `C18/` a usable comparison. Everything derived from the GPU's speed — f, the saturation point, the required gaps, the gap-scale multipliers, c — is an **A100 prior carried over unchanged and expected to be wrong here**, because `P` and the decode rate are both unmeasured on SM90 (§5.4). The trace inputs (mean per-turn `output_length` 182.0, emitted-turn mean gap 1.49 s, mean replay context 19.7K / 20.6K swebench) are trace properties and do carry over. **Redo every time-derived number in this section after §5.4 has run.**
 **Goal:** choose (`--max-total-tokens`, `--hicache-size`) per pressure level so that the live working set exceeds the tier under test (host at PH, SSD at PL) while admission still fits in L1, so §7 rows 3-6 measure tiering and not queueing; and size the concurrency, gap scale, control cadence K and L3 disk budget those cells need.
 **Runs on:** none for the arithmetic (the flags are applied through `set_level` in §5.2); the check block runs on the host, read-only.
 **Touches:** read-only
 **Takes:** reading time; check block < 1 s; GPU idle
 
-Qwen3-32B-FP8, fp8_e5m2 KV, b = 131,072 B/token throughout.
+Qwen3-32B-FP8, fp8_e5m2 KV, b = 131,072 B/token throughout. `b` is a dtype-and-architecture property (2 x 64 layers x 8 KV heads x 128 x 1 byte) and is the one §5.4 constant that ports without re-measurement — but §5.4 re-measures it anyway, because every byte-derived number below rests on it.
 
-- 1 GiB of KV = 8,192 tokens exactly; 1 GB = 7,629 tokens. Weights 32.59 GB on the GPU (measured, `R32/exp1_32b/server.log:16`).
-- Auto device pool, **measured** with the §5.2 flags: `max_total_num_tokens=281216` = 34.33 GiB (K 17.17 + V 17.17 GB; 7.66 GB GPU left, `R32/exp1_32b/startup_facts.txt:4`).
-  Seen only on HiCache arms, so every arm pins `--max-total-tokens` for an identical L1.
-- Pool arithmetic (source): device = `min(profiled, --max-total-tokens)` floored to the page (`kv_cache_configurator.py:2159-2168`); host = `(int(GB x 1e9 // b) // 64 + 1) x 64`
-  (`pool_host/base.py:151-159`; 100 -> 762,944 measured). A host pool <= device pool only logs a warning (`base.py:163-171`); what `write_through` does then was not traced, so every arm keeps L2 >= L1.
-- Live working set: LMCache contexts grow ~14K -> ~35K (median input 21K; dataset card, `/home/wanhr/data/lmcache/README.md:87-100`, not re-measured); after the 32K cut the converted trace's replayed context averages **20.6K (swebench) / 19.7K (all), measured in §3.3**, so the 25K below is an upper-side assumption (about 20 % pessimistic for swebench, 2x for gaia): rescale the WS column by 0.8 for a swebench replay. WS = c x 25K (derived): c=4 100K tok (12.2 GiB),
-  c=8 200K (24.4), c=12 300K (36.6), c=16 400K (48.8), c=32 800K (97.7 GiB). Ignores cross-session sharing of the agent system prompt; recompute from the converter's real `prompt_tokens`.
-- **With default pools L3 is never read:** 281,216 + 762,944 = 1,044,160 tokens = 41.8 sessions of 25K, far above any c this GPU sustains (estimate below); the same holds at
-  `--hicache-size 64` (769,536 tokens = 30.8 sessions; 30.0 with L1 pinned to 262,144 as in P0). L3 pressure needs BOTH pools shrunk.
+- 1 GiB of KV = 8,192 tokens exactly; 1 GB = 7,629 tokens.
+- Weights on the GPU: 32.59 GB on the A100 (`measured-A100`, `R32/exp1_32b/server.log:16`). Expected to be close here (the checkpoint is the same fp8 storage), but the kernel path differs (native FP8, not Marlin repacking), so **read it off the first boot log** (§2.6) rather than assuming it.
+- **Auto device pool: NOT measured on this box.** `measured-A100`: `max_total_num_tokens=281216` = 34.33 GiB at `--mem-fraction-static 0.85` on 81,920 MiB. **Estimate for this box: ~700,000 tokens** (derived: the static budget grows from 0.85 x 85.9 GB = 73.0 GB to 0.85 x 150.8 GB = 128.1 GB, i.e. +55.1 GB, and all of it goes to KV if weights and activations are unchanged: 36.86 + 55.1 = 92.0 GB / 131,072 = ~701,760 tokens = ~86 GiB). **This estimate is the first thing §5.4 replaces**, from the `max_total_num_tokens=` line of a boot without `--max-total-tokens`.
+- Pool arithmetic (source): device = `min(profiled, --max-total-tokens)` floored to the page (`kv_cache_configurator.py:2153-2168`); host = `(int(GB x 1e9 // b) // 64 + 1) x 64` (`mem_cache/pool_host/base.py:151-160`; 100 GB -> 762,944, `measured-A100`). A host pool <= device pool only logs `L2 cache effectiveness is reduced` (`mem_cache/pool_host/base.py:163-171`); what `write_through` does then was not traced, so every arm keeps L2 >= L1.
+- Live working set: the converted trace's replayed context averages **20.6K (swebench) / 19.7K (all)**, measured (§3.3). The tables below keep the A100's 25K upper-side assumption so the two boxes' tables line up; rescale the WS column by 0.8 for a swebench-only replay. WS = c x 25K (derived): c=4 100K tok (12.2 GiB), c=8 200K (24.4), c=12 300K (36.6), c=16 400K (48.8), c=32 800K (97.7 GiB).
+- **With default pools L3 is never read, and the margin is much larger here:** at the estimated ~700K device pool plus `--hicache-size 100` (762,944) that is ~1.46M tokens = 58 sessions of 25K, against a GPU that sustains nowhere near c=58. L3 pressure needs BOTH pools shrunk, exactly as on the A100 but from a higher starting point.
 
 | level | `--max-total-tokens` | `--hicache-size` | L1 tok (GiB) | L2 tok (GiB) | L1+L2 (sessions of 25K) | c | WS / pool | in-flight cap L1/(1.2 x 25K) -> needs f <= | role |
 |---|---|---|---|---|---|---|---|---|---|
-| P0 | 262144 | 64 | 262,144 (32.0) | 488,320 (59.6) | 750,464 (30.0) | 4 (8) | 0.38 L1 (0.76 L1) | 8.7 -> any f (c=8: f <= 1, no margin) | **no-pressure tie control**: WS < L1, expect all arms within noise, L2/L3 reads ~0; c=8 touches L1 late in sessions (8 x 32.7K = 262K) |
+| P0 | 262144 | 64 | 262,144 (32.0) | 488,320 (59.6) | 750,464 (30.0) | 4 (8) | 0.38 L1 (0.76 L1) | 8.7 -> any f (c=8: f <= 1, no margin) | **no-pressure tie control**: WS < L1, expect all arms within noise, L2/L3 reads ~0 |
 | PH | 131072 | 48 | 131,072 (16.0) | 366,272 (44.7) | 497,344 (19.9) | 8 (12) | 1.53 L1 = 0.40 (L1+L2) (2.29 L1 = 0.60) | 4.37 -> f <= 0.55 (0.36) | **host-restore arm**: L1 < WS <= L1+L2, everything that leaves HBM fits in host, L3 reads ~0 by construction |
 | PL | 131072 | 18 | 131,072 (16.0) | 137,344 (16.8) | 268,416 (10.7) | 12 (16) | 1.12 (L1+L2) (1.49) | 4.37 -> f <= 0.36 (0.27) | **L3 arm**: WS > L1+L2, ~32K (c=16: 131K) tokens live only on the SSD |
-| (defaults) | auto 281,216 | 100 | 281,216 (34.3) | 762,944 (93.1) | 1,044,160 (41.8) | - | - | 9.4 | not an arm: L3 never read at any sustainable c |
+| PW (**new, H200-only**) | 655360 | 96 | 655,360 (80.0) | 732,480 (89.4) | 1,387,840 (55.5) | 24-32 | to be derived after §5.4 | 21.8 -> f <= 0.91 at c=24 | **wide level**: the same pressure ratios at 5x the absolute scale, which the A100's 80 GB HBM could not reach. Not sized yet; see below |
+| (defaults) | auto ~700,000 (est.) | 100 | ~700,000 (~85) | 762,944 (93.1) | ~1,463,000 (58.5) | - | - | ~23 | not an arm: L3 never read at any sustainable c |
 
-Pools: L1 = the flag (multiples of 64, below the measured auto pool), L2 derived from the host rule, GiB = tokens / 8,192. PH and PL share L1, so the single-tier
-control (e) boots once for both. Host pinned RAM 64 / 48 / 18 GB of 167 GB, no swap: `--hicache-size 100` boots (all of 2026-09-17) but leaves ~8-28 GiB `free`
-(57-62 GiB available, `free -g` rows in `R32/run_c2.log`), at which point the Claude Code harness kills background waiters (§10): keep <= 64 with a client on the box.
-`--hicache-size 16` would give 122,112 < L1 (warning), hence 18. Optional larger host arm if c=12 is wanted at f <= 0.55: `--max-total-tokens 196608` (24.0 GiB) +
-`--hicache-size 32` (244,160) = 440,768 tokens (17.6 sessions). HANDOFF §5: without WS > L1+L2 every policy ties `nohicache`; PL is the only level where L3 can show anything.
+Pools: L1 = the flag (multiples of 64, below the profiled pool), L2 derived from the host rule, GiB = tokens / 8,192. PH and PL share L1, so the
+single-tier control (e) boots once for both. Host pinned RAM 64 / 48 / 18 (/ 96) GB of **196 GB**, no swap: the A100's "keep `--hicache-size` <= 64 or the
+box runs out of RAM" constraint is **much looser here** — 96 GB still leaves ~100 GB, and even 128 GB (976,576 tokens) would boot. Keep the P0/PH/PL
+values as they are anyway: they are what `C18/` used.
+
+**Why P0/PH/PL are deliberately unchanged, and what PW is for.** The pins are *below* the profiled pool on both boxes, so the same three numbers
+produce the same three experiments; carrying them over is what lets a row on this box be read against `C18/` and `R32/`. What the H200 adds is
+**headroom**, and `C18/README.md` named exactly the constraint that headroom relieves: the A100's three-arm tie happened because L1+L2 = 157K sat
+against a live set of ~500K, so admission, not tiering, set TTFT (§7.0). PW is the level that tests the same hypothesis with condition (a) of that
+README satisfied — L1 big enough to admit the live in-flight set — while still putting the parked set beyond L1+L2. It is listed, not sized: its c,
+gap scale and cell time need the §5.4 constants first, and it must not be run before row 2 has tied at P0.
 
 ```bash
 # host, read-only: reproduce the derived pool and working-set numbers of the table from the §5.1 host-pool rule (b = 131,072, page 64)
 python3 - <<'EOF'
 b = 131072; page = 64
 host = lambda gb: (int(gb * 1e9 // b) // page + 1) * page
-for gb in (100, 64, 48, 32, 18, 16):
+for gb in (100, 96, 64, 48, 32, 18, 16):
     print(f"host pool at --hicache-size {gb}: {host(gb)} tokens = {host(gb)/8192:.1f} GiB")
-for c in (4, 8, 12, 16, 32):
+for c in (4, 8, 12, 16, 24, 32):
     print(f"WS at c={c}: {c*25000} tokens = {c*25000/8192:.1f} GiB")
-print(f"L1+L2 at P0 / PH / PL: {262144+host(64)} / {131072+host(48)} / {131072+host(18)} tokens = {(262144+host(64))/25000:.1f} / {(131072+host(48))/25000:.1f} / {(131072+host(18))/25000:.1f} sessions of 25K")
-print(f"in-flight cap L1/(1.2 x 25K): P0 {262144/30000:.2f}, PH and PL {131072/30000:.2f}")
+print(f"L1+L2 at P0 / PH / PL / PW: {262144+host(64)} / {131072+host(48)} / {131072+host(18)} / {655360+host(96)} tokens"
+      f" = {(262144+host(64))/25000:.1f} / {(131072+host(48))/25000:.1f} / {(131072+host(18))/25000:.1f} / {(655360+host(96))/25000:.1f} sessions of 25K")
+print(f"in-flight cap L1/(1.2 x 25K): P0 {262144/30000:.2f}, PH and PL {131072/30000:.2f}, PW {655360/30000:.2f}")
 EOF
 ```
--> prints `host pool at --hicache-size 100: 762944 tokens = 93.1 GiB` (the measured anchor), then 488320 / 366272 / 244160 / 137344 / 122112 for 64 / 48 / 32 / 18 / 16,
-WS 100000 / 200000 / 300000 / 400000 / 800000 tokens, `L1+L2 ... 750464 / 497344 / 268416 tokens = 30.0 / 19.9 / 10.7 sessions`, caps `8.74` and `4.37` (verified 2026-09-18).
-Any other value means the rule in `pool_host/base.py:151-159` changed and the table, and the assert block of §5.2, must be re-derived.
+-> prints `host pool at --hicache-size 100: 762944 tokens = 93.1 GiB` (the A100-measured anchor, and a pure-arithmetic rule so it holds here too), then
+732480 / 488320 / 366272 / 244160 / 137344 / 122112 for 96 / 64 / 48 / 32 / 18 / 16, WS 100000 / 200000 / 300000 / 400000 / 600000 / 800000 tokens,
+`L1+L2 ... 750464 / 497344 / 268416 / 1387840 tokens = 30.0 / 19.9 / 10.7 / 55.5 sessions`, caps `8.74`, `4.37` and `21.85` (verified 2026-09-21).
+Any other value means the rule in `mem_cache/pool_host/base.py:151-160` changed and the table, and the assert block of §5.2, must be re-derived.
 
-**Two constraints per cell** (the WS ratio alone is not enough): (i) `L1 >= 1.2 x f x c x context`, because the PrefillAdder admits only within available + evictable
-device tokens (`schedule_policy.py:636-658,807-808,1215,1228`) and beyond that TTFT is admission queueing (HANDOFF §4); (ii) `WS = c x context > L1` (host arm) or
-`> L1+L2` (L3 arm). With the in-flight fraction `f = turn_time / (turn_time + gap)` they require `f <= L1 / (1.2 x WS)`: < 0.83 for any host arm, < 0.42 for any L3 arm.
+**Two constraints per cell** (the WS ratio alone is not enough): (i) `L1 >= 1.2 x f x c x context`, because the PrefillAdder admits only within available +
+evictable device tokens (`schedule_policy.py:636-658,807-808,1215,1228`) and beyond that TTFT is admission queueing (HANDOFF §4; and it is what `C18/`
+actually measured, §7.0); (ii) `WS = c x context > L1` (host arm) or `> L1+L2` (L3 arm). With the in-flight fraction `f = turn_time / (turn_time + gap)`
+they require `f <= L1 / (1.2 x WS)`: **< 0.83 for any host arm and < 0.42 for any L3 arm, at any L1** — the L1 cancels, so a bigger GPU does not by itself
+buy this. What a faster GPU buys is a **smaller f at the same gap**, because `turn_time` shrinks: that is the mechanism by which the H200 may reach a
+regime the A100 could not, and it is unquantified until §5.4 gives the decode rate.
 
-Where a 25K prefix lives decides TTFT (derived from the §5.4 fits): L1 0.36 s, L2 0.44 s, L3 4.96 s, recompute 18.0 s (`T_rec`, §3.5); only the recompute occupies
-the GPU. **Unmeasured input 1, returning turn on a device-resident prefix (+~1K tokens):** bound >= 0.46 s (a 1,024-token prefill from scratch, measured); model value
-~1.4 s = `T_L1(25K) + T_rec(26K) - T_rec(25K)` (marginal 1.06 ms/token at 25K); the trace's uncached delta is nearer 330-550 tokens/turn plus the 220 re-prefilled reply
-tokens (§5.2). Planning value 1.4 s. **Unmeasured input 2, decode rate:** first-principles ESTIMATE: weight-only Marlin reads 35.0 GB (the logged 32.59 "GB" is GiB) of weights per step plus
-3.28 GB of fp8 KV per 25K-token sequence; at an assumed ~2.0 TB/s HBM bandwidth (spec, from memory) x efficiency 0.5-0.8: RAW decode 26-42 tok/s at batch 1, ~17-28 per sequence at batch 7,
-~12-19 at 15 (this is what matrix row 1 measures). In the closed loop each sequence's decode also stalls behind the other sessions' ~1.4 s prefills: EFFECTIVE ~10-13 tok/s per sequence at
-c=8, ~6-7 at c=16; the f / X figures below use the effective rates.
+Where a 25K prefix lives decides TTFT. The A100's numbers (`measured-A100`, derived from the §5.4 fits): L1 0.36 s, L2 0.44 s, L3 4.96 s, recompute 18.0 s.
+**None of the first three port** (they are fits through GPU-side copy rates) and the fourth certainly does not. What can be said for this box before
+§5.4 runs, from the disk alone: a 25K L3 restore moves 25,000 x 131,072 = 3.28 GB = 3.05 GiB, which at this SSD's measured **1.88 GiB/s sustained
+ceiling** takes **>= 1.62 s** if it gets the whole device, versus **>= 4.90 s** on the A100's 0.623 GiB/s (derived, §2.2). That is the single largest
+mechanical improvement of the port, and it is the reason to re-run the L3 rows here at all.
 
-Consequence (ESTIMATE, closed-loop model on those inputs, 220 output tokens, no control load): one turn is 6.6-9.9 s at c=1 against a ~2.08 s MEAN gap (README; 0.71 s median; f is a time
-fraction, so the mean counts), so **f = 0.76-0.83 at c=1 and ~0.90-0.92 at c=8: in-flight ~ 0.9 c.** Turn throughput reaches 65-71 % of its ceiling (0.47-0.54 turns/s) at c=8 and 89-92 %
-at c=32 while turn time goes 19-24 s -> 63-74 s: compute saturates near **c ~ 8**, memory admission at c = 8.7 (P0) / 4.4 (PH, PL). The paired controls add T_rec(context)/K of GPU per turn
-(§7.3): K = 40 lowers the ceiling to 0.39-0.43 and stretches a c=8 turn to 22-28 s. At real gaps (i) and (ii) cannot both hold: **every WS > L1 cell at gap scale 1 is an overload cell**
-(run once as the honest short-gap case, bin by queue depth). Tiering cells need a mean gap of at least ~13-16 s (PH c=8), ~26-34 s (PH c=12), ~31-39 s (PL c=12), ~46-58 s (PL c=16)
-(control load at the K of the L3 cleaner budget paragraph below included; ~10-15 % less without it): set the client's `--gap-scale = required_mean_gap / mean(pre_gap)` (§4.6) with the mean of the
-turns actually replayed. On the converted trace's emitted-turn mean of 1.49 s (measured 2026-09-18, `lmcache_agentic_trace.json.stats.json`, §3.3) that is **x9-11 (PH c=8), x17-23 (PH c=12),
-x21-26 (PL c=12), x31-39 (PL c=16)** (derived: required gap / 1.49; the README mean 2.08 s, which counts turns the replay never sends, gave x6-8 / x13-16 / x15-19 / x22-28); a
-swebench-only replay divides by 1.32 s instead (x10-12 at PH c=8). The required gaps themselves rest on the 220-token placeholder: with the measured mean of 182 tokens each turn is
-~3-4 s shorter at the effective c=8 rates (estimate), so they shrink by roughly that much; re-derive them, not the multipliers' formula, after row 1. Record measured f per cell (`num_running_reqs`/c from `memtime.csv`, §6.1); require median queue
-depth ~0 in the window or bin by it (§9.1).
+**Unmeasured input 1, returning turn on a device-resident prefix (+~1K tokens):** A100 model value ~1.4 s. **Unmeasured input 2, decode rate.** Both are
+§5.4 open constants, both were open on the A100 too, and on this box **the whole TTFT-vs-length curve joins them** — so the A100's consequence paragraph
+(f = 0.76-0.83 at c=1, ~0.90-0.92 at c=8; saturation near c ~ 8; required mean gaps of ~13-16 s at PH c=8 and ~31-39 s at PL c=12; gap-scale multipliers
+x9-11 / x17-23 / x21-26 / x31-39 on the 1.49 s emitted-turn mean) is reproduced here **only as the prior to beat**, not as a plan. Expect every required
+gap and every multiplier to come down in proportion to whatever speed-up §5.4 measures. Record measured f per cell (`num_running_reqs`/c from
+`memtime.csv`, §6.1); require median queue depth ~0 in the window or bin by it (§9.1).
 
-**L3 write-through capacity (32B).** SSD write ceiling measured 391 MiB/s = 0.38 GiB/s at 99 % util (`R32/exp1_32b/iostat.log`) = 3,130 tok/s at b = 131,072 (derived).
-The GPU cannot make KV faster than it prefills: 2,140-2,270 tok/s for 512-4,096-token prompts, 1,660 at 16K, 1,220 at 32.5K (L / median TTFT, §5.4) = at most 73 % of
-the ceiling; steady state far lower (estimate 12-20 %). **The disk keeps up with write-through for the 32B on average** (the 8B could not: 8,858 tok/s x 147,456 B = 1.22 GiB/s =
-3.2x the ceiling). But the backup is not spread over the prefill: the log shows each 32.5K prompt (26.7 s prefill) followed by a ~10 s burst AT the ceiling (390 MiB/s, 99 % util,
-`R32/exp1_32b/iostat.log` nvme0n1 samples 21, 27, 32); derived at 0.38 GiB/s: ~4.5 s for a 14K turn 0, ~0.4 s for a 1.2K delta. Not measured: L3 restores overlapping such a burst, and
-concurrent L3 reads (0.62 GiB/s already runs the device at 97 % util) against writes in general: watch `w_await`/`%util` in PL cells.
+**L3 write-through capacity (32B, re-derived for this disk).** Write ceiling **measured 1.88 GiB/s sustained at 100 % util** (§2.2) =
+**15,418 tok/s** at b = 131,072 (derived). The GPU cannot make KV faster than it prefills, and on the A100 that was 1,220-2,270 tok/s, i.e. at most 15 %
+of *this* disk's write ceiling. Even if the H200 prefills 3x faster, write-through stays well inside the disk. **This is a qualitative change from the
+A100**, where the same comparison was "at most 73 % of the ceiling, with ~10 s bursts AT the ceiling after each 32.5K prompt" — and where, in `C18/`,
+`h2s_io` occupied 835 s of a 2,780 s run at the write ceiling and starved the reads (cause 3 of the null result, §7.0). The headroom does not remove the
+write amplification itself (cause 4: every recomputed turn re-inserts its KV and write-through backs it up again — 2.55M tokens written for ~480K tokens
+of distinct content), it only stops that amplification from saturating the device: the same 312 GiB of `h2s` traffic occupies **~166 s here against the
+835 s measured there** (derived). **Watch `w_await` and `%util` on `vdc` in PL cells anyway** and record them: the claim above is arithmetic, not a
+measurement under load, and reads and writes share one 1.88 GiB/s budget rather than two.
 
-**L3 cleaner budget.** nixl deletes from 80 % of the 368.0 GiB filesystem = 294 GiB = 2.41M tokens down to 70 %, oldest mtime first (`nixl_cleaner.py:21-22,148-157,181-184`): the turn-0
-prefix pages of the longest-parked sessions, i.e. a second eviction policy in the cell. Everything prefilled is written through, controls included (`R32/exp1_32b/metrics_after.txt`:
-197,184 prefilled -> 195,648 tokens backed up to L2 and to L3). Budget per three-tier cell (derived): `N_conv x 4.0 GiB (final context <= 32.7K) + N_ctl x 3.05 GiB (25K control) <= 294 GiB`,
-`N_ctl ~ 39 x N_conv / K` at 40 turns. K = 4 would be 9-10 controls = ~258K tok (31.5 GiB) per conversation: watermark crossed after ~9 conversations, ~1.3 TiB for a c=8 cell. c=8 /
-40 conv: N_ctl <= 44 -> **K = 40** (~1 control per conversation: 160 + 119 = 279 GiB). c=12 / 60 conv: 240 GiB leaves 17 controls; with `"l3_cleaner_high_watermark": 95,
-"l3_cleaner_low_watermark": 85` in `l3_extra.json` (350 GiB; the 18 GiB margin covers the cleaner's 30 s interval at 0.38 GiB/s) 36 -> K = 72. c=16: at most 64 conversations (256 GiB),
-30 controls at 95/85 -> K >= 84. Not counted: ~220 tokens of orphaned reply KV per turn on a boot without the §4.5 template (<= 1.05 GiB per conversation; zero with it). K and these bounds are provisional:
-check `df /mnt/nvme` and `l3_stats.json` after the first c=8 cell, re-derive GiB per conversation, and record cleaner deletions (§9.1).
+**L3 cleaner budget — re-derive, do not carry over.** nixl deletes from 80 % of the filesystem down to 70 %, oldest mtime first
+(`nixl_cleaner.py:21-22,148-157,181-184`), and **the filesystem is now 2.27 TiB, not 368 GiB**: 80 % is **1.82 TiB = 14.9M tokens**, against the A100's
+294 GiB = 2.41M. Two consequences. (1) The cleaner is effectively **inert** for a single cell — a `C18/`-sized cell wrote 312 GiB, which is 13 % of this
+disk — so the A100's careful K-vs-watermark arithmetic (K = 40 at c=8, K = 72 at c=12 with 95/85 watermarks) is **no longer a binding constraint**, and K
+can be chosen for the GPU budget alone (§7.3). (2) Across a multi-day campaign the store now accumulates until it hits 1.82 TiB, at which point the
+cleaner fires mid-cell and becomes a hidden second eviction policy — the exact failure the A100 sized against. **Therefore: keep wiping L3 between arms
+(§7.2 step 1), and set explicit watermarks in `l3_extra.json` so the budget is a stated number rather than an accident of disk size.** The §5.2 variables
+block writes `"l3_cleaner_high_watermark": 30, "l3_cleaner_low_watermark": 20` (= 698 GiB high, 465 GiB low; derived: 30 % of 2.27 TiB), which is >= 2x the
+biggest observed cell and still leaves 1.5 TiB of the disk untouched. Everything prefilled is written through, controls included (`measured-A100`,
+`R32/exp1_32b/metrics_after.txt`: 197,184 prefilled -> 195,648 tokens backed up to L2 and to L3). Budget per three-tier cell (derived):
+`N_conv x 4.0 GiB (final context <= 32.7K) + N_ctl x 3.05 GiB (25K control) <= 698 GiB`, `N_ctl ~ 39 x N_conv / K` at 40 turns — at c=12 / 60 conversations
+that is 240 GiB of conversations and room for ~150 controls, i.e. **K is unconstrained by the disk at every c this GPU can sustain.** Check `df /mnt/ssd`
+and `l3_stats.json` after the first c=8 cell and record cleaner deletions (§9.1); a deletion during a cell means this paragraph is wrong.
 
-**Expected result:** the level table above, applied through `set_level` (P0 `262144 64`, PH `131072 48`, PL `131072 18`), gives L1+L2 = 750,464 / 497,344 / 268,416 tokens
-(30.0 / 19.9 / 10.7 sessions of 25K; derived, reproduced by the check block); with c = 4-8 at P0, 8 at PH and 12 at PL the working set is 0.38-0.76 L1, 1.53 L1 (0.40 of L1+L2) and
-1.12 x (L1+L2) respectively (derived), and the admission caps are 8.7 (P0) and 4.37 (PH, PL) in-flight requests. Every f, gap scale and c is an estimate until §5.4's open constants
-are measured; the pool numbers are not.
-**If it differs:** a booted arm shows pools other than the table's (the §5.2 assert block): fix the boot, never the table. Measured f per cell (`num_running_reqs`/c, §6.1) above the
-cap column: the cell is queueing, not tiering; raise the gap scale for that row or lower c, and keep the short-gap result as the overload reference (§7.1 row 3).
-**Expected lessons:** the pool ratio alone does not make a tiering experiment: in-flight sessions must fit in L1 (constraint i) while the parked ones must not (constraint ii),
-and at the trace's real gaps the two cannot both hold for this model on this GPU, so every tiering cell is a stretched-gap cell and the real-gap cell is an overload reference.
-If the measured decode rate lands above the 26-42 tok/s band, turns shorten, f falls and the required gap scales shrink (rows 4-5 get cheaper); if below, the scales
-grow and c=16 at PL (46-58 s mean gap) is probably out of reach in the §7.3 budget. With the default pools, or `--hicache-size 100`, L3 is never read at any sustainable c:
-P0 is the negative case by construction, PL the only level where the SSD can show anything, and its write-through burst and cleaner are two more variables the cell has to record.
+**Expected result:** the level table above, applied through `set_level` (P0 `262144 64`, PH `131072 48`, PL `131072 18`, PW `655360 96`), gives
+L1+L2 = 750,464 / 497,344 / 268,416 / 1,387,840 tokens (30.0 / 19.9 / 10.7 / 55.5 sessions of 25K; derived, reproduced by the check block) and the
+admission caps 8.7 / 4.37 / 4.37 / 21.8. Those numbers are exact. **Every other number in this section is an A100 prior and is expected to change**;
+the §5.4 run is what replaces them, and no row past 2 may be sized until it has.
+**If it differs:** a booted arm shows pools other than the table's (the §5.2 assert block): fix the boot, never the table. The profiled pool comes back far
+from ~700,000: the estimate's assumption (weights and activations unchanged from the A100) is wrong — take the real number and re-derive the PW row, which
+is the only row that depends on it. Measured f per cell above the cap column: the cell is queueing, not tiering; raise the gap scale for that row or lower
+c, and keep the short-gap result as the overload reference (§7.1 row 3).
+**Expected lessons:** the pool ratio alone does not make a tiering experiment: in-flight sessions must fit in L1 (constraint i) while the parked ones must
+not (constraint ii), and because the L1 cancels out of `f <= L1/(1.2 x WS)`, **a bigger GPU does not relax that trade-off — only a shorter turn or a longer
+gap does.** The H200 helps through speed (smaller `turn_time`, hence smaller f at the same gap) and through the disk (a 25K L3 restore has a 1.62 s floor
+here against 4.90 s there), not through HBM size. And the two things the A100 campaign got wrong are now cheap to get right: the disk is no longer the
+bottleneck for write-through, and the cleaner is no longer a budget to design around — which leaves the prefetch-admission limit (cause 2 of `C18/`:
+`cache_controller.py` caps in-flight prefetch at half the host pool) as the one mechanism from that null result this box does **not** automatically fix.
 
 ### 5.4 Constants for Qwen3-32B-FP8 on this box
 
-**Status:** measured rows: done 2026-09-17 (`R32/`, campaign 5). The two open constants (decode rate, prefix-extension TTFT): not started; their command is flag-checked against `benchmark/one_batch_server.py:158-210,321-328` but its behaviour is unverified (`cli_main` calls `server_args.resolve_once()` even with `--base-url`, `:1494-1495`). The re-check blocks reuse `hicache_eval/scripts` until §11's copies exist.
-**Goal:** the one table every later step reads its numbers from, and the first GPU job of the study (matrix row 1, §7.1): measure the decode rate per sequence and the TTFT of extending a long cached prefix, so the provisional c, gap scales and cell times of §3.5, §5.3, §7.1 and §7.3 can be replaced by measured ones.
-**Runs on:** open constants: host shell (the `docker exec` wrapper; the inner command can also be pasted into a §5.2 container shell without the wrapper), against arm (a) at P0 booted per §5.2 (no HiCache: the prompts are seed-fixed, `one_batch_server.py:662`, and `/flush_cache` never clears L3, so on a nixl arm a second run would be an L3 hit). Re-checks: `container: sglang_hicache`, bash, `cd /sgl-workspace/sglang/hicache_eval/scripts` (hcommon is imported from cwd); b needs a HiCache arm ((b) at P0: the counters are GPU->L2 backups, §6.1), P needs arm (a).
-**Touches:** `$RUNDIR/decode_delta/{warm_prefix.jsonl,warm_prefix.log,itl_c1.jsonl}`, `$RUNDIR/b_measure/`, `$RUNDIR/p_measure/`, `$RUNDIR/constants.json` (§9.2); the server's radix tree and host pool (the tool flushes via `/flush_cache` per batch size). Nothing on `/mnt/nvme` (arm (a) has no L3).
-**Takes:** open constants ~6 min (estimate; GPU busy); ITL cross-check ~2 min (estimate: 8 x (1K prefill + 256 decode tokens) at c=1); b re-check ~1 min; P re-check ~5 min (estimate: 3 reps x 7 recompute lengths whose medians sum to ~44 s, plus flushes; GPU busy).
+**Status:** **not started — this is the single most important open step on this box, and it is matrix row 1.** Nine constants that the A100 measured are
+invalid on SM90 and are listed below with `measured-A100` values as priors and a command each. The A100's own two open constants (decode rate,
+prefix-extension TTFT) were never measured on either box and are open here too. Until this step runs, **every c, f, gap scale, K and cell time in §3.5,
+§5.3, §7.1 and §7.3 is an Ampere number being used on Hopper.**
+**Goal:** re-measure, on this GPU and this disk, the constants every later step reads: the profiled device pool, `b`, the recompute TTFT-vs-length curve
+and its slope `P`, the L1/L2/L3 tier fits, the decode rate per sequence, and the TTFT of extending a long cached prefix — and write them into
+`constants.json` (§9.2) so no number is re-typed elsewhere.
+**Runs on:** `container: sglang_hicache`, bash, against servers booted per §5.2; the tier-fit and P sweeps run from `cd /sgl-workspace/sglang/hicache_eval/scripts` (`hcommon` is imported from cwd). The open-constants block can also be driven from the host with the `docker exec` wrapper shown.
+**Touches:** `$RUNDIR/{decode_delta,b_measure,p_measure,tier_measure}/`, `$RUNDIR/constants.json` (§9.2); the server's radix tree and host pool (the tools flush via `/flush_cache`). Nothing on `/mnt/ssd` for the recompute and decode measurements (arm (a) has no L3); the tier sweep does write L3.
+**Takes:** ~25 min of GPU-busy measurement in total (estimate: pool 0 min — it is a log line; b ~1 min; P sweep ~5 min at A100 speed, less here; tier sweep ~10 min; open constants ~6 min; ITL cross-check ~2 min), plus one or two boots
 
-**Measured constants.** Setup of every measured row: fp8_e5m2 KV, triton, mem-fraction 0.85, page 64, ctx 32768, `--hicache-size 100`, `wait_complete`, idle server, one in-flight probe with `max_tokens=1`,
-n = 3; the `timeout` policy and concurrent load are unmeasured. TTFT source: `R32/exp1_32b/ttft_by_tier.csv` (medians recomputed from the CSV on 2026-09-18, equal to `R32/COMPARISON.md:157-215`; hit rows have 64 uncached tokens).
+**The nine constants to re-measure, with their A100 priors.** A prior is what the number was on the A100; it is stated so a wildly different result is
+recognisable as a mistake rather than a discovery, and it is **never** a value to use.
 
-| median TTFT (s) at L = | 512 | 1,024 | 2,048 | 4,096 | 8,192 | 16,384 | 32,512 |
-|---|---|---|---|---|---|---|---|
-| recompute | 0.2393 | 0.4552 | 0.9021 | 1.8597 | 4.0303 | 9.8764 | 26.6922 |
-| L1 hit (device) | 0.0638 | 0.0680 | 0.0758 | 0.1046 | 0.1504 | 0.2552 | 0.4597 |
-| L2 hit (host) | 0.0680 | 0.0705 | 0.0811 | 0.1067 | 0.1604 | 0.2992 | 0.5673 |
-| L3 hit (NVMe, nixl POSIX O_DIRECT) | 0.0904 | 0.2154 | 0.3985 | 1.0021 | 1.6937 | 3.3073 | 6.3898 |
-| L3 / recompute (below 1 = L3 wins) | 0.38 | 0.47 | 0.44 | 0.54 | 0.42 | 0.33 | 0.24 |
+| # | constant | `measured-A100` prior | why it cannot port | how to measure here |
+|---|---|---|---|---|
+| 1 | profiled device pool at `--mem-fraction-static 0.85` | 281,216 tok = 34.3 GiB | HBM 143,771 MiB vs 81,920 | boot arm (a) **without** `--max-total-tokens`, read `max_total_num_tokens=` (block A) |
+| 2 | weights on GPU | 32.59 GB, fp8 e4m3, weight-only Marlin (W8A16) | SM90 runs **native FP8**, not Marlin (`fp8_utils.py:2126-2132`) | `Load weight end.` line of the same boot (block A) |
+| 3 | `b`, KV bytes/token | 131,072 | dtype property; expected identical | block B (one 4,096-token write-through probe, D2H counters) |
+| 4 | recompute TTFT at L = 512 … 32,512 | 0.2393 … 26.6922 s | prefill is compute-bound; different SM, different FP8 kernel | block C (`exp1.py --tiers recompute`, 3 reps x 7 lengths) |
+| 5 | `P`, marginal prefill slope, and the bar `b x P` | 1,226 tok/s, intercept -1.251 s; 0.150 GiB/s | follows from 4 | linear fit over block C's medians |
+| 6 | L1 / L2 tier fits | 9.81 / 7.75 GiB/s, intercepts 0.053 / 0.048 s | device- and host-copy rates, PCIe Gen5 here vs Gen4 | block D (`exp1.py --tiers device,host`) |
+| 7 | L3 tier fit | 0.623 GiB/s + 0.058 s | **different disk**: 1.88 GiB/s ceiling vs 0.68 | block D (`--tiers storage`) on a three-tier arm |
+| 8 | decode rate per sequence at B = 1, 4, 8 | **never measured on either box** | — | block E (`one_batch_server` warm-prefix run) + block F (ITL cross-check) |
+| 9 | TTFT of extending a ~24.5K cached prefix by ~1K | **never measured on either box** | — | block E, `last_ttft` at bs=1 |
 
-| constant | value | status | source |
-|---|---|---|---|
-| b (KV bytes/token) | 131,072 | measured: 536,870,912 B / 4,096 tok | `R32/exp0_32b/exp0_results.json` step2_backup |
-| device pool (L1_TOKENS) | 281,216 tok = 34.3 GiB | measured (HiCache arms only) | `R32/exp1_32b/startup_facts.txt:4` |
-| weights on GPU | 32.59 GB, fp8 e4m3, weight-only Marlin | measured | `R32/exp1_32b/server.log:15-16` |
-| host pool | 762,944 tok @ 100 GB | measured; 488,320 / 366,272 / 137,344 @ 64 / 48 / 18 GB are derived (§5.1 rule) | `R32/exp1_32b/startup_facts.txt:5` |
-| P, marginal prefill (slope fit); recompute bar b x P | 1,226 tok/s, intercept -1.251 s; 0.150 GiB/s | measured | `R32/COMPARISON.md:139-141` |
-| tier fits, rate + intercept | L1 9.81 GiB/s + 0.053 s (65x the bar); L2 7.75 + 0.048 s (52x; pass ran while write-through drained); L3 0.623 + 0.058 s (4.2x) | measured | `R32/COMPARISON.md:142-152`; `R32/REPORT.md:82-83` |
-| SSD ceiling | ~0.68 GiB/s read (704 MiB/s, 97 % util), ~0.38 GiB/s write (391 MiB/s, 99 % util) | measured (iostat, 5 s samples; no fio saved) | `R32/exp1_32b/iostat.log`; `R32/REPORT.md:84` |
-| boot to `fired up` | ~633 s (10.6 min) JIT-cold; 278-285 s warm with the 100 GB pool | measured (`R32/preflight/boot_32b/server.log:6,51`; `R32/exp{0,1}_32b*/server.log`) | §2.6 |
-| 25K-token recompute; 25K-token restore | ~18 s (quadratic fit 18.0; linear interpolation 18.9; slope fit 19.1); L3 ~5.0 s, L2 ~0.44 s, L1 ~0.36 s | derived (§3.5 fit; intercept + 25,000 x b / rate) | the rows above |
-| **decode rate** (tok/s per sequence at batch 1, 4, 8, ~25K contexts) | **NOT MEASURED** | open constant 1 | the open-constants block below |
-| **TTFT of extending a ~24.5K cached prefix by ~1K tokens** | **NOT MEASURED** | open constant 2 | the open-constants block below |
+Boot time is a tenth value worth recording (`measured-A100`: 278-285 s warm, ~633 s JIT-cold): read it off the `READY:` line of the first boots (§2.6).
 
-Admission rule (HANDOFF §2): a tier pays only if `bandwidth(tier) > b x P`. Here L2 and L3 both clear the bar and an L3 hit is faster than recompute
-at 7 of 7 lengths; quote that, not the fit break-even "2,114 tokens" (`R32/COMPARISON.md:153`), an artefact of the superlinear recompute curve. The
-L3 rate is the SSD ceiling and is model-independent: the 8B (bar 1.22 GiB/s) loses at 7 of 7 lengths on this box.
+**Setup that every measured row must share** (so the rows are comparable to each other and to `R32/`): fp8_e5m2 KV, `--attention-backend triton`,
+`--mem-fraction-static 0.85`, page 64, ctx 32768, idle server, one in-flight probe with `max_tokens=1`, n = 3 reps. The `timeout` policy and concurrent
+load stay unmeasured here as they were there.
 
-**The two open constants (matrix row 1).** Prerequisites: arm (a) at P0 is up and asserted (§5.2), and one discarded long probe has been sent (the first long prefill
-in a fresh container took 9.0 s once, §2.6): from a §5.2 container shell, `cd /sgl-workspace/sglang/hicache_eval/scripts && python3 probe.py --len 4096 --seed $RANDOM`
-(prints one JSON line; discard it). Per batch size the tool flushes, prefills the first `int(25600 x 0.96)` = 24,576 tokens with `max_new_tokens=1`
-(`one_batch_server.py:462-524,621-625`), then times 1,024 uncached tokens on that prefix plus 220 decoded tokens. `last_ttft` at bs=1 = open constant 2;
-`output_throughput / batch_size` = open constant 1 at B = 1, 4, 8. Put both in `constants.json` (§9.2).
+The one boot in this runbook that must NOT carry the `--max-total-tokens` pin: the pin hides the profiled pool, which is the value being
+measured. `set_level` always builds the pin into `COMMON`, so this block spells the flags out instead of reusing the array.
+```bash
+# container: sglang_hicache, bash; paste the §5.2 variables block first (for RUNDIR and MODEL).
+# Block A (constants 1 and 2): boot arm (a) WITHOUT --max-total-tokens and read the profiled pool and the weight line off the log
+ARM=probe_pool
+python3 -m sglang.launch_server \
+  --model-path "$MODEL" --host 0.0.0.0 --port 30000 --context-length 32768 \
+  --chat-template /sgl-workspace/sglang/agent_cache/templates/qwen3_replay_nothink.jinja \
+  --kv-cache-dtype fp8_e5m2 --attention-backend triton \
+  --page-size 64 --chunked-prefill-size 8192 --mem-fraction-static 0.85 \
+  --max-running-requests 64 --radix-eviction-policy lru \
+  --enable-metrics --enable-cache-report \
+  > "$RUNDIR/server_$ARM.log" 2>&1 &
+echo $! > "$RUNDIR/server_$ARM.pid"; echo "launched $ARM: pid $(cat "$RUNDIR/server_$ARM.pid")"
+# ... wait with the §5.2 readiness block (ARM=probe_pool), then:
+echo "profiled device pool: $(grep -aoE 'max_total_num_tokens=[0-9]+' "$RUNDIR/server_$ARM.log" | head -1)"
+echo "kv cache line:        $(grep -a 'KV Cache is allocated' "$RUNDIR/server_$ARM.log" | head -1)"
+echo "weight line:          $(grep -a 'Load weight end' "$RUNDIR/server_$ARM.log" | head -1)"
+echo "marlin mentioned:     $(grep -ac 'Marlin' "$RUNDIR/server_$ARM.log")   (want 0 on SM90)"
+echo "attention backend:    $(grep -ao \"'attention_backend': '[a-z0-9_]*'\" "$RUNDIR/server_$ARM.log" | head -1)"
+echo "boot seconds:         (from the READY: line of the readiness block)"
+```
+-> prints the four labelled lines. **Pass conditions:** `max_total_num_tokens=` some value near the ~700,000 estimate (§5.3) — write the exact number into
+`constants.json` as `L1_TOKENS` and into the §5.3 PW row; `KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: <same>`; a `Load weight end. ...
+quant=fp8 ... mem usage=<N> GB` line; **`marlin mentioned: 0`** — a non-zero count means the A100's W8A16 path is running on Hopper silicon and every
+later number would be wrong (check for `SGLANG_FORCE_FP8_MARLIN` in the environment); `'attention_backend': 'triton'`. Then stop this server
+(`kill $(cat "$RUNDIR/server_$ARM.pid")`): every other block boots an arm with the pin.
 
 ```bash
-# host: measure the two open constants against arm (a) at P0 (~6 min, estimate; GPU busy). RUNDIR is the CONTAINER path built from the host stamp file
-# (§2.4); an empty or bare RUNDIR would make the inner command write to /decode_delta or results/decode_delta in the container, silently, hence the guard
+# container: sglang_hicache, bash; paste the §5.2 variables block first. Make the re-check dirs and move to the scripts dir (hcommon/cachectl/probe are imported from cwd)
+cd /sgl-workspace/sglang/hicache_eval/scripts && mkdir -p "$RUNDIR"/{b_measure,p_measure,tier_measure,decode_delta} \
+  && echo "cwd:  $(pwd)" && echo "dirs: $(ls -d "$RUNDIR"/{b_measure,p_measure,tier_measure,decode_delta} | tr '\n' ' ')"
+```
+-> prints `cwd: /sgl-workspace/sglang/hicache_eval/scripts` and the four created directories (two labelled lines; a `cd:` error means the scripts dir is missing and nothing was created).
+
+```bash
+# container: sglang_hicache, bash, cwd = the scripts dir, RUNDIR from the §5.2 variables block; against a HiCache arm ((b) at P0).
+# Block B (constant 3): one 4096-token write-through probe, then the D2H backup counters (exp0.py:90-104 procedure)
+python3 cachectl.py scrape "$RUNDIR/b_measure/before.txt" && python3 probe.py --len 4096 --seed 4242 && python3 cachectl.py drain \
+  && python3 cachectl.py scrape "$RUNDIR/b_measure/after.txt" \
+  && python3 cachectl.py delta "$RUNDIR/b_measure/before.txt" "$RUNDIR/b_measure/after.txt" | grep -E 'hicache_backup_(bytes|tokens)_total'
+```
+-> prints the two counter deltas; pass when bytes / tokens == **131072 exactly** (`measured-A100`: 536,870,912 / 4,096). This is the one constant expected to be unchanged; any other ratio means a different KV dtype or layer count is being served (§5.1 `--kv-cache-dtype` row) and every byte-derived number in §5.3 is off.
+
+```bash
+# container: sglang_hicache, bash, cwd = the scripts dir, RUNDIR from the §5.2 variables block; against arm (a) at P0.
+# Block C (constants 4 and 5): recompute-only sweep, 3 reps x 7 lengths (~5 min at A100 speed, less here; GPU busy;
+# watch $RUNDIR/p_measure/run.log; Ctrl-C stops it). exp1.py:22 reads os.environ["RESULTS"] unconditionally (KeyError without it)
+# and writes to $RESULTS/$EXP1_OUT; it never sources env.sh, so the frozen-dir guard is not involved
+RESULTS=$RUNDIR EXP1_OUT=p_measure python3 exp1.py --reps 3 --tiers recompute --lengths 512,1024,2048,4096,8192,16384,32512 > "$RUNDIR/p_measure/run.log" 2>&1 \
+  && echo "P sweep done: $(wc -l < "$RUNDIR/p_measure/run.log") log lines in $RUNDIR/p_measure/run.log"
+```
+-> prints `P sweep done: ...`. **Record the seven medians and the slope fit here.** `measured-A100` for comparison: 0.2393 / 0.4552 / 0.9021 / 1.8597 /
+4.0303 / 9.8764 / 26.6922 s, slope P = 1,226 tok/s with intercept -1.251 s, and a quadratic `T_rec(L) = 0.0626 + 3.752e-4 L + 1.365e-8 L^2` (max residual
+31 ms) that §3.5 and §7.3 use. **Expect the H200 to be materially faster** — native FP8 GEMMs instead of W8A16 Marlin dequant, on a newer SM — but the
+curve must still be re-fitted, not scaled: it is superlinear, and a single speed-up factor would misstate both the slope and the intercept. Re-fit the
+quadratic and put it in `constants.json`; §3.5's `T_rec` and §7.3's `GPU_s_per_turn` read it from there.
+
+```bash
+# container: sglang_hicache, bash, cwd = the scripts dir, RUNDIR from the §5.2 variables block; against a THREE-TIER arm ((c) at P0).
+# Block D (constants 6 and 7): the tier sweep. Same lengths, one pass per tier; the storage pass writes and then reads L3 on /mnt/ssd.
+RESULTS=$RUNDIR EXP1_OUT=tier_measure python3 exp1.py --reps 3 --tiers device,host,storage --lengths 512,1024,2048,4096,8192,16384,32512 > "$RUNDIR/tier_measure/run.log" 2>&1 \
+  && echo "tier sweep done: $(wc -l < "$RUNDIR/tier_measure/run.log") log lines in $RUNDIR/tier_measure/run.log"
+```
+-> prints `tier sweep done: ...` and writes a per-tier TTFT table. **Record the three fits (rate + intercept) here.** `measured-A100`: L1 9.81 GiB/s +
+0.053 s, L2 7.75 GiB/s + 0.048 s, L3 0.623 GiB/s + 0.058 s. **The L3 row is the one that decides the study**: this disk's contended read ceiling is
+1.88 GiB/s (measured, §2.2), so a single idle restore should land far above 0.623 — if it does not, the bottleneck is nixl or the prefetch path, not the
+device, and that is itself the finding. Note the sweep runs `wait_complete` at idle and single-stream, exactly as the A100's did; concurrent-restore
+behaviour is what §7.1 rows 5-6 measure, not this block.
+
+```bash
+# host: Block E (constants 8 and 9): measure the decode rate and the prefix-extension TTFT against arm (a) at P0 (~6 min, estimate; GPU busy).
+# RUNDIR is the CONTAINER path built from the host stamp file (§2.4); an empty or bare RUNDIR would make the inner command write to
+# /decode_delta or results/decode_delta in the container, silently, hence the guard
 STAMP=$(cat /home/wanhr/sglang/agent_cache/.current_results 2>/dev/null); [ -n "$STAMP" ] || { echo "STOP: no agent_cache/.current_results; run §2.4 block 6 (results stamp) first"; false; } \
   && RUNDIR=/sgl-workspace/sglang/agent_cache/results/$STAMP && echo "RUNDIR (container path): $RUNDIR" \
   && docker exec -e RUNDIR="$RUNDIR" sglang_hicache bash -lc 'cd /sgl-workspace/sglang && mkdir -p "$RUNDIR/decode_delta" \
@@ -1825,17 +1981,22 @@ STAMP=$(cat /home/wanhr/sglang/agent_cache/.current_results 2>/dev/null); [ -n "
     --result-filename "$RUNDIR/decode_delta/warm_prefix.jsonl" 2>&1 | tee "$RUNDIR/decode_delta/warm_prefix.log"'
 ```
 -> prints `RUNDIR (container path): /sgl-workspace/sglang/agent_cache/results/<stamp>` (a `STOP:` line means §2.4's stamp is missing: nothing runs), then
-(not yet observed; expected shape) one report block per batch size with `last_ttft` and `output_throughput`, and `warm_prefix.jsonl` gains three lines
-(batch_size 1, 4, 8) with those fields (`one_batch_server.py:415-438`). Pass condition: `last_ttft` at bs=1 is far below the 25.6K recompute (~18 s, derived): if it is
-near 18 s the 96 % warm-up did not take (flush or seed mismatch) and the run measured a recompute, not the extension.
-Flag groups: target (`--model-path`, `--base-url`: an external server, no launch); prompt shape (`random-ids`, 25,600 tokens of which 96 % are pre-cached, 220 output tokens);
-batch sizes 1 4 8; `--skip-warmup --show-report` (the discarded probe above is the warm-up); output files under `$RUNDIR/decode_delta/`.
+one report block per batch size with `last_ttft` and `output_throughput`, and `warm_prefix.jsonl` gains three lines (batch_size 1, 4, 8) with those fields
+(`one_batch_server.py:415-438`). `last_ttft` at bs=1 is constant 9; `output_throughput / batch_size` is constant 8 at B = 1, 4, 8.
+**Pass condition:** `last_ttft` at bs=1 must be far below a full 25.6K recompute (whatever block C measured it to be); if it is near that value the 96 %
+warm-up did not take (flush or seed mismatch) and the run measured a recompute, not the extension.
+Prerequisite: arm (a) at P0 is up and asserted (§5.2), and one discarded long probe has been sent (the first long prefill in a fresh container took 9.0 s
+once on the A100, `R8/DEVIATIONS.md` D9): from a §5.2 container shell, `cd /sgl-workspace/sglang/hicache_eval/scripts && python3 probe.py --len 4096 --seed $RANDOM`
+(prints one JSON line; discard it). Per batch size the tool flushes, prefills `int(25600 x 0.96)` = 24,576 tokens with `max_new_tokens=1`
+(`one_batch_server.py:462-524,621-625`), then times 1,024 uncached tokens on that prefix plus 220 decoded tokens.
+Flag groups: target (`--model-path`, `--base-url`: an external server, no launch); prompt shape (`random-ids`, 25,600 tokens of which 96 % are pre-cached,
+220 output tokens); batch sizes 1 4 8; `--skip-warmup --show-report`; output files under `$RUNDIR/decode_delta/`.
 Watch from another host shell: `tail -f /home/wanhr/sglang/agent_cache/results/$(cat /home/wanhr/sglang/agent_cache/.current_results)/decode_delta/warm_prefix.log`.
 Stop: `docker exec sglang_hicache pkill -f sglang.benchmark.one_batch_server` (no wrapping `bash -c`, so the pattern cannot match its own shell, §10).
-Inside a §5.2 container shell, run the inner command (from `cd /sgl-workspace/sglang` on) without the `docker exec` wrapper.
 
 ```bash
-# container: sglang_hicache, bash; paste the §5.2 variables block first (RUNDIR). Cross-check of the decode rate at short context: median ITL at c=1 (~2 min, estimate; GPU busy; Ctrl-C stops it)
+# container: sglang_hicache, bash; paste the §5.2 variables block first (RUNDIR). Block F: cross-check of the decode rate at short context:
+# median ITL at c=1 (~2 min, estimate; GPU busy; Ctrl-C stops it)
 mkdir -p "$RUNDIR/decode_delta" && python3 -m sglang.benchmark.serving \
   --backend sglang \
   --host 127.0.0.1 \
@@ -1851,61 +2012,32 @@ mkdir -p "$RUNDIR/decode_delta" && python3 -m sglang.benchmark.serving \
   --output-details \
   --output-file "$RUNDIR/decode_delta/itl_c1.jsonl"
 ```
--> prints the serving summary with `Median ITL`; `1 / median ITL` is the batch-1 decode rate at a 1K context (not yet measured; expected in or above the 26-42 tok/s band of §5.3,
-since a 1K context reads less KV per step than a 25K one). `random-ids` and not `random`: `random` would download ShareGPT; `probe.py:49` fixes `max_tokens=1`, so it cannot give a decode rate.
+-> prints the serving summary with `Median ITL`; `1 / median ITL` is the batch-1 decode rate at a 1K context, which must be consistent with (and a little
+above) block E's bs=1 rate at 25K, since a 1K context reads less KV per step. `random-ids` and not `random`: `random` would download ShareGPT; `probe.py:49`
+fixes `max_tokens=1`, so it cannot give a decode rate.
 
-**Re-check procedures for the measured constants** (container shell of §5.2; reuse `hicache_eval/scripts` until §11's copies exist; hcommon is imported from cwd and `scrape()` does not mkdir).
+**Admission rule (HANDOFF §2): a tier pays only if `bandwidth(tier) > b x P`.** On the A100 that gave: L2 clears the bar 52x, L3 4.2x, and an L3 hit was
+faster than recompute at 7 of 7 lengths — which is why the 32B was chosen as the evaluation model there, and why the 8B (bar 1.22 GiB/s vs 0.625
+delivered) was the documented negative case. **Both sides of that inequality move here**, in opposite directions: `P` goes up (native FP8 on a newer SM),
+which raises the bar, and the disk goes up 2.8x, which raises L3's side. Which way the ratio lands is exactly what blocks C and D decide, and it is a
+go/no-go input (§9.3), not a detail. Quote the measured ratio and the 7-length comparison; never the fit break-even, which is an artefact of the
+superlinear recompute curve.
 
-```bash
-# container: sglang_hicache, bash; paste the §5.2 variables block first. Make the re-check dirs and move to the scripts dir (hcommon/cachectl/probe are imported from cwd)
-cd /sgl-workspace/sglang/hicache_eval/scripts && mkdir -p "$RUNDIR/b_measure" "$RUNDIR/p_measure" \
-  && echo "cwd: $(pwd)" && echo "b dir: $RUNDIR/b_measure" && echo "p dir: $RUNDIR/p_measure"
-```
--> prints `cwd: /sgl-workspace/sglang/hicache_eval/scripts`, `b dir: /sgl-workspace/sglang/agent_cache/results/<stamp>/b_measure` and
-`p dir: .../p_measure` (three labelled lines; a `cd:` error means the scripts dir is missing and nothing was created).
-
-```bash
-# container: sglang_hicache, bash, cwd = the scripts dir (block above), RUNDIR from the §5.2 variables block; against a HiCache arm ((b) at P0). b: one 4096-token write-through probe, then the D2H backup counters (exp0.py:90-104 procedure)
-python3 cachectl.py scrape "$RUNDIR/b_measure/before.txt" && python3 probe.py --len 4096 --seed 4242 && python3 cachectl.py drain \
-  && python3 cachectl.py scrape "$RUNDIR/b_measure/after.txt" \
-  && python3 cachectl.py delta "$RUNDIR/b_measure/before.txt" "$RUNDIR/b_measure/after.txt" | grep -E 'hicache_backup_(bytes|tokens)_total'
-```
--> prints the two counter deltas; pass when bytes / tokens == 131072 exactly (measured 2026-09-17: 536,870,912 / 4,096). Any other ratio means a different KV dtype or
-layer count is being served (§5.1 `--kv-cache-dtype` row) and every byte-derived number in §5.3 is off.
-
-```bash
-# container: sglang_hicache, bash, cwd = the scripts dir (block above), RUNDIR from the §5.2 variables block; against arm (a) at P0. P: recompute-only sweep (3 reps x 7 lengths, ~5 min estimate, GPU busy; watch $RUNDIR/p_measure/run.log; Ctrl-C stops it),
-# then the linear fit of median TTFT vs L (run_p_measure.sh:9-17; analyze_models.py:43-50). exp1.py:22 reads os.environ["RESULTS"] unconditionally (KeyError without it)
-# and writes to $RESULTS/$EXP1_OUT; it never sources env.sh, so the frozen-dir guard is not involved
-RESULTS=$RUNDIR EXP1_OUT=p_measure python3 exp1.py --reps 3 --tiers recompute --lengths 512,1024,2048,4096,8192,16384,32512 > "$RUNDIR/p_measure/run.log" 2>&1 \
-  && echo "P sweep done: $(wc -l < "$RUNDIR/p_measure/run.log") log lines in $RUNDIR/p_measure/run.log"
-```
--> prints `P sweep done: ...`; the slope fit of the medians should reproduce P = 1,226 tok/s with intercept -1.251 s (measured 2026-09-17, `R32/COMPARISON.md:139-141`) within
-the run-to-run noise of three reps; the 32,512-token median should be ~26.7 s.
-
-```bash
-# container: sglang_hicache, bash; paste the §5.2 variables block first. L1_TOKENS: 281216 was measured with HiCache attached (R32/exp1_32b/cold_check.txt); confirm the value arm (a) profiles
-echo "arm (a) device pool: $(grep -aoE 'max_total_num_tokens=[0-9]+' "$RUNDIR/server_hbm_lru.log" | head -1)   (pinned to 262144 at P0; the profiled value shows only if the pin is dropped)"
-```
--> prints `arm (a) device pool: max_total_num_tokens=262144` with the P0 pin (expected); to see arm (a)'s own profiled pool, boot it once without `--max-total-tokens` and expect
-281216 (measured on HiCache arms; unverified without HiCache, the reason P0 pins 262,144).
-
-**Expected result:** the measured tables above stand as the source of every constant referenced elsewhere (§3.5, §5.3, §7.3, §9.2). Open constants: not yet measured;
-expected shape: `warm_prefix.log` shows three report blocks (bs 1, 4, 8); `last_ttft` at bs=1 between the 0.46 s bound (a 1,024-token prefill from scratch, measured 0.4552 s) and
-roughly the 1.4 s planning value (estimate, §5.3), and far below the ~18 s of a full 25K recompute; `output_throughput / batch_size` at bs=1 in the 26-42 tok/s band
-(first-principles estimate, §5.3), lower per sequence at bs 4 and 8 (~17-28 at batch 7 was the estimate); `itl_c1.jsonl` median ITL consistent with that rate at 1K context.
-Record the measured values here, in `constants.json` (`decode_rate_tok_s {1, 4, 8}`, `extend_1k_on_24k_ttft_s`, §9.2) and in §5.3 after the run.
-**If it differs:** `last_ttft` at bs=1 ~18 s: the warm-up prefix did not take (arm has HiCache and the seed-fixed prompt was an L3 hit, or `/flush_cache` failed): confirm arm (a),
-re-run. `output_throughput` far below 26 tok/s at bs=1 with a healthy `last_ttft`: check `nvidia-smi` for a second process and `top` for scheduler CPU starvation (12 vCPU, §10)
-before believing it. The tool exits on `resolve_once()` errors with `--base-url`: `one_batch_server.py:1494-1495` is the unverified path; fall back to the ITL cross-check
-plus `--random-input-len 25600` for the decode rate at long context.
-**Expected lessons:** the two open constants are the inputs every provisional figure rests on. Decode rate at bs=1 below the 26-42 tok/s band: turns are longer than 6.6-9.9 s,
-f rises, the required mean gaps of §5.3 (13-16 s at PH c=8, 31-39 s at PL c=12) and hence the gap scales grow, cell times in §7.3 stretch beyond 85-105 min (c=8) / 165-205 min
-(PL c=12), and c=16 at PL is dropped; above the band: the opposite, and c=12 at PH becomes affordable at K = 40. Per-sequence rate collapsing from bs 1 to bs 8 (memory-bound
-steps shared by the batch) confirms the ~10-13 tok/s effective estimate and the saturation near c ~ 8; a flat rate means the GPU has decode headroom and c can rise before
-memory admission (8.7 / 4.37) becomes the binding limit. Extension TTFT near the 0.46 s bound: `t_delta` drops from 1.4 s, `GPU_s_per_turn` falls and every §7.3 cell gets
-shorter; near or above 1.4 s: the §7.3 budget stands; well above (the reply re-prefill of the §5.2 history note adds `output_len(prev)` tokens on every returning turn): a cached
-prefix is worth less than the fits say, the (e)-vs-(d) gap narrows, and the memory-time freed per restore must be re-derived with the measured value.
+**Expected result:** ten values recorded here and in `constants.json` (§9.2): profiled device pool, weight-load size and kernel (Marlin absent), `b`
+(expected 131,072), seven recompute medians plus the re-fitted slope/intercept/quadratic, three tier fits, decode rate at B = 1/4/8, prefix-extension
+TTFT, and the warm and JIT-cold boot times. Not one of them exists for this box today.
+**If it differs:** `marlin mentioned` non-zero in block A: something forces the A100 kernel; fix it before anything else. Block B's ratio not 131,072:
+the dtype is not what the flags say. Block C's medians *slower* than the A100's: implausible on this GPU — check `nvidia-smi` for a second process, `top`
+for scheduler CPU starvation (16 vCPU shared by scheduler, HiCache threads, tokenizer and client, §10), and that the pin took, before believing it.
+Block D's L3 rate near the A100's 0.623 GiB/s despite a 1.88 GiB/s device: the nixl path, not the disk, is the limit — profile it (§8) before sizing rows
+5-6, because it would mean the disk upgrade bought nothing. Block E exits on `resolve_once()` errors with `--base-url`: `one_batch_server.py:1494-1495` is
+the unverified path; fall back to block F plus `--random-input-len 25600`.
+**Expected lessons:** this step is the port. Everything else in §2-§4 is plumbing that either works or fails loudly; these nine numbers fail *silently*,
+by making a cell look correctly sized when it is not — which is how the A100 campaign spent a day producing `C18/`, a three-arm tie that could not be
+attributed because the cell had been sized from estimates (§7.0). Two specific outcomes to watch for: if `P` rises faster than the disk did, the L3
+admission ratio *falls* despite the better SSD and PL becomes harder to demonstrate, not easier; and if the decode rate rises a lot, `turn_time` and hence
+f fall, the required mean gaps of §5.3 shrink, and rows 4-6 get cheaper in both gap scale and wall time. Those two pull in opposite directions, which is
+why both must be measured before any row past 2 is sized.
 
 ---
 
@@ -1920,15 +2052,14 @@ split comes from without any server change, what to log when a client cannot rea
 
 ### 6.1 Metrics to scrape and cadence (`/metrics`, needs `--enable-metrics`)
 
-**Status:** families, meanings and anchors verified against this checkout (`6ec32e6b7`) on 2026-09-18; the 1 s sampler below has not run on this box
-yet (no cell has been run; the 2026-09-17 campaign logs are 5 s averages from `hicache_eval/scripts/telemetry.sh:9,11`, §7.2 step 5).
+**Status:** families, meanings and anchors verified against `6ec32e6b7` on 2026-09-18 and re-checked against `d608a20d4` on 2026-09-21 (the three intervening commits add `HICACHE_EVT` log lines, §6.6, and change no metric definition). The 1 s sampler below ran on the A100 box for the `C18/` cells; **it has never run here** (no cell has run on this box).
 **Goal:** record device-pool and host-pool occupancy and the queue depth at 1 s resolution for the whole cell, and name the counter family that
 answers each question, so that §6.4 can attach a queue depth to every turn and bound memory-time, and §9.1 can bin TTFT by queue depth at send time.
 **Runs on:** `container: sglang_hicache`, `bash`, in the §7.2 step 0 shell (it defines `OUT`, this cell's dir); `curl` and `awk` are in the image.
 The server must be up with `--enable-metrics` (part of the §5.2 `COMMON` array; it gates every HiCache Prometheus family, §5.1).
 **Touches:** writes `$OUT/memtime.csv` and `$OUT/.memtime.pid` (container `/sgl-workspace/sglang/agent_cache/results/<stamp>/<cell>/` =
 host `/home/wanhr/sglang/agent_cache/results/<stamp>/<cell>/`, root-owned until the §7.2 step 12 chown); one `GET /metrics` per second; nothing else.
-**Takes:** runs in the background for the whole cell (55-205 min per cell, estimate, §7.3); the sampler costs one `curl` per second and no GPU
+**Takes:** runs in the background for the whole cell (cell length is re-derived after §5.4; the A100's `C18/` cells were ~46 min each, §7.0); the sampler costs one `curl` per second and no GPU
 (the client and the server are the GPU users; the sampler is stopped in §7.2 step 8, before the drain).
 
 | family | type | meaning | refresh |
@@ -2004,8 +2135,8 @@ kill "$(cat "$OUT/.memtime.pid")" && echo "sampler stopped; rows: $(($(wc -l < "
 **Expected result:** `$OUT/memtime.csv` has the 11-column header and one row per ~1 s over the cell (row count ~ client wall seconds, derived).
 In every row `kv_used_tokens + kv_evictable_tokens + kv_available_tokens == max_total_num_tokens` (derived: the three come from one
 `_get_token_info` pass, `used = total - (available + evictable)`, `pool_stats_observer.py:221-229`), and `max_total_num_tokens` equals the
-arm's `--max-total-tokens` pin: 262144 at P0, 131072 at PH and PL (§5.3). On HiCache arms `hicache_host_total_tokens` is 488320 / 366272 / 137344
-at `--hicache-size` 64 / 48 / 18 (derived from the §5.1 host-pool rule; 762,944 at 100 GB is the measured point, `R32/exp1_32b/startup_facts.txt:5`);
+arm's `--max-total-tokens` pin: 262144 at P0, 131072 at PH and PL, 655360 at PW (§5.3). On HiCache arms `hicache_host_total_tokens` is
+488320 / 366272 / 137344 / 732480 at `--hicache-size` 64 / 48 / 18 / 96 (derived from the §5.1 host-pool rule; 762,944 at 100 GB is the `measured-A100` anchor, `R32/exp1_32b/startup_facts.txt:5`);
 on arms (a) and (e) both `hicache_host_*` columns are empty. With the server idle (before the client starts, after the §7.2 step 4 flush)
 `num_running_reqs` and `num_queue_reqs` are 0 and every value repeats unchanged row after row: the gauges are frozen while idle, not broken.
 While the client runs `num_running_reqs` is <= the row's c plus the in-flight controls (with gaps, in-flight conversation requests <<
@@ -2021,12 +2152,12 @@ radix-cached KV, a warm LRU pool reads ~full on every arm, and the gauge integra
 idle-session memory-time comes from the per-turn tier split (§6.2). `num_queue_reqs` at send time is the confounder of every per-turn TTFT
 (turn index == rep index == queue depth in a replay, §10): a cell whose `memtime.csv` is missing or was stopped early cannot be binned, and its
 TTFT rows in §9.1 are not interpretable. `prefetch_bandwidth` / `backup_bandwidth` stay empty on nixl, so L3 bandwidth is derived from
-`prefetched_tokens_total x 131,072 / wall` and cross-checked against `iostat` (§8), never read from a histogram.
+`prefetched_tokens_total x 131,072 / wall` and cross-checked against `iostat -x -d 1 vdc` (§8), never read from a histogram.
 
 ### 6.2 Per-request tier split: zero server changes needed
 
-**Status:** source facts verified against this checkout (`6ec32e6b7`) on 2026-09-18; the classification below is not implemented yet (it
-belongs in `agent_cache/scripts/analyze.py`, §11), and the "compare against the previous round" variant waits on the §4.4 dry run.
+**Status:** source facts verified against `6ec32e6b7` on 2026-09-18, re-checked against `d608a20d4` on 2026-09-21; the classification below is not implemented yet (it
+belongs in `agent_cache/scripts/analyze.py`, §11 — note `agent_cache/scripts/timeline.py` now does part of the job, §7.0), and the "compare against the previous round" variant waits on the §4.4 dry run.
 **Goal:** define, from what the stock server already returns per request, the restore-hit class of every returning turn (device-only /
 host-restored / storage-restored / recomputed) that §6.4 computes and §9.1 reports, so that no server patch is needed for the split.
 **Runs on:** none (read-only source facts; the client receives the split with `--cache-report --output-details`, §4.2, and the
@@ -2070,7 +2201,7 @@ report wants (a restore that did not materialize saved nothing). The class fract
 ### 6.3 Eval-only server log line (only if a client cannot read `sglext`, e.g. AIPerf)
 
 **Status:** not applied; needed only for a client that cannot read `sglext.cached_tokens_details` (AIPerf, row 7); the insertion site and the
-missing import were re-checked against `6ec32e6b7` on 2026-09-18 (site line 2679, `logger` at 161, no `import time`).
+missing import were re-checked against `6ec32e6b7` on 2026-09-18 (site line 2679, `logger` at 161, no `import time`); `schedule_batch.py` is untouched by the three commits up to `d608a20d4`, so they still hold.
 **Goal:** give a client that cannot read the per-request `sglext` chunk the same per-tier split (§6.2) from the server log, one line per
 request, so that row 7 can still report restore-hit classes.
 **Runs on:** host (the repo is bind-mounted into both containers: an edit under `/home/wanhr/sglang/python/` is live at
@@ -2092,7 +2223,7 @@ echo "site line: $(grep -n 'req._cache_breakdown_computed = True' $SB | cut -d: 
 echo "import time lines: $(grep -c '^import time' $SB)"
 echo "logger line: $(grep -n '^logger = logging.getLogger' $SB | cut -d: -f1)"
 ```
--> prints `site line: 2679`, `import time lines: 0`, `logger line: 161` (checked 2026-09-18 at `6ec32e6b7`); any other site line means the
+-> prints `site line: 2679`, `import time lines: 0`, `logger line: 161` (checked 2026-09-18 at `6ec32e6b7`, unchanged at `d608a20d4`); any other site line means the
 file moved under you: put the hunk after the line that sets `req._cache_breakdown_computed = True`, not after 2679.
 
 ```diff
@@ -2197,7 +2328,7 @@ of GPU per turn (§7.3).
 Commands: none (the rule is enforced by the client patch and the analysis).
 
 Every "restore" TTFT is compared against a **never-before-sent prompt of the same length sent at the same instant under the same concurrency**
-(`hicache_eval/scripts/exp2.py:148-165`), never against an idle recompute curve. Control seeds are salted per process (`exp2.py:28-30`) and
+(`hicache_eval/scripts/archive/exp2.py:148-165`), never against an idle recompute curve. Control seeds are salted per process (`exp2.py:28-30`) and
 control rows must show `cached_storage` NaN/0, else the control silently became an L3 hit. In a gap replay the control **cannot** sit in the
 conversation slot (every round extends `prev_messages` and appends the reply, `serving.py:1319,1329-1331`, poisoning every later prefix;
 `exp2.py:148-165` is single-shot, outside any conversation): it is the side-channel request of patch hunk 6 (`--agentic-control-every K`,
@@ -2222,13 +2353,13 @@ statistical power against cell time and L3 disk (§5.3, §7.3): a CI that does n
 
 ### 6.6 HiCache event log: millisecond timestamps and tier-transfer events (eval patch 0002)
 
-**Status:** patch written, applied to the working tree and verified on a booted `hbm_host` P0 server 2026-09-18 (64 events over 4 conversations x 4 turns); L3 events (`s2h_*`, `h2s_*`) and evictions not yet observed (need a three-tier boot under pressure)
+**Status:** **committed, not applied.** The patch was written on the A100 box 2026-09-18 and then committed at `5b881454b`, so on this checkout (`d608a20d4`) it is **already in the working tree with `git status` clean** — nothing to `git apply`, and nothing to revert before a commit. It was verified there on a booted `hbm_host` P0 server (64 events over 4 conversations x 4 turns) and then produced the full `C18/` event logs, including the L3 events (`s2h_*`, `h2s_*`) and evictions that the first test could not reach. On **this** box it has never emitted a line (no server has run).
 **Goal:** a per-event timeline of the tiers in the server log (when and how much KV is offloaded device->host, backed up host->L3, prefetched L3->host, loaded host->device, evicted), with millisecond timestamps, so a cell's client turns can be joined to what the cache did between them; the stock log has none of this (the controller logs nothing at INFO/DEBUG, the cache only prefetch completion).
-**Runs on:** host for apply/revert (`/home/wanhr/sglang`); the server reads the patched modules at boot (`container: sglang_hicache`, same bind mount)
-**Touches:** working tree under `python/` while applied (`managers/cache_controller.py`, `mem_cache/unified_radix_cache.py`, `mem_cache/hybrid_cache/hybrid_cache_controller.py`: 28 added lines, every one tagged `# EVAL-PATCH`); archive `agent_cache/patches/0002-hicache-event-log.patch`; **must be reverted before any commit** (§11 revert block; HANDOFF §7)
-**Takes:** apply/revert < 1 s; the server must be (re)booted to load it (§5.2 times); GPU idle for the apply itself
+**Runs on:** nothing to run — the code is in the checkout; the server reads it at boot (`container: sglang_hicache`, same bind mount). The verify block below is host-side and read-only.
+**Touches:** **read-only.** The 31 added lines (every one tagged `# EVAL-PATCH`) live in `managers/cache_controller.py`, `mem_cache/unified_radix_cache.py`, `mem_cache/hybrid_cache/hybrid_cache_controller.py` and `utils/common.py` and are part of `HEAD`. `agent_cache/patches/0002-hicache-event-log.patch` is kept as the record of what was added and as the way to *remove* it (`git apply -R`) if a run ever needs the stock logging.
+**Takes:** the verify block < 1 s; GPU idle
 
-Millisecond timestamps need no patch: `SGLANG_LOG_MS=1` in the server environment turns `[%(asctime)s]` into `[... HH:MM:SS.mmm]` (`utils/common.py:2399-2400`, env `environ.py:339`); `scripts/start_server.sh` sets it on every arm. The events are `logger.info("HICACHE_EVT <event> k=v ...")` lines, one per transfer or eviction, greppable with `HICACHE_EVT`:
+Millisecond timestamps need `SGLANG_LOG_MS=1` in the server environment, which turns `[%(asctime)s]` into `[... HH:MM:SS.mmm]` (env `environ.py:339`); `agent_cache/scripts/start_server.sh` sets it on every arm. One of the committed `# EVAL-PATCH` lines extends the same millisecond format to uvicorn's access log (`utils/common.py`, `set_uvicorn_logging_configs`). The events are `logger.info("HICACHE_EVT <event> k=v ...")` lines, one per transfer or eviction, greppable with `HICACHE_EVT`:
 
 | event | emitted where | meaning and fields |
 |---|---|---|
@@ -2246,14 +2377,16 @@ Millisecond timestamps need no patch: `SGLANG_LOG_MS=1` in the server environmen
 The stock `HiCache prefetch success|dropped req= completed= matched= loaded=` INFO line (`unified_radix_cache.py:2028`) completes the prefetch story and stays as is.
 
 ```bash
-# host: apply the patch for the session (refuses if python/ is not clean), or revert it (the -R form); the server must be rebooted afterwards
-cd /home/wanhr/sglang \
-  && { [ -z "$(git status --short -- python/)" ] || { echo "STOP: python/ is not clean; revert first: git apply -R agent_cache/patches/0002-hicache-event-log.patch"; false; }; } \
-  && git apply agent_cache/patches/0002-hicache-event-log.patch \
-  && echo "applied: $(git diff -- python/ | grep -c 'EVAL-PATCH') EVAL-PATCH lines in $(git diff --stat -- python/ | tail -1)"
-# revert:  cd /home/wanhr/sglang && git apply -R agent_cache/patches/0002-hicache-event-log.patch && git status --short -- python/   (prints nothing)
+# host: verify that the committed event-log code is in the tree (read-only). Nothing to apply on this checkout.
+echo "EVAL-PATCH lines in tree: $(grep -rc 'EVAL-PATCH' /home/wanhr/sglang/python/sglang/srt/managers/cache_controller.py /home/wanhr/sglang/python/sglang/srt/mem_cache/unified_radix_cache.py /home/wanhr/sglang/python/sglang/srt/mem_cache/hybrid_cache/hybrid_cache_controller.py /home/wanhr/sglang/python/sglang/srt/utils/common.py | paste -sd' ')"
+echo "patch is in HEAD:         $(git -C /home/wanhr/sglang apply --check -R /home/wanhr/sglang/agent_cache/patches/0002-hicache-event-log.patch >/dev/null 2>&1 && echo yes || echo NO)"
+echo "python/ working diff:     $(git -C /home/wanhr/sglang status --short -- python/ | wc -l) files   (0 = clean, and the patch is STILL active)"
+echo "commit that added it:     $(git -C /home/wanhr/sglang log --oneline -1 -S'HICACHE_EVT' -- python/)"
 ```
--> prints `applied: 15 EVAL-PATCH lines in 3 files changed, 28 insertions(+), 5 deletions(-)` (verified 2026-09-18). `error: patch does not apply` means the checkout moved past `6ec32e6b7`: re-anchor the 11 hunks by hand.
+-> prints `EVAL-PATCH lines in tree: ...cache_controller.py:5 ...unified_radix_cache.py:8 ...hybrid_cache_controller.py:2 ...common.py:1` (16 tagged lines across 4 files),
+`patch is in HEAD: yes`, `python/ working diff: 0 files`, and `commit that added it: 5b881454b agent evaluation` (verified 2026-09-21).
+**To remove it for one run:** `git -C /home/wanhr/sglang apply -R agent_cache/patches/0002-hicache-event-log.patch`, reboot the server, and re-apply
+(`git apply`) afterwards — the working tree then shows a diff, which is the normal §11 situation and not an error.
 
 ```bash
 # host: after a cell, count events by type and print the timeline of one conversation's turn (rid from client.jsonl), read-only
@@ -2265,8 +2398,8 @@ echo "per-request events for rid evt_host-c1-t2:"; grep "rid=evt_host-c1-t2" "$L
 -> the type counts (2026-09-18, `hbm_host` P0, 4 conv x 4 turns: `32 d2h_submit`, `32 d2h_done`, nothing else: at P0 nothing is evicted, so no `h2d_*`, and no L3 on arm (b)); a `d2h_done` line reads like `HICACHE_EVT d2h_done nodes=1 tokens=7808 bytes=1023410176 ms=81.2` (the shared system prompt: 1.02 GB in 81 ms = 12.6 GB/s device->host, measured); per-request lines appear only for `load_back_init` / `prefetch_*` / `s2h_*`, so at P0 the last block prints nothing.
 
 **Expected result:** every server log line carries milliseconds; on `hbm_host` at P0 the count of `d2h_done` equals `d2h_submit`, their `tokens` sum equals the prefilled-token volume that was inserted (write-through backs up every inserted node), and each `ms` is consistent with ~10-13 GB/s. On a pressure cell (§5.3 PH/PL): `h2d_*` lines appear before returning turns whose `cached_details.host > 0` in `client.jsonl`, `load_back_init rid=` names those turns, and on three-tier arms `h2s_*` follows every `d2h_done` and `s2h_*` precedes L3 hits.
-**If it differs:** no `HICACHE_EVT` at all on a HiCache arm: the server booted before the patch was applied (it imports the modules at start) or the patch was reverted; `grep -c EVAL-PATCH python/sglang/srt/mem_cache/unified_radix_cache.py` on the host must print 8 (5 in `cache_controller.py`, 2 in the hybrid controller). `ms=-1.0` on every `*_done`: `--enable-metrics` missing (the timing events are created only then). `d2h_submit` without a matching `d2h_done` at the end of a run: the ack is polled by the scheduler in `check_hicache_events`, so an idle server drains it on the next scheduling iteration; wait one request or check `/metrics`.
-**Expected lessons:** write-through granularity is the radix node, not the request: the first conversation's 7,808-token system prompt is one `d2h` of 1 GB, and later conversations' branches produce 256-3,712-token fragments as nodes split; so backup volume per turn is the new tokens only (once), which is what `hicache_eval` measured as "bar" in aggregate and this log now resolves per node with a wall-clock stamp. Joining `t_send`/`ttft` from `client.jsonl` with `load_back_init`/`h2d_done` stamps gives the restore latency each returning turn actually waited for, which §6.4 could only infer from tier splits before.
+**If it differs:** no `HICACHE_EVT` at all on a HiCache arm: the server booted from a tree where the code is reverted, or it is an older container image with its own copy of `sglang` shadowing the bind mount (§2.4 block 2); the verify block above must print `patch is in HEAD: yes` and 8 tagged lines in `unified_radix_cache.py` (5 in `cache_controller.py`, 2 in the hybrid controller, 1 in `utils/common.py`). `ms=-1.0` on every `*_done`: `--enable-metrics` missing (the timing events are created only then). `d2h_submit` without a matching `d2h_done` at the end of a run: the ack is polled by the scheduler in `check_hicache_events`, so an idle server drains it on the next scheduling iteration; wait one request or check `/metrics`.
+**Expected lessons:** write-through granularity is the radix node, not the request: the first conversation's 7,808-token system prompt is one `d2h` of 1 GB, and later conversations' branches produce 256-3,712-token fragments as nodes split; so backup volume per turn is the new tokens only (once), which is what `hicache_eval` measured as "bar" in aggregate and this log now resolves per node with a wall-clock stamp. Joining `t_send`/`ttft` from `client.jsonl` with `load_back_init`/`h2d_done` stamps gives the restore latency each returning turn actually waited for, which §6.4 could only infer from tier splits before. **This log is what made the A100 null result diagnosable** (§7.0): all four named causes — host churn, prefetch admission, timeout cut-off, write amplification — were read off `h2s_io` / `s2h_query` / `evict_host` counts and durations, not off `/metrics`. Because it is now committed rather than applied, the one way to lose it is to boot a server whose `sglang` is not the bind-mounted checkout.
 
 ---
 
@@ -2274,9 +2407,88 @@ echo "per-request events for rid evt_host-c1-t2:"; grep "rid=evt_host-c1-t2" "$L
 
 This section turns §5 (server configurations) and §6 (instrumentation) into the ordered list of cells that actually get run, one checklist that every cell follows, and the time each row is expected to cost. At its end the reader knows which arm, pressure level, trace and concurrency each row uses, what each row is supposed to show, how to run one cell without missing a step, and how many days the campaign needs.
 
+### 7.0 What the A100 campaign actually found (read before sizing anything)
+
+**Status:** **measured-A100, complete, and the only end-to-end result this study has.** Three arms, one fresh boot each, 2026-09-18 19:50-22:30 UTC, driven by `agent_cache/scripts/run_compare.sh`; artefacts in `C18/` = `agent_cache/results/compare_20260918_final/` (README, `compare.csv`, `compare.png`, `turns_<arm>.csv`, `events_<arm>.csv`, `timeline_<arm>.png`) and the three boot dirs named in `C18/manifest.txt`. Nothing comparable has been run on this box.
+**Goal:** state the prior result, its four diagnosed causes and the three conditions it named, so that a cell on this box is sized to test them rather than to repeat them.
+**Runs on:** none (reading). Regenerate the figures with `python3 agent_cache/scripts/timeline.py --manifest agent_cache/results/compare_20260918_final/manifest.txt`.
+**Touches:** read-only
+**Takes:** ~10 min to read `C18/README.md` and one `timeline_*.png`; GPU idle
+
+**The cell.** `hbm_lru` / `hbm_host` / `three_tier`, identical pools (**L1 65,536 tokens, L2 12 GB = 91,520 tokens**, i.e. *below* even the PL level of §5.3), identical client: the LMCache swebench trace, 32 conversations all live (`NCONV=32 C=32`), 12 turns each, gaps x10, `GAP_CAP=600` on two of the three arms. Qwen3-32B-FP8, fp8 KV, A100 80 GB.
+
+**The result: the three arms are indistinguishable.**
+
+| | hbm_lru | hbm_host | three_tier |
+|---|---|---|---|
+| returning-turn TTFT p50 / p90 (s) | 141 / 247 | 142 / 248 | 143 / 246 |
+| turns done at 95 % (s) | 2163.4 | 2112.5 | 2103.3 |
+| returning turns: device / host / storage / recompute | 196 / 0 / 0 / 152 | 156 / 43 / 0 / 150 | 146 / 43 / **11** / 149 |
+| uncached tokens per returning turn (mean) | 7,427 | 7,052 | 6,961 |
+| tokens d2h / h2s / h2d / s2h | – | 2.59M / – / 106K / – | 2.55M / 2.55M / 150K / 191K |
+| peak scheduler queue | 28 | 28 | 28 |
+
+43-44 % of returning turns recomputed their whole private context **in every arm**. The tiers restored only during the first ~100 s, plus 11 storage hits in the whole run. TTFT was set by **admission queueing** (queue ~25 for 35 minutes: 32 live conversations against a 64K-token pool that admits 3-5 requests of 12-20K tokens at a time), not by tiering.
+
+**Four diagnosed causes** (read off the §6.6 event log, not off `/metrics`):
+1. **The host pool was smaller than the churn.** L1+L2 = 157K tokens against a live set of ~500K; the host LRU evicted 2.5-2.7M tokens, so a conversation's tail left L2 before the conversation returned. Host hits happened only while total cached KV was still below the pool.
+2. **Prefetch admission is capped at half the host pool** (`managers/cache_controller.py`, `prefetch_tokens_occupied` against a budget of 45,760 tokens here), and each prefetch reserves its *requested* length, so ~three 15K prefetches fit at once: **145 of 354 prefetch requests never reached the L3 lookup.**
+3. **The `timeout` policy gave up before the SSD could deliver.** Budget ~1 s + 0.25 s/Ki-token (~4.7 s for 15K); the L3 read ran at <= 0.5 GiB/s because the disk was busy writing. **167 of 209 lookups ended with zero usable tokens.**
+4. **Write amplification.** Every recomputed turn re-inserts its KV and write-through backs it up again: **2.55M tokens (312 GiB) written to L3 for ~480K tokens of distinct content**; `h2s_io` occupied **835 s of the 2,780 s run** at the 0.37 GiB/s write ceiling, which is what starved the reads in (3).
+
+**The three conditions the README named.** Tiers can only show a benefit when (a) L1 admits the live in-flight set (`f x c x context <= L1 / 1.2`, §5.3 constraint i), (b) L2 is large enough that a conversation's tail survives its gap, and (c) prefetch capacity and the timeout budget cover a full-context restore at the disk's *contended* read rate.
+
+**What this box changes, cause by cause** (all predictions, none measured here):
+- **(1)** is a pool-sizing choice, not a hardware limit: that cell ran at L1 65,536 / L2 12 GB, which is below PL. Fixing it costs nothing on either box — run PH/PL as §5.3 specifies, or PW.
+- **(2) is untouched by the hardware.** The half-the-host-pool prefetch cap is a code constant; a bigger host pool raises the budget proportionally, which is the only lever, and §7.1 row 6 should record `storage_prefetch_unfulfilled_tokens_total{reason}` specifically to see whether admission or timeout dominates.
+- **(3)** improves the most: the sustained read ceiling is **1.88 GiB/s here vs ~0.5-0.68 GiB/s there** (measured, §2.2), so the same budget buys ~2.8x more tokens and four concurrent 25K restores fit where one did (§5.1) — *provided* the nixl path reaches the device, which §5.4 block D is the test of.
+- **(4)** the amplification itself is unchanged (it is a consequence of write-through plus recompute), but at a **1.88 GiB/s** write ceiling the same 312 GiB would occupy **~166 s instead of 835 s** (derived), so it should stop starving the reads. Note reads and writes share that one ceiling, so the two effects are not independent.
+
+**Expected result:** a reader can state, before sizing any cell here, which of the four causes that cell is exposed to and which it controls for. A cell that reproduces cause (1) — pools far below the live set — will reproduce the tie on this box too, faster.
+**If it differs:** if a cell on this box ties at PH/PL *with* median queue depth ~0 and `storage_prefetch_unfulfilled` near zero, that is a genuine null result for tiering on this workload, not a repeat of `C18/`; say so explicitly, because the two look identical in the summary table and completely different in the event log.
+**Expected lessons:** the A100 campaign's one campaign-scale mistake was sizing a cell from estimates and only afterwards discovering it had measured admission queueing (§5.4's Expected lessons). The four causes above are the reason §5.4 comes first here and the reason §7.1 row 2 (the tie control at P0) must run before any pressure row: without a tie at P0 there is no baseline against which a tie at PL means anything.
+### 7.0b What campaign 7 found on this box (2026-09-22): the tiers work once the pools admit the live set
+
+**Status:** **measured-H200, complete.** Four arms, one fresh boot each, 2026-09-22 02:37-11:27 UTC, driven by `agent_cache/scripts/run_compare.sh`; artefacts in `C7/` = `agent_cache/results/compare_20260922_023714/` (`README.md`, `DECISIONS.md` with the sizing chain and the run notes, `compare.png`, `compare.csv`, `timeline_<arm>.png`, `turns_<arm>.csv`, `events_<arm>.csv`, `iostat_vdc.log`).
+**Goal:** state the first result on this box in the same terms as §7.0, so that the next cell is sized against a measured tiering benefit and its measured limit (the SSD's read ceiling), not against the A100 null result.
+**Runs on:** none (reading). Regenerate the figures with `python3 agent_cache/scripts/timeline.py --manifest agent_cache/results/compare_20260922_023714/manifest.txt`.
+**Touches:** read-only
+**Takes:** ~15 min to read `C7/README.md`, `compare.png` and one `timeline_*.png`; GPU idle
+
+**The cell.** `hbm_lru` / `hbm_host` / `three_tier_to` / `three_tier_wc` (the two prefetch policies), identical pools at their natural size: **L1 668,160 tokens** (the profiled pool, bf16 KV at 98,304 B/token), **L2 160 GB = 1,627,648 tokens**, L3 the attached SSD (cleaner 70/60 %, never reached: 331 GB peak). Client: the LMCache swebench trace re-converted at a 262K cut, **128 conversations all live**, up to 40 turns each = 4,676 turns, gaps x70 capped at 1,200 s, stock template, `OFFSET=32`. Model Qwen3-30B-A3B-Instruct-2507 (bf16 weights 57 GB); chosen for its 262K context so that sessions could run 40 turns (final context p50 35.6K, of which 7,808 is the shared system prompt). Private working set 3.55M tokens.
+
+**The result: the SSD tier turns a 3-minute queue into a 3-second restore.**
+
+| | hbm_lru | hbm_host | three_tier_to | three_tier_wc |
+|---|---|---|---|---|
+| returning-turn TTFT p50 / p90 (s) | 92.9 / 201 | 0.98 / 184 | 0.32 / 6.8 | 0.29 / 4.5 |
+| returning-turn TTFT mean (s) | 97.0 | 61.0 | 1.94 | 1.48 |
+| turns done at 95 % (s); client wall (s) | 8,658; 11,429 | 6,309; 9,155 | 2,620; 5,327 | 2,539; 5,148 |
+| returning turns: device / host / storage / recompute | 985 / 0 / 0 / 3,563 | 1,274 / 1,553 / 0 / 1,721 | 1,669 / 1,921 / **890** / 68 | 1,780 / 1,890 / **837** / 0 |
+| uncached tokens per returning turn (mean) | 15,427 | 8,663 | 924 | 558 |
+| storage restore TTFT p50 / p90 (s) | – | – | 2.58 / 13.8 | 3.34 / 15.1 |
+| tokens d2h / h2s / h2d / s2h | – | 40.5M / – / 22.4M / – | 5.27M / 5.27M / 47.8M / 18.1M | 3.57M / 3.57M / 46.4M / 17.2M |
+| peak scheduler queue | 69 | 70 | 73 | 79 |
+
+Every arm serves the first ~12 min identically (device/host hits at 0.2-0.3 s) until the unique live set passes L2's 1.63M tokens; from there `hbm_host` recomputes every evicted return (~28K tokens, 5-7 s of GPU each), the closed loop saturates at 0.2-0.3 turns/s and TTFT sits at ~180 s p50 for 40 min with 55-86 conversations waiting; `hbm_lru` does the same from minute 10 for two hours. The SSD arms restore the same returns at 2.6-3.3 s p50 with the queue at 0-7 and finish in 58 % of the wall time.
+
+**The four §7.0 causes, measured here:**
+1. **L1 admits the in-flight set** (668K holds ~15 requests of 35K against 12-42 running); admission queueing is gone from the tiered arms. Cause (1) was a pool-sizing choice, as §7.0 predicted.
+2. **Prefetch admission never bound**: budget 0.5 x host pool = 814K tokens in flight, used to ~60 % at 12-30 concurrent restores of ~20K; 960 / 837 prefetches ran, all complete, none rate-limited, none timed out (`HICACHE_EVT`, RUNBOOK 6.6).
+3. **The SSD is the wall now, not the policy.** Restores run the device at 1.0 GiB/s mean / 2.0 GiB/s peak (`iostat_vdc.log`, 26-28 % of active samples at >= 95 % util), i.e. the 1.88 GiB/s ceiling of §2.2; the storage p90 of 14-15 s is the disk queue. `wait_complete` removes the `timeout` arm's 68 post-warm-up recomputes (mean 1.48 vs 1.94 s) at the price of a slower individual restore (3.34 vs 2.58 s p50).
+4. **No write amplification in the SSD arms**: 3.6-5.3M tokens backed up for 3.6M of content (write-back 81-171 MiB/s); `hbm_host` still re-inserts 40.5M because every recompute is written through again.
+
+**One structural fact worth remembering:** write-through keeps L2 a superset of L1, so the unique capacity of the two tiers is **L2 alone (1.63M), not L1+L2 (2.30M)** — host evictions began at 02:48Z with the live set at ~1.56M. Size the L3-reachability condition against L2, not L1+L2 (§5.3 constraint ii).
+
+**Deviations (all in `C7/DECISIONS.md`):** (a) the 9,000 s per-arm cap did not act — `timeout --foreground` signals only the `bash start_client.sh` wrapper, which defers SIGINT while its pipeline runs; every `STAGE CAPPED` line of that campaign is spurious and `hbm_lru` ran uncapped (190 min). Fixed 2026-09-22: `CLIENT_TIMEOUT` now reaches the client as `--max-seconds` (conversations stop at their next turn boundary, in-flight requests complete, the summary line carries `"capped": true`, the driver prints `STAGE CAPPED` from that) and was verified with a 4-conversation `CLIENT_TIMEOUT=40` self-test. (b) `three_tier_wc` lost two conversations (41 turns) to aiohttp keep-alive resets (`SGLANG_TIMEOUT_KEEP_ALIVE=5` s vs pooled idle connections); `replay_agentic.py` now retries such a request once on a fresh connection and marks the record `retried`. (c) `STAGE FAILED three_tier_wc (client)` in the driver log was the per-turn table crashing on the two error records after the client had finished; the manifest line was added by hand and the driver now keys the manifest on the summary line, not the wrapper's exit code.
+
+**Expected result:** the next cell can assume tiering works at natural pools on this box and should target the limit instead: the SSD read ceiling (a faster device, or fewer bytes per restore — fp8 KV halves them, §5.3) and the prefetch policy trade-off (`wait_complete` for fewer recomputes, `timeout` for shorter individual restores).
+**If it differs:** a cell that shows `storage` hits at 2-4 s but a rising `recompute` share under `wait_complete` has hit the admission budget (§7.0 cause 2): read `prefetch_start` vs `s2h_io` counts before touching anything else.
+**Expected lessons:** three things went wrong that a script could have caught: the wall cap was never exercised before the campaign (a 40 s self-test would have shown it), a transport reset ended a conversation instead of being retried, and a cosmetic post-processing step could flip a finished run to FAILED. All three are fixed in the scripts; the self-test recipe is `ARMS=hbm_lru NCONV=4 C=4 TURNS=8 GAP=0 CLIENT_TIMEOUT=40 bash run_compare.sh` (~4 min).
+
 ### 7.1 Order
 
-**Status:** not started as of 2026-09-18 (no row has run). Row 0 needs the §4.1 patch (not applied: `git status --short python/` is empty); row 1 needs only a §5.2 boot of arm (a); rows 4-6 need `s_H`/`s_L`, which cannot be fixed until §3.5 gives `mean(pre_gap)` and row 1 gives the two open constants; row 7 needs the AIPerf venv (§2.5, `/opt/aiperf/bin/aiperf` absent in `sglang_hicache` on 2026-09-18). Every c, f, K and gap figure below is provisional: sized from ESTIMATES of the decode rate and the prefix-extension cost (§5.3). Re-derive rows 2-8 after row 1.
+**Status:** **one off-matrix four-arm cell has run on this box** (campaign 7, §7.0b, 2026-09-22: tiering works at natural pools, the SSD read ceiling is the limit); no matrix row has run here. Row 1 is now **the full §5.4 constant re-measurement**, not just the two open constants, and it needs only a §5.2 boot of arm (a) plus one of arm (c); row 0 needs the §4.6 client (already in the checkout); rows 4-6 need `s_H`/`s_L`, which cannot be fixed until row 1 lands; row 7 needs the AIPerf venv (§2.5). **Every c, f, K and gap figure below is an A100 prior** (§5.3): re-derive rows 2-8 after row 1. Row order is unchanged from the A100 plan, because the order is a logical dependency, not a hardware one.
 **Goal:** fix the execution order so that the two unmeasured constants are measured before any multi-hour cell is sized, the tie control runs before any pressure cell, and every pressure cell has the same-pool HBM-only reference it is compared against.
 **Runs on:** the commands of each row live elsewhere: row 0 in §4.4, row 1 in §5.4, rows 2-6 in §7.2 (`container: sglang_hicache`), rows 7-8 in §3.4. This subsection is the plan, not a command sequence.
 **Touches:** read-only (each row's cell dirs are created by §7.2 block 0).
@@ -2285,7 +2497,7 @@ This section turns §5 (server configurations) and §6 (instrumentation) into th
 | # | arm (§5.2) | pressure (§5.3) | trace | c | purpose |
 |---|---|---|---|---|---|
 | 0 | (a) | P0 | gap-test (§4.4) | 2 | patch + pipeline smoke |
-| 1 | (a) | P0 | `one_batch_server` warm-prefix run (§5.4) | 1, 4, 8 | decode_rate(B) and the prefix-extension TTFT: the two unmeasured inputs of §5.3/§7.3. b, P, L1/L2/L3 rates are already measured (`R32/`) |
+| 1 | (a), then (c) | P0 | §5.4 blocks A-F | 1, 4, 8 | **the whole constant set for this GPU and this disk**: profiled pool, weight kernel, b, the recompute curve and P, the L1/L2/L3 fits, decode_rate(B), the prefix-extension TTFT. On the A100 only the last two were open; here **nine** are (§5.4) |
 | 2 | (a),(b),(c) | P0 | LMCache, real gaps (median 0.71 s) | 4, 8 | **tie control and honest short-gap case**: WS = 100K / 200K < L1 = 262K; expect all arms within noise, L2/L3 reads ~0. f ~ 0.85-0.92 (estimate, on the 2.08 s mean gap): in-flight ~ 0.9 c |
 | 3 | (e),(g),(d) | PH | LMCache, real gaps | 8 | **overload reference**, run once: f ~ 0.90-0.92 so in-flight ~ 7.3 x 25K = 182K > L1 = 131K; TTFT is admission queueing: bin by queue depth, not a tiering result |
 | 4 | (e),(g),(d) | PH | LMCache, gap scale s_H (mean gap >= ~13-16 s, §5.3) | 8 | **host-restore case**: WS = 1.53 L1 = 0.40 (L1+L2); (g) vs (e) is the L2 effect, (d) should equal (g) (L3 idle) |
@@ -2293,8 +2505,9 @@ This section turns §5 (server configurations) and §6 (instrumentation) into th
 | 6 | (d) vs (f), (g) | PL | as row 5 | 12 | `timeout` vs `wait_complete` (HANDOFF §2) with the host-only reference. (f) is the policy with measured constants here; (d) with the default budget may measure the cut-off, not the tier (§5.1) |
 | 7 | (d) | PL | AgentX via AIPerf, 1800 s | 8 | long-context standardized view (context-capped). At c=8 WS <= 8 x 32,768 = 262K < L1+L2 = 268K: expect L3 reads ~0 unless subagent trees multiply the live contexts (unverified); record storage-hit tokens and do not read this row as an L3 result |
 | 8 | (a) | P0 | Mooncake toolagent, `--backend sglang`, slowdown >= ~15 | 8 | cross-session sharing only; pure backlog without the slowdown factor (§3.4) |
+| 9 | (d), (g), (e) | **PW** | LMCache at `s_L` | 24-32 | **optional, H200-only**: the same pressure ratios at ~5x the absolute scale (§5.3 PW row), which the A100's 80 GB HBM could not reach. Run only after rows 2-5 and only if row 5 shows a non-zero storage-hit rate; size it from the row-1 constants |
 
-Arm letters: (a) `hbm_lru`, (b) `hbm_host`, (c) `three_tier`, (d) `three_tier_p`, (e) `hbm_lru_p`, (f) `three_tier_wc`, (g) `hbm_host_p` (§5.2). Pressure levels P0 / PH / PL are the `set_level` rows of §5.3 (L1 = 262,144 / 131,072 / 131,072 tokens; `--hicache-size` 64 / 48 / 18 GB).
+Arm letters: (a) `hbm_lru`, (b) `hbm_host`, (c) `three_tier`, (d) `three_tier_p`, (e) `hbm_lru_p`, (f) `three_tier_wc`, (g) `hbm_host_p` (§5.2). Pressure levels P0 / PH / PL / PW are the `set_level` rows of §5.3 (L1 = 262,144 / 131,072 / 131,072 / 655,360 tokens; `--hicache-size` 64 / 48 / 18 / 96 GB).
 
 **Row 0 — patch + pipeline smoke.** Arm (a), P0, the 2-conversation gap-test trace of §4.4, c = 2.
 - Goal: prove that the §4.1 patch sleeps through `pre_gap`, fires the side-channel controls, and dumps per-turn `ttfts` / `cached_tokens_details` / `start_times` before any GPU hours are spent on it.
@@ -2302,11 +2515,11 @@ Arm letters: (a) `hbm_lru`, (b) `hbm_host`, (c) `three_tier`, (d) `three_tier_p`
 - Expected result: the §4.4 pass criteria, all of them: wall time >= 10 s; the server log shows 6 conversation requests with ~5 s spacing between rounds of the same conversation plus 4 controls; the JSONL has 6 entries in `ttfts` / `cached_tokens_details` / `start_times` (conversation-major, round-minor); rounds 1-2 show `device > 0`; the 4 `control_details` rows show `storage == 0, host == 0, device <= 64`; `wall(scale 1) - wall(--agentic-gap-scale 0)` = 10 s +/- 1 s; the load line reads `#Conversations: 2 (... turns/conv min=3 max=3 ...)` (`agentic_trace.py:107-112`).
 - Expected lessons: a gap difference far from 10 s means the sleep hunk is not on the awaited path (or warmup sleeps too); a control row with `host > 0` or `storage > 0` means the salt or the side channel is broken and every paired comparison in rows 2-6 would be invalid. The `device` value on rounds 1-2 (~floor64 of the previous round's prompt, not ~prompt - 64) decides whether the §5.2 history note holds and therefore which denominator the §6.2 restore-hit classifier uses.
 
-**Row 1 — the two open constants.** Arm (a), P0, `one_batch_server` warm-prefix run (§5.4), batch sizes 1, 4, 8.
-- Goal: measure decode_rate(B) (open constant 1) and the TTFT of extending a ~24.5K cached prefix by ~1K tokens (open constant 2), the two inputs that every c, f, gap scale, K and cell time in §3.4, §5.3, §7.1 and §7.3 rests on.
-- Runs on / takes: `container: sglang_hicache`, arm (a) with no HiCache (the prompts are seed-fixed and `/flush_cache` never clears L3, so on a nixl arm a second run would be an L3 hit); ~6 min GPU-busy (estimate, §5.4) plus the boot.
-- Expected result: not yet measured. `$RUNDIR/decode_delta/warm_prefix.jsonl` with `last_ttft` at bs=1 (open constant 2: bound >= 0.46 s, the measured 1,024-token prefill from scratch; model value ~1.4 s, estimate, §5.3) and `output_throughput / batch_size` at B = 1, 4, 8 (open constant 1: first-principles estimate 26-42 tok/s raw at batch 1, ~17-28 per sequence at batch 7, §5.3). Record both in `constants.json` (§9.2: `decode_rate_tok_s {1, 4, 8}`, `extend_1k_on_24k_ttft_s`) and write the measured values into this row after the run.
-- Expected lessons: a lower decode rate or a higher extension cost than the estimates lengthens `turn_time`, raises f, and raises the mean gap (hence `s_H`, `s_L`) that rows 4-6 need to satisfy the two constraints of §5.3; it also moves the compute-saturation point away from c ~ 8, which changes the c of every later row. If the extension TTFT is well above 1.4 s, the recompute-heavy (e) cells of §7.3 become GPU-bound sooner and must be wall-time capped.
+**Row 1 — the constants for this box.** Arms (a) and (c), P0, §5.4 blocks A-F.
+- Goal: replace all nine `measured-A100` constants plus the two never-measured ones with values for this GPU and this disk, because every c, f, gap scale, K and cell time in §3.4, §5.3, §7.1 and §7.3 rests on them. **This is the porting step; nothing past row 2 may be sized before it.**
+- Runs on / takes: `container: sglang_hicache`; block A on a pinless arm (a), blocks B/E/F on arm (a) or (b) at P0, blocks C and D on arms (a) and (c) respectively (block D writes L3, so it needs the three-tier arm and a wiped store); ~25 min GPU-busy in total (estimate, §5.4) plus two to three boots.
+- Expected result: the ten values of §5.4's table recorded in `constants.json` (§9.2) and in §5.4 itself. The three that decide the rest: the **profiled device pool** (estimate ~700,000 tok, which sizes the PW level), the **recompute curve and P** (which set the admission bar `b x P` and every recompute time in §3.5/§7.3), and the **L3 fit** (which, against the bar, decides whether L3 is admissible at all here, §9.3).
+- Expected lessons: the two headline outcomes pull in opposite directions and both matter. If `P` rises more than the disk did (2.8x), the L3 admission ratio **falls** despite the faster SSD and PL gets harder to demonstrate, not easier. If the decode rate rises a lot, `turn_time` and hence f fall, the required mean gaps of §5.3 shrink, and rows 4-6 get cheaper in both gap scale and wall time. A block-D L3 rate near the A100's 0.623 GiB/s despite a 1.88 GiB/s device means the nixl path, not the disk, is the limit — profile it (§8) before sizing rows 5-6.
 
 **Row 2 — tie control and honest short-gap case.** Arms (a), (b), (c), P0, LMCache with real gaps (median 0.71 s), c = 4 and 8: 6 cells.
 - Goal: show that with WS = 100K / 200K tokens < L1 = 262K no tier is ever read, so the three arms tie; and report the short-gap regime as the honest negative case (§9.1). It also yields the first measured X (turns/s) and turn_time(c) for re-budgeting §7.3.
@@ -2329,8 +2542,8 @@ Arm letters: (a) `hbm_lru`, (b) `hbm_host`, (c) `three_tier`, (d) `three_tier_p`
 **Row 5 — L3 case.** Arms (e), (g), (d), PL, LMCache at gap scale `s_L` (mean gap >= ~31-39 s), c = 12 (c = 16 only if the scale can reach a 46-58 s mean gap).
 - Goal: the only level where L3 can show anything (HANDOFF §5): WS = 1.12 (L1+L2) at c=12 (1.49x at c=16), so ~32K tokens (c=16: 131K) live only on the SSD; (g) recomputes what (d) reads from L3.
 - Runs on / takes: `container: sglang_hicache`, §7.2 per cell with K = 72 and the 95/85 cleaner watermarks (§5.3); estimate 165-205 min per cell (§7.3), GPU-busy; 60 conversations at c=12, 64 (the L3 disk cap of §5.3) at c=16, whose in-flight == N window is therefore shorter: say so in the report. `s_L` = x21-26 at c=12 and x31-39 at c=16 on the 1.49 s emitted-turn mean (derived, §5.3; the required gaps are re-derived after row 1).
-- Expected result: on (d) `storage_hit` / `prefetched_tokens_total` deltas > 0 and `df /mnt/nvme` growing by ~4.0 GiB per conversation plus ~3.05 GiB per control (derived, §5.3); paired p50 (restore - control) < 0 with the 95 % CI excluding 0 for (d), and (d) ahead of (g) on TTFT and memory-time freed (§9.3). Not yet measured.
-- Expected lessons: an L3 hit beats recompute 7 of 7 lengths at idle (measured, §5.4) but the SSD's ~0.68 GiB/s read ceiling is shared by every concurrent restore and by write-through bursts: if (d) loses to (g) here, disk KV does not pay for this model under load on this box, whatever the idle curve says, and that is the go/no-go answer; watch `w_await` and `%util` in `iostat.log`. If the cleaner deletes during the cell (`l3_stats.json`, cleaner log lines), the budget arithmetic of §5.3 must be redone before the row is trusted.
+- Expected result: on (d) `storage_hit` / `prefetched_tokens_total` deltas > 0 and `df /mnt/ssd` growing by ~4.0 GiB per conversation plus ~3.05 GiB per control (derived, §5.3); paired p50 (restore - control) < 0 with the 95 % CI excluding 0 for (d), and (d) ahead of (g) on TTFT and memory-time freed (§9.3). Not yet measured on this box; on the A100 the equivalent cell produced **11 storage hits in a whole run** and a three-way tie (§7.0).
+- Expected lessons: whether an L3 hit beats recompute at idle is §5.4 block D's answer, not a given (it was 7 of 7 lengths on the A100). Under load the disk's **1.88 GiB/s contended read ceiling** (measured, §2.2) is shared by every concurrent restore and by write-through, but at ~3x the A100's it should no longer be the binding constraint — which makes the **prefetch-admission cap** (half the host pool, cause 2 of §7.0) the most likely remaining limiter. Record `storage_prefetch_unfulfilled_tokens_total{reason}` for exactly that reason. If (d) loses to (g) here with the queue drained and unfulfilled ~0, disk KV does not pay for this model under load, and that is the go/no-go answer; watch `w_await` and `%util` for `vdc` in `iostat.log`. If the cleaner deletes during the cell (`l3_stats.json`, cleaner log lines), the §5.3 budget was wrong and the row is not trustworthy until it is redone.
 
 **Row 6 — prefetch policy.** (d) vs (f), with (g) as the host-only reference, PL, as row 5, c = 12.
 - Goal: decide between `timeout` (d) and `wait_complete` (f) under load: (f) is the policy every measured constant was taken with; (d) with the default budget (1.0 s + 0.25 s per 1,024 tokens = 4,096 tok/s, derived §5.1) may measure the cut-off, not the tier.
@@ -2350,7 +2563,7 @@ Arm letters: (a) `hbm_lru`, (b) `hbm_host`, (c) `three_tier`, (d) `three_tier_p`
 - Expected result: a prefix hit rate from cross-session sharing (`prefill_effective_tokens_total{mode=device_hit}`) over the slice; without the slowdown factor only backlog is measured. Not yet measured.
 - Expected lessons: this row calibrates the simulator's cross-session sharing (§0 step 2), nothing about parking; if backlog dominates even at slowdown 15 the factor must be raised, not the concurrency.
 
-**Rules that hold for every row.** Arm order within a row is interleaved per cell (dflash RUNBOOK 0.4, `dflash_eval/RUNBOOK.md:194`) so thermal or queue drift does not bias one arm. `--seed` and `--dataset-offset` are fixed per row (recorded in `config.json`): every arm and gap scale in a row replays the same conversations in the same order (the loader rotates by offset and takes the first `--num-prompts`, `agentic_trace.py:74-76,82-83`; sessions span 14K-130K context, so a per-arm offset confounds arm with sample). Salt only the control prompts (`RC_SALT`, `hicache_eval/scripts/exp2.py:30`); rotate by row if at all. Use >= 5 x c conversations (20 at c=4, 40 at c=8, 60 at c=12, 64 = the cap at c=16) so the in-flight == N window dominates (§9.1), and at most 64 per three-tier cell (L3 disk budget, §5.3). `--agentic-control-every` K is fixed per row like the seed (the control load is part of the workload): K = 40 for rows 2-4, 72 for rows 5-6 with the 95/85 cleaner watermarks (§5.3; provisional). `--agentic-max-turns 20` halves cell time (§7.3) but caps contexts near ~25K, which lowers WS: if used, use it for every arm of the row and record it.
+**Rules that hold for every row.** Arm order within a row is interleaved per cell (dflash RUNBOOK 0.4, `dflash_eval/RUNBOOK.md:194`) so thermal or queue drift does not bias one arm. `agent_cache/scripts/run_compare.sh` is the driver that already does one arm-per-boot sweep with a shared client config (it produced §7.0); prefer extending it over pasting §7.2 by hand once row 2 has run once manually. `--seed` and `--dataset-offset` are fixed per row (recorded in `config.json`): every arm and gap scale in a row replays the same conversations in the same order (the loader rotates by offset and takes the first `--num-prompts`, `agentic_trace.py:74-76,82-83`; sessions span 14K-130K context, so a per-arm offset confounds arm with sample). Salt only the control prompts (`RC_SALT`, `hicache_eval/scripts/archive/exp2.py:30`); rotate by row if at all. Use >= 5 x c conversations (20 at c=4, 40 at c=8, 60 at c=12, 64 at c=16) so the in-flight == N window dominates (§9.1). **The A100's 64-conversation cap was an L3 disk budget and no longer binds** (§5.3: 30 % of 2.27 TiB = 698 GiB against ~4.0 GiB per conversation), so the cap is now a cell-time decision, not a disk one. `--control-every` K is fixed per row like the seed (the control load is part of the workload) and is likewise now a **GPU-budget** choice alone (§7.3), not a disk one: the A100's K = 40 / 72 split existed to stay under its cleaner watermark. `--agentic-max-turns 20` halves cell time (§7.3) but caps contexts near ~25K, which lowers WS: if used, use it for every arm of the row and record it.
 
 **Expected result:** after the campaign every row has one cell dir per (arm, c) under `$RUNDIR/` with the §9 files and a `summary.csv` row; `constants.json` carries the two row-1 constants and the measured X / turn_time(c) of row 2; each row's `config.json` files show one seed, offset, K and gap scale across all its arms; rows 4-5 have >= 30 paired (restore - control) differences per pooled bin (§6.5).
 **If it differs:** a row whose arms used different seeds or offsets cannot be compared arm-to-arm: rerun the odd cell with the row's values. A three-tier cell that ran with more than 64 conversations or K = 4 has probably crossed the cleaner watermark: check `l3_stats.json` and the cleaner lines before reading it.
@@ -2358,11 +2571,11 @@ Arm letters: (a) `hbm_lru`, (b) `hbm_host`, (c) `three_tier`, (d) `three_tier_p`
 
 ### 7.2 Per-run checklist (one cell)
 
-**Status:** not started as of 2026-09-18 (no cell has run). The box state that blocks 0, 0b and 1 assert was checked on 2026-09-18 01:30 UTC (`sglang_hicache` up, `/mnt/nvme` on `/dev/nvme0n1`, `/mnt/nvme/hicache_l3` empty, `agent_cache/.current_results` = `20260917_2303`, `agent_cache/results/20260917_2303/` present and empty). Blocks 3-7 are the §5.2 / §5.4 / §4.1 commands sequenced; block 7's `--agentic-gap-scale` and `--agentic-control-every` exist only after the §4.3 `git apply`. The per-cell scripts of §11 (`launch.sh`, `bench.sh`) do not exist yet; until they do, this checklist is the procedure and `hicache_eval/scripts` supplies `hcommon.py`, `cachectl.py`, `probe.py`, `stop_server.sh`.
+**Status:** **not started on this box.** The state blocks 0, 0b and 1 assert was checked 2026-09-21: `/mnt/ssd` on `/dev/vdc`, `/mnt/ssd/hicache_l3` empty, **no container and no results stamp yet** (§2.3, §2.4 block 6 must run first). Blocks 3-7 are the §5.2 / §5.4 / §4.6 commands sequenced; block 7 uses the standalone client of §4.6 (`--gap-scale`, `--control-every`), which is in the checkout, so no `git apply` is involved. `agent_cache/scripts/` now supplies `start_server.sh`, `start_client.sh`, `stop_server.sh`, `run_compare.sh` and `timeline.py` (they drove §7.0); `hicache_eval/scripts` still supplies `hcommon.py`, `cachectl.py`, `probe.py`, `telemetry.sh`. **`agent_cache/scripts/start_server.sh` hardcodes the pressure levels and the L3 path: check it matches §5.2/§5.3 before using it instead of the blocks below.**
 **Goal:** produce one complete, comparable cell: a cold L3 and page cache, a server whose two pool sizes are asserted, counters that exclude the warm-up, 1 s telemetry that excludes the post-run flush, and the file set of §9, so that any two cells of a row differ only in the arm.
 **Runs on:** `container: sglang_hicache`, as root (the container's user), under `bash` (`docker exec -it sglang_hicache bash`; the container's default shell is zsh and the §5.2 launch line uses bash arrays), working directory `/sgl-workspace/sglang/hicache_eval/scripts` (= `/home/wanhr/sglang/hicache_eval/scripts` on the host) because `python3 -c 'import hcommon'` imports from cwd. Block 12's `chown` runs on the host as `wanhr`.
-**Touches:** destroys the whole L3 store `/mnt/nvme/hicache_l3` (block 1) and the page cache (block 2); writes `$RUNDIR/server_<ARM>.log`, `$RUNDIR/server_<ARM>.pid`, the cell dir `$OUT` and `$RUNDIR/summary.csv`; starts and stops one server (blocks 3, 11) and three background samplers (block 5).
-**Takes:** one boot (278-285 s warm, measured 2026-09-17; ~633 s JIT-cold in a new container) plus 55-205 min of client time per cell (estimate, §7.3) plus a drain of seconds to minutes; GPU busy from block 3 to block 11.
+**Touches:** destroys the whole L3 store `/mnt/ssd/hicache_l3` (block 1) and the page cache (block 2); writes `$RUNDIR/server_<ARM>.log`, `$RUNDIR/server_<ARM>.pid`, the cell dir `$OUT` and `$RUNDIR/summary.csv`; starts and stops one server (blocks 3, 11) and three background samplers (block 5).
+**Takes:** one boot (**not yet measured here**; `measured-A100` 278-285 s warm, ~633 s JIT-cold in a new container) plus the client time of the row (re-derived after §5.4; §7.3) plus a drain of seconds to minutes; GPU busy from block 3 to block 11.
 
 ```bash
 # container: sglang_hicache (bash), cwd = /sgl-workspace/sglang/hicache_eval/scripts
@@ -2376,36 +2589,37 @@ GAP=<GAP>                # --gap-scale (§4.6; --agentic-gap-scale in the §4.1 
 K=<K>                    # --control-every (§4.6; --agentic-control-every in the §4.1 fallback): 40 for rows 2-4, 72 for rows 5-6 (§5.3 disk budget, §7.3 GPU budget; provisional)
 ROW_SEED=<ROW_SEED>      # client --seed: chosen once per matrix row, identical for every arm and gap scale of that row
 ROW_OFFSET=<ROW_OFFSET>  # client --dataset-offset: likewise fixed per row
-NCONV=$(( 5*C > 64 ? 64 : 5*C ))   # conversations: >= 5 x c, capped at 64 (L3 disk budget, §5.3)
+NCONV=$(( 5*C > 64 ? 64 : 5*C ))   # conversations: >= 5 x c, capped at 64 (a cell-time choice here; the A100's L3 disk cap no longer binds, §5.3)
 RUNDIR=/sgl-workspace/sglang/agent_cache/results/$(cat /sgl-workspace/sglang/agent_cache/.current_results)
 OUT=$RUNDIR/${ARM}_${TRACE}_c${C}
-export MODEL=Qwen/Qwen3-32B-FP8 KV_BYTES_PER_TOKEN=131072 L3_DIR=/mnt/nvme/hicache_l3 NVME_DEV=nvme0n1 HICACHE_FLUSH_TIMEOUT=1800
+export MODEL=Qwen/Qwen3-32B-FP8 KV_BYTES_PER_TOKEN=131072 L3_DIR=/mnt/ssd/hicache_l3 NVME_DEV=vdc HICACHE_FLUSH_TIMEOUT=1800
 mkdir -p "$OUT" && cd /sgl-workspace/sglang/hicache_eval/scripts
 # the cell's identifiers, fixed per row (§7.1), into config.json (§9); the exact server args and the patch sha are added by block 12a
 printf '{"arm":"%s","trace":"%s","c":%s,"gap_scale":%s,"control_every":%s,"seed":%s,"dataset_offset":%s,"num_prompts":%s,"model":"%s","kv_bytes_per_token":%s,"l3_dir":"%s"}\n' \
   "$ARM" "$TRACE" "$C" "$GAP" "$K" "$ROW_SEED" "$ROW_OFFSET" "$NCONV" "$MODEL" "$KV_BYTES_PER_TOKEN" "$L3_DIR" > $OUT/config.json
 echo "RUNDIR: $RUNDIR"; echo "OUT: $OUT"; echo "NCONV: $NCONV"; echo "cwd: $(pwd)"; echo "config: $(cat $OUT/config.json)"
 ```
--> prints `RUNDIR: /sgl-workspace/sglang/agent_cache/results/20260917_2303` (the stamp on the box today; any other stamp means `.current_results` was re-created, which is fine), `OUT: .../<ARM>_<TRACE>_c<C>`, `NCONV:` 10 / 20 / 40 / 60 / 64 for c = 2 / 4 / 8 / 12 / 16, `cwd: /sgl-workspace/sglang/hicache_eval/scripts`, and `config:` one JSON object with every field filled (an empty or `<...>` value means a placeholder was not replaced). An empty `RUNDIR` suffix (`results/`) means `.current_results` is missing: run §2.4 block 6 (results stamp) first.
+-> prints `RUNDIR: /sgl-workspace/sglang/agent_cache/results/<stamp>` (the stamp created by §2.4 block 6), `OUT: .../<ARM>_<TRACE>_c<C>`, `NCONV:` 10 / 20 / 40 / 60 / 64 for c = 2 / 4 / 8 / 12 / 16, `cwd: /sgl-workspace/sglang/hicache_eval/scripts`, and `config:` one JSON object with every field filled (an empty or `<...>` value means a placeholder was not replaced). An empty `RUNDIR` suffix (`results/`) means `.current_results` is missing: run §2.4 block 6 (results stamp) first.
 
 ```bash
 # container: sglang_hicache (bash; variables from block 0)
-# 0b. Preflight gate: the L3 store must be on the local NVMe, not on the root PD (§2.2). Stops the checklist, never the shell
-#     (a hard-stopping form of this gate belongs in bench.sh, §11, not in a pasted block). Same gate as §2.2's, seen from inside the container.
-echo "L3 dir source: $(findmnt -n -o SOURCE -T /mnt/nvme/hicache_l3)"
-[ "$(findmnt -n -o SOURCE -T /mnt/nvme/hicache_l3)" = /dev/nvme0n1 ] || { echo "STOP: L3 dir is not on nvme0n1 - redo §2.2 on the host before any cell"; false; }
+# 0b. Preflight gate: the L3 store must be on the attached SSD, not on the root disk (§2.2). Stops the checklist, never the shell
+#     (a hard-stopping form of this gate belongs in bench.sh, §11, not in a pasted block). Same check as §2.2's, seen from inside the container.
+echo "L3 dir source: $(findmnt -n -o SOURCE -T /mnt/ssd/hicache_l3)"
+echo "L3 fs free:    $(df -h --output=avail /mnt/ssd | tail -1 | tr -d ' ')"
+[ "$(findmnt -n -o SOURCE -T /mnt/ssd/hicache_l3)" = /dev/vdc ] || { echo "STOP: L3 dir is not on /dev/vdc - fix the mount on the host (§2.2) before any cell"; false; }
 ```
--> prints `L3 dir source: /dev/nvme0n1` and nothing else (checked 2026-09-18 01:30 UTC). `/dev/sda1` or an empty value = the SSD was wiped by a VM stop/start and the container was started before the §2.2 gate: every "L3" write would land on the root PD with no error. Stop, redo §2.2, `docker restart` is not enough (the bind mount must see the new filesystem: §2.3 `:rshared`).
+-> prints `L3 dir source: /dev/vdc` and `L3 fs free: 2.3T` (checked 2026-09-21). `/dev/vda1` or an empty value = `/mnt/ssd` was not mounted when the container started: every "L3" write would land on the root disk, ~4x slower, with no error. Stop, `sudo mount -a` on the host, and note that `docker restart` may not be enough (the bind mount must see the new filesystem: §2.3 `:rshared`). Unlike on the A100 box this is now a rare failure — the volume is persistent and in `fstab` — but it is exactly as silent, so the gate stays.
 
 ```bash
 # container: sglang_hicache, as root (the container's user; the bucket dirs 00..ff are root-owned, §2.2) (variables from block 0)
-# 1. Cold L3 between arms: DESTROYS every file and bucket dir under /mnt/nvme/hicache_l3 (the previous cell's whole L3 store).
+# 1. Cold L3 between arms: DESTROYS every file and bucket dir under /mnt/ssd/hicache_l3 (the previous cell's whole L3 store).
 #    find -delete is ARG_MAX-safe; `rm -rf $L3_DIR/*` silently fails past ~10k files (HANDOFF §3; hicache_eval/scripts/env.sh:22).
-#    Takes seconds to ~1 min (estimate) for the ~85k files a full three-tier cell leaves (§10). Gated on the NVMe check so a root-PD dir is never "cleaned" as if it were the store.
-[ "$(findmnt -n -o SOURCE -T /mnt/nvme/hicache_l3)" = /dev/nvme0n1 ] || { echo "STOP: L3 dir is not on nvme0n1 (block 0b)"; false; } \
-  && find /mnt/nvme/hicache_l3 -mindepth 1 -delete
-echo "L3 files left: $(find /mnt/nvme/hicache_l3 -type f | wc -l)"
-[ "$(find /mnt/nvme/hicache_l3 -type f | wc -l)" -eq 0 ] || { echo "STOP: L3 wipe failed (run inside the container as root, or with sudo on the host)"; false; }
+#    Takes seconds to ~1 min (estimate) for the ~85k files a full three-tier cell leaves (§10). Gated on the device check so a root-disk dir is never "cleaned" as if it were the store.
+[ "$(findmnt -n -o SOURCE -T /mnt/ssd/hicache_l3)" = /dev/vdc ] || { echo "STOP: L3 dir is not on /dev/vdc (block 0b)"; false; } \
+  && find /mnt/ssd/hicache_l3 -mindepth 1 -delete
+echo "L3 files left: $(find /mnt/ssd/hicache_l3 -type f | wc -l)"
+[ "$(find /mnt/ssd/hicache_l3 -type f | wc -l)" -eq 0 ] || { echo "STOP: L3 wipe failed (run inside the container as root, or with sudo on the host)"; false; }
 ```
 -> prints `L3 files left: 0`. Any other count means the wipe ran without root or the store is on a different path than the server's `SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR` (§5.2 `L3ENV`): the next cell would not be cold (HANDOFF §3: a "cold" run that was not cold cost a whole experiment once). The server recreates the 256 bucket dirs at boot.
 
@@ -2414,14 +2628,14 @@ echo "L3 files left: $(find /mnt/nvme/hicache_l3 -type f | wc -l)"
 # 2. Drop the page cache so this cell's L3 reads come from the SSD, not from RAM.
 sync && echo 3 > /proc/sys/vm/drop_caches && echo "drop_caches: ok, Cached now $(awk '/^Cached:/{print $2}' /proc/meminfo) kB"
 ```
--> prints `drop_caches: ok, Cached now <N> kB` with N far below the pre-drop value (the host showed 49 GB of buff/cache on 2026-09-18). `Permission denied` or `Read-only file system` means the container is not privileged: use `python3 cachectl.py droppc` (prints `{"method": "fadvise", "cached_kb": ...}`) and record that the weaker method was used, because fadvise only evicts the L3 files, not the trace or the model.
+-> prints `drop_caches: ok, Cached now <N> kB` with N far below the pre-drop value (this host had 2 GB of buff/cache idle on 2026-09-21; it grows to tens of GB during a cell). `Permission denied` or `Read-only file system` means the container is not privileged: use `python3 cachectl.py droppc` (prints `{"method": "fadvise", "cached_kb": ...}`) and record that the weaker method was used, because fadvise only evicts the L3 files, not the trace or the model.
 
 ```bash
 # container: sglang_hicache (bash; variables from block 0; the §5.2 variables block pasted in this shell: it defines set_level, L3, L3WC, L3ENV)
 # 3a. Launch the arm exactly as §5.2 lists it; log to $RUNDIR/server_<ARM>.log (the §5.2 / §5.4 grep lines expect that name) and keep the pid for block 11.
 #     Shown for arm (a) hbm_lru. For (b)/(g) use "${COMMON[@]}" "${HOST[@]}"; for (c)/(d) prefix `env "${L3ENV[@]}"` and append "${HOST[@]}" "${L3[@]}";
 #     for (f) prefix `env "${L3ENV[@]}"` and append "${HOST[@]}" "${L3WC[@]}" (§5.2). Same redirection. Do not re-assign OUT.
-set_level <L1> <HSIZE>     # P0: set_level 262144 64 | PH: set_level 131072 48 | PL: set_level 131072 18 (§5.3; the same level for every arm of the row)
+set_level <L1> <HSIZE>     # P0: set_level 262144 64 | PH: set_level 131072 48 | PL: set_level 131072 18 | PW: set_level 655360 96 (§5.3; the same level for every arm of the row)
 LOG=$RUNDIR/server_${ARM}.log
 python3 -m sglang.launch_server "${COMMON[@]}" > "$LOG" 2>&1 &
 echo $! > $RUNDIR/server_${ARM}.pid
@@ -2456,7 +2670,7 @@ echo "pin-ignored warnings: $(grep -c 'larger than the profiled value' "$LOG")"
 echo "O_DIRECT lines: $(grep -c 'O_DIRECT is active' "$LOG")"
 echo "cleaner: $(grep -ao 'HiCacheL3Cleaner started: dirs=\[[^]]*\] high=[0-9.]*% low=[0-9.]*%' "$LOG" | head -1)"
 ```
--> prints `device pool: max_total_num_tokens=262144` (P0) or `=131072` (PH, PL) = the `$L1` of `set_level`; `host pool: host pool: 488320 tokens` / `366272` / `137344` for `--hicache-size` 64 / 48 / 18 (derived from the §5.1 rule; only 762,944 @ 100 GB is measured, `R32/exp1_32b/startup_facts.txt:5`), empty on arms (a) and (e); `pin-ignored warnings: 0`; on the nixl arms (c), (d), (f) `O_DIRECT lines: 1` and `cleaner: HiCacheL3Cleaner started: dirs=['/mnt/nvme/hicache_l3'] high=80.0% low=70.0%` (95/85 in rows 5-6 with the §5.3 `l3_extra.json`), both empty on (a), (b), (e), (g). A device pool other than `$L1`, a host pool other than the level's, or a warning count > 0 means the pin did not take: stop the server (block 11) and fix the §5.2 arrays. A cleaner dir other than `/mnt/nvme/hicache_l3` means `L3ENV` was not passed: every "L3" write would go to `/tmp/hicache_storage` (tmpfs, §10).
+-> prints `device pool: max_total_num_tokens=262144` (P0) or `=131072` (PH, PL) or `=655360` (PW) = the `$L1` of `set_level`; `host pool: host pool: 488320 tokens` / `366272` / `137344` / `732480` for `--hicache-size` 64 / 48 / 18 / 96 (derived from the §5.1 rule; only 762,944 @ 100 GB is `measured-A100`, `R32/exp1_32b/startup_facts.txt:5`), empty on arms (a) and (e); `pin-ignored warnings: 0`; on the nixl arms (c), (d), (f) `O_DIRECT lines: 1` and `cleaner: HiCacheL3Cleaner started: dirs=['/mnt/ssd/hicache_l3'] high=30.0% low=20.0%` (the watermarks come from the §5.2 `l3_extra.json`, §5.3), both empty on (a), (b), (e), (g). A device pool other than `$L1`, a host pool other than the level's, or a warning count > 0 means the pin did not take: stop the server (block 11) and fix the §5.2 arrays. A cleaner dir other than `/mnt/ssd/hicache_l3` means `L3ENV` was not passed: every "L3" write would go to `/tmp/hicache_storage`, which on this box is the **root disk** (§5.1, §10). `high=80.0% low=70.0%` means `l3_extra.json` did not reach the cleaner (§5.3).
 
 ```bash
 # container: sglang_hicache (bash; variables from block 0; cwd = hicache_eval/scripts)
@@ -2477,7 +2691,7 @@ python3 -c 'import hcommon; print("flushed after s:", hcommon.wait_until_flushab
 ```bash
 # container: sglang_hicache (bash; variables from block 0)
 # 5. Telemetry on at 1 s (the 2026-09-17 campaign logs are 5 s averages, hicache_eval/scripts/telemetry.sh:9,11; iostat exists in the container and on the host).
-iostat -x -d -t 1 nvme0n1 > $OUT/iostat.log 2>/dev/null & echo $! > $OUT/.iostat.pid
+iostat -x -d -t 1 vdc > $OUT/iostat.log 2>/dev/null & echo $! > $OUT/.iostat.pid
 nvidia-smi dmon -s t -d 1 > $OUT/pcie.log 2>/dev/null & echo $! > $OUT/.dmon.pid
 echo "iostat pid: $(cat $OUT/.iostat.pid)"; echo "dmon pid: $(cat $OUT/.dmon.pid)"
 # then paste the §6.1 memtime sampler block (it reads $OUT from this shell and writes $OUT/memtime.csv and $OUT/.memtime.pid)
@@ -2539,7 +2753,7 @@ python3 -c 'import hcommon; print("drain s:", hcommon.wait_until_flushable(5400,
 # 10. Telemetry off, then the L3 store size (nixl writes K and V as separate files: files = 2 x pages, 4,194,304 B per file, 8,388,608 B per page for this model, §2.2).
 kill $(cat $OUT/.iostat.pid) $(cat $OUT/.dmon.pid) 2>/dev/null; rm -f $OUT/.iostat.pid $OUT/.dmon.pid
 python3 cachectl.py l3 | tee $OUT/l3_stats.json
-echo "nvme used: $(df -h /mnt/nvme | awk 'NR==2{print $3" of "$2" ("$5")"}')"
+echo "ssd used: $(df -h /mnt/ssd | awk 'NR==2{print $3" of "$2" ("$5")"}')"
 ```
 -> prints `{"files": <F>, "bytes": <B>}` with B = F x 4,194,304 exactly and F even on the nixl arms (c), (d), (f); `{"files": 0, "bytes": 0}` on (a), (b), (e), (g); then `nvme used: <used> of 369G (<pct>)`. F odd or B not a multiple of 4,194,304 means a partial page write (a killed backup thread): note it. Used space near 80 % of 368.0 GiB means the cleaner ran during the cell (§5.3 budget): check the cleaner lines in the server log before trusting any L3 hit.
 
@@ -2590,43 +2804,62 @@ echo "root-owned left: $(find /home/wanhr/sglang/agent_cache/results /home/wanhr
 
 ### 7.3 Time budget
 
-**Status:** provisional, first pass: every cell time below is an ESTIMATE until the decode rate and the prefix-extension cost are measured (row 1, §5.4); rewrite the row figures from the measured X and turn_time(c) of rows 1-2 (stored in `constants.json`, §9.2). Bring-up is done; the converter is built and run (§3.3, 2026-09-18).
-**Goal:** know before starting a row how many GPU-hours it costs and which cells must be wall-time capped, so the campaign fits in the 4-5 days plus a re-run day and the K of the paired controls is chosen by budget rather than by habit.
+**Status:** **not derivable yet on this box, by construction.** Cell time is computed from the recompute curve, the decode rate and the prefix-extension cost — all three are §5.4 constants and none is measured here. What this section gives instead is (i) the formula, unchanged, (ii) the **one real measurement** the study has, from `C18/` on the A100 (§7.0), and (iii) the A100's estimate table, kept as a strict upper bound. **Rewrite the row figures from the measured X and turn_time(c) after rows 1-2** (stored in `constants.json`, §9.2).
+**Goal:** know before starting a row how many GPU-hours it costs and which cells must be wall-time capped, so the campaign fits in the planned days and K is chosen by budget rather than by habit.
 **Runs on:** none (arithmetic on the measured and estimated inputs below).
 **Touches:** read-only; the measured X and turn_time(c) go into `results/<stamp>/constants.json` after rows 1-2.
 **Takes:** none; the figures are the budget itself.
 
-Fixed costs: daily overhead = §2.2 (~2 min) + `docker start`. Data + converter + Week-1 stats 0.5 day (CPU). Rows 0-1: ~1 h. Measured inputs (2026-09-17, `R32/exp1_32b/ttft_by_tier.csv`, §5.4): recompute 1.86 s @4K, 4.03 s @8K, 9.88 s @16K, 26.69 s @32.5K (18.0 s @25K, derived from the §3.5 quadratic fit); 25K restore L3 ~5.0 s, L2 ~0.44 s, L1 ~0.36 s (derived, intercept + 25,000 x b / rate); boot 278-285 s warm with a 100 GB host pool, ~633 s JIT-cold (measured): budget 5 min per cell.
+Fixed costs on this box: no daily overhead at all (the SSD is persistent, §2.2; `docker start` is ~2 s). One-time bring-up ~30-60 min (image pull + model download, §2.3/§2.6, both network-bound and both unmeasured here). Data + Week-1 stats 0.5 day (CPU, §3). Row 1 ~25 min of GPU plus 2-3 boots (§5.4).
 
-Cell time is **computed, not guessed**: `cell_s ~ turns / X + boot + drain`, with `X = min(c / (turn_time(c) + s x mean_gap), 1 / GPU_s_per_turn)`, `GPU_s_per_turn = (1-m) x t_delta + m x T_rec(context) + decode share + T_rec(context)/K`, m = fraction of returning turns that recompute (0 in a tiered arm that restores, up to 1 in (e)), t_delta ~ 1.4 s (estimate, §5.3), K = `--agentic-control-every` (each control is a full recompute: 18.0 s at 25K), turns = min(5 x c, 64) x <= 40.
+**The one measured cell (A100, §7.0).** Three arms x (32 conversations, c = 32, 12 turns, gaps x10, `GAP_CAP=600`): **2,608-2,783 s wall per arm (~44-46 min)**, 380-381 turns each, 95 % of turns done by 2,103-2,163 s. That is **~7.3 s of wall per turn at c = 32**, and it was **admission-bound, not GPU-bound** (peak queue 28 on every arm), so it is a lower bound on how fast a correctly-sized cell runs and an upper bound on how much of that time was useful.
 
-The control term decides K (derived from T_rec(25K) = 18.0 s per control):
+Cell time is **computed, not guessed**: `cell_s ~ turns / X + boot + drain`, with `X = min(c / (turn_time(c) + s x mean_gap), 1 / GPU_s_per_turn)`,
+`GPU_s_per_turn = (1-m) x t_delta + m x T_rec(context) + decode share + T_rec(context)/K`, m = fraction of returning turns that recompute (0 in a tiered arm
+that restores, up to 1 in (e); **`C18/` measured m = 0.43-0.44 in all three arms**, which is what a mis-sized cell looks like), t_delta = the §5.4
+prefix-extension constant, K = `--control-every` (each control is a full recompute), turns = min(5 x c, 64) x <= 40.
 
-| K | control GPU s per turn (18.0 / K) | ceiling X (turns/s), estimate |
-|---|---|---|
-| 4 | 4.5 (on top of the 1.95 s of the turn itself: ~70 % of the GPU on controls) | 0.16 |
-| 16 | 1.1 | 0.33 |
-| 40 | 0.45 | 0.39-0.43 |
-| 72 | 0.25 | not derived in the first pass |
-| no controls | 0 | 0.47-0.54 |
+The control term decides K, and on this box it is a **GPU-budget decision only** — the A100's L3-disk constraint on K is gone (§5.3). The table below is
+the A100's, with `T_rec(25K) = 18.0 s`; **recompute the first column from this box's `T_rec(25K)` as soon as §5.4 block C has run**, and the ceiling
+column with it.
 
-Per-row estimates (§5.3 closed-loop model on the README mean gap 2.08 s and 220 output tokens, K = 40; K = 72 at c=12): X ~ 0.20-0.26 turns/s at c=4, 0.27-0.33 at c=8 (scale 1), 0.22-0.28 (PH c=8 at s_H), 0.20-0.25 (PL c=12 at s_L). The measured trace inputs (emitted-turn mean gap 1.49 s, mean output 182 tokens, §3.3) push X up slightly (shorter turns, shorter gaps); the figures are re-derived with the measured decode rate after row 1.
+| K | control GPU s per turn (`T_rec(25K)` / K) | A100: 18.0 s | this box: `T_rec(25K)` = ? |
+|---|---|---|---|
+| 4 | `T_rec`/4 | 4.5 s (~70 % of the GPU on controls) | to be filled |
+| 16 | `T_rec`/16 | 1.1 s | to be filled |
+| 40 | `T_rec`/40 | 0.45 s | to be filled |
+| 72 | `T_rec`/72 | 0.25 s | to be filled |
+| no controls | 0 | 0 | 0 |
 
-| row | cell | estimate |
-|---|---|---|
-| 2 | c=4 | ~55-70 min per cell |
-| 2 | c=8 | ~85-105 min per cell |
-| 4 | tiered cell, PH c=8 at s_H | ~100-125 min per cell |
-| 5 (and 6) | PL c=12 at s_L | ~165-205 min per cell |
-| 3-6, arm (e) | recompute-heavy, GPU-bound at `1/(1.4 + 16.6 m + 0.55 + 18.0/K)` turns/s | ~3.6 h at m = 0.35, 8.4 h at m = 1 (c=8, 40 conv x 40 turns) |
-| 7 | AIPerf 1800 s + boot | ~35 min |
-| 8 | Mooncake | only a wall-time-capped slice (§3.4) |
+**A100 per-row estimates, kept as an upper bound.** (§5.3 closed-loop model on the README mean gap 2.08 s and 220 output tokens, K = 40; K = 72 at c=12.)
+X ~ 0.20-0.26 turns/s at c=4, 0.27-0.33 at c=8 (scale 1), 0.22-0.28 (PH c=8 at s_H), 0.20-0.25 (PL c=12 at s_L).
 
-Rows 2-6 are ~17 cells: **4-5 days** at 40 turns, about half with 20. Reserve a day for re-runs.
+| row | cell | `measured-A100` estimate | this box |
+|---|---|---|---|
+| 2 | c=4 | ~55-70 min per cell | <= that (faster GPU); re-derive after row 1 |
+| 2 | c=8 | ~85-105 min per cell | <= that; re-derive |
+| 4 | tiered cell, PH c=8 at s_H | ~100-125 min per cell | <= that; re-derive |
+| 5 (and 6) | PL c=12 at s_L | ~165-205 min per cell | <= that; re-derive |
+| 3-6, arm (e) | recompute-heavy, GPU-bound at `1/(t_delta + m x T_rec + decode + T_rec/K)` | ~3.6 h at m = 0.35, 8.4 h at m = 1 (c=8, 40 conv x 40 turns) | scales down with `T_rec`; still the cell to wall-time cap |
+| 7 | AIPerf 1800 s + boot | ~35 min | ~35 min (client-duration-bound, so unchanged) |
+| 8 | Mooncake | wall-time-capped slice (§3.4) | same |
+| 9 | PW, c=24-32 | not applicable on the A100 | to be derived from the row-1 constants |
 
-**Expected result:** the (e) cells are capped by wall time (e.g. 90 min) and compared over the common window, or rows 3-6 run with `--agentic-max-turns 20` for every arm of the row; after row 2 this table is rewritten from the measured X and turn_time(c) in `constants.json` and the measured cell wall times replace the estimates here. Not yet measured: no cell has run.
-**If it differs:** a c=8 P0 cell that takes far longer than 105 min at scale 1 means X is below 0.27 turns/s: either the decode rate is at or below the low end of the §5.3 estimate or the client is queue-bound (check `num_queue_reqs` in `memtime.csv`); re-derive s_H/s_L before row 4. The converted trace's emitted-turn mean `output_length` is 182.0 tokens (measured 2026-09-18, `agent_cache/traces/lmcache_agentic_trace.json.stats.json`), below the 220 used in the model, so the decode term above is on the pessimistic side.
-**Expected lessons:** the control frequency is a GPU-budget decision, not a statistics one: K = 4 would spend ~70 % of the GPU on controls and ~1.3 TiB of L3 writes per c=8 cell (§5.3), so pairs per bin come from pooling turn indices or repeating the cell (§6.5), never from lowering K. A recompute-heavy (e) cell can cost a working day on its own; capping it by wall time and comparing over the common window is what keeps a row to one day.
+Rows 2-6 are ~17 cells: **4-5 days on the A100** at 40 turns, about half with 20. Expect less here in proportion to whatever speed-up §5.4 measures;
+reserve a day for re-runs either way.
+
+**Expected result:** after row 1, this section is rewritten with `T_rec(25K)`, the decode rate and t_delta for this box, and the K table's third column
+is filled; after row 2, the row estimates are replaced by measured X and turn_time(c) from `constants.json` and by the measured cell wall times. Today
+none of that exists and the only real datum is the `C18/` 44-46 min per arm at c = 32.
+**If it differs:** a cell that takes far longer than the A100 estimate is not a slow GPU — check `num_queue_reqs` in `memtime.csv` first, because an
+admission-bound cell (§7.0) looks exactly like a slow one in wall time and completely different in the event log. A cell that finishes far *faster* than
+expected with a high `m` (recompute fraction) is the `C18/` failure mode: it is drawing turns through a pool too small to hold them.
+**Expected lessons:** the control frequency is a GPU-budget decision, not a statistics one: K = 4 would spend ~70 % of the GPU on controls (on the A100),
+so pairs per bin come from pooling turn indices or repeating the cell (§6.5), never from lowering K — but the **disk** half of that argument no longer
+applies on this box (§5.3), so K may be lowered further than the A100 allowed if the GPU budget permits. A recompute-heavy (e) cell can still cost a
+working day on its own; capping it by wall time and comparing over the common window is what keeps a row to one day. (`CLIENT_TIMEOUT`, enforced inside the client since 2026-09-22 via `--max-seconds`; the earlier `timeout --foreground` never reached the client, §7.0b.) And the single most useful budgeting
+fact available today is not an estimate at all: `C18/` shows that **a badly sized cell costs a full 45 minutes per arm and yields nothing attributable**,
+which is why §5.4 (25 min) runs first.
 
 ---
 
@@ -2716,7 +2949,7 @@ study (SKILL.md:190-217).
 OUT=${OUT:?paste the §7.2 step 0 block first: it defines OUT}
 cat > /tmp/pyspy_census.sh <<'EOF'
 #!/bin/bash
-# pattern: hicache_eval/scripts/c3_dump.sh:12,21-36
+# pattern: hicache_eval/scripts/archive/c3_dump.sh:12,21-36
 set -e
 OUT=${1:?usage: pyspy_census.sh <cell dir>}
 SCHED=$(pgrep -f 'sglang::scheduler' | head -1)
@@ -2732,9 +2965,9 @@ bash /tmp/pyspy_census.sh $OUT
 **Never `py-spy record -s`** on the launcher: it hung 4.5 h on the ~100 GB-RSS scheduler (HANDOFF §3).
 
 ```bash
-# container: sglang_hicache (or host: same commands). Whole-device telemetry at 1 s: NVMe (r vs w is the only prefetch/backup split) and GPU PCIe rx/tx; §7.2 step 5 starts this same pair
+# container: sglang_hicache (or host: same commands). Whole-device telemetry at 1 s: the SSD vdc (r vs w is the only prefetch/backup split) and GPU PCIe rx/tx; §7.2 step 5 starts this same pair
 OUT=${OUT:?paste the §7.2 step 0 block first: it defines OUT}
-iostat -x -d -t 1 nvme0n1 > $OUT/iostat.log 2>&1 & echo $! > $OUT/.iostat.pid
+iostat -x -d -t 1 vdc > $OUT/iostat.log 2>&1 & echo $! > $OUT/.iostat.pid
 nvidia-smi dmon -s t -d 1 > $OUT/pcie.log 2>&1 & echo $! > $OUT/.dmon.pid
 echo "iostat pid: $(cat $OUT/.iostat.pid)"
 echo "dmon pid: $(cat $OUT/.dmon.pid)"
@@ -2750,8 +2983,8 @@ What each tool can and cannot attribute (recipes are the blocks above):
 | batch-count capture | block 4: `python -m sglang.profiler --url ... --num-steps 40 --output-dir ... --profile-prefix hicache-window` (blocks until written; `profiler.py:21-66`); `num_steps` counts scheduler batches, prefill+decode (`scheduler.py:4179-4189`) | same | a request-defined window (use the manual start/stop) |
 | analysis skill | block 5: `Skill llm-torch-profiler-analysis` -> `analyze_llm_torch_profile.py --framework sglang --input <trace>`; ask for rows below the 1 % default cutoff so transfer kernels appear (SKILL.md:35-39). **Never** its `--url` live mode (SKILL.md:190-217) | kernel / overlap / fuse tables | stream timelines (use Perfetto on the same file) |
 | `generate-profile` skill | `python3 -m sglang.test.send_one --profile` (SKILL.md:61-81) | one synthetic request | a HiCache window; use only as a sanity check of the profiler path |
-| py-spy | block 6, from a script file (`hicache_eval/scripts/c3_dump.sh:12,21-36`): `SCHED=$(pgrep -f 'sglang::scheduler' \| head -1)`, 12 x `timeout 30 py-spy dump --pid $SCHED --nonblocking` 2 s apart, census of `(active+gil)` threads. **Never `py-spy record -s`** on the launcher (hung 4.5 h, HANDOFF §3) | thread state at sample instants: GIL holder, `synchronize (torch/cuda/streams.py)` = waiting on GPU, frames in `prefetch_thread_func`/`backup_thread_func` | durations |
-| `nvidia-smi dmon -s t -d 1` / `iostat -x -d -t 1 nvme0n1` | block 7 = §7.2 step 5; `iostat` is installed (host and both containers); log formats from this box and model: `R32/exp1_32b/{pcie,iostat}.log` (5 s samples). Reference ceilings, measured: nvme0n1 704 MiB/s read at 97 % util, 391 MiB/s write at 99 % util | whole-GPU PCIe rx/tx MB/s; whole-device NVMe r/w kB/s, await, %util | load-back vs other H2D; prefetch vs backup vs writeback (r vs w is the only split); per-turn bytes (HANDOFF §3: `iostat_*` is a window) |
+| py-spy | block 6, from a script file (`hicache_eval/scripts/archive/c3_dump.sh:12,21-36`): `SCHED=$(pgrep -f 'sglang::scheduler' \| head -1)`, 12 x `timeout 30 py-spy dump --pid $SCHED --nonblocking` 2 s apart, census of `(active+gil)` threads. **Never `py-spy record -s`** on the launcher (hung 4.5 h, HANDOFF §3) | thread state at sample instants: GIL holder, `synchronize (torch/cuda/streams.py)` = waiting on GPU, frames in `prefetch_thread_func`/`backup_thread_func` | durations |
+| `nvidia-smi dmon -s t -d 1` / `iostat -x -d -t 1 vdc` | block 7 = §7.2 step 5; `iostat` is installed on the host and in the image (there is **no `fio` on this box**, §1). Log formats from the A100 and the same model: `R32/exp1_32b/{pcie,iostat}.log` (5 s samples). **Reference ceiling for `vdc`, measured 2026-09-21 (§2.2): 1,973,500 kB/s = 1,927 MiB/s = 1.88 GiB/s at 100 % util, symmetric read and write** (the A100's nvme0n1 was 704 MiB/s read / 391 MiB/s write). PCIe is Gen5 x16 here vs Gen4 x16 there, so the H2D/D2H ceiling roughly doubles too | whole-GPU PCIe rx/tx MB/s; whole-device r/w kB/s, await, %util | load-back vs other H2D; prefetch vs backup vs writeback (r vs w is the only split); per-turn bytes (HANDOFF §3: `iostat_*` is a window) |
 | `/metrics` histograms | §6.1: `load_back_duration_seconds` (CUDA-event span per merged op, excludes queue/fence waits) and `hicache_backup_duration_seconds`; bytes_total/duration_sum = BW while copying | L2<->GPU throughput | L3 durations for nixl (no `get_stats`): derive from `prefetched_tokens_total x 131,072 / wall`, cross-check iostat rkB/s; anything above ~0.68 GiB/s is page cache, not the SSD; the idle single-stream reference is 0.623 GiB/s (measured, §5.4) |
 
 Profiler traps (source facts): `profile_stages` is a no-op unless `SGLANG_PROFILE_V2` (`profiler_manager.py:102`, `environ.py:435`); `with_stack`
@@ -2796,7 +3029,7 @@ copy it into the cell, or name it in `config.json`), `client.jsonl` (+`client.lo
 **Goal:** one row per cell whose numbers are comparable across arms of a §7.1 row and across days, with the queue-depth binning that separates a
 tiering effect from admission queueing, so that §9.3 can be decided from the table alone.
 **Runs on:** host or `container: sglang_hicache`, offline over `results/<stamp>/<cell>/` (CPU only; the container has pandas/pyarrow, the host has
-Python 3.14 stdlib only, §1).
+host Python 3.12.3, stdlib only, §1).
 **Touches:** read-only over the cell directory; writes the cell's `summary.csv` row (§7.2 step 12) and the report tables.
 **Takes:** minutes per cell (estimate); GPU idle.
 
@@ -2838,16 +3071,19 @@ positive row 4-5 result credible.
 
 ### 9.2 Constants block (`results/<stamp>/constants.json`)
 
-**Status:** not started: today's stamp dir `agent_cache/results/20260917_2303/` (from `.current_results`, checked 2026-09-18) is empty; no
-`constants.json` written.
+**Status:** **not started on this box**, and `agent_cache/.current_results` does not exist yet (§2.4 block 6 creates it). The template below is
+rewritten for this box: **every GPU- and disk-derived value is `null`** and carries the A100 value in a `*_a100_prior` field next to it, so the file
+itself shows what is missing and what it is expected to be near. Eighteen top-level nulls, not two.
 **Goal:** one file that every analysis script and every budget (§5.3, §7.3) reads its constants from, so that no number is re-typed elsewhere with a
 different value and the two still-open constants are visibly null until measured.
 **Runs on:** host, as `wanhr`.
 **Touches:** writes `/home/wanhr/sglang/agent_cache/results/<stamp>/constants.json` (= `/sgl-workspace/sglang/agent_cache/results/<stamp>/constants.json` in the container).
 **Takes:** seconds; GPU idle.
 
-Pre-fill from campaign 5 (`source`: `R32/`; values = the §5.4 tables, measured unless tagged). The two nulls are the open constants of §5.4 (matrix
-row 1); after row 1 add the measured turn throughput and `turn_time(c)` of §7.3 and the go/no-go memory-time bar X of §9.3.
+Pre-fill with what is true of **this** box today: the model and flags, `b` (a dtype property), the disk ceilings (measured 2026-09-21, §2.2), the
+logical sector size, and the trace constants. Everything else is `null` until §5.4 (matrix row 1) fills it, with the A100 value carried alongside as a
+prior. After row 1, also add the measured turn throughput and `turn_time(c)` of §7.3 and the go/no-go memory-time bar X of §9.3.
+**18 top-level nulls and 10 nested ones** — against the A100 runbook's two, which is the size of the port in one number.
 
 ```bash
 # host, as wanhr. Write the pre-filled constants block for the current stamp (refuses if one exists: after row 1 the nulls are edited in place, never re-nulled)
@@ -2855,34 +3091,71 @@ AC=/home/wanhr/sglang/agent_cache
 F=$AC/results/$(cat $AC/.current_results)/constants.json
 [ ! -s "$F" ] || { echo "STOP: $F exists; edit it instead of overwriting"; false; } && mkdir -p "$(dirname $F)" && cat > "$F" <<'EOF'
 {
-  "source": "R32/ = hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/ (campaign 5, measured 2026-09-17); values per RUNBOOK §5.4",
+  "box": "Nebius computeinstance-u00jtv5xqvxttejgvw, 1x NVIDIA H200 143771 MiB, SM90, driver 580.173.02, CUDA 13.0",
+  "source": "this box, RUNBOOK §5.4 (H200 port of 2026-09-21). *_a100_prior fields are R32/ = hicache_eval/results/20260917_a100_gcp_32b70b_fp8kv/ (measured 2026-09-17) and are NEVER values for this box",
+
   "model": "Qwen/Qwen3-32B-FP8 @ aa55da1e",
   "kv_cache_dtype": "fp8_e5m2",
-  "weight_kernel": "fp8 weight-only Marlin (W8A16)",
   "attention_backend": "triton",
+  "attention_backend_note": "SM90 default is fa3; fa3+fp8_e5m2 is auto-rewritten to triton, so the pin agrees with the automatic resolution (RUNBOOK §5.1)",
   "mem_fraction_static": 0.85,
+  "weight_kernel": null,
+  "weight_kernel_expected": "native FP8 (NOT Marlin: can_auto_enable_marlin_fp8() is 80 <= sm < 89)",
+  "weight_kernel_a100_prior": "fp8 weight-only Marlin (W8A16), mem usage 32.59 GB",
+  "weights_gb": null,
+
   "b": 131072,
-  "P_marginal": 1226.3,
+  "b_note": "2 x 64 layers x 8 KV heads x 128 x 1 byte; dtype property, expected identical to the A100; §5.4 block B re-measures it",
+
+  "L1_TOKENS": null,
+  "L1_TOKENS_estimate": 701760,
+  "L1_TOKENS_a100_prior": 281216,
+  "L1_TOKENS_note": "profiled device pool at mem-fraction 0.85; read off a boot WITHOUT --max-total-tokens (§5.4 block A)",
+  "host_pool_tokens_at_100gb": 762944,
+  "host_pool_tokens_note": "arithmetic rule (int(GB*1e9//b)//64+1)*64, box-independent; 64/48/18/96 GB -> 488320/366272/137344/732480",
+
+  "P_marginal": null,
   "P_marginal_unit": "tok/s",
-  "P_marginal_intercept_s": -1.251,
-  "recompute_ttft_s": {"512": 0.2393, "1024": 0.4552, "2048": 0.9021, "4096": 1.8597, "8192": 4.0303, "16384": 9.8764, "32512": 26.6922},
-  "recompute_quadratic": "0.0626 + 3.752e-4 L + 1.365e-8 L^2 (derived; HANDOFF: P is not constant)",
-  "recompute_bar_GiBps": 0.150,
-  "L1_TOKENS": 281216,
-  "host_pool_tokens": 762944,
-  "host_pool_tokens_note": "at --hicache-size 100",
-  "L1_GiBps": 9.808, "L1_intercept_s": 0.053,
-  "L2_GiBps": 7.748, "L2_intercept_s": 0.048,
-  "L3_GiBps": 0.623, "L3_intercept_s": 0.058,
-  "tier_fits_note": "wait_complete, idle server",
-  "ssd_read_ceiling_GiBps": 0.68,
-  "ssd_write_ceiling_GiBps": 0.38,
-  "ssd_ceiling_note": "iostat, 5 s samples",
+  "P_marginal_intercept_s": null,
+  "P_marginal_a100_prior": 1226.3,
+  "P_marginal_intercept_s_a100_prior": -1.251,
+  "recompute_ttft_s": {"512": null, "1024": null, "2048": null, "4096": null, "8192": null, "16384": null, "32512": null},
+  "recompute_ttft_s_a100_prior": {"512": 0.2393, "1024": 0.4552, "2048": 0.9021, "4096": 1.8597, "8192": 4.0303, "16384": 9.8764, "32512": 26.6922},
+  "recompute_quadratic": null,
+  "recompute_quadratic_a100_prior": "0.0626 + 3.752e-4 L + 1.365e-8 L^2 (derived; HANDOFF: P is not constant)",
+  "recompute_bar_GiBps": null,
+  "recompute_bar_GiBps_a100_prior": 0.150,
+
+  "L1_GiBps": null, "L1_intercept_s": null,
+  "L2_GiBps": null, "L2_intercept_s": null,
+  "L3_GiBps": null, "L3_intercept_s": null,
+  "tier_fits_a100_prior": {"L1_GiBps": 9.808, "L1_intercept_s": 0.053, "L2_GiBps": 7.748, "L2_intercept_s": 0.048, "L3_GiBps": 0.623, "L3_intercept_s": 0.058},
+  "tier_fits_note": "wait_complete, idle server, single stream (§5.4 block D)",
+
+  "l3_device": "/dev/vdc, 2496449740800 B ext4 label=ssd, mounted /mnt/ssd, persistent (fstab UUID + nofail)",
+  "ssd_read_ceiling_GiBps": 1.882,
+  "ssd_write_ceiling_GiBps": 1.882,
+  "ssd_ceiling_tok_s": 15418,
+  "ssd_ceiling_note": "measured 2026-09-21: 4 concurrent dd O_DIRECT streams at 4 MiB, iostat -x -d 2 steady state 1973500 kB/s at 100% util in BOTH directions (5300 IOPS of ~372 kB, aqu-sz 35-38); symmetric. Short-burst dd aggregates overstate it (up to 2205 MiB/s) because the first seconds are below 100% util. No fio on this box",
+  "ssd_ceiling_a100_prior": {"read_GiBps": 0.68, "write_GiBps": 0.38},
+  "lba": 512,
+  "lba_a100_prior": 4096,
+  "l3_cleaner_watermarks_pct": {"high": 30, "low": 20},
+  "l3_cleaner_note": "pinned in l3_extra.json; the 80/70 default would be 1.82/1.59 TiB on this 2.27 TiB filesystem and never fire (§5.3)",
   "page_cache_evict_method": "drop_caches",
-  "lba": 4096,
+
   "decode_rate_tok_s": {"1": null, "4": null, "8": null},
   "extend_1k_on_24k_ttft_s": null,
-  "open_constants_note": "decode_rate_tok_s and extend_1k_on_24k_ttft_s: null until measured (RUNBOOK §5.4, matrix row 1)",
+  "boot_s_warm": null,
+  "boot_s_jit_cold": null,
+  "boot_s_a100_prior": {"warm": 281, "jit_cold": 633},
+
+  "trace_mean_pre_gap_s": 1.49,
+  "trace_mean_output_length": 182.0,
+  "trace_mean_replay_prompt_tokens": 19665,
+  "trace_note": "properties of agent_cache/traces/lmcache_agentic_trace.json, box-independent (§3.3)",
+
+  "open_constants_note": "every null above is a §5.4 (matrix row 1) measurement; until they are filled, no §7.1 row past 2 may be sized",
   "turn_throughput_turns_s": null,
   "turn_time_s_by_c": null,
   "measured_after_row1_note": "turn throughput and turn_time(c) of §7.3: fill from rows 1-2",
@@ -2890,24 +3163,28 @@ F=$AC/results/$(cat $AC/.current_results)/constants.json
   "go_no_go_note": "X = proposed bar (§9.3); fix it before the first row 4 cell"
 }
 EOF
-echo "constants: $(python3 -c "import json;d=json.load(open('$F'));print(len(d),'keys; decode_rate_tok_s =',d['decode_rate_tok_s'],'; extend_1k_on_24k_ttft_s =',d['extend_1k_on_24k_ttft_s'])")"
+echo "constants: $(python3 -c "import json;d=json.load(open('$F'));n=[k for k,v in d.items() if v is None];print(len(d),'keys;',len(n),'null:',','.join(n))")"
 ```
--> prints `constants: 36 keys; decode_rate_tok_s = {'1': None, '4': None, '8': None} ; extend_1k_on_24k_ttft_s = None` (derived: the key count of the
-document above); a `STOP:` line means the file already exists and the nulls must be edited in place, never re-nulled.
+-> prints `constants: 63 keys; 18 null: weight_kernel,weights_gb,L1_TOKENS,P_marginal,P_marginal_intercept_s,recompute_quadratic,recompute_bar_GiBps,L1_GiBps,L1_intercept_s,L2_GiBps,L2_intercept_s,L3_GiBps,L3_intercept_s,extend_1k_on_24k_ttft_s,boot_s_warm,boot_s_jit_cold,turn_throughput_turns_s,turn_time_s_by_c`
+(verified 2026-09-21 by parsing the document above; `recompute_ttft_s` and `decode_rate_tok_s` hold a further 7 and 3 nested nulls, which the key count
+does not show). A `STOP:` line means the file already exists and the nulls must be edited in place, never re-nulled.
 
-**Expected result:** `constants.json` exists in the stamp dir with the values above: `model`, `kv_cache_dtype`, `weight_kernel`, `attention_backend`,
-`mem_fraction_static`, `b`, `P_marginal` (with its intercept), `recompute_ttft_s` (7 lengths), `recompute_quadratic`, `recompute_bar_GiBps`, `L1_TOKENS`,
-`host_pool_tokens`, the `L1/L2/L3_GiBps` rates with intercepts (idle `wait_complete` fits), `ssd_read/write_ceiling_GiBps`, `page_cache_evict_method`,
-`lba`; exactly two null constants (`decode_rate_tok_s` at B = 1, 4, 8 and `extend_1k_on_24k_ttft_s`) and X = 20 until the user fixes it. After matrix
-row 1 the nulls hold numbers and `open_constants_note` is rewritten.
-**Expected lessons:** the nulls are the reason every c, f, K and cell-time figure in §3.4, §5.3, §7.1 and §7.3 is provisional; a §7.1 row after row 1
-must not be sized while they are null. Keeping `L1_TOKENS` here (281,216, measured on this box) is what stops the H100 value 284,224 in
-`hicache_eval/scripts/models.sh:21` from leaking into a copied script.
+**Expected result:** `constants.json` exists in the stamp dir with: the box identity; the model, dtype, backend and mem-fraction; `b` = 131,072; the
+**measured** disk block (`ssd_read/write_ceiling_GiBps` 1.943 / 2.153, `lba` 512, the cleaner watermarks, the device description); the **trace** block
+(mean gap 1.49 s, mean output 182.0, mean replay context 19,665); and **twelve top-level nulls** plus two nested null maps, each paired with an
+`*_a100_prior`. Counted exactly: **63 keys, 18 top-level nulls, plus 7 nested nulls in `recompute_ttft_s` and 3 in `decode_rate_tok_s`** (verified
+2026-09-21). X = 20 until the user fixes it. After matrix row 1 the nulls hold numbers and `open_constants_note` is rewritten.
+**Expected lessons:** the nulls are the reason every c, f, K and cell-time figure in §3.4, §5.3, §7.1 and §7.3 is provisional; a §7.1 row past 2 must not
+be sized while they are null. The `*_a100_prior` fields exist so that a wrong value is *recognisable*: a measured `P` near 1,226 on an H200 would mean the
+Marlin path is somehow active (§5.2), and a measured `L3_GiBps` near 0.623 on a 1.88 GiB/s disk would mean the nixl path, not the device, is the limit.
+Keeping `L1_TOKENS` here is also what stops a stale value from leaking through a copied script — the A100 runbook's warning about the H100's 284,224 in
+`hicache_eval/scripts/models.sh:21` now applies to the A100's 281,216 as well.
 
 ### 9.3 Go/no-go (starter kit §0, made concrete)
 
-**Status:** rules fixed 2026-09-17; no verdict yet: Week 1 needs §3.5, the simulation needs Weeks 2-3, the serve verdict needs §7.1 rows 4-5. X must
-be written to `constants.json` (§9.2) before the first row 4 cell.
+**Status:** rules fixed 2026-09-17 and unchanged by the port (they are statistical rules, not hardware ones); no verdict yet on this box. Week 1 needs
+§3.5, the simulation needs Weeks 2-3, the serve verdict needs §7.1 rows 4-5. **The serve gate's *inputs* changed**: the admission-rule numbers below are
+`measured-A100` and are re-measured by §5.4. X must be written to `constants.json` (§9.2) before the first row 4 cell.
 **Goal:** three explicit stop/continue thresholds so the study can end in a week on a negative Week-1 result instead of after the serving campaign, and
 so a serve-phase "win" is a paired, CI-backed statement rather than a crossover read off two curves.
 **Runs on:** none: a decision step over the §3.5 output, the simulator output and the §9.1 tables.
@@ -2922,21 +3199,26 @@ No commands: the inputs are produced by §3.5, the simulator (short version item
   `fraction(1 s) < 10 %` of session-token-seconds**: parking cannot free much, stop or change workload. (Not "pool-seconds": a trace-only computation
   has no pool.) With an estimated 6.6-9.9 s turn against a ~2.08 s mean gap (0.71 s median) f is ~0.8 at c=1 and ~0.9 at c=8: expect a small
   `fraction(1 s)` at scale 1 unless the gap tail is heavy; that number is the Week-1 result.
-- **Weeks 2-3 (simulate):** with the measured tier costs (§5.4: `restore(L) = 0.058 s + L x 131,072 / 0.623 GiB/s` for L3, `0.048 s + L x 131,072 /
-  7.75 GiB/s` for L2, `recompute(L)` from the measured curve), in the PL-like regime the deadline policy must free **>= X % of idle-session memory-time**
+- **Weeks 2-3 (simulate):** with the tier costs **measured on this box** (§5.4 block D: `restore(L) = L3_intercept + L x 131,072 / L3_GiBps`, likewise
+  for L2, and `recompute(L)` from this box's re-fitted curve — the A100 forms were `0.058 s + L x 131,072 / 0.623 GiB/s` and `0.048 s + L x 131,072 /
+  7.75 GiB/s`), in the PL-like regime the deadline policy must free **>= X % of idle-session memory-time**
   (X fixed in `constants.json` before the runs; 20 % is the proposed bar) **at an unchanged p95 TTFT SLO, over >= 30 simulated sessions per bin**; else
   no-go. "0.5 pp" is a hit-rate unit from the negative results (starter kit §0) and is not the criterion here.
 - **Serve (rows 4-5):** go only if BOTH hold: (i) paired p50 (restore - control) TTFT **< 0 with a 95 % CI excluding 0 over >= 30 pairs per (pooled,
   §6.5) turn-index bin, at median queue depth ~0 in the window**, and (ii) **>= X % idle-session memory-time freed vs the same-pool HBM-only arm**; a
-  "crossover" without a CI is a dead heat until shown otherwise (`hicache_eval/HANDOFF.md:144`, the "L3 crosses recompute at R=2" row; `:134` at HEAD
-  `6ec32e6b7`). A tier is admissible only if `bandwidth(tier) > b*P` (§5.4). Measured idle, single-stream for the 32B: L2 clears the bar 52x, L3 4.2x,
-  and an L3 hit takes 0.24-0.54x of the recompute TTFT at all 7 lengths, so both tiers are admissible at idle; the open question for rows 4-6 is whether
-  L3 still pays when concurrent restores share a ~0.68 GiB/s SSD and the `timeout` policy cuts them off. (The 8B is the counter-example on this box:
-  L3 = 0.51x its bar, loses 7/7.)
+  "crossover" without a CI is a dead heat until shown otherwise (`hicache_eval/HANDOFF.md:144`, the "L3 crosses recompute at R=2" row). A tier is
+  admissible only if `bandwidth(tier) > b*P` (§5.4), and **on this box neither side of that inequality is measured yet**. `measured-A100`, idle and
+  single-stream for the 32B: L2 cleared the bar 52x, L3 4.2x, and an L3 hit took 0.24-0.54x of the recompute TTFT at all 7 lengths. Both sides move
+  here and in opposite directions — `P` up (native FP8 on SM90, so the bar rises), the disk up 2.8x — so **§5.4 blocks C and D are a go/no-go input,
+  not a detail**. The open question for rows 4-6 is then the same one the A100 could not answer: whether L3 still pays when concurrent restores share
+  the device and the `timeout` policy cuts them off — except that on the A100 it demonstrably did not, for four diagnosed reasons (§7.0), three of which
+  this box's disk substantially relieves and one of which (the prefetch-admission cap) it does not.
 
 **Expected result:** not yet measured at any of the three gates. Week 1: one `fraction(1 s)` per (source, c) for both decode-rate ends, compared with
 10 %. Weeks 2-3: freed memory-time in % vs X at unchanged p95 TTFT. Serve: per row 4 and row 5, the paired p50 difference with its CI and the freed
-memory-time in % vs the same-pool HBM-only arm (e). Write each verdict and its inputs into `constants.json`.
+memory-time in % vs the same-pool HBM-only arm (e). Write each verdict and its inputs into `constants.json`. **Gate zero, new and cheap:** after §5.4
+blocks C and D, compute `L3_GiBps / (b x P)` and the 7-length L3-vs-recompute comparison. If L3 is not admissible at idle on this box, rows 5, 6 and 9
+are skipped and the study reports that — a one-hour answer to a question that cost the A100 campaign a day.
 **Expected lessons:** Week 1 below 10 % means the trace has too little idle context behind >= 1 s gaps for any parking policy to matter, and the
 serving weeks are skipped or the workload changed; above it, the simulation says whether a tier's restore cost eats the freed memory-time before any
 GPU time is spent. In the serve gate a negative paired difference with a CI that includes 0 is "no effect shown", not "slightly worse", and a freed
@@ -2950,32 +3232,32 @@ This section is the list of failure modes that each cost a wrong number or a los
 ones). It exists so a reader can check, before each step, which trap applies to it; each line ends with the step it protects. At its end the reader
 has read every trap once and knows where to look when a number looks too good.
 
-**Status:** living list, last checked 2026-09-18 against the checkout (`6ec32e6b7`) and the live box.
+**Status:** living list, last checked 2026-09-21 against the checkout (`d608a20d4`) and this box. Traps that were A100-specific have been rewritten rather than deleted, so the reason each one existed is still readable.
 **Goal:** name, for every step of §2-§9, the mistake that would silently invalidate it, so the step's **If it differs** line has a known cause to point at.
 **Runs on:** none (read before the step it protects).
 **Touches:** read-only.
 **Takes:** ~5 min to read; GPU idle.
 
 - Paired control, not idle baseline; salt control seeds per process; assert `cached_storage` is NaN on control rows (HANDOFF §3) (protects §6.5, §7.2 step 7).
-- `rm -rf $L3_DIR/*` silently fails past ~10k files, use `find -mindepth 1 -delete` (a 32B cell writes up to ~33k conversation pages plus ~10k control pages = ~85k files: 64 conv x 32.7K, 2 files per 8 MiB page, §5.3); `flush_cache` 400s until fully idle incl. HiCache queues (`scheduler.py:4779-4785`), poll the flush, never `hicache_backup_tokens_total` (protects §7.2 steps 1 and 4).
+- `rm -rf $L3_DIR/*` silently fails past ~10k files, use `find -mindepth 1 -delete` (a 32B cell writes up to ~33k conversation pages plus ~10k control pages = ~85k files: 64 conv x 32.7K, 2 files per 8 MiB page, §5.3; the A100's `C18/` cell wrote 312 GiB = ~78k files); `flush_cache` 400s until fully idle incl. HiCache queues (`scheduler.py:4779-4785`), poll the flush, never `hicache_backup_tokens_total` (protects §7.2 steps 1 and 4).
 - `pkill -f` AND `pgrep -f <name>` match the shell that runs them when the pattern is on that shell's command line (`bash -lc '... pgrep -f sglang ...'` never sees zero; a wait loop did that on 2026-09-17): run them from a script file, or use `server.pid`, a marker file or a log line. `py-spy record -s` hangs on a ~100 GB-RSS scheduler (`py-spy dump --nonblocking` only) (protects §7.2 step 11, §8 py-spy block).
-- nixl L3 cleaner evicts at 80 %/70 % of the filesystem: sessions parked across long gaps are the oldest entries; there is no byte cap for nixl (`L3_MAX_SIZE` is file-backend only), lower the band via extra-config `l3_cleaner_high_watermark`/`_low_watermark` (§5.1); log `storage` per turn and treat cleaner evictions as a metric (protects §5.3 cleaner budget, §9.1).
-- NVMe LBA is 4 KiB: O_DIRECT needs every nixl file to be a multiple of 4096, and nixl L3 = 2 files per page (K, V): Qwen3-32B-FP8 fp8 KV, page 64: 8,388,608 B per page = 2 x 4,194,304 B, OK and confirmed (`O_DIRECT is active`); file counts in `l3_stats.json` are 2 x pages. The code never falls back on EINVAL (`nixl_utils.py:286-296`), so any other model/page size either passes that check or sets `SGLANG_HICACHE_NIXL_USE_DIRECT_IO=0`; record `lsblk -o LOG-SEC /dev/nvme0n1` in `constants.json` (protects §2.2, §5.2, §9.2).
-- Working set must exceed L1+L2 or every arm ties `nohicache` (HANDOFF §5); P0 is the negative case, PL the L3 test. With the 32B, auto L1 + `--hicache-size 100` is 1,044,160 tokens (41.8 sessions of 25K): L3 is never read there, by construction (§5.3) (protects §5.3, §7.1 rows 4-5).
+- nixl L3 cleaner evicts at 80 %/70 % **of the filesystem**, and on this box that is 1.82 TiB / 1.59 TiB of a 2.27 TiB disk, so the default would **never fire within a cell and then fire mid-campaign**: §5.2 pins `l3_cleaner_high_watermark: 30, l3_cleaner_low_watermark: 20` in `l3_extra.json` and the §5.2 assert block checks the log line says `high=30.0% low=20.0%`. Sessions parked across long gaps are the oldest entries, so a firing cleaner is a second eviction policy inside the cell; there is no byte cap for nixl (`L3_MAX_SIZE` is file-backend only). Log `storage` per turn and treat cleaner evictions as a metric (protects §5.3 cleaner budget, §9.1).
+- O_DIRECT needs every nixl file to be a multiple of the logical sector size, and nixl L3 = 2 files per page (K, V): Qwen3-32B-FP8 fp8 KV, page 64: 8,388,608 B per page = 2 x 4,194,304 B. **This disk's LBA is 512 B** (the A100's NVMe was 4 KiB), so the constraint is strictly weaker and the arithmetic holds with room to spare; the `O_DIRECT is active` line is nevertheless asserted on every three-tier boot (§5.2) because it has not yet been seen on `vdc`. File counts in `l3_stats.json` are 2 x pages. The code never falls back on EINVAL (`nixl_utils.py:286-296`), so any other model/page size either passes that check or sets `SGLANG_HICACHE_NIXL_USE_DIRECT_IO=0`; record `lsblk -o LOG-SEC /dev/vdc` in `constants.json` (protects §2.2, §5.2, §9.2).
+- Working set must exceed L1+L2 or every arm ties `nohicache` (HANDOFF §5); P0 is the negative case, PL the L3 test. With the 32B, auto L1 + `--hicache-size 100` is ~1.46M tokens here (~58 sessions of 25K; it was 1,044,160 on the A100): L3 is never read there, by construction (§5.3). **The opposite error is just as fatal and is the one that actually happened:** pools far *below* the live set make every arm tie too, because TTFT becomes admission queueing (`C18/`: L1+L2 = 157K against a live set of ~500K, three-way tie, §7.0) (protects §5.3, §7.1 rows 4-5).
 - Turn index == rep index == queue depth in a replay (bin TTFT by `num_queue_reqs` at send time via the `start_times` hunk, never by pool); a fixed `--num-prompts` lets the load drain before late turns (24 conv at c=12 is two waves), so use >= 5 x c conversations and report turn-index bins only over the window where in-flight == N (protects §7.1, §9.1).
 - With gaps, in-flight HTTP requests << `--max-concurrency` (the intended "N live sessions" semantics, say so); warmup replays the whole first conversation (`serving.py:1431-1449`), keep `turn_meta` off the warmup input; `--agentic-gap-scale 0` == unpatched client, use it as the "no idle window" control (protects §4.1, §7.2 steps 3 and 7).
 - Starter-kit flag mismatches: `--hicache-storage-prefetch-timeout` does not exist; `page_first_direct`+`kernel` becomes `direct`; `--radix-eviction-policy fifo` is rejected; timeout defaults on the live unified path are 1.0/0.25/no max, not the dead HiRadixCache 2.0/0.1/30 (pass them explicitly, §5.1) (protects §5.1, §5.2).
 - `token_usage` excludes radix-cached KV (`pool_stats_observer.py:221-224`); the gauge integral is pool occupancy, ~full under LRU for every arm, so idle-session memory-time comes from the per-turn tier split (§6.4); gauges freeze while idle and refresh only per prefill batch / `--decode-log-interval` decode steps; stop the sampler before the post-run flush (protects §6.4, §7.2 step 8).
 - `prefetched_tokens_total` counts raw L3->host volume before prefix dedup (use `prefill_effective_tokens_total{storage_hit}` for tokens used); `prefetch_bandwidth`/`backup_bandwidth` are empty for nixl and file, derive L3 BW from counters + iostat (protects §6.1, §8 metrics row, §9.1).
-- Default nixl dir is `/tmp/hicache_storage` = 84 GB tmpfs here (O_DIRECT falls back to buffered): always set `SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR`. The VM is stopped every night, so **the SSD is blank EVERY morning**: redo §2.2 (guarded mkfs + mount; the fstab line is already present, never append it again) before `docker start sglang_hicache`. `/mnt/nvme` is also wiped on host-maintenance restarts (`onHostMaintenance=TERMINATE`, `automaticRestart=TRUE`): on that boot `nofail` fails silently and nixl writes "L3" to the root PD with no error, so run the §2.2 gate before every `docker start` and the step-0b preflight before every cell (protects §2.2, §5.2, §7.2 step 0b).
-- 167 GB RAM, no swap: `--hicache-size` <= 64. 100 DOES boot (762,944 tokens, all of 2026-09-17) but leaves ~8-28 GiB `free` (57-62 GiB available); the Claude Code harness then kills background Bash waiters ("system is running low on memory"): watch long runs through a marker file / log line (Monitor). With the 32B it also makes L3 unreachable (§5.3). 12 vCPU shared by scheduler, HiCache threads, tokenizer and client (the hicache_eval plan's caveat 17, `hicache_eval/hicache_eval_plan.md:332`, assumed 26): watch scheduler CPU in `top`, keep client concurrency <= 16 (the 32B saturates near c ~ 8, estimate), run a py-spy census once (protects §5.3, §7.2 step 3, §8 py-spy block).
-- `fa3` is unusable on this A100 (decode CUDA-graph capture fails: `scheduler_metadata must have shape (metadata_size)`); SM80 default is `flashinfer`; pin `--attention-backend triton` with fp8_e5m2 KV, the only measured combination. FP8 checkpoints run as weight-only FP8 Marlin (W8A16), automatically: P is 0.53x the H100's DeepGEMM path, and the first boot in a new container JIT-compiles for 10.6 min (readiness timeout >= 2400 s, `START_TIMEOUT_S`) (protects §5.2, §2.6).
-- Qwen3-8B cannot show an L3 benefit on this box (bar 1.22 GiB/s vs 0.625 delivered: an L3 hit is 1.8-2.9x SLOWER than recompute at 7/7 lengths): smoke tests only, never the tiering model (protects §2.6, §7.1).
-- The first long prefill in a fresh container took 9.0 s (one-time warm-up): send one discarded long probe after creating a container and never recreate it between measured stages (`docker rm` also drops the warm JIT cache) (protects §2.3, §7.2 step 3).
-- L3 delivery is the SSD ceiling (~0.68 GiB/s read, ~0.38 GiB/s write), shared by all concurrent restores and backups; the default `timeout` budget (1 s + 4,096 tok/s) covers one idle 32B restore (5,104 tok/s) but not two overlapping ones (derived, §5.1) (protects §5.1, §7.1 row 6).
-- `hicache_eval/.current_results` points at a frozen campaign (today `20260917_a100_gcp_32b70b_fp8kv`, listed in `hicache_eval/.frozen_results`): any reused hicache_eval driver that sources `env.sh` refuses to run until `RESULTS` points at a new dir (`env.sh:6-12`). Never write agent_cache results into `hicache_eval/results/` (protects §5.4 re-check procedures, §11).
-- Docker group is live in new login shells (verified 2026-09-17); the toolkit stage restarts dockerd (kills containers) only when the `nvidia` runtime is not yet registered (it is); the setup script's printed `-v` path is right only with the uncommitted `setup-gpu-docker.sh:179` edit; container-written files are `root:root` on the host: the L3 bucket dirs (wipe as root), `agent_cache/results`, `agent_cache/traces`, `python/**/__pycache__`, `git apply` output and the HF cache (`chown -R wanhr:wanhr`) (protects §2.1, §7.2 step 12, §11).
-- Never leave a patch under `python/` (HANDOFF §7; `91d480573` -> `2cb739b9a`); archive under `agent_cache/patches/` and `results/<stamp>/patches/` (protects §4.3, §11).
+- Default nixl dir is `/tmp/hicache_storage`, which on this box is the **root disk** (`/tmp` is not a tmpfs here, §1 block C): ~4x slower than `/mnt/ssd` and completely silent, so always set `SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR`. **The A100 box's "the SSD is blank every morning" trap is gone**: `/dev/vdc` is a persistent volume with an `fstab` UUID line and `nofail`, so there is no daily format and no start gate. What survives is the same silent failure with a lower probability — if the volume is detached or the mount fails, `nofail` lets the boot succeed and `/mnt/ssd` is an empty directory on `/` — so the §7.2 step-0b preflight runs before every cell and §2.2's one-line check before every session (protects §2.2, §5.2, §7.2 step 0b).
+- **196 GB RAM**, no swap (the A100 box had 167): `--hicache-size 96` leaves ~100 GB and is comfortable; 128 (976,576 tokens) would still boot. The A100's `<= 64` rule was a RAM rule and no longer binds — but a large host pool still makes L3 unreachable by construction (§5.3), which is the reason PL uses 18 GB. Keep enough headroom that background Bash waiters are not killed for memory: watch long runs through a marker file / log line, never a foreground wait. **16 vCPU** (the A100 had 12) shared by scheduler, HiCache threads, tokenizer and client (the hicache_eval plan's caveat 17, `hicache_eval/hicache_eval_plan.md:332`, assumed 26): watch scheduler CPU in `top`, and re-derive the concurrency ceiling from §5.4 rather than reusing the A100's "saturates near c ~ 8"; run a py-spy census once (protects §5.3, §7.2 step 3, §8 py-spy block).
+- **This GPU is SM90, and that invalidates nine measured constants** (§5.4). On Hopper the MHA default is `fa3` (not the A100's `flashinfer`), `fa3` + `fp8_e5m2` is auto-rewritten to `triton`, and FP8 checkpoints run on **native FP8**, not weight-only Marlin W8A16 (`can_auto_enable_marlin_fp8()` is `80 <= sm < 89`). Pin `--attention-backend triton` anyway so the log is unambiguous, and assert that **no Marlin line appears** in the boot log (§5.2). Never carry an A100 `P`, bar, TTFT curve or tier fit into a calculation here: they fail silently by making a cell look correctly sized (protects §5.1, §5.2, §5.4, §7.1).
+- The A100's model-choice argument ("the 32B clears the L3 bar 4.2x; the 8B loses 7/7 because its bar is 1.22 GiB/s against 0.625 delivered") is a statement about **that** GPU's `b x P` against **that** disk: both sides move here (§2.6, §5.4). The 32B stays the evaluation model for comparability, but the admission ratio must be re-derived from §5.4 blocks C and D before it is quoted (protects §2.6, §7.1, §9.3).
+- The first long prefill in a fresh container took 9.0 s on the A100 (one-time warm-up) and the first boot JIT-compiled for 10.6 min: send one discarded long probe after creating a container, keep the readiness timeout at 2400 s, and never recreate the container between measured stages (`docker rm` also drops the warm JIT cache in `/root/.cache/sglang`). Neither cost is measured on this box yet; record both on the first boot (§2.6) (protects §2.3, §7.2 step 3).
+- L3 delivery is bounded by the disk ceiling (**1.88 GiB/s = 15,418 tok/s, symmetric, measured 2026-09-21**, §2.2), and reads and writes share that one budget. The default `timeout` budget (1 s + 4,096 tok/s, so 7.10 s for a 25K restore) covered exactly one idle restore on the A100's 0.623 GiB/s and covers four here (§5.1) — a prediction, not a measurement, until §5.4 block D shows the nixl path actually reaches the device. **Measure the ceiling from `iostat` steady state at 100 % util, never from a short `dd` aggregate:** the latter overstated it by 15 % here on 2026-09-21 (protects §5.1, §7.1 row 6).
+- `hicache_eval/.current_results` points at a frozen **A100** campaign (`20260917_a100_gcp_32b70b_fp8kv`, listed in `hicache_eval/.frozen_results`): any reused hicache_eval driver that sources `env.sh` refuses to run until `RESULTS` points at a new dir (`env.sh:6-12`). Never write this box's results into `hicache_eval/results/`, and never write them into the `agent_cache/results/20260918_*` or `compare_*` dirs either — those are A100 results (protects §5.4, §11).
+- **`wanhr` is not yet in the `docker` group on this box** (§2.1): until `usermod -aG docker wanhr` has run AND a new login shell has been opened, every `docker` command fails with `permission denied ... docker.sock`, which looks like a broken daemon and is not. The toolkit stage restarts dockerd (kills containers) only when the `nvidia` runtime is not yet registered (it already is). Container-written files are `root:root` on the host: the L3 bucket dirs (wipe as root), `agent_cache/results`, `agent_cache/traces`, `python/**/__pycache__` and the HF cache (`chown -R wanhr:wanhr`) (protects §2.1, §2.6, §7.2 step 12, §11).
+- Never leave an **unarchived** patch under `python/` (HANDOFF §7; `91d480573` -> `2cb739b9a`); archive under `agent_cache/patches/` and `results/<stamp>/patches/`. **New on this box:** the §6.6 event-log patch is *committed* (`5b881454b`), so a clean `git status -- python/` no longer implies "no eval patch is active" — the two facts were equivalent on the A100 and are not here (protects §4.1, §4.3, §6.6, §11).
 - `_normalize_round_messages` strips `tool_call_id`/`name` (convert tool messages to user text; bare `role: tool` is accepted at source level only, not run end to end, §3.3); empty `messages` turns are dropped by the loader and desync `pre_gap` (merge assistant-only iterations forward in the converter) (protects §3.3, §4.4).
 - AIPerf's idle guard compresses gaps > 10 s at low concurrency; keep c high or raise `--system-idle-gap-cap-seconds` (protects §3.4, §7.1 row 7).
 - A reply shorter than one page (64 tokens) is invisible to `cached_tokens`: prefix matching is page-floored, so `floor64(prompt + reply)` = `floor64(prompt)` and the usage-based reuse check reads the same whether the reply hit or not. The §4.4 gap trace has 16-token replies: prove reuse there with `--check-ids`, or use replies >= 128 tokens (protects §4.6 dry run, §4.4 block 5).
@@ -2984,8 +3266,9 @@ has read every trap once and knows where to look when a number looks too good.
 **Expected result:** every trap names the step it protects and every step's **If it differs** line can be traced to one of them; no new trap has been
 added without a step reference.
 **Expected lessons:** the traps cluster into four families: a control that was not a control (paired, salted, asserted), a store that was not where it
-was assumed to be (tmpfs, root PD, frozen dir), a process that matched itself (pgrep, py-spy), and a gauge that measured the pool instead of the policy;
-a new anomaly is checked against those four before any new mechanism is proposed.
+was assumed to be (the root disk instead of `/mnt/ssd`, a frozen results dir), a process that matched itself (pgrep, py-spy), and a gauge that measured
+the pool instead of the policy. This port adds a fifth family: **a constant that belonged to another GPU** (§5.4) — the only one of the five that leaves
+no trace in any log. A new anomaly is checked against those five before any new mechanism is proposed.
 
 ---
 
@@ -2996,14 +3279,17 @@ commit. It exists because container-written files are root-owned, the repo root 
 `main` (HANDOFF §7). At its end the reader can create the stamp dir for a new campaign, confirm the tracking rules, and make a commit that touches
 only `agent_cache/` with `python/` pristine.
 
-**Status:** partly in place as of 2026-09-18: `agent_cache/.gitignore`, `.current_results` (= `20260917_2303`), `results/20260917_2303/` (empty),
-`scripts/convert_lmcache.py`, `traces/lmcache_agentic_trace.json` (68,429,742 B) and `traces/lmcache_agentic_trace.json.stats.json` exist and are
-`wanhr`-owned; `patches/`, the shell scripts under `scripts/`, `analyze.py` and `versions.txt`/`constants.json` under the stamp dir do not exist yet.
+**Status:** mostly in place as of 2026-09-21, because it is all committed: `agent_cache/.gitignore`, `patches/0002-hicache-event-log.patch`,
+`templates/*.jinja`, `traces/lmcache_agentic_trace.json` (68,429,742 B) + `.stats.json`, and `scripts/{convert_lmcache,replay_agentic,replay_template,timeline}.py`
+plus `{start_server,start_client,stop_server,run_compare}.sh` all exist and are `wanhr`-owned. `results/` holds the **A100** run dirs (`20260918_*`,
+`compare_*`) and `results/.current_run`. **Missing on this box:** `agent_cache/.current_results` (the stamp pointer; §2.4 block 6 creates it), this box's
+stamp dir, `versions.txt`, `constants.json`, and `scripts/analyze.py`.
 **Goal:** a layout in which every result is tracked through the nested `.gitignore`, every reused script carries this box's constants, and no commit
 can carry a `python/` patch or a root-owned file.
 **Runs on:** host, as `wanhr` (`chown` needs sudo). `/home/wanhr/sglang/agent_cache` on the host = `/sgl-workspace/sglang/agent_cache` in the container.
 **Touches:** `agent_cache/.current_results`, `agent_cache/results/<stamp>/`, ownership of `agent_cache/results` and `agent_cache/traces`; the
-revert block discards the working-tree diff under `python/` (destructive by design, guarded: it refuses unless that diff is archived under `agent_cache/patches/`).
+revert block discards the working-tree diff under `python/` (destructive by design, guarded: it refuses unless that diff is archived under
+`agent_cache/patches/`). **On this box the revert block normally has nothing to do**, because the only eval patch is committed (§6.6).
 **Takes:** seconds each; GPU idle.
 
 Layout (tree as planned; `traces/` and `results/` are what exists today):
@@ -3013,7 +3299,8 @@ agent_cache/
   agent-kv-tiering-evaluation-starter-kit.md   RUNBOOK.md (this)
   .gitignore            copy of dflash_eval/.gitignore (!*.log !*.csv !*.png !*.jsonl; root ignores them at .gitignore:62,173,182,187) + traces/*.parquet (+ data/)
   .current_results      bare stamp, e.g. 20260917_0900 (dflash convention, dflash_eval/scripts/run_track.sh:44-51); NOT a full path (hicache_eval/.current_results style)
-  patches/              0002-hicache-event-log.patch (§6.6; git apply / git apply -R); 0001-agentic-trace-pre-gap.patch only if the §4.1 fallback is taken; 0003-eval-tier-log.patch only for §6.3
+  patches/              0002-hicache-event-log.patch (§6.6 — COMMITTED at 5b881454b, so this file is the record and the way to remove it, not something to apply);
+                        0001-agentic-trace-pre-gap.patch only if the §4.1 fallback is taken; 0003-eval-tier-log.patch only for §6.3
   traces/               lmcache_agentic_trace.json (+ .stats.json, on disk as lmcache_agentic_trace.json.stats.json), gaptest.json; converter output only
   templates/            qwen3_replay_nothink.jinja (the §5.2 default), qwen3_replay_think.jinja; generated by scripts/replay_template.py make (§4.5), tracked
   scripts/
@@ -3024,18 +3311,20 @@ agent_cache/
     stop_server.sh      kills the .current_run server, waits for the pid to exit and port 30000 to free
     env.sh              from dflash env.sh:7-29 (DOCKER/CONTAINER=sglang_hicache/PORT/BASE_URL, stamp -> RESULTS, readlink guard) + hicache env.sh, whose knobs now come from the environment:
                         L3_DIR (:4, default /var/hicache_l3), RESULTS (:5), frozen-dir guard (:6-12), MODEL (:15), NVME_DEV (:16, default vda), KV_BYTES_PER_TOKEN (:17, default 147456),
-                        PAGE_SIZE=64 (:18), l3_wipe (:22). Set L3_DIR=/mnt/nvme/hicache_l3 NVME_DEV=nvme0n1 MODEL=Qwen/Qwen3-32B-FP8 KV_BYTES_PER_TOKEN=131072 as
-                        run_a100_rerun_c2.sh:24-30,44-45 does; AGENT_CACHE_HOST=/home/wanhr/sglang/agent_cache, _CTR=/sgl-workspace/sglang/agent_cache
+                        PAGE_SIZE=64 (:18), l3_wipe (:22). Set L3_DIR=/mnt/ssd/hicache_l3 NVME_DEV=vdc MODEL=Qwen/Qwen3-32B-FP8 KV_BYTES_PER_TOKEN=131072 as
+                        run_a100_rerun_c2.sh:24-30,44-45 does for the A100 paths; AGENT_CACHE_HOST=/home/wanhr/sglang/agent_cache, _CTR=/sgl-workspace/sglang/agent_cache
     models.sh           one primary entry qwen32b: MODEL=Qwen/Qwen3-32B-FP8, KV_BYTES_PER_TOKEN=131072, MODEL_EXTRA_ARGS="--kv-cache-dtype fp8_e5m2 --attention-backend triton --mem-fraction-static 0.85",
-                        REASONING_PARSER=qwen3, L1_TOKENS=281216, P_TOK_S=1226, BAR_GIBPS=0.150, L2_GIBPS=7.75, L3_GIBPS=0.623, HOST_TOKENS_AT_100GB=762944 (all measured on this box, §5.4).
-                        Do NOT copy hicache_eval/scripts/models.sh:21 (L1_TOKENS=284224 is the H100 value)
+                        HOST_TOKENS_AT_100GB=762944 (arithmetic, box-independent). **Leave L1_TOKENS, P_TOK_S, BAR_GIBPS, L2_GIBPS and L3_GIBPS UNSET (or null)
+                        until §5.4 measures them on this box**, then fill from constants.json (§9.2) — never from the A100's 281216 / 1226 / 0.150 / 7.75 / 0.623,
+                        and never from hicache_eval/scripts/models.sh:21 (L1_TOKENS=284224, the H100 value). Three GPUs' constants now exist for this model; only one set is this box's
     arms.sh             arm_flags(): hbm_lru | hbm_host | three_tier | three_tier_p | hbm_lru_p | three_tier_wc | hbm_host_p (§5.2); arm_pressure(): P0 | PH | PL -> L1, HSIZE (§5.3)
-    launch.sh           dflash launch.sh:15-69 skeleton (docker exec -d, append log, health loop) + 'fired up' grep and startup_facts from hicache start_server.sh:40-63, incl. its knobs
-                        ATTENTION_BACKEND (:30-34), START_TIMEOUT_S (:41-43, default 900: use 2400), server_args.txt dump (:35), server.pid (:38); stop via server.pid or a script file
-    bench.sh            one cell = §7.2; client runs INSIDE the container (host has no python tooling)
+    launch.sh           superseded by the committed agent_cache/scripts/start_server.sh (ARM, LEVEL, L1_TOKENS/HOST_GB overrides, own run dir, 2400 s readiness, startup facts, SGLANG_LOG_MS=1).
+                        Repointed at /mnt/ssd and given the 30/20 cleaner watermarks + a /dev/vdc gate on 2026-09-21; its LEVEL table (P0/PH/PL) matches §5.3 but has
+                        no PW row, so pass L1_TOKENS/HOST_GB explicitly for that level. Stop via server.pid or stop_server.sh
+    bench.sh            one cell = §7.2; client runs INSIDE the container (host has no python tooling). run_compare.sh is the existing multi-arm driver (it produced §7.0)
     run_arms.sh         dflash run_track.sh:43-57,75-93,96-134 skeleton: RUN/.current_results, DRY_RUN, preflight, cell_done resume, l3_wipe+droppc per cold arm, failures.log, cleanup trap; reuse
                         gate() (NVMe source + >= 110 GiB RAM + stale-server stop), wipe() (verified zero files), boot() (a failed boot ends the stage), postboot_hicache() (cleaner dir == L3 dir,
-                        O_DIRECT line), health(), measured() from hicache_eval/scripts/run_a100_rerun_c2.sh:48-88; progress via marker lines ('STAGE DONE' / 'STAGE FAILED', :142), never via pgrep
+                        O_DIRECT line), health(), measured() from hicache_eval/scripts/archive/run_a100_rerun_c2.sh:48-88; progress via marker lines ('STAGE DONE' / 'STAGE FAILED', :142), never via pgrep
     convert_lmcache.py  §3.3        analyze.py  per-turn TTFT bins, restore-hit split, memory-time integral, P fit (analyze_models.py:43-50)
     hcommon.py probe.py cachectl.py exp0.py exp1.py telemetry.sh   copy the CURRENT working-tree versions of hicache_eval/scripts (uncommitted; they carry the env knobs: hcommon.py HICACHE_FLUSH_TIMEOUT
                         :132-151, writeload.py --idx-offset :113 + SIGTERM stop :119, exp2.py NVME_DEV :31), changing only the sys.path / source-path constants (cachectl.py:5, probe.py:14,
@@ -3055,9 +3344,9 @@ echo "stamp: $(cat "$AC/.current_results")"
 echo "results dir: $(ls -d "$AC/results/$(cat "$AC/.current_results")" 2>&1)"
 echo "versions.txt: $(ls -l "$AC/results/$(cat "$AC/.current_results")/versions.txt" 2>&1 | sed 's#.*/##')"
 ```
--> prints `stamp: 20260917_2303` (today's value, checked 2026-09-18; a new campaign gets a fresh stamp by deleting the file first), `results dir:
-/home/wanhr/sglang/agent_cache/results/20260917_2303`, and `versions.txt: ... No such file or directory` until §2.4's last line has run. A stamp
-containing `/` is the hicache_eval style and breaks `$RUNDIR` in §5.2.
+-> on this box the first run **creates** the stamp (`.current_results` does not exist as of 2026-09-21) and prints `stamp: 20260921_HHMM`, `results dir:
+/home/wanhr/sglang/agent_cache/results/20260921_HHMM`, and `versions.txt: ... No such file or directory` until §2.4 block 7 has run. A stamp containing
+`/` is the hicache_eval style and breaks `$RUNDIR` in §5.2. Do not reuse an `20260918_*` dir: those are A100 results.
 
 ```bash
 # host. Check the nested .gitignore: evidence files re-included, raw data excluded (paths need not exist: git check-ignore matches patterns)
@@ -3068,14 +3357,17 @@ echo "client.jsonl under results: $(git -C /home/wanhr/sglang check-ignore -q ag
 echo "parquet under traces: $(git -C /home/wanhr/sglang check-ignore -q agent_cache/traces/x.parquet && echo ignored || echo TRACKED)"
 echo "pycache under scripts: $(git -C /home/wanhr/sglang check-ignore -q agent_cache/scripts/__pycache__/x.pyc && echo ignored || echo TRACKED)"
 ```
--> prints `gitignore rules: !*.log !*.csv !*.png !*.jsonl *.parquet data/` (the file as of 2026-09-18), `server.log under results: tracked`,
-`client.jsonl under results: tracked`, `parquet under traces: ignored`, `pycache under scripts: ignored` (all four verified 2026-09-18); an
-upper-case `IGNORED`/`TRACKED` means the nested `.gitignore` is missing or was edited.
+-> prints `gitignore rules: !*.log !*.csv !*.png !*.jsonl *.parquet data/` (the file as of 2026-09-21), `server.log under results: tracked`,
+`client.jsonl under results: tracked`, `parquet under traces: ignored`, `pycache under scripts: ignored`; an upper-case `IGNORED`/`TRACKED` means the
+nested `.gitignore` is missing or was edited.
 
 Git hygiene: commits touch only `agent_cache/` (results tracked through the nested `.gitignore`); before every commit run the revert block below (the
 one revert procedure of this runbook, referenced from §4.3 step 3 and §6.3) and confirm `git status` shows nothing under `python/`;
 `chown -R wanhr:wanhr agent_cache/results agent_cache/traces` first (container writes are root-owned, as are `python/**/__pycache__`); raw datasets
-stay in `/home/wanhr/data/` (untracked, outside the repo); never commit `/mnt/nvme` contents.
+stay in `/home/wanhr/data/` (untracked, outside the repo); never commit `/mnt/ssd` contents.
+**One asymmetry to keep in mind on this box:** the §6.6 event-log patch is committed (`5b881454b`), so it is *not* something the revert block removes and
+*not* something a clean `git status` rules out. The revert block below still guards against a newly authored, unarchived patch under `python/`; it just
+has nothing to do in the normal case.
 
 ```bash
 # host, as wanhr. Before EVERY commit, step 1: revert python/ (DISCARDS the applied eval patches under python/). Each archived patch under agent_cache/patches/
@@ -3089,8 +3381,11 @@ done
 [ -z "$(git -C "$REPO" status --short -- python/)" ] || { echo "STOP: python/ still differs after reverting every archived patch; archive the remaining diff first (§4.3 block 1 / §6.3), then rerun:"; git -C "$REPO" status --short -- python/; false; }
 [ -z "$(git -C "$REPO" status --short -- python/)" ] && git -C "$REPO" checkout -- python/ && echo "python/ modified files: $(git -C "$REPO" status --short -- python/ | wc -l)"
 ```
--> prints one `reverted: agent_cache/patches/<name>.patch` line per archived patch that was applied (both 0001 and 0002 after §6.3; none today,
-2026-09-18: `python/` is clean and `agent_cache/patches/` does not exist, so the block prints only the last line) and then `python/ modified files: 0`.
+-> prints one `reverted: agent_cache/patches/<name>.patch` line per archived patch that is applied **as a working-tree diff**, then `python/ modified
+files: 0`. On this box today it prints **only the last line**: `python/` is clean, and although `0002-hicache-event-log.patch` is in `patches/`, its
+`git apply --check -R` succeeds against a *committed* change, so the loop's first `--check -R` would pass and the block would try to reverse-apply it —
+**which is why the loop's `git apply -R` is followed by the `git status` guard**: after such a reverse-apply `python/` is dirty, the guard prints
+`STOP: python/ still differs`, nothing is discarded, and the fix is `git checkout -- python/`. Verify with `git status --short -- python/` before and after.
 A `STOP: python/ still differs` line is followed by the `git status` paths whose changes match no archived patch: the last line does not run, nothing
 is discarded; archive them first (§4.3 block 1 for `python/sglang/benchmark/`, the §6.3 archive block for `schedule_batch.py`), then rerun. A
 `STOP: reverse-apply ... failed` line is a permission problem (root-owned file written by the container): `sudo chown -R wanhr:wanhr /home/wanhr/sglang/python`
@@ -3104,14 +3399,13 @@ sudo chown -R wanhr:wanhr /home/wanhr/sglang/agent_cache/results /home/wanhr/sgl
 echo "root-owned under agent_cache: $(find /home/wanhr/sglang/agent_cache -user root | wc -l)"
 echo "staged paths outside agent_cache: $(git -C /home/wanhr/sglang diff --cached --name-only | grep -v '^agent_cache/' | wc -l)"
 ```
--> prints `root-owned under agent_cache: 0` (0 today, 2026-09-18) and `staged paths outside agent_cache: 0`; a non-zero second value means
+-> prints `root-owned under agent_cache: 0` (0 today, 2026-09-21: nothing has run in the container yet) and `staged paths outside agent_cache: 0`; a non-zero second value means
 something under `python/`, `hicache_eval/` or `scripts/` is staged for an `agent_cache` commit: unstage it.
 
 Not reusable as workloads: `exp3.py`/`run_exp3.sh` (`bench_multiturn` synthetic rounds, skeleton only) and dflash `COMMON_*` (fa3, `--disable-radix-cache`).
 
-**Expected result:** the four blocks print `stamp: 20260917_2303`, the four tracking lines with lower-case `tracked`/`ignored`, `python/ modified
-files: 0` and `root-owned under agent_cache: 0` (all as measured on 2026-09-18); after a cell, the same blocks are what turn root-owned results into a
-committable state.
+**Expected result:** the four blocks print this box's stamp, the four tracking lines with lower-case `tracked`/`ignored`, `python/ modified
+files: 0` and `root-owned under agent_cache: 0`; after a cell, the same blocks are what turn root-owned results into a committable state.
 **If it differs:** `stamp` contains a `/`: `.current_results` was written in the hicache_eval style, rewrite it as a bare stamp. `server.log under
 results: IGNORED`: `agent_cache/.gitignore` is missing (copy `dflash_eval/.gitignore` and add `*.parquet`, `data/`). A `STOP: python/ still differs`
 line from the revert block (no `python/ modified files` line at all): archive the listed paths (§4.3 block 1 / §6.3) and rerun. `root-owned` > 0 after the chown: the file is under `agent_cache/scripts/__pycache__`

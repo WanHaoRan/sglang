@@ -29,8 +29,10 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 
 BLUE, ORANGE, AQUA, GRAY, INK, MUTED = "#2a78d6", "#eb6834", "#1baf7a", "#9a9891", "#0b0b0b", "#52514e"
+GREEN = "#2e7d32"  # three_tier_wc, distinct from the AQUA of three_tier_to
 TIER_COLOR = {"cold": GRAY, "device": BLUE, "host": ORANGE, "storage": AQUA}
-ARM_COLOR = {"hbm_lru": GRAY, "hbm_host": ORANGE, "three_tier": AQUA}
+ARM_COLOR = {"hbm_lru": GRAY, "hbm_host": ORANGE, "three_tier": AQUA,
+             "three_tier_to": AQUA, "three_tier_wc": GREEN}   # campaign 6: the two prefetch policies
 TS_RE = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d{3})?)\]\s*(.*)$")
 KV_RE = re.compile(r"(\w+)=(-?[\w./-]+)")
 
@@ -169,8 +171,9 @@ def draw_timeline(arm: str, cl: dict, sv: dict, out_png: str) -> None:
         c = TIER_COLOR[t["tier"]]
         a_req.plot([t["t0"], t["t0"] + t["ttft"]], [y, y], color=c, linewidth=4, solid_capstyle="butt")
         a_req.plot([t["t0"] + t["ttft"], t["t0"] + t["lat"]], [y, y], color=c, linewidth=1.2, alpha=0.7)
-    a_req.set_yticks(range(len(convs)))
-    a_req.set_yticklabels([f"c{c}" for c in convs], fontsize=7)
+    step = max(1, len(convs) // 32)  # at most ~32 labels: 128 conversations would otherwise print as a black bar
+    a_req.set_yticks(range(0, len(convs), step))
+    a_req.set_yticklabels([f"c{c}" for c in convs[::step]], fontsize=7)
     a_req.invert_yaxis()
     style(a_req, f"{arm}: requests per conversation (thick = send to first token, thin = decode); color = where the prefix was found",
           "conversation")
@@ -295,7 +298,8 @@ def draw_compare(results: list, out_png: str) -> None:
     style(a_cdf, "TTFT of returning turns (ECDF)", "fraction of turns")
     a_cdf.set_xlabel("seconds", fontsize=8, color=MUTED)
     a_cdf.legend(fontsize=8, frameon=False, loc="lower right")
-    style(a_cdf0, "TTFT of first turns (ECDF; cold prefill under the 32-way start)", "fraction of turns")
+    n_conv = max(len({t["conv"] for t in cl["turns"]}) for _, cl, _, _ in results)
+    style(a_cdf0, f"TTFT of first turns (ECDF; cold prefill under the {n_conv}-way start)", "fraction of turns")
     a_cdf0.set_xlabel("seconds", fontsize=8, color=MUTED)
     a_cdf0.legend(fontsize=8, frameon=False, loc="lower right")
     # tier share of returning turns, one bar per arm, 2px gaps between segments
@@ -316,7 +320,7 @@ def draw_compare(results: list, out_png: str) -> None:
     a_tier.invert_yaxis()
     style(a_tier, "where returning turns found their prefix", None)
     a_tier.legend(handles=[Patch(color=TIER_COLOR[k], label=("cold/recompute" if k == "cold" else k)) for k in ("device", "host", "storage", "cold")],
-                  fontsize=8, frameon=False, loc="lower right", ncol=4)
+                  fontsize=8, frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.04), ncol=4)  # below the bars: any arm count
     fig.tight_layout()
     fig.savefig(out_png, dpi=130, bbox_inches="tight")
     plt.close(fig)

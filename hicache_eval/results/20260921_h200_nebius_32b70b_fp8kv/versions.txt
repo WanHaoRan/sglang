@@ -1,0 +1,18 @@
+== versions ==
+sglang_git_head: d608a20d4030a07759ec006ce8791f7cebdc4375
+sglang_upstream_base: f3ccd1c0e42926e795a4304d50935b8cbd210169 (same base as campaigns 2 and 5; commits on top touch only eval dirs and scripts/)
+sglang: 0.0.0.dev1+g30705c004
+torch: 2.13.0+cu130 cuda 13.0
+580.173.02, NVIDIA H200 (143,771 MiB, SM90)
+pcie: gen 5 x16 (nvidia-smi pcie.link.gen.max / width.max)
+image_tag: lmsysorg/sglang:nightly-dev-20260907-30705c00 (same tag as campaigns 1, 2 and 5)
+flashinfer-python 0.6.18
+nixl 1.4.1
+nixl-cu13 1.4.1
+sglang-kernel 0.4.6.post1
+transformers 5.12.1
+triton 3.7.1
+attention_backend: triton (pinned, as in campaign 5; on SM90 the fa3 default resolves to the same value because fa3 rejects fp8_e5m2 KV)
+weight kernels: 70B awq_marlin (as on the A100); 32B native FP8 through DeepGEMM (the A100 ran weight-only FP8 Marlin, W8A16)
+snapshots: Qwen/Qwen3-32B-FP8 aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df ; casperhansen/llama-3.3-70b-instruct-awq 64d255621f40b42adaf6d1f32a47e1d4534c0f14
+host: Nebius computeinstance, 16 vCPU (Xeon Platinum 8468), 196 GB RAM, Ubuntu 24.04.4, L3 on the attached 2.27 TiB virtio SSD /dev/vdc ext4 noatime,discard at /mnt/ssd/hicache_l3 (1.88 GiB/s read and write, iostat steady state at 100 % util, 2026-09-21)

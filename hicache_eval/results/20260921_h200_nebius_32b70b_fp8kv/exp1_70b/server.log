@@ -1,0 +1,837 @@
+/sgl-workspace/sglang/python/sglang/launch_server.py:63: UserWarning: 'python -m sglang.launch_server' is still supported, but 'sglang serve' is the recommended entrypoint.
+  Example: sglang serve --model-path <model> [options]
+  warnings.warn(
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[2026-09-21 21:04:35] Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[2026-09-21 21:04:35] The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.
+[2026-09-21 21:04:39] server_args={'model_path': 'casperhansen/llama-3.3-70b-instruct-awq', 'tokenizer_path': 'casperhansen/llama-3.3-70b-instruct-awq', 'tokenizer_mode': 'auto', 'tokenizer_backend': 'huggingface', 'tokenizer_worker_num': 1, 'detokenizer_worker_num': 1, 'skip_tokenizer_init': False, 'load_format': 'auto', 'model_loader_extra_config': '{}', 'trust_remote_code': False, 'context_length': 32768, 'is_embedding': False, 'enable_multimodal': None, 'revision': None, 'model_impl': 'auto', 'model_config_parser': 'auto', 'json_model_override_args': '{}', 'dtype': 'auto', 'quantization': None, 'quantization_param_path': None, 'kv_cache_dtype': 'fp8_e5m2', 'enable_fp32_lm_head': False, 'modelopt_quant': None, 'modelopt_checkpoint_restore_path': None, 'modelopt_checkpoint_save_path': None, 'modelopt_export_path': None, 'quantize_and_serve': False, 'rl_quant_profile': None, 'enable_tf32_matmul': False, 'mem_fraction_static': 0.85, 'max_running_requests': None, 'max_queued_requests': None, 'max_total_tokens': None, 'chunked_prefill_size': 8192, 'prefill_decode_interval': 0, 'enable_dynamic_chunking': False, 'max_prefill_tokens': 16384, 'prefill_max_requests': None, 'schedule_policy': 'fcfs', 'enable_priority_scheduling': False, 'disable_priority_preemption': False, 'default_priority_value': None, 'abort_on_priority_when_disabled': False, 'schedule_low_priority_values_first': False, 'priority_scheduling_preemption_threshold': 10, 'retraction_policy': 'length', 'schedule_conservativeness': 1.0, 'page_size': 64, 'c128_page_size': 16, 'swa_full_tokens_ratio': 0.8, 'disable_hybrid_swa_memory': False, 'radix_eviction_policy': 'lru', 'radix_eviction_policy_config': None, 'prefill_only_disable_kv_cache': False, 'disable_radix_cache': False, 'enable_page_major_kv_layout': False, 'enable_unified_memory': False, 'disable_chunked_prefix_cache': False, 'disable_overlap_schedule': False, 'num_continuous_decode_steps': 1, 'scheduler_recv_interval': 1, 'enable_mixed_chunk': False, 'nccl_port': None, 'dist_timeout': None, 'dist_init_addr': None, 'gated_launch_port': None, 'nnodes': 1, 'node_rank': 0, 'tp_size': 1, 'dcp_size': 1, 'pp_size': 1, 'pp_max_micro_batch_size': None, 'pp_async_batch_depth': 0, 'dp_size': 1, 'load_balance_method': 'round_robin', 'attn_cp_size': 1, 'moe_dp_size': 1, 'dwdp_size': 1, 'dcp_comm_backend': 'ag_rs', 'dcp_replicate_q_proj': None, 'enable_prefill_cp': False, 'cp_strategy': None, 'enable_dsa_cache_layer_split': False, 'enable_dsa_prefill_context_parallel': False, 'dsa_prefill_cp_mode': 'round-robin-split', 'enable_prefill_context_parallel': False, 'prefill_cp_mode': 'in-seq-split', 'enable_cp_decode_attn_tp': False, 'enable_dp_attention': False, 'enable_dp_attention_local_control_broadcast': False, 'enable_dp_lm_head': False, 'enable_tp_lm_head_all_to_all': False, 'enable_attn_tp_input_scattered': False, 'enable_shared_experts_attn_tp': False, 'enable_dense_mlp_attn_tp': False, 'enable_layernorm_sp': False, 'disable_attn_tp_gather': False, 'enable_p2p_check': False, 'device': 'cuda', 'base_gpu_id': 0, 'gpu_id_step': 1, 'random_seed': 735225341, 'mlx_enable_sampling': False, 'watchdog_timeout': 300, 'soft_watchdog_timeout': None, 'sleep_on_idle': False, 'use_ray': False, 'custom_sigquit_handler': None, 'numa_node': None, 'gc_threshold': None, 'host': '0.0.0.0', 'port': 30000, 'fastapi_root_path': '', 'smg_grpc_mode': False, 'grpc_mode': False, 'grpc_port': None, 'grpc_worker_threads': 4, 'sidecar': None, 'sidecar_args': None, 'skip_server_warmup': False, 'warmups': None, 'enable_http2': False, 'http2_max_concurrent_streams': 200, 'http2_initial_connection_window_size': 1048576, 'ssl_keyfile': None, 'ssl_certfile': None, 'ssl_ca_certs': None, 'ssl_keyfile_password': None, 'enable_ssl_refresh': False, 'api_key': None, 'admin_api_key': None, 'served_model_name': 'casperhansen/llama-3.3-70b-instruct-awq', 'weight_version': 'default', 'chat_template': None, 'hf_chat_template_name': None, 'completion_template': None, 'file_storage_path': 'sglang_storage', 'enable_cache_report': True, 'return_input_ids': False, 'return_output_ids': False, 'reasoning_parser': None, 'default_chat_template_kwargs': None, 'strip_thinking_cache': False, 'enable_strict_thinking': False, 'tool_call_parser': None, 'tool_server': None, 'sampling_defaults': 'model', 'asr_max_buffer_seconds': 60, 'asr_max_concurrent_sessions': 32, 'preferred_sampling_params': None, 'allow_auto_truncate': False, 'stream_interval': 1, 'batch_notify_size': 16, 'stream_response_default_include_usage': False, 'incremental_streaming_output': False, 'enable_streaming_session': False, 'enable_session_radix_cache': False, 'log_level': 'info', 'log_level_http': None, 'log_requests': False, 'log_requests_level': 2, 'log_requests_format': 'text', 'log_requests_target': None, 'uvicorn_access_log_exclude_prefixes': [], 'crash_dump_folder': None, 'show_time_cost': False, 'enable_metrics': True, 'smg_http_sidecar_port': None, 'enable_mfu_metrics': False, 'enable_metrics_for_all_schedulers': False, 'load_snapshot_publish_interval': 15, 'tokenizer_metrics_custom_labels_header': 'x-custom-labels', 'tokenizer_metrics_allowed_custom_labels': None, 'extra_metric_labels': None, 'bucket_time_to_first_token': None, 'bucket_inter_token_latency': None, 'bucket_e2e_request_latency': None, 'prompt_tokens_buckets': None, 'generation_tokens_buckets': None, 'gc_warning_threshold_secs': 0.0, 'decode_log_interval': 40, 'enable_request_time_stats_logging': False, 'kv_events_config': None, 'load_publish_endpoint': None, 'enable_forward_pass_metrics': False, 'forward_pass_metrics_worker_id': '', 'forward_pass_metrics_ipc_name': None, 'enable_trace': False, 'trace_modules': 'request', 'otlp_traces_endpoint': 'localhost:4317', 'export_metrics_to_file': False, 'export_metrics_to_file_dir': None, 'stat_loggers': None, 'constrained_json_whitespace_pattern': None, 'constrained_json_disable_any_whitespace': False, 'attention_backend': 'triton', 'decode_attention_backend': None, 'enable_lean_attention': None, 'prefill_attention_backend': None, 'sampling_backend': 'flashinfer', 'grammar_backend': 'xgrammar', 'radix_cache_backend': None, 'mm_attention_backend': None, 'fp8_gemm_runner_backend': 'auto', 'fp4_gemm_runner_backend': 'auto', 'bf16_gemm_backend': 'auto', 'dsa_prefill_backend': None, 'dsv4_prefill_backend': 'auto', 'dsa_decode_backend': None, 'dsa_paged_mqa_logits_backend': 'auto', 'dsa_topk_backend': 'sgl-kernel', 'disable_flashinfer_autotune': False, 'flashinfer_autotune_skip_ops': None, 'mamba_backend': 'triton', 'cuda_graph_config': {'decode': {'backend': 'full', 'max_bs': 256, 'bs': [1, 2, 4, 8, 12, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256], 'tc_compiler': 'eager', 'full_prefill_max_req': None, 'full_prefill_prefix_chunk_tokens': None}, 'prefill': {'backend': 'breakable', 'max_bs': 8192, 'bs': [4, 8, 12, 16, 20, 24, 28, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 704, 768, 832, 896, 960, 1024, 1280, 1536, 1792, 2048, 2304, 2560, 2816, 3072, 3328, 3584, 3840, 4096, 4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192], 'tc_compiler': 'eager', 'full_prefill_max_req': None, 'full_prefill_prefix_chunk_tokens': None}}, 'cuda_graph_backend_decode': None, 'cuda_graph_backend_prefill': None, 'cuda_graph_max_bs_decode': None, 'cuda_graph_max_bs_prefill': None, 'cuda_graph_bs_decode': None, 'cuda_graph_bs_prefill': None, 'cuda_graph_tc_compiler': None, 'disable_prefill_cuda_graph': False, 'disable_decode_cuda_graph': False, 'disable_cuda_graph': False, 'disable_cuda_graph_padding': False, 'enable_profile_cuda_graph': False, 'enable_cudagraph_gc': False, 'debug_cuda_graph': False, 'enable_layerwise_nvtx_marker': False, 'enable_nccl_nvls': False, 'enable_symm_mem': False, 'triton_attention_reduce_in_fp32': False, 'triton_attention_num_kv_splits': 8, 'triton_attention_split_tile_size': None, 'flashinfer_mla_disable_ragged': False, 'enable_fused_qk_norm_rope': False, 'enable_precise_embedding_interpolation': False, 'enable_fused_moe_sum_all_reduce': False, 'enable_deepseek_v4_fp4_indexer': False, 'disable_custom_all_reduce': False, 'enable_mscclpp': False, 'enable_torch_symm_mem': False, 'enable_scattered_sconv': False, 'pre_warm_nccl': False, 'enable_quant_communications': False, 'enable_flashinfer_allreduce_fusion': False, 'enforce_disable_flashinfer_allreduce_fusion': False, 'flashinfer_allreduce_fusion_backend': None, 'enable_aiter_allreduce_fusion': False, 'enable_torch_compile': False, 'enable_torch_compile_debug_mode': False, 'torch_compile_max_bs': 32, 'speculative_algorithm': None, 'uno_lora_path': None, 'speculative_draft_model_path': None, 'speculative_draft_model_revision': None, 'speculative_draft_load_format': None, 'speculative_num_steps': None, 'speculative_eagle_topk': None, 'speculative_num_draft_tokens': None, 'speculative_dflash_block_size': None, 'speculative_dspark_block_size': None, 'speculative_dspark_sps_table_path': None, 'speculative_dspark_confidence_sts_path': None, 'speculative_dspark_align_verify_tokens_to_graph_tier': False, 'speculative_accept_threshold_single': 1.0, 'speculative_accept_threshold_acc': 1.0, 'speculative_use_rejection_sampling': False, 'speculative_token_map': None, 'speculative_attention_mode': 'prefill', 'speculative_draft_attention_backend': None, 'speculative_dsa_topk_backend': 'sgl-kernel', 'speculative_draft_kv_cache_dtype': None, 'speculative_draft_window_size': None, 'speculative_moe_runner_backend': 'auto', 'speculative_moe_a2a_backend': None, 'speculative_draft_model_quantization': None, '_speculative_draft_quantization_explicitly_set': False, 'speculative_skip_dp_mlp_sync': False, 'enable_multi_layer_eagle': False, 'speculative_adaptive': False, 'speculative_adaptive_config': None, 'decoupled_spec_bind_endpoint': None, 'decoupled_spec_connect_endpoints': None, 'decoupled_spec_rank': None, 'decoupled_spec_role': 'null', 'spec_trace_dir': None, 'speculative_ngram_min_bfs_breadth': 1, 'speculative_ngram_max_bfs_breadth': 10, 'speculative_ngram_match_type': 'BFS', 'speculative_ngram_max_trie_depth': 18, 'speculative_ngram_capacity': 10000000, 'speculative_ngram_external_corpus_path': None, 'speculative_ngram_external_sam_budget': 0, 'speculative_ngram_external_corpus_max_tokens': 10000000, 'ep_size': 1, 'moe_a2a_backend': 'none', 'enable_w4a4_mxfp4_megamoe': False, 'deepep_v2_mode': 'direct', 'moe_runner_backend': 'auto', 'flashinfer_mxfp4_moe_precision': 'default', 'deepep_mode': 'auto', 'fuseep_mode': 2, 'deepep_dispatcher_output_dtype': 'auto', 'ep_num_redundant_experts': 0, 'ep_dispatch_algorithm': None, 'init_expert_location': 'trivial', 'enable_eplb': False, 'eplb_algorithm': 'auto', 'eplb_rebalance_num_iterations': 1000, 'eplb_rebalance_layers_per_chunk': None, 'eplb_min_rebalancing_utilization_threshold': 1.0, 'expert_distribution_recorder_mode': None, 'expert_distribution_recorder_buffer_size': 1000, 'expert_balancedness_report_mode': 'off', 'deepep_config': None, 'moe_dense_tp_size': None, 'elastic_ep_backend': None, 'enable_elastic_expert_backup': False, 'mooncake_ib_device': None, 'enable_waterfill': False, 'ep_join_mode': None, 'ep_join_rank_offset': 0, 'elastic_ep_initial_size': None, 'max_ep_size': None, 'elastic_ep_scale_timeout': 600, 'elastic_ep_rejoin': False, 'disable_flashinfer_cutlass_moe_fp4_allgather': False, 'disable_shared_experts_fusion': False, 'enforce_shared_experts_fusion': False, 'max_mamba_cache_size': None, 'mamba_ssm_dtype': None, 'mamba_max_states_per_path': -1, 'enable_mamba_cache_stochastic_rounding': False, 'mamba_cache_philox_rounds': 0, 'mamba_full_memory_ratio': 0.9, 'mamba_radix_cache_strategy': 'auto', 'uses_mamba_radix_cache': False, 'mamba_track_interval': 256, 'enable_int8_mamba_checkpoint': False, 'int8_mamba_ckpt_size': None, 'linear_attn_backend': 'triton', 'linear_attn_decode_backend': None, 'linear_attn_prefill_backend': None, 'linear_attn_verify_backend': None, 'enable_linear_replayssm': False, 'linear_replayssm_cache_len': 16, 'enable_linear_replayssm_spec': False, 'enable_hierarchical_cache': True, 'hicache_host_memory_mode': 'cache', 'hicache_ratio': 2.0, 'hicache_size': 160, 'hicache_write_policy': 'write_through', 'hicache_io_backend': 'kernel', 'hicache_mem_layout': 'page_first', 'hicache_storage_backend': 'nixl', 'hicache_storage_prefetch_policy': 'wait_complete', 'hicache_storage_backend_extra_config': '@/sgl-workspace/sglang/hicache_eval/results/20260921_h200_nebius_32b70b_fp8kv/exp1_70b/l3_extra.json', 'hicache_storage_prefetch_retry_poll_interval': 0, 'hicache_storage_prefetch_retry_max_attempts': 4, 'enable_unified_cache_external_linker': False, 'unified_cache_external_linker_backend': 'mooncake', 'enable_hisparse': False, 'hisparse_config': None, 'enable_broadcast_mm_inputs_process': False, 'enable_prefix_mm_cache': False, 'mm_enable_dp_encoder': False, 'mm_process_config': {}, 'mm_processor_worker_num': 0, 'mm_io_worker_num': 0, 'allowed_media_domains': [], 'media_url_max_file_size_mb': 64, 'mm_preprocess_cache_size_mb': None, 'trust_mm_content_hashes': False, 'limit_mm_data_per_request': None, 'enable_mm_global_cache': False, 'image_processor_backend': 'auto', 'mm_global_cache_backend': 'mooncake', 'disable_fast_image_processor': False, 'mm_feature_transport': 'cpu', 'keep_mm_feature_on_device': False, 'enable_lora': None, 'enable_lora_overlap_loading': None, 'max_lora_rank': None, 'lora_target_modules': None, 'lora_paths': None, 'max_loaded_loras': None, 'max_loras_per_batch': 8, 'lora_eviction_policy': 'lru', 'lora_backend': 'csgmv', 'max_lora_chunk_size': 16, 'experts_shared_outer_loras': None, 'lora_use_virtual_experts': False, 'lora_strict_loading': False, 'lora_drain_wait_threshold': 0.0, 'enable_two_batch_overlap': False, 'enable_single_batch_overlap': False, 'tbo_token_distribution_threshold': 0.48, 'cpu_offload_gb': 0, 'offload_group_size': -1, 'offload_num_in_group': 1, 'offload_prefetch_step': 1, 'offload_mode': 'cpu', 'enable_lmcache': False, 'lmcache_config_file': None, 'enable_flexkv': False, 'flexkv_config_file': None, 'kt_weight_path': None, 'kt_method': 'AMXINT4', 'kt_cpuinfer': None, 'kt_threadpool_count': 2, 'kt_num_gpu_experts': None, 'kt_max_deferred_experts_per_token': None, 'dllm_algorithm': None, 'dllm_algorithm_config': None, 'dllm_fdfo': True, 'disaggregation_mode': 'null', 'disaggregation_transfer_backend': 'mooncake', 'disaggregation_bootstrap_port': 8998, 'disaggregation_ib_device': None, 'disaggregation_decode_enable_radix_cache': False, 'disaggregation_decode_enable_offload_kvcache': False, 'disaggregation_decode_retraction_backup': None, 'num_reserved_decode_tokens': 512, 'disaggregation_decode_extra_slots': None, 'disaggregation_decode_polling_interval': 1, 'optimistic_prefill_attempts': 0, 'encoder_only': False, 'language_only': False, 'language_model_only': False, 'encoder_transfer_backend': 'zmq_to_scheduler', 'encoder_urls': [], 'encoder_bootstrap_port': 8997, 'encoder_register_urls': [], 'enable_adaptive_dispatch_to_encoder': False, 'enable_pdmux': False, 'pdmux_config_path': None, 'sm_group_num': 8, 'startup_weight_load_mode': 'serial', 'custom_weight_loader': [], 'weight_loader_disable_mmap': False, 'weight_loader_prefetch_checkpoints': False, 'weight_loader_prefetch_num_threads': 4, 'weight_loader_drop_cache_after_load': False, 'remote_instance_weight_loader_seed_instance_ip': None, 'remote_instance_weight_loader_seed_instance_service_port': None, 'remote_instance_weight_loader_send_weights_group_ports': None, 'remote_instance_weight_loader_backend': 'nccl', 'remote_instance_weight_loader_start_seed_via_transfer_engine': False, 'engine_info_bootstrap_port': 6789, 'modelexpress_config': None, 'download_dir': None, 'model_checksum': None, 'delete_ckpt_after_loading': False, 'decrypted_config_file': None, 'decrypted_draft_config_file': None, 'checkpoint_engine_wait_weights_before_ready': False, 'enable_prefill_delayer': False, 'prefill_delayer_max_delay_passes': 30, 'prefill_delayer_token_usage_low_watermark': None, 'prefill_delayer_forward_passes_buckets': None, 'prefill_delayer_wait_seconds_buckets': None, 'prefill_delayer_queue_min_ratio': None, 'prefill_delayer_max_delay_ms': None, 'min_free_slots_delay': None, 'enable_deterministic_inference': False, 'rl_on_policy_target': None, 'kv_canary': 'none', 'kv_canary_real_data': 'none', 'kv_canary_sweep_interval': 0, 'enable_dynamic_batch_tokenizer': False, 'dynamic_batch_tokenizer_batch_size': 32, 'dynamic_batch_tokenizer_batch_timeout': 0.002, 'enable_tokenizer_batch_encode': False, 'disable_tokenizer_batch_decode': False, 'debug_tensor_dump_output_folder': None, 'debug_tensor_dump_layers': None, 'debug_tensor_dump_input_file': None, 'enable_memory_saver': False, 'enable_weights_cpu_backup': False, 'enable_draft_weights_cpu_backup': False, 'enable_custom_logit_processor': False, 'enable_return_hidden_states': False, 'return_hidden_states_mode': None, 'enable_return_routed_experts': False, 'enable_return_indexer_topk': False, 'disable_outlines_disk_cache': False, 'enable_mis': False, 'weight_cache_mode': 'off', 'weight_cache_socket': None, 'weight_cache_timeout': 1800, 'forward_hooks': None, 'msprobe_dump_config': None}
+[2026-09-21 21:04:39] The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.
+[2026-09-21 21:04:43] Using default HuggingFace chat template with detected content format: string
+[2026-09-21 21:04:48] The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.
+[2026-09-21 21:04:52] The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.
+[2026-09-21 21:04:52] Init torch distributed begin.
+[2026-09-21 21:04:52] Init torch distributed ends. elapsed=0.05 s, mem usage=0.09 GB
+[2026-09-21 21:04:54] Load weight begin. avail mem=139.09 GB
+[2026-09-21 21:04:54] Found local HF snapshot for casperhansen/llama-3.3-70b-instruct-awq at /root/.cache/huggingface/hub/models--casperhansen--llama-3.3-70b-instruct-awq/snapshots/64d255621f40b42adaf6d1f32a47e1d4534c0f14; skipping download.
+Multi-thread loading shards:   0% Completed | 0/9 [00:00<?, ?it/s]Multi-thread loading shards:  11% Completed | 1/9 [00:11<01:34, 11.86s/it]Multi-thread loading shards:  22% Completed | 2/9 [00:22<01:19, 11.33s/it]Multi-thread loading shards:  33% Completed | 3/9 [00:33<01:06, 11.03s/it]Multi-thread loading shards:  44% Completed | 4/9 [00:44<00:55, 11.02s/it]Multi-thread loading shards:  56% Completed | 5/9 [00:55<00:44, 11.02s/it]Multi-thread loading shards:  67% Completed | 6/9 [01:06<00:33, 11.02s/it]Multi-thread loading shards:  78% Completed | 7/9 [01:17<00:22, 11.01s/it]Multi-thread loading shards:  89% Completed | 8/9 [01:25<00:09,  9.91s/it]Multi-thread loading shards: 100% Completed | 9/9 [01:29<00:00,  8.31s/it]Multi-thread loading shards: 100% Completed | 9/9 [01:29<00:00,  9.99s/it]
+[2026-09-21 21:06:29] Load weight end. elapsed=94.43 s, type=LlamaForCausalLM, quant=awq, bits=4, avail mem=101.91 GB, mem usage=37.19 GB.
+[2026-09-21 21:06:33] KV Cache is allocated. dtype: torch.float8_e5m2, #tokens: 531008, K size: 40.52 GB, V size: 40.52 GB
+[2026-09-21 21:06:33] Memory pool end. avail mem=20.15 GB
+[2026-09-21 21:06:33] Capture target prefill CUDA graph begin. backend=breakable, num_tokens=[4, 8, 12, 16, 20, 24, 28, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 704, 768, 832, 896, 960, 1024, 1280, 1536, 1792, 2048, 2304, 2560, 2816, 3072, 3328, 3584, 3840, 4096, 4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192], avail mem=20.06 GB
+  0%|          | 0/58 [00:00<?, ?it/s]Capturing num tokens (num_tokens=8192 avail_mem=20.06 GB):   0%|          | 0/58 [00:00<?, ?it/s]Capturing num tokens (num_tokens=8192 avail_mem=20.06 GB):   2%|▏         | 1/58 [00:09<09:26,  9.94s/it]Capturing num tokens (num_tokens=7680 avail_mem=15.80 GB):   2%|▏         | 1/58 [00:09<09:26,  9.94s/it]Capturing num tokens (num_tokens=7680 avail_mem=15.80 GB):   3%|▎         | 2/58 [00:17<07:53,  8.45s/it]Capturing num tokens (num_tokens=7168 avail_mem=15.67 GB):   3%|▎         | 2/58 [00:17<07:53,  8.45s/it]Capturing num tokens (num_tokens=7168 avail_mem=15.67 GB):   5%|▌         | 3/58 [00:24<07:07,  7.77s/it]Capturing num tokens (num_tokens=6656 avail_mem=15.66 GB):   5%|▌         | 3/58 [00:24<07:07,  7.77s/it]Capturing num tokens (num_tokens=6656 avail_mem=15.66 GB):   7%|▋         | 4/58 [00:30<06:32,  7.26s/it]Capturing num tokens (num_tokens=6144 avail_mem=15.64 GB):   7%|▋         | 4/58 [00:30<06:32,  7.26s/it]Capturing num tokens (num_tokens=6144 avail_mem=15.64 GB):   9%|▊         | 5/58 [00:36<05:59,  6.78s/it]Capturing num tokens (num_tokens=5632 avail_mem=15.63 GB):   9%|▊         | 5/58 [00:36<05:59,  6.78s/it]Capturing num tokens (num_tokens=5632 avail_mem=15.63 GB):  10%|█         | 6/58 [00:42<05:27,  6.30s/it]Capturing num tokens (num_tokens=5120 avail_mem=15.62 GB):  10%|█         | 6/58 [00:42<05:27,  6.30s/it]Capturing num tokens (num_tokens=5120 avail_mem=15.62 GB):  12%|█▏        | 7/58 [00:46<04:57,  5.82s/it]Capturing num tokens (num_tokens=4608 avail_mem=15.60 GB):  12%|█▏        | 7/58 [00:46<04:57,  5.82s/it]Capturing num tokens (num_tokens=4608 avail_mem=15.60 GB):  14%|█▍        | 8/58 [00:51<04:27,  5.34s/it]Capturing num tokens (num_tokens=4096 avail_mem=15.59 GB):  14%|█▍        | 8/58 [00:51<04:27,  5.34s/it]Capturing num tokens (num_tokens=4096 avail_mem=15.59 GB):  16%|█▌        | 9/58 [00:55<03:58,  4.86s/it]Capturing num tokens (num_tokens=3840 avail_mem=15.58 GB):  16%|█▌        | 9/58 [00:55<03:58,  4.86s/it]Capturing num tokens (num_tokens=3840 avail_mem=15.58 GB):  17%|█▋        | 10/58 [00:58<03:33,  4.44s/it]Capturing num tokens (num_tokens=3584 avail_mem=15.56 GB):  17%|█▋        | 10/58 [00:58<03:33,  4.44s/it]Capturing num tokens (num_tokens=3584 avail_mem=15.56 GB):  19%|█▉        | 11/58 [01:01<03:12,  4.09s/it]Capturing num tokens (num_tokens=3328 avail_mem=15.55 GB):  19%|█▉        | 11/58 [01:01<03:12,  4.09s/it]Capturing num tokens (num_tokens=3328 avail_mem=15.55 GB):  21%|██        | 12/58 [01:04<02:53,  3.78s/it]Capturing num tokens (num_tokens=3072 avail_mem=15.54 GB):  21%|██        | 12/58 [01:04<02:53,  3.78s/it]Capturing num tokens (num_tokens=3072 avail_mem=15.54 GB):  22%|██▏       | 13/58 [01:07<02:36,  3.48s/it]Capturing num tokens (num_tokens=2816 avail_mem=15.53 GB):  22%|██▏       | 13/58 [01:07<02:36,  3.48s/it]Capturing num tokens (num_tokens=2816 avail_mem=15.53 GB):  24%|██▍       | 14/58 [01:10<02:20,  3.19s/it]Capturing num tokens (num_tokens=2560 avail_mem=15.52 GB):  24%|██▍       | 14/58 [01:10<02:20,  3.19s/it]Capturing num tokens (num_tokens=2560 avail_mem=15.52 GB):  26%|██▌       | 15/58 [01:12<02:06,  2.93s/it]Capturing num tokens (num_tokens=2304 avail_mem=15.51 GB):  26%|██▌       | 15/58 [01:12<02:06,  2.93s/it]Capturing num tokens (num_tokens=2304 avail_mem=15.51 GB):  28%|██▊       | 16/58 [01:14<01:52,  2.68s/it]Capturing num tokens (num_tokens=2048 avail_mem=15.49 GB):  28%|██▊       | 16/58 [01:14<01:52,  2.68s/it]Capturing num tokens (num_tokens=2048 avail_mem=15.49 GB):  29%|██▉       | 17/58 [01:16<01:39,  2.43s/it]Capturing num tokens (num_tokens=1792 avail_mem=15.48 GB):  29%|██▉       | 17/58 [01:16<01:39,  2.43s/it]Capturing num tokens (num_tokens=1792 avail_mem=15.48 GB):  31%|███       | 18/58 [01:18<01:27,  2.18s/it]Capturing num tokens (num_tokens=1536 avail_mem=15.47 GB):  31%|███       | 18/58 [01:18<01:27,  2.18s/it]Capturing num tokens (num_tokens=1536 avail_mem=15.47 GB):  33%|███▎      | 19/58 [01:19<01:15,  1.95s/it]Capturing num tokens (num_tokens=1280 avail_mem=15.46 GB):  33%|███▎      | 19/58 [01:19<01:15,  1.95s/it]Capturing num tokens (num_tokens=1280 avail_mem=15.46 GB):  34%|███▍      | 20/58 [01:20<01:05,  1.71s/it]Capturing num tokens (num_tokens=1024 avail_mem=15.45 GB):  34%|███▍      | 20/58 [01:20<01:05,  1.71s/it]Capturing num tokens (num_tokens=1024 avail_mem=15.45 GB):  36%|███▌      | 21/58 [01:21<00:54,  1.48s/it]Capturing num tokens (num_tokens=960 avail_mem=15.44 GB):  36%|███▌      | 21/58 [01:21<00:54,  1.48s/it] Capturing num tokens (num_tokens=960 avail_mem=15.44 GB):  38%|███▊      | 22/58 [01:22<00:46,  1.30s/it]Capturing num tokens (num_tokens=896 avail_mem=15.43 GB):  38%|███▊      | 22/58 [01:22<00:46,  1.30s/it]Capturing num tokens (num_tokens=896 avail_mem=15.43 GB):  40%|███▉      | 23/58 [01:23<00:40,  1.17s/it]Capturing num tokens (num_tokens=832 avail_mem=15.42 GB):  40%|███▉      | 23/58 [01:23<00:40,  1.17s/it]Capturing num tokens (num_tokens=832 avail_mem=15.42 GB):  41%|████▏     | 24/58 [01:24<00:36,  1.06s/it]Capturing num tokens (num_tokens=768 avail_mem=15.41 GB):  41%|████▏     | 24/58 [01:24<00:36,  1.06s/it]Capturing num tokens (num_tokens=768 avail_mem=15.41 GB):  43%|████▎     | 25/58 [01:24<00:31,  1.05it/s]Capturing num tokens (num_tokens=704 avail_mem=15.40 GB):  43%|████▎     | 25/58 [01:24<00:31,  1.05it/s]Capturing num tokens (num_tokens=704 avail_mem=15.40 GB):  45%|████▍     | 26/58 [01:25<00:27,  1.17it/s]Capturing num tokens (num_tokens=640 avail_mem=15.39 GB):  45%|████▍     | 26/58 [01:25<00:27,  1.17it/s]Capturing num tokens (num_tokens=640 avail_mem=15.39 GB):  47%|████▋     | 27/58 [01:26<00:24,  1.28it/s]Capturing num tokens (num_tokens=576 avail_mem=15.38 GB):  47%|████▋     | 27/58 [01:26<00:24,  1.28it/s]Capturing num tokens (num_tokens=576 avail_mem=15.38 GB):  48%|████▊     | 28/58 [01:26<00:21,  1.40it/s]Capturing num tokens (num_tokens=512 avail_mem=15.37 GB):  48%|████▊     | 28/58 [01:26<00:21,  1.40it/s]Capturing num tokens (num_tokens=512 avail_mem=15.37 GB):  50%|█████     | 29/58 [01:27<00:18,  1.55it/s]Capturing num tokens (num_tokens=480 avail_mem=15.36 GB):  50%|█████     | 29/58 [01:27<00:18,  1.55it/s]Capturing num tokens (num_tokens=480 avail_mem=15.36 GB):  52%|█████▏    | 30/58 [01:27<00:16,  1.68it/s]Capturing num tokens (num_tokens=448 avail_mem=15.35 GB):  52%|█████▏    | 30/58 [01:27<00:16,  1.68it/s]Capturing num tokens (num_tokens=448 avail_mem=15.35 GB):  53%|█████▎    | 31/58 [01:28<00:14,  1.83it/s]Capturing num tokens (num_tokens=416 avail_mem=15.34 GB):  53%|█████▎    | 31/58 [01:28<00:14,  1.83it/s]Capturing num tokens (num_tokens=416 avail_mem=15.34 GB):  55%|█████▌    | 32/58 [01:28<00:13,  1.99it/s]Capturing num tokens (num_tokens=384 avail_mem=15.33 GB):  55%|█████▌    | 32/58 [01:28<00:13,  1.99it/s]Capturing num tokens (num_tokens=384 avail_mem=15.33 GB):  57%|█████▋    | 33/58 [01:28<00:11,  2.13it/s]Capturing num tokens (num_tokens=352 avail_mem=15.32 GB):  57%|█████▋    | 33/58 [01:28<00:11,  2.13it/s]Capturing num tokens (num_tokens=352 avail_mem=15.32 GB):  59%|█████▊    | 34/58 [01:29<00:10,  2.21it/s]Capturing num tokens (num_tokens=320 avail_mem=15.31 GB):  59%|█████▊    | 34/58 [01:29<00:10,  2.21it/s]Capturing num tokens (num_tokens=320 avail_mem=15.31 GB):  60%|██████    | 35/58 [01:29<00:09,  2.38it/s]Capturing num tokens (num_tokens=288 avail_mem=15.30 GB):  60%|██████    | 35/58 [01:29<00:09,  2.38it/s]Capturing num tokens (num_tokens=288 avail_mem=15.30 GB):  62%|██████▏   | 36/58 [01:29<00:08,  2.55it/s]Capturing num tokens (num_tokens=256 avail_mem=15.29 GB):  62%|██████▏   | 36/58 [01:29<00:08,  2.55it/s]Capturing num tokens (num_tokens=256 avail_mem=15.29 GB):  64%|██████▍   | 37/58 [01:30<00:07,  2.79it/s]Capturing num tokens (num_tokens=240 avail_mem=15.28 GB):  64%|██████▍   | 37/58 [01:30<00:07,  2.79it/s]Capturing num tokens (num_tokens=240 avail_mem=15.28 GB):  66%|██████▌   | 38/58 [01:30<00:06,  3.00it/s]Capturing num tokens (num_tokens=224 avail_mem=15.26 GB):  66%|██████▌   | 38/58 [01:30<00:06,  3.00it/s]Capturing num tokens (num_tokens=224 avail_mem=15.26 GB):  67%|██████▋   | 39/58 [01:30<00:05,  3.22it/s]Capturing num tokens (num_tokens=208 avail_mem=15.25 GB):  67%|██████▋   | 39/58 [01:30<00:05,  3.22it/s]Capturing num tokens (num_tokens=208 avail_mem=15.25 GB):  69%|██████▉   | 40/58 [01:30<00:05,  3.45it/s]Capturing num tokens (num_tokens=192 avail_mem=15.24 GB):  69%|██████▉   | 40/58 [01:30<00:05,  3.45it/s]Capturing num tokens (num_tokens=192 avail_mem=15.24 GB):  71%|███████   | 41/58 [01:31<00:04,  3.71it/s]Capturing num tokens (num_tokens=176 avail_mem=15.23 GB):  71%|███████   | 41/58 [01:31<00:04,  3.71it/s]Capturing num tokens (num_tokens=176 avail_mem=15.23 GB):  72%|███████▏  | 42/58 [01:31<00:04,  3.80it/s]Capturing num tokens (num_tokens=160 avail_mem=15.22 GB):  72%|███████▏  | 42/58 [01:31<00:04,  3.80it/s]Capturing num tokens (num_tokens=160 avail_mem=15.22 GB):  74%|███████▍  | 43/58 [01:31<00:03,  3.93it/s]Capturing num tokens (num_tokens=144 avail_mem=15.21 GB):  74%|███████▍  | 43/58 [01:31<00:03,  3.93it/s]Capturing num tokens (num_tokens=144 avail_mem=15.21 GB):  76%|███████▌  | 44/58 [01:31<00:03,  4.09it/s]Capturing num tokens (num_tokens=128 avail_mem=15.20 GB):  76%|███████▌  | 44/58 [01:31<00:03,  4.09it/s]Capturing num tokens (num_tokens=128 avail_mem=15.20 GB):  78%|███████▊  | 45/58 [01:32<00:02,  4.39it/s]Capturing num tokens (num_tokens=112 avail_mem=15.19 GB):  78%|███████▊  | 45/58 [01:32<00:02,  4.39it/s]Capturing num tokens (num_tokens=112 avail_mem=15.19 GB):  79%|███████▉  | 46/58 [01:32<00:02,  4.58it/s]Capturing num tokens (num_tokens=96 avail_mem=15.18 GB):  79%|███████▉  | 46/58 [01:32<00:02,  4.58it/s] Capturing num tokens (num_tokens=96 avail_mem=15.18 GB):  81%|████████  | 47/58 [01:32<00:02,  4.69it/s]Capturing num tokens (num_tokens=80 avail_mem=15.17 GB):  81%|████████  | 47/58 [01:32<00:02,  4.69it/s]Capturing num tokens (num_tokens=80 avail_mem=15.17 GB):  83%|████████▎ | 48/58 [01:32<00:02,  4.76it/s]Capturing num tokens (num_tokens=64 avail_mem=15.16 GB):  83%|████████▎ | 48/58 [01:32<00:02,  4.76it/s]Capturing num tokens (num_tokens=64 avail_mem=15.16 GB):  84%|████████▍ | 49/58 [01:32<00:01,  4.79it/s]Capturing num tokens (num_tokens=48 avail_mem=15.14 GB):  84%|████████▍ | 49/58 [01:32<00:01,  4.79it/s]Capturing num tokens (num_tokens=48 avail_mem=15.14 GB):  86%|████████▌ | 50/58 [01:33<00:01,  4.88it/s]Capturing num tokens (num_tokens=32 avail_mem=15.13 GB):  86%|████████▌ | 50/58 [01:33<00:01,  4.88it/s]Capturing num tokens (num_tokens=32 avail_mem=15.13 GB):  88%|████████▊ | 51/58 [01:33<00:01,  5.05it/s]Capturing num tokens (num_tokens=28 avail_mem=15.12 GB):  88%|████████▊ | 51/58 [01:33<00:01,  5.05it/s]Capturing num tokens (num_tokens=28 avail_mem=15.12 GB):  90%|████████▉ | 52/58 [01:33<00:01,  5.17it/s]Capturing num tokens (num_tokens=24 avail_mem=15.11 GB):  90%|████████▉ | 52/58 [01:33<00:01,  5.17it/s]Capturing num tokens (num_tokens=24 avail_mem=15.11 GB):  91%|█████████▏| 53/58 [01:33<00:00,  5.22it/s]Capturing num tokens (num_tokens=20 avail_mem=15.10 GB):  91%|█████████▏| 53/58 [01:33<00:00,  5.22it/s]Capturing num tokens (num_tokens=20 avail_mem=15.10 GB):  93%|█████████▎| 54/58 [01:33<00:00,  5.31it/s]Capturing num tokens (num_tokens=16 avail_mem=15.09 GB):  93%|█████████▎| 54/58 [01:33<00:00,  5.31it/s]Capturing num tokens (num_tokens=16 avail_mem=15.09 GB):  95%|█████████▍| 55/58 [01:34<00:00,  4.95it/s]Capturing num tokens (num_tokens=12 avail_mem=15.08 GB):  95%|█████████▍| 55/58 [01:34<00:00,  4.95it/s]Capturing num tokens (num_tokens=12 avail_mem=15.08 GB):  97%|█████████▋| 56/58 [01:34<00:00,  5.09it/s]Capturing num tokens (num_tokens=8 avail_mem=15.07 GB):  97%|█████████▋| 56/58 [01:34<00:00,  5.09it/s] Capturing num tokens (num_tokens=8 avail_mem=15.07 GB):  98%|█████████▊| 57/58 [01:34<00:00,  5.17it/s]Capturing num tokens (num_tokens=4 avail_mem=15.05 GB):  98%|█████████▊| 57/58 [01:34<00:00,  5.17it/s]Capturing num tokens (num_tokens=4 avail_mem=15.05 GB): 100%|██████████| 58/58 [01:34<00:00,  5.21it/s]Capturing num tokens (num_tokens=4 avail_mem=15.05 GB): 100%|██████████| 58/58 [01:34<00:00,  1.63s/it]
+[2026-09-21 21:08:09] Capture target prefill CUDA graph end. elapsed=95.34 s, mem usage=2.89 GB, avail mem=17.17 GB.
+[2026-09-21 21:08:09] Capture target decode CUDA graph begin. backend=full, num_tokens_per_req=1, bs=[1, 2, 4, 8, 12, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256], avail mem=17.17 GB
+  0%|          | 0/36 [00:00<?, ?it/s]Capturing batches (bs=256 avail_mem=17.05 GB):   0%|          | 0/36 [00:00<?, ?it/s]Capturing batches (bs=256 avail_mem=17.05 GB):   3%|▎         | 1/36 [00:00<00:11,  3.14it/s]Capturing batches (bs=248 avail_mem=17.01 GB):   3%|▎         | 1/36 [00:00<00:11,  3.14it/s]Capturing batches (bs=248 avail_mem=17.01 GB):   6%|▌         | 2/36 [00:00<00:09,  3.41it/s]Capturing batches (bs=240 avail_mem=17.01 GB):   6%|▌         | 2/36 [00:00<00:09,  3.41it/s]Capturing batches (bs=240 avail_mem=17.01 GB):   8%|▊         | 3/36 [00:00<00:09,  3.57it/s]Capturing batches (bs=232 avail_mem=17.00 GB):   8%|▊         | 3/36 [00:00<00:09,  3.57it/s]Capturing batches (bs=232 avail_mem=17.00 GB):  11%|█         | 4/36 [00:01<00:08,  3.65it/s]Capturing batches (bs=224 avail_mem=17.00 GB):  11%|█         | 4/36 [00:01<00:08,  3.65it/s]Capturing batches (bs=224 avail_mem=17.00 GB):  14%|█▍        | 5/36 [00:01<00:08,  3.75it/s]Capturing batches (bs=216 avail_mem=16.99 GB):  14%|█▍        | 5/36 [00:01<00:08,  3.75it/s]Capturing batches (bs=216 avail_mem=16.99 GB):  17%|█▋        | 6/36 [00:01<00:07,  3.82it/s]Capturing batches (bs=208 avail_mem=16.99 GB):  17%|█▋        | 6/36 [00:01<00:07,  3.82it/s]Capturing batches (bs=208 avail_mem=16.99 GB):  19%|█▉        | 7/36 [00:01<00:07,  3.88it/s]Capturing batches (bs=200 avail_mem=16.98 GB):  19%|█▉        | 7/36 [00:01<00:07,  3.88it/s]Capturing batches (bs=200 avail_mem=16.98 GB):  22%|██▏       | 8/36 [00:02<00:07,  3.97it/s]Capturing batches (bs=192 avail_mem=16.98 GB):  22%|██▏       | 8/36 [00:02<00:07,  3.97it/s]Capturing batches (bs=192 avail_mem=16.98 GB):  25%|██▌       | 9/36 [00:02<00:06,  4.18it/s]Capturing batches (bs=184 avail_mem=16.98 GB):  25%|██▌       | 9/36 [00:02<00:06,  4.18it/s]Capturing batches (bs=184 avail_mem=16.98 GB):  28%|██▊       | 10/36 [00:02<00:06,  4.26it/s]Capturing batches (bs=176 avail_mem=16.97 GB):  28%|██▊       | 10/36 [00:02<00:06,  4.26it/s]Capturing batches (bs=176 avail_mem=16.97 GB):  31%|███       | 11/36 [00:02<00:05,  4.38it/s]Capturing batches (bs=168 avail_mem=16.97 GB):  31%|███       | 11/36 [00:02<00:05,  4.38it/s]Capturing batches (bs=168 avail_mem=16.97 GB):  33%|███▎      | 12/36 [00:02<00:05,  4.44it/s]Capturing batches (bs=160 avail_mem=16.96 GB):  33%|███▎      | 12/36 [00:02<00:05,  4.44it/s]Capturing batches (bs=160 avail_mem=16.96 GB):  36%|███▌      | 13/36 [00:03<00:05,  4.58it/s]Capturing batches (bs=152 avail_mem=16.96 GB):  36%|███▌      | 13/36 [00:03<00:05,  4.58it/s]Capturing batches (bs=152 avail_mem=16.96 GB):  39%|███▉      | 14/36 [00:03<00:04,  4.65it/s]Capturing batches (bs=144 avail_mem=16.95 GB):  39%|███▉      | 14/36 [00:03<00:04,  4.65it/s]Capturing batches (bs=144 avail_mem=16.95 GB):  42%|████▏     | 15/36 [00:03<00:04,  4.78it/s]Capturing batches (bs=136 avail_mem=16.95 GB):  42%|████▏     | 15/36 [00:03<00:04,  4.78it/s]Capturing batches (bs=136 avail_mem=16.95 GB):  44%|████▍     | 16/36 [00:03<00:04,  4.88it/s]Capturing batches (bs=128 avail_mem=16.94 GB):  44%|████▍     | 16/36 [00:03<00:04,  4.88it/s]Capturing batches (bs=128 avail_mem=16.94 GB):  47%|████▋     | 17/36 [00:03<00:03,  5.24it/s]Capturing batches (bs=120 avail_mem=16.94 GB):  47%|████▋     | 17/36 [00:03<00:03,  5.24it/s]Capturing batches (bs=120 avail_mem=16.94 GB):  50%|█████     | 18/36 [00:04<00:03,  5.37it/s]Capturing batches (bs=112 avail_mem=16.93 GB):  50%|█████     | 18/36 [00:04<00:03,  5.37it/s]Capturing batches (bs=112 avail_mem=16.93 GB):  53%|█████▎    | 19/36 [00:04<00:03,  5.58it/s]Capturing batches (bs=104 avail_mem=16.93 GB):  53%|█████▎    | 19/36 [00:04<00:03,  5.58it/s]Capturing batches (bs=104 avail_mem=16.93 GB):  56%|█████▌    | 20/36 [00:04<00:02,  5.71it/s]Capturing batches (bs=96 avail_mem=16.93 GB):  56%|█████▌    | 20/36 [00:04<00:02,  5.71it/s] Capturing batches (bs=96 avail_mem=16.93 GB):  58%|█████▊    | 21/36 [00:04<00:02,  5.91it/s]Capturing batches (bs=88 avail_mem=16.92 GB):  58%|█████▊    | 21/36 [00:04<00:02,  5.91it/s]Capturing batches (bs=88 avail_mem=16.92 GB):  61%|██████    | 22/36 [00:04<00:02,  6.07it/s]Capturing batches (bs=80 avail_mem=16.92 GB):  61%|██████    | 22/36 [00:04<00:02,  6.07it/s]Capturing batches (bs=80 avail_mem=16.92 GB):  64%|██████▍   | 23/36 [00:04<00:02,  6.25it/s]Capturing batches (bs=72 avail_mem=16.91 GB):  64%|██████▍   | 23/36 [00:04<00:02,  6.25it/s]Capturing batches (bs=72 avail_mem=16.91 GB):  67%|██████▋   | 24/36 [00:05<00:01,  6.43it/s]Capturing batches (bs=64 avail_mem=16.91 GB):  67%|██████▋   | 24/36 [00:05<00:01,  6.43it/s]Capturing batches (bs=64 avail_mem=16.91 GB):  69%|██████▉   | 25/36 [00:05<00:01,  6.61it/s]Capturing batches (bs=56 avail_mem=16.90 GB):  69%|██████▉   | 25/36 [00:05<00:01,  6.61it/s]Capturing batches (bs=56 avail_mem=16.90 GB):  72%|███████▏  | 26/36 [00:05<00:01,  6.77it/s]Capturing batches (bs=48 avail_mem=16.90 GB):  72%|███████▏  | 26/36 [00:05<00:01,  6.77it/s]Capturing batches (bs=48 avail_mem=16.90 GB):  75%|███████▌  | 27/36 [00:05<00:01,  6.86it/s]Capturing batches (bs=40 avail_mem=16.90 GB):  75%|███████▌  | 27/36 [00:05<00:01,  6.86it/s]Capturing batches (bs=40 avail_mem=16.90 GB):  78%|███████▊  | 28/36 [00:05<00:01,  6.92it/s]Capturing batches (bs=32 avail_mem=16.89 GB):  78%|███████▊  | 28/36 [00:05<00:01,  6.92it/s]Capturing batches (bs=32 avail_mem=16.89 GB):  81%|████████  | 29/36 [00:05<00:00,  7.00it/s]Capturing batches (bs=24 avail_mem=16.89 GB):  81%|████████  | 29/36 [00:05<00:00,  7.00it/s]Capturing batches (bs=24 avail_mem=16.89 GB):  83%|████████▎ | 30/36 [00:05<00:00,  7.04it/s]Capturing batches (bs=16 avail_mem=16.89 GB):  83%|████████▎ | 30/36 [00:05<00:00,  7.04it/s]Capturing batches (bs=16 avail_mem=16.89 GB):  86%|████████▌ | 31/36 [00:06<00:00,  7.07it/s]Capturing batches (bs=12 avail_mem=16.89 GB):  86%|████████▌ | 31/36 [00:06<00:00,  7.07it/s]Capturing batches (bs=12 avail_mem=16.89 GB):  89%|████████▉ | 32/36 [00:06<00:00,  7.14it/s]Capturing batches (bs=8 avail_mem=16.88 GB):  89%|████████▉ | 32/36 [00:06<00:00,  7.14it/s] Capturing batches (bs=8 avail_mem=16.88 GB):  92%|█████████▏| 33/36 [00:06<00:00,  7.15it/s]Capturing batches (bs=4 avail_mem=16.88 GB):  92%|█████████▏| 33/36 [00:06<00:00,  7.15it/s]Capturing batches (bs=4 avail_mem=16.88 GB):  94%|█████████▍| 34/36 [00:06<00:00,  7.21it/s]Capturing batches (bs=2 avail_mem=16.88 GB):  94%|█████████▍| 34/36 [00:06<00:00,  7.21it/s]Capturing batches (bs=2 avail_mem=16.88 GB):  97%|█████████▋| 35/36 [00:06<00:00,  7.27it/s]Capturing batches (bs=1 avail_mem=16.88 GB):  97%|█████████▋| 35/36 [00:06<00:00,  7.27it/s]Capturing batches (bs=1 avail_mem=16.88 GB): 100%|██████████| 36/36 [00:06<00:00,  7.14it/s]Capturing batches (bs=1 avail_mem=16.88 GB): 100%|██████████| 36/36 [00:06<00:00,  5.35it/s]
+[2026-09-21 21:08:16] Capture target decode CUDA graph end. elapsed=7.40 s, mem usage=0.30 GB, avail mem=16.87 GB.
+[2026-09-21 21:08:16] max_total_num_tokens=531008, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=4096, context_len=32768, available_gpu_mem=16.87 GB
+[2026-09-21 21:08:16] Init Unified Radix Cache. Components: (<ComponentType.FULL: 0>,). Tree Core: UnifiedTreeCore
+[2026-09-21 21:08:16] Allocating kv hierarchical KV host pool: 976576 tokens, 160.00 GB host memory.
+[2026-09-21 21:09:11] Creating storage backend 'nixl' (sglang.srt.mem_cache.storage.nixl.hicache_nixl.HiCacheNixl)
+2026-09-21 21:09:11 NIXL INFO    _api.py:285 Initialized NIXL agent: hicache_nixl_15171375-1821-4e55-bee2-05610eef6937
+2026-09-21 21:09:11 NIXL INFO    _api.py:407 Backend POSIX was instantiated
+[2026-09-21 21:09:11] NixlBackendSelection.create_backend: backend_name POSIX initparams {} customParams {} supported plugins ['AZURE_BLOB', 'GDS', 'GDS_MT', 'GPUNETIO', 'GUSLI', 'INFINIA', 'LIBFABRIC', 'OBJ', 'POSIX', 'UCX']
+E0921 21:09:11.403733    5710 posix_backend.cpp:245] POSIX path-mode open failed: nixl::FileFd("/nonexistent-nixl-probe"): No such file or directory
+E0921 21:09:11.403769    5710 nixl_agent.cpp:545] registerMem: registration failed for the specified or all potential backends
+[2026-09-21 21:09:11] HiCacheNixl: path-mode FILE registration active.
+[2026-09-21 21:09:11] HiCacheNixl: O_DIRECT is active with a file-based backend (POSIX). Page-aligned host buffers are required (needs_page_alignment=True).
+[2026-09-21 21:09:11] HiCacheL3Cleaner started: dirs=['/mnt/ssd/hicache_l3'] high=30.0% low=20.0% interval=30.0s unlink_workers=8
+[2026-09-21 21:09:11] HiCacheNixl: pre-registered host regions for layout=page_first zero_copy=True
+[2026-09-21 21:09:11] Attached hybrid pool stack to UnifiedRadixCache: pools=KV, transfer_layer_num=80
+[2026-09-21 21:09:11] Tree cache initialized: source=default impl=UnifiedRadixCache hybrid_swa=False hybrid_ssm=False hicache_attached=True streaming_wrapped=False
+[2026-09-21 21:09:11] Engine startup timings (s): load_weight=94.43, kv_cache_allocation=0.39, scheduler_e2e=263.86, cuda_graph={prefill=95.34, decode=7.40, target_verify=0.00, draft_prefill=0.00, draft_decode=0.00, draft_extend=0.00}, tokenizer_e2e=272.66
+[2026-09-21 21:09:11] INFO:     Started server process [5622]
+[2026-09-21 21:09:11] INFO:     Waiting for application startup.
+[2026-09-21 21:09:11] Using default chat sampling params from model generation config: {'temperature': 0.6, 'top_p': 0.9}
+[2026-09-21 21:09:11] INFO:     Application startup complete.
+[2026-09-21 21:09:11] INFO:     Uvicorn running on http://0.0.0.0:30000 (Press CTRL+C to quit)
+[2026-09-21 21:09:12] INFO:     127.0.0.1:59826 - "GET /health HTTP/1.1" 503 Service Unavailable
+[2026-09-21 21:09:12] INFO:     127.0.0.1:59836 - "GET /model_info HTTP/1.1" 200 OK
+[2026-09-21 21:09:13] HICACHE_EVT prefetch_start rid=4b9a000a894f48a1ba190b7c0f56a037 tokens=6
+[2026-09-21 21:09:13] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 34.76
+[2026-09-21 21:09:13] INFO:     127.0.0.1:59862 - "GET /health HTTP/1.1" 503 Service Unavailable
+[2026-09-21 21:09:13] INFO:     127.0.0.1:59850 - "POST /generate HTTP/1.1" 200 OK
+[2026-09-21 21:09:13] INFO:     127.0.0.1:59872 - "POST /freeze_gc HTTP/1.1" 200 OK
+[2026-09-21 21:09:13] The server is fired up and ready to roll!
+[2026-09-21 21:09:14] HICACHE_EVT prefetch_start rid=HEALTH_CHECK_f2884931ece349e4b1df1e5eb1494929 tokens=0
+[2026-09-21 21:09:14] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 57.52
+[2026-09-21 21:09:15] INFO:     127.0.0.1:59884 - "GET /health HTTP/1.1" 200 OK
+[2026-09-21 21:09:15] HICACHE_EVT prefetch_start rid=56b25034ddd54e47811a78ccc00e2e3b tokens=5
+[2026-09-21 21:09:15] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 66.06
+[2026-09-21 21:09:15] INFO:     127.0.0.1:59888 - "POST /generate HTTP/1.1" 200 OK
+[2026-09-21 21:09:15] INFO:     127.0.0.1:59904 - "GET /metrics HTTP/1.1" 200 OK
+[2026-09-21 21:09:33] HICACHE_EVT prefetch_start rid=cb1d1cd70e284435a82ee14c6ca72550 tokens=511
+[2026-09-21 21:09:33] HICACHE_EVT s2h_query rid=cb1d1cd70e284435a82ee14c6ca72550 tokens_req=448 storage_hit=0
+[2026-09-21 21:09:33] HICACHE_EVT d2h_submit nodes=1 tokens=512 bytes=83886080
+[2026-09-21 21:09:33] Prefill batch, #new-seq: 1, #new-token: 512, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 27.81
+[2026-09-21 21:09:33] HICACHE_EVT h2s_submit op=1 node=10 tokens=512
+[2026-09-21 21:09:33] HICACHE_EVT d2h_done nodes=1 tokens=512 bytes=83886080 ms=18.3
+[2026-09-21 21:09:33] INFO:     127.0.0.1:47864 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:33] HICACHE_EVT prefetch_start rid=8667448bbbae486fba891d0a280ac26a tokens=63
+[2026-09-21 21:09:33] HICACHE_EVT h2s_io op=1 pages=8 tokens=512 ms=35
+[2026-09-21 21:09:33] HICACHE_EVT h2s_done op=1 tokens=512
+[2026-09-21 21:09:33] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 448, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 840.63
+[2026-09-21 21:09:33] INFO:     127.0.0.1:47870 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:33] HICACHE_EVT prefetch_start rid=701f8d7f28594bdf92e2d56b93ce93d9 tokens=511
+[2026-09-21 21:09:33] HICACHE_EVT s2h_query rid=701f8d7f28594bdf92e2d56b93ce93d9 tokens_req=448 storage_hit=0
+[2026-09-21 21:09:34] HICACHE_EVT d2h_submit nodes=1 tokens=512 bytes=83886080
+[2026-09-21 21:09:34] Prefill batch, #new-seq: 1, #new-token: 512, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2214.23
+[2026-09-21 21:09:34] INFO:     127.0.0.1:47886 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:34] HICACHE_EVT prefetch_start rid=58ab38e737a2498a88a6bdce9d12ed17 tokens=63
+[2026-09-21 21:09:34] HICACHE_EVT h2s_submit op=3 node=13 tokens=448
+[2026-09-21 21:09:34] HICACHE_EVT h2s_submit op=4 node=12 tokens=64
+[2026-09-21 21:09:34] HICACHE_EVT d2h_done nodes=1 tokens=512 bytes=83886080 ms=1.7
+[2026-09-21 21:09:34] HICACHE_EVT h2s_io op=3 pages=7 tokens=448 ms=31
+[2026-09-21 21:09:34] HICACHE_EVT h2s_io op=4 pages=1 tokens=64 ms=5
+[2026-09-21 21:09:34] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 448, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1152.12
+[2026-09-21 21:09:34] HICACHE_EVT h2s_done op=3 tokens=448
+[2026-09-21 21:09:34] HICACHE_EVT h2s_done op=4 tokens=64
+[2026-09-21 21:09:34] INFO:     127.0.0.1:47896 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:34] HICACHE_EVT prefetch_start rid=b81432718e7944e8a6b70effa9a5bbcd tokens=511
+[2026-09-21 21:09:34] HICACHE_EVT s2h_query rid=b81432718e7944e8a6b70effa9a5bbcd tokens_req=448 storage_hit=0
+[2026-09-21 21:09:34] HICACHE_EVT d2h_submit nodes=1 tokens=512 bytes=83886080
+[2026-09-21 21:09:34] Prefill batch, #new-seq: 1, #new-token: 512, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2194.08
+[2026-09-21 21:09:34] INFO:     127.0.0.1:47898 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:34] HICACHE_EVT prefetch_start rid=85ba6e47e9c64e3c9115f22b65208c99 tokens=63
+[2026-09-21 21:09:34] HICACHE_EVT h2s_submit op=6 node=15 tokens=448
+[2026-09-21 21:09:34] HICACHE_EVT h2s_submit op=7 node=14 tokens=64
+[2026-09-21 21:09:34] HICACHE_EVT d2h_done nodes=1 tokens=512 bytes=83886080 ms=1.7
+[2026-09-21 21:09:34] HICACHE_EVT h2s_io op=6 pages=7 tokens=448 ms=27
+[2026-09-21 21:09:34] HICACHE_EVT h2s_io op=7 pages=1 tokens=64 ms=4
+[2026-09-21 21:09:34] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 448, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1155.06
+[2026-09-21 21:09:34] HICACHE_EVT h2s_done op=6 tokens=448
+[2026-09-21 21:09:34] HICACHE_EVT h2s_done op=7 tokens=64
+[2026-09-21 21:09:34] INFO:     127.0.0.1:47904 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:34] HICACHE_EVT prefetch_start rid=f240bb4b3d444322a23b4a093dccf285 tokens=1023
+[2026-09-21 21:09:34] HICACHE_EVT s2h_query rid=f240bb4b3d444322a23b4a093dccf285 tokens_req=960 storage_hit=0
+[2026-09-21 21:09:34] HICACHE_EVT d2h_submit nodes=1 tokens=1024 bytes=167772160
+[2026-09-21 21:09:34] Prefill batch, #new-seq: 1, #new-token: 1024, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2183.69
+[2026-09-21 21:09:34] INFO:     127.0.0.1:47910 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:34] HICACHE_EVT prefetch_start rid=bbab1fb8fe2a4e76bd30354ecd6aeb3d tokens=63
+[2026-09-21 21:09:34] HICACHE_EVT h2s_submit op=9 node=17 tokens=960
+[2026-09-21 21:09:34] HICACHE_EVT h2s_submit op=10 node=16 tokens=64
+[2026-09-21 21:09:34] HICACHE_EVT d2h_done nodes=1 tokens=1024 bytes=167772160 ms=3.2
+[2026-09-21 21:09:34] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 960, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1058.76
+[2026-09-21 21:09:34] INFO:     127.0.0.1:47912 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:34] HICACHE_EVT prefetch_start rid=3705a6611d694376906a50ef761fe9d6 tokens=1023
+[2026-09-21 21:09:34] HICACHE_EVT s2h_query rid=3705a6611d694376906a50ef761fe9d6 tokens_req=960 storage_hit=0
+[2026-09-21 21:09:34] HICACHE_EVT h2s_io op=9 pages=15 tokens=960 ms=69
+[2026-09-21 21:09:34] HICACHE_EVT h2s_io op=10 pages=1 tokens=64 ms=4
+[2026-09-21 21:09:34] HICACHE_EVT h2s_done op=9 tokens=960
+[2026-09-21 21:09:34] HICACHE_EVT h2s_done op=10 tokens=64
+[2026-09-21 21:09:35] HICACHE_EVT d2h_submit nodes=1 tokens=1024 bytes=167772160
+[2026-09-21 21:09:35] Prefill batch, #new-seq: 1, #new-token: 1024, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2245.13
+[2026-09-21 21:09:35] INFO:     127.0.0.1:47920 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:35] HICACHE_EVT prefetch_start rid=2ec14f684ae4494aa25e94246e19f805 tokens=63
+[2026-09-21 21:09:35] HICACHE_EVT h2s_submit op=12 node=19 tokens=960
+[2026-09-21 21:09:35] HICACHE_EVT h2s_submit op=13 node=18 tokens=64
+[2026-09-21 21:09:35] HICACHE_EVT d2h_done nodes=1 tokens=1024 bytes=167772160 ms=3.2
+[2026-09-21 21:09:35] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 960, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1066.91
+[2026-09-21 21:09:35] INFO:     127.0.0.1:47928 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:35] HICACHE_EVT prefetch_start rid=3ffbb86509dc41a1a4ae9254a6978c5b tokens=1023
+[2026-09-21 21:09:35] HICACHE_EVT s2h_query rid=3ffbb86509dc41a1a4ae9254a6978c5b tokens_req=960 storage_hit=0
+[2026-09-21 21:09:35] HICACHE_EVT h2s_io op=12 pages=15 tokens=960 ms=93
+[2026-09-21 21:09:35] HICACHE_EVT h2s_io op=13 pages=1 tokens=64 ms=4
+[2026-09-21 21:09:35] HICACHE_EVT h2s_done op=12 tokens=960
+[2026-09-21 21:09:35] HICACHE_EVT h2s_done op=13 tokens=64
+[2026-09-21 21:09:35] HICACHE_EVT d2h_submit nodes=1 tokens=1024 bytes=167772160
+[2026-09-21 21:09:35] Prefill batch, #new-seq: 1, #new-token: 1024, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2093.11
+[2026-09-21 21:09:35] INFO:     127.0.0.1:47936 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:35] HICACHE_EVT prefetch_start rid=7ecf46dc26e04a029d9c29b6ab3925ca tokens=63
+[2026-09-21 21:09:35] HICACHE_EVT h2s_submit op=15 node=21 tokens=960
+[2026-09-21 21:09:35] HICACHE_EVT h2s_submit op=16 node=20 tokens=64
+[2026-09-21 21:09:35] HICACHE_EVT d2h_done nodes=1 tokens=1024 bytes=167772160 ms=3.2
+[2026-09-21 21:09:35] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 960, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1066.53
+[2026-09-21 21:09:35] INFO:     127.0.0.1:47940 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:36] HICACHE_EVT prefetch_start rid=876dd03f9c294322a389277380d6a08f tokens=2047
+[2026-09-21 21:09:36] HICACHE_EVT s2h_query rid=876dd03f9c294322a389277380d6a08f tokens_req=1984 storage_hit=0
+[2026-09-21 21:09:36] HICACHE_EVT h2s_io op=15 pages=15 tokens=960 ms=161
+[2026-09-21 21:09:36] HICACHE_EVT h2s_io op=16 pages=1 tokens=64 ms=5
+[2026-09-21 21:09:36] HICACHE_EVT h2s_done op=15 tokens=960
+[2026-09-21 21:09:36] HICACHE_EVT h2s_done op=16 tokens=64
+[2026-09-21 21:09:36] HICACHE_EVT d2h_submit nodes=1 tokens=2048 bytes=335544320
+[2026-09-21 21:09:36] Prefill batch, #new-seq: 1, #new-token: 2048, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2056.00
+[2026-09-21 21:09:36] INFO:     127.0.0.1:47952 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:37] HICACHE_EVT prefetch_start rid=baf473d77a8e47aa8fcd20a63ef13f92 tokens=63
+[2026-09-21 21:09:37] HICACHE_EVT h2s_submit op=18 node=23 tokens=1984
+[2026-09-21 21:09:37] HICACHE_EVT h2s_submit op=19 node=22 tokens=64
+[2026-09-21 21:09:37] HICACHE_EVT d2h_done nodes=1 tokens=2048 bytes=335544320 ms=6.4
+[2026-09-21 21:09:37] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 1984, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 851.73
+[2026-09-21 21:09:37] INFO:     127.0.0.1:47956 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:37] HICACHE_EVT prefetch_start rid=e9a3a694a7bd481da4484a68961c4974 tokens=2047
+[2026-09-21 21:09:37] HICACHE_EVT s2h_query rid=e9a3a694a7bd481da4484a68961c4974 tokens_req=1984 storage_hit=0
+[2026-09-21 21:09:37] HICACHE_EVT h2s_io op=18 pages=31 tokens=1984 ms=137
+[2026-09-21 21:09:37] HICACHE_EVT h2s_io op=19 pages=1 tokens=64 ms=5
+[2026-09-21 21:09:37] HICACHE_EVT d2h_submit nodes=1 tokens=2048 bytes=335544320
+[2026-09-21 21:09:37] Prefill batch, #new-seq: 1, #new-token: 2048, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2234.28
+[2026-09-21 21:09:37] HICACHE_EVT h2s_done op=18 tokens=1984
+[2026-09-21 21:09:37] HICACHE_EVT h2s_done op=19 tokens=64
+[2026-09-21 21:09:37] INFO:     127.0.0.1:47968 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:37] HICACHE_EVT prefetch_start rid=1cddc83753584b74b80ef862624f93fd tokens=63
+[2026-09-21 21:09:37] HICACHE_EVT h2s_submit op=21 node=25 tokens=1984
+[2026-09-21 21:09:37] HICACHE_EVT h2s_submit op=22 node=24 tokens=64
+[2026-09-21 21:09:37] HICACHE_EVT d2h_done nodes=1 tokens=2048 bytes=335544320 ms=6.4
+[2026-09-21 21:09:38] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 1984, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 900.85
+[2026-09-21 21:09:38] INFO:     127.0.0.1:47984 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:38] HICACHE_EVT prefetch_start rid=0d0776867a934cf19d11940a618100e4 tokens=2047
+[2026-09-21 21:09:38] HICACHE_EVT s2h_query rid=0d0776867a934cf19d11940a618100e4 tokens_req=1984 storage_hit=0
+[2026-09-21 21:09:38] HICACHE_EVT h2s_io op=21 pages=31 tokens=1984 ms=135
+[2026-09-21 21:09:38] HICACHE_EVT h2s_io op=22 pages=1 tokens=64 ms=5
+[2026-09-21 21:09:38] HICACHE_EVT d2h_submit nodes=1 tokens=2048 bytes=335544320
+[2026-09-21 21:09:38] Prefill batch, #new-seq: 1, #new-token: 2048, #cached-token: 0, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2242.04
+[2026-09-21 21:09:38] HICACHE_EVT h2s_done op=21 tokens=1984
+[2026-09-21 21:09:38] HICACHE_EVT h2s_done op=22 tokens=64
+[2026-09-21 21:09:38] INFO:     127.0.0.1:47994 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:38] HICACHE_EVT prefetch_start rid=201c23d17715469aa0241d01d3429da6 tokens=63
+[2026-09-21 21:09:38] HICACHE_EVT h2s_submit op=24 node=27 tokens=1984
+[2026-09-21 21:09:38] HICACHE_EVT h2s_submit op=25 node=26 tokens=64
+[2026-09-21 21:09:38] HICACHE_EVT d2h_done nodes=1 tokens=2048 bytes=335544320 ms=6.4
+[2026-09-21 21:09:39] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 1984, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 917.70
+[2026-09-21 21:09:39] INFO:     127.0.0.1:57988 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:39] HICACHE_EVT prefetch_start rid=bed75d889805470297723e6d6d8b9ea4 tokens=4095
+[2026-09-21 21:09:39] HICACHE_EVT s2h_query rid=bed75d889805470297723e6d6d8b9ea4 tokens_req=4032 storage_hit=0
+[2026-09-21 21:09:39] HICACHE_EVT h2s_io op=24 pages=31 tokens=1984 ms=133
+[2026-09-21 21:09:39] HICACHE_EVT h2s_io op=25 pages=1 tokens=64 ms=5
+[2026-09-21 21:09:40] HICACHE_EVT d2h_submit nodes=1 tokens=4096 bytes=671088640
+[2026-09-21 21:09:40] Prefill batch, #new-seq: 1, #new-token: 4096, #cached-token: 0, token usage: 0.01, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2198.07
+[2026-09-21 21:09:40] HICACHE_EVT h2s_done op=24 tokens=1984
+[2026-09-21 21:09:40] HICACHE_EVT h2s_done op=25 tokens=64
+[2026-09-21 21:09:40] INFO:     127.0.0.1:57990 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:40] HICACHE_EVT prefetch_start rid=85dd38772dff45ba9730865717d89a7d tokens=63
+[2026-09-21 21:09:40] HICACHE_EVT h2s_submit op=27 node=29 tokens=4032
+[2026-09-21 21:09:40] HICACHE_EVT h2s_submit op=28 node=28 tokens=64
+[2026-09-21 21:09:40] HICACHE_EVT d2h_done nodes=1 tokens=4096 bytes=671088640 ms=12.6
+[2026-09-21 21:09:40] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 4032, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 780.19
+[2026-09-21 21:09:40] INFO:     127.0.0.1:57996 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:40] HICACHE_EVT prefetch_start rid=5456e6d659a2434589687939736d857c tokens=4095
+[2026-09-21 21:09:41] HICACHE_EVT s2h_query rid=5456e6d659a2434589687939736d857c tokens_req=4032 storage_hit=0
+[2026-09-21 21:09:41] HICACHE_EVT h2s_io op=27 pages=63 tokens=4032 ms=268
+[2026-09-21 21:09:41] HICACHE_EVT h2s_io op=28 pages=1 tokens=64 ms=5
+[2026-09-21 21:09:42] HICACHE_EVT d2h_submit nodes=1 tokens=4096 bytes=671088640
+[2026-09-21 21:09:42] Prefill batch, #new-seq: 1, #new-token: 4096, #cached-token: 0, token usage: 0.01, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2198.60
+[2026-09-21 21:09:42] HICACHE_EVT h2s_done op=27 tokens=4032
+[2026-09-21 21:09:42] HICACHE_EVT h2s_done op=28 tokens=64
+[2026-09-21 21:09:42] INFO:     127.0.0.1:58010 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:42] HICACHE_EVT prefetch_start rid=eb00cbaf2e904f0699cdeaa805c66ec5 tokens=63
+[2026-09-21 21:09:42] HICACHE_EVT h2s_submit op=30 node=31 tokens=4032
+[2026-09-21 21:09:42] HICACHE_EVT h2s_submit op=31 node=30 tokens=64
+[2026-09-21 21:09:42] HICACHE_EVT d2h_done nodes=1 tokens=4096 bytes=671088640 ms=12.7
+[2026-09-21 21:09:42] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 4032, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 789.24
+[2026-09-21 21:09:42] INFO:     127.0.0.1:58022 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:42] HICACHE_EVT prefetch_start rid=f99312eec3424d76bf02e69dc7f86494 tokens=4095
+[2026-09-21 21:09:42] HICACHE_EVT s2h_query rid=f99312eec3424d76bf02e69dc7f86494 tokens_req=4032 storage_hit=0
+[2026-09-21 21:09:43] HICACHE_EVT h2s_io op=30 pages=63 tokens=4032 ms=262
+[2026-09-21 21:09:43] HICACHE_EVT h2s_io op=31 pages=1 tokens=64 ms=4
+[2026-09-21 21:09:44] HICACHE_EVT d2h_submit nodes=1 tokens=4096 bytes=671088640
+[2026-09-21 21:09:44] Prefill batch, #new-seq: 1, #new-token: 4096, #cached-token: 0, token usage: 0.01, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2211.71
+[2026-09-21 21:09:44] HICACHE_EVT h2s_done op=30 tokens=4032
+[2026-09-21 21:09:44] HICACHE_EVT h2s_done op=31 tokens=64
+[2026-09-21 21:09:44] INFO:     127.0.0.1:58036 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:44] HICACHE_EVT prefetch_start rid=ad64fe51ce8b44b087df033c0cff7f66 tokens=63
+[2026-09-21 21:09:44] HICACHE_EVT h2s_submit op=33 node=33 tokens=4032
+[2026-09-21 21:09:44] HICACHE_EVT h2s_submit op=34 node=32 tokens=64
+[2026-09-21 21:09:44] HICACHE_EVT d2h_done nodes=1 tokens=4096 bytes=671088640 ms=12.6
+[2026-09-21 21:09:44] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 4032, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 761.69
+[2026-09-21 21:09:44] INFO:     127.0.0.1:58046 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:44] HICACHE_EVT prefetch_start rid=9c890d46496346698202cc9e9d4a9dec tokens=8191
+[2026-09-21 21:09:44] HICACHE_EVT s2h_query rid=9c890d46496346698202cc9e9d4a9dec tokens_req=8128 storage_hit=0
+[2026-09-21 21:09:45] HICACHE_EVT h2s_io op=33 pages=63 tokens=4032 ms=245
+[2026-09-21 21:09:45] HICACHE_EVT h2s_io op=34 pages=1 tokens=64 ms=5
+[2026-09-21 21:09:45] HICACHE_EVT h2s_done op=33 tokens=4032
+[2026-09-21 21:09:45] HICACHE_EVT h2s_done op=34 tokens=64
+[2026-09-21 21:09:48] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:09:48] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.02, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2091.40
+[2026-09-21 21:09:48] INFO:     127.0.0.1:58048 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:48] HICACHE_EVT h2s_submit op=36 node=34 tokens=8192
+[2026-09-21 21:09:48] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=25.1
+[2026-09-21 21:09:48] HICACHE_EVT prefetch_start rid=0eae18b83d5b4fab8112b2a029de1020 tokens=63
+[2026-09-21 21:09:48] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 8128, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 577.27
+[2026-09-21 21:09:48] INFO:     127.0.0.1:34540 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:48] HICACHE_EVT prefetch_start rid=a391a51334974fb7a81206cd40c67025 tokens=8191
+[2026-09-21 21:09:48] HICACHE_EVT s2h_query rid=a391a51334974fb7a81206cd40c67025 tokens_req=8128 storage_hit=0
+[2026-09-21 21:09:49] HICACHE_EVT h2s_io op=36 pages=128 tokens=8192 ms=554
+[2026-09-21 21:09:52] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:09:52] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.02, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2069.31
+[2026-09-21 21:09:52] HICACHE_EVT h2s_done op=36 tokens=8192
+[2026-09-21 21:09:52] INFO:     127.0.0.1:34552 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:52] HICACHE_EVT h2s_submit op=38 node=36 tokens=8192
+[2026-09-21 21:09:52] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=25.1
+[2026-09-21 21:09:52] HICACHE_EVT prefetch_start rid=58d6fe01f00a4bf5971f6eb50d0c5311 tokens=63
+[2026-09-21 21:09:52] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 8128, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 570.95
+[2026-09-21 21:09:52] INFO:     127.0.0.1:34564 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:52] HICACHE_EVT prefetch_start rid=149046050c2547c59a7a50091d58ea2f tokens=8191
+[2026-09-21 21:09:52] HICACHE_EVT s2h_query rid=149046050c2547c59a7a50091d58ea2f tokens_req=8128 storage_hit=0
+[2026-09-21 21:09:53] HICACHE_EVT h2s_io op=38 pages=128 tokens=8192 ms=526
+[2026-09-21 21:09:56] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:09:56] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.02, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 2091.94
+[2026-09-21 21:09:56] HICACHE_EVT h2s_done op=38 tokens=8192
+[2026-09-21 21:09:56] INFO:     127.0.0.1:34570 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:56] HICACHE_EVT h2s_submit op=40 node=38 tokens=8192
+[2026-09-21 21:09:56] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=25.1
+[2026-09-21 21:09:56] HICACHE_EVT prefetch_start rid=df8fcde7b6744ae4a0058b6d37a6170e tokens=63
+[2026-09-21 21:09:56] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 8128, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 570.00
+[2026-09-21 21:09:56] INFO:     127.0.0.1:34584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:09:57] Decode batch, #running-req: 1, #token: 0, token usage: 0.00, cuda graph: True, gen throughput (token/s): 0.88, #queue-req: 0
+[2026-09-21 21:09:57] HICACHE_EVT prefetch_start rid=c88e3b3daded46f0bc139e52a6fe00df tokens=16383
+[2026-09-21 21:09:57] HICACHE_EVT s2h_query rid=c88e3b3daded46f0bc139e52a6fe00df tokens_req=16320 storage_hit=0
+[2026-09-21 21:09:57] HICACHE_EVT h2s_io op=40 pages=128 tokens=8192 ms=537
+[2026-09-21 21:10:00] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.03, #running-req: 0, #queue-req: 0, #pending-token: 8192, cuda graph: True, input throughput (token/s): 2066.41
+[2026-09-21 21:10:00] HICACHE_EVT h2s_done op=40 tokens=8192
+[2026-09-21 21:10:06] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:10:06] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:10:06] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.03, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1583.56
+[2026-09-21 21:10:06] INFO:     127.0.0.1:34598 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:10:06] HICACHE_EVT h2s_submit op=42 node=40 tokens=8192
+[2026-09-21 21:10:06] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=25.1
+[2026-09-21 21:10:06] HICACHE_EVT h2s_submit op=43 node=41 tokens=8192
+[2026-09-21 21:10:06] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=25.1
+[2026-09-21 21:10:06] HICACHE_EVT prefetch_start rid=c837040a5b664e3a8346d2b7e059ba63 tokens=63
+[2026-09-21 21:10:06] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 16320, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 360.08
+[2026-09-21 21:10:06] INFO:     127.0.0.1:35494 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:10:06] HICACHE_EVT prefetch_start rid=5b0626e3d6324a8eafeb8d03c447ec87 tokens=16383
+[2026-09-21 21:10:06] HICACHE_EVT s2h_query rid=5b0626e3d6324a8eafeb8d03c447ec87 tokens_req=16320 storage_hit=0
+[2026-09-21 21:10:06] HICACHE_EVT h2s_io op=42 pages=128 tokens=8192 ms=547
+[2026-09-21 21:10:07] HICACHE_EVT h2s_io op=43 pages=128 tokens=8192 ms=544
+[2026-09-21 21:10:10] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.03, #running-req: 0, #queue-req: 0, #pending-token: 8192, cuda graph: True, input throughput (token/s): 2073.99
+[2026-09-21 21:10:10] HICACHE_EVT h2s_done op=42 tokens=8192
+[2026-09-21 21:10:10] HICACHE_EVT h2s_done op=43 tokens=8192
+[2026-09-21 21:10:15] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:10:15] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:10:15] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.03, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1585.05
+[2026-09-21 21:10:15] INFO:     127.0.0.1:35502 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:10:15] HICACHE_EVT h2s_submit op=45 node=43 tokens=8192
+[2026-09-21 21:10:15] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=25.1
+[2026-09-21 21:10:15] HICACHE_EVT h2s_submit op=46 node=44 tokens=8192
+[2026-09-21 21:10:15] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=25.2
+[2026-09-21 21:10:15] HICACHE_EVT prefetch_start rid=f3660a6ec2854827abe75a0da215a71c tokens=63
+[2026-09-21 21:10:15] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 16320, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 358.75
+[2026-09-21 21:10:15] INFO:     127.0.0.1:33200 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:10:15] HICACHE_EVT prefetch_start rid=e8f1e05eff3c4e40bb8aa249a3248482 tokens=16383
+[2026-09-21 21:10:15] HICACHE_EVT s2h_query rid=e8f1e05eff3c4e40bb8aa249a3248482 tokens_req=16320 storage_hit=0
+[2026-09-21 21:10:16] HICACHE_EVT h2s_io op=45 pages=128 tokens=8192 ms=578
+[2026-09-21 21:10:16] HICACHE_EVT h2s_io op=46 pages=128 tokens=8192 ms=588
+[2026-09-21 21:10:19] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.03, #running-req: 0, #queue-req: 0, #pending-token: 8192, cuda graph: True, input throughput (token/s): 2058.66
+[2026-09-21 21:10:19] HICACHE_EVT h2s_done op=45 tokens=8192
+[2026-09-21 21:10:19] HICACHE_EVT h2s_done op=46 tokens=8192
+[2026-09-21 21:10:24] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:10:24] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:10:24] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.03, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1583.01
+[2026-09-21 21:10:24] INFO:     127.0.0.1:33214 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:10:24] HICACHE_EVT h2s_submit op=48 node=46 tokens=8192
+[2026-09-21 21:10:24] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=25.1
+[2026-09-21 21:10:24] HICACHE_EVT h2s_submit op=49 node=47 tokens=8192
+[2026-09-21 21:10:24] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=25.3
+[2026-09-21 21:10:24] HICACHE_EVT prefetch_start rid=eb7f042a0916420cbbe2445a20831135 tokens=63
+[2026-09-21 21:10:24] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 16320, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 360.38
+[2026-09-21 21:10:24] INFO:     127.0.0.1:33838 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:10:25] HICACHE_EVT prefetch_start rid=cf29670bbd1e4daa956121c17912eb62 tokens=32511
+[2026-09-21 21:10:25] HICACHE_EVT s2h_query rid=cf29670bbd1e4daa956121c17912eb62 tokens_req=32448 storage_hit=0
+[2026-09-21 21:10:25] HICACHE_EVT h2s_io op=48 pages=128 tokens=8192 ms=521
+[2026-09-21 21:10:25] HICACHE_EVT h2s_io op=49 pages=128 tokens=8192 ms=528
+[2026-09-21 21:10:28] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.03, #running-req: 0, #queue-req: 0, #pending-token: 24320, cuda graph: True, input throughput (token/s): 2051.53
+[2026-09-21 21:10:28] HICACHE_EVT h2s_done op=48 tokens=8192
+[2026-09-21 21:10:28] HICACHE_EVT h2s_done op=49 tokens=8192
+[2026-09-21 21:10:34] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.05, #running-req: 0, #queue-req: 0, #pending-token: 16128, cuda graph: True, input throughput (token/s): 1585.28
+[2026-09-21 21:10:40] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.06, #running-req: 0, #queue-req: 0, #pending-token: 7936, cuda graph: True, input throughput (token/s): 1235.48
+[2026-09-21 21:10:48] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:10:48] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:10:48] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:10:48] HICACHE_EVT d2h_submit nodes=1 tokens=7936 bytes=1300234240
+[2026-09-21 21:10:48] Prefill batch, #new-seq: 1, #new-token: 7936, #cached-token: 0, token usage: 0.06, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1006.57
+[2026-09-21 21:10:48] INFO:     127.0.0.1:33840 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:10:48] HICACHE_EVT h2s_submit op=51 node=49 tokens=8192
+[2026-09-21 21:10:48] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=25.1
+[2026-09-21 21:10:48] HICACHE_EVT h2s_submit op=52 node=50 tokens=8192
+[2026-09-21 21:10:48] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=24.9
+[2026-09-21 21:10:48] HICACHE_EVT h2s_submit op=53 node=51 tokens=8192
+[2026-09-21 21:10:48] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=24.9
+[2026-09-21 21:10:48] HICACHE_EVT h2s_submit op=54 node=52 tokens=7936
+[2026-09-21 21:10:48] HICACHE_EVT d2h_done nodes=1 tokens=7936 bytes=1300234240 ms=25.2
+[2026-09-21 21:10:48] HICACHE_EVT prefetch_start rid=fb5a5dbc12db4215b69e981121205ecf tokens=63
+[2026-09-21 21:10:48] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 32448, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 203.44
+[2026-09-21 21:10:48] INFO:     127.0.0.1:41970 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:10:49] HICACHE_EVT prefetch_start rid=9d0713c59f9e46bc9a92dcce81f6fb32 tokens=32511
+[2026-09-21 21:10:49] HICACHE_EVT s2h_query rid=9d0713c59f9e46bc9a92dcce81f6fb32 tokens_req=32448 storage_hit=0
+[2026-09-21 21:10:49] HICACHE_EVT h2s_io op=51 pages=128 tokens=8192 ms=582
+[2026-09-21 21:10:49] HICACHE_EVT h2s_io op=52 pages=128 tokens=8192 ms=575
+[2026-09-21 21:10:50] HICACHE_EVT h2s_io op=53 pages=128 tokens=8192 ms=586
+[2026-09-21 21:10:50] HICACHE_EVT h2s_io op=54 pages=124 tokens=7936 ms=575
+[2026-09-21 21:10:52] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.03, #running-req: 0, #queue-req: 0, #pending-token: 24320, cuda graph: True, input throughput (token/s): 2048.43
+[2026-09-21 21:10:52] HICACHE_EVT h2s_done op=51 tokens=8192
+[2026-09-21 21:10:52] HICACHE_EVT h2s_done op=52 tokens=8192
+[2026-09-21 21:10:52] HICACHE_EVT h2s_done op=53 tokens=8192
+[2026-09-21 21:10:52] HICACHE_EVT h2s_done op=54 tokens=7936
+[2026-09-21 21:10:58] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.05, #running-req: 0, #queue-req: 0, #pending-token: 16128, cuda graph: True, input throughput (token/s): 1580.89
+[2026-09-21 21:11:04] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.06, #running-req: 0, #queue-req: 0, #pending-token: 7936, cuda graph: True, input throughput (token/s): 1237.47
+[2026-09-21 21:11:12] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:11:12] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:11:12] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:11:12] HICACHE_EVT d2h_submit nodes=1 tokens=7936 bytes=1300234240
+[2026-09-21 21:11:12] Prefill batch, #new-seq: 1, #new-token: 7936, #cached-token: 0, token usage: 0.06, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1001.28
+[2026-09-21 21:11:12] INFO:     127.0.0.1:41984 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:11:12] HICACHE_EVT h2s_submit op=56 node=54 tokens=8192
+[2026-09-21 21:11:12] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=25.1
+[2026-09-21 21:11:12] HICACHE_EVT h2s_submit op=57 node=55 tokens=8192
+[2026-09-21 21:11:12] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=24.9
+[2026-09-21 21:11:12] HICACHE_EVT h2s_submit op=58 node=56 tokens=8192
+[2026-09-21 21:11:12] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=25.0
+[2026-09-21 21:11:12] HICACHE_EVT h2s_submit op=59 node=57 tokens=7936
+[2026-09-21 21:11:12] HICACHE_EVT d2h_done nodes=1 tokens=7936 bytes=1300234240 ms=24.2
+[2026-09-21 21:11:12] HICACHE_EVT prefetch_start rid=b0688174c796496fbe03c24daa863d37 tokens=63
+[2026-09-21 21:11:12] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 32448, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 204.74
+[2026-09-21 21:11:12] INFO:     127.0.0.1:41530 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:11:13] HICACHE_EVT prefetch_start rid=1e50505846254961a16854a15a74dac6 tokens=32511
+[2026-09-21 21:11:13] HICACHE_EVT s2h_query rid=1e50505846254961a16854a15a74dac6 tokens_req=32448 storage_hit=0
+[2026-09-21 21:11:13] HICACHE_EVT h2s_io op=56 pages=128 tokens=8192 ms=588
+[2026-09-21 21:11:13] HICACHE_EVT h2s_io op=57 pages=128 tokens=8192 ms=563
+[2026-09-21 21:11:14] HICACHE_EVT h2s_io op=58 pages=128 tokens=8192 ms=563
+[2026-09-21 21:11:14] HICACHE_EVT h2s_io op=59 pages=124 tokens=7936 ms=518
+[2026-09-21 21:11:16] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.03, #running-req: 0, #queue-req: 0, #pending-token: 24320, cuda graph: True, input throughput (token/s): 2053.57
+[2026-09-21 21:11:16] HICACHE_EVT h2s_done op=56 tokens=8192
+[2026-09-21 21:11:16] HICACHE_EVT h2s_done op=57 tokens=8192
+[2026-09-21 21:11:16] HICACHE_EVT h2s_done op=58 tokens=8192
+[2026-09-21 21:11:16] HICACHE_EVT h2s_done op=59 tokens=7936
+[2026-09-21 21:11:22] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.05, #running-req: 0, #queue-req: 0, #pending-token: 16128, cuda graph: True, input throughput (token/s): 1583.90
+[2026-09-21 21:11:28] Prefill batch, #new-seq: 1, #new-token: 8192, #cached-token: 0, token usage: 0.06, #running-req: 0, #queue-req: 0, #pending-token: 7936, cuda graph: True, input throughput (token/s): 1235.02
+[2026-09-21 21:11:36] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:11:36] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:11:36] HICACHE_EVT d2h_submit nodes=1 tokens=8192 bytes=1342177280
+[2026-09-21 21:11:36] HICACHE_EVT d2h_submit nodes=1 tokens=7936 bytes=1300234240
+[2026-09-21 21:11:36] Prefill batch, #new-seq: 1, #new-token: 7936, #cached-token: 0, token usage: 0.06, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 1004.85
+[2026-09-21 21:11:36] INFO:     127.0.0.1:41542 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:11:36] HICACHE_EVT h2s_submit op=61 node=59 tokens=8192
+[2026-09-21 21:11:36] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=25.1
+[2026-09-21 21:11:36] HICACHE_EVT h2s_submit op=62 node=60 tokens=8192
+[2026-09-21 21:11:36] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=24.9
+[2026-09-21 21:11:36] HICACHE_EVT h2s_submit op=63 node=61 tokens=8192
+[2026-09-21 21:11:36] HICACHE_EVT d2h_done nodes=1 tokens=8192 bytes=1342177280 ms=25.9
+[2026-09-21 21:11:36] HICACHE_EVT h2s_submit op=64 node=62 tokens=7936
+[2026-09-21 21:11:36] HICACHE_EVT d2h_done nodes=1 tokens=7936 bytes=1300234240 ms=24.9
+[2026-09-21 21:11:36] HICACHE_EVT prefetch_start rid=24b6b771ee5646d3b3fb20aee53f7e94 tokens=63
+[2026-09-21 21:11:36] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 32448, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 202.91
+[2026-09-21 21:11:36] INFO:     127.0.0.1:46646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:11:37] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:11:37] INFO:     127.0.0.1:46650 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:11:37] HICACHE_EVT h2s_io op=61 pages=128 tokens=8192 ms=546
+[2026-09-21 21:11:37] HICACHE_EVT h2s_done op=61 tokens=8192
+[2026-09-21 21:11:37] HICACHE_EVT h2s_io op=62 pages=128 tokens=8192 ms=578
+[2026-09-21 21:11:37] HICACHE_EVT h2s_done op=62 tokens=8192
+[2026-09-21 21:11:38] HICACHE_EVT h2s_io op=63 pages=128 tokens=8192 ms=575
+[2026-09-21 21:11:38] HICACHE_EVT h2s_done op=63 tokens=8192
+[2026-09-21 21:11:38] HICACHE_EVT h2s_io op=64 pages=124 tokens=7936 ms=509
+[2026-09-21 21:11:38] HICACHE_EVT h2s_done op=64 tokens=7936
+[2026-09-21 21:11:42] Cache flushed successfully!
+[2026-09-21 21:11:42] INFO:     127.0.0.1:42684 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:11:43] Cache flushed successfully!
+[2026-09-21 21:11:43] INFO:     127.0.0.1:42690 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:11:48] HICACHE_EVT prefetch_start rid=468abc4e75194674b07ec6bc406ea302 tokens=511
+[2026-09-21 21:11:48] HICACHE_EVT s2h_query rid=468abc4e75194674b07ec6bc406ea302 tokens_req=448 storage_hit=448
+[2026-09-21 21:11:49] HICACHE_EVT s2h_io rid=468abc4e75194674b07ec6bc406ea302 pages=7 tokens=0 ms=57
+[2026-09-21 21:11:49] HiCache prefetch success req=468abc4e75194674b07ec6bc406ea302 completed=448 matched=0 loaded=448 occupied=0
+[2026-09-21 21:11:49] HICACHE_EVT load_back_init rid=468abc4e75194674b07ec6bc406ea302 tokens=448 host_hit=448 node=74
+[2026-09-21 21:11:49] HICACHE_EVT h2d_submit nodes=1 tokens=448 bytes=73400320
+[2026-09-21 21:11:49] HICACHE_EVT h2d_done nodes=1 tokens=448 bytes=73400320 ms=2.8
+[2026-09-21 21:11:49] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:11:49] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 448, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 5.28
+[2026-09-21 21:11:49] HICACHE_EVT h2s_submit op=66 node=75 tokens=64
+[2026-09-21 21:11:49] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:11:49] INFO:     127.0.0.1:33836 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:11:49] HICACHE_EVT h2s_io op=66 pages=1 tokens=64 ms=5
+[2026-09-21 21:11:49] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:11:49] HICACHE_EVT h2s_done op=66 tokens=64
+[2026-09-21 21:11:49] INFO:     127.0.0.1:33850 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:11:55] Cache flushed successfully!
+[2026-09-21 21:11:55] INFO:     127.0.0.1:33866 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:11:58] HICACHE_EVT prefetch_start rid=340b02a3319044b8a7572aea5e5d6fa9 tokens=511
+[2026-09-21 21:11:58] HICACHE_EVT s2h_query rid=340b02a3319044b8a7572aea5e5d6fa9 tokens_req=448 storage_hit=448
+[2026-09-21 21:11:58] HICACHE_EVT s2h_io rid=340b02a3319044b8a7572aea5e5d6fa9 pages=7 tokens=0 ms=58
+[2026-09-21 21:11:58] HiCache prefetch success req=340b02a3319044b8a7572aea5e5d6fa9 completed=448 matched=0 loaded=448 occupied=0
+[2026-09-21 21:11:58] HICACHE_EVT load_back_init rid=340b02a3319044b8a7572aea5e5d6fa9 tokens=448 host_hit=448 node=81
+[2026-09-21 21:11:58] HICACHE_EVT h2d_submit nodes=1 tokens=448 bytes=73400320
+[2026-09-21 21:11:58] HICACHE_EVT h2d_done nodes=1 tokens=448 bytes=73400320 ms=1.9
+[2026-09-21 21:11:58] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:11:58] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 448, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.99
+[2026-09-21 21:11:58] HICACHE_EVT h2s_submit op=68 node=82 tokens=64
+[2026-09-21 21:11:58] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:11:58] INFO:     127.0.0.1:33872 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:11:58] HICACHE_EVT h2s_io op=68 pages=1 tokens=64 ms=5
+[2026-09-21 21:11:58] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:11:58] HICACHE_EVT h2s_done op=68 tokens=64
+[2026-09-21 21:11:58] INFO:     127.0.0.1:33874 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:12:04] Cache flushed successfully!
+[2026-09-21 21:12:04] INFO:     127.0.0.1:41844 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:12:07] HICACHE_EVT prefetch_start rid=f36baf06359247718b3d0b0340bba6c3 tokens=511
+[2026-09-21 21:12:07] HICACHE_EVT s2h_query rid=f36baf06359247718b3d0b0340bba6c3 tokens_req=448 storage_hit=448
+[2026-09-21 21:12:07] HICACHE_EVT s2h_io rid=f36baf06359247718b3d0b0340bba6c3 pages=7 tokens=0 ms=39
+[2026-09-21 21:12:07] HiCache prefetch success req=f36baf06359247718b3d0b0340bba6c3 completed=448 matched=0 loaded=448 occupied=0
+[2026-09-21 21:12:07] HICACHE_EVT load_back_init rid=f36baf06359247718b3d0b0340bba6c3 tokens=448 host_hit=448 node=88
+[2026-09-21 21:12:07] HICACHE_EVT h2d_submit nodes=1 tokens=448 bytes=73400320
+[2026-09-21 21:12:07] HICACHE_EVT h2d_done nodes=1 tokens=448 bytes=73400320 ms=1.8
+[2026-09-21 21:12:07] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:12:07] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 448, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.95
+[2026-09-21 21:12:07] HICACHE_EVT h2s_submit op=70 node=89 tokens=64
+[2026-09-21 21:12:07] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:12:07] INFO:     127.0.0.1:41856 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:12:07] HICACHE_EVT h2s_io op=70 pages=1 tokens=64 ms=5
+[2026-09-21 21:12:07] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:12:07] HICACHE_EVT h2s_done op=70 tokens=64
+[2026-09-21 21:12:07] INFO:     127.0.0.1:41858 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:12:13] Cache flushed successfully!
+[2026-09-21 21:12:13] INFO:     127.0.0.1:43050 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:12:16] HICACHE_EVT prefetch_start rid=73773afa69a149eaaa72c5b0c14076e9 tokens=1023
+[2026-09-21 21:12:16] HICACHE_EVT s2h_query rid=73773afa69a149eaaa72c5b0c14076e9 tokens_req=960 storage_hit=960
+[2026-09-21 21:12:16] HICACHE_EVT s2h_io rid=73773afa69a149eaaa72c5b0c14076e9 pages=15 tokens=0 ms=116
+[2026-09-21 21:12:16] HiCache prefetch success req=73773afa69a149eaaa72c5b0c14076e9 completed=960 matched=0 loaded=960 occupied=0
+[2026-09-21 21:12:16] HICACHE_EVT load_back_init rid=73773afa69a149eaaa72c5b0c14076e9 tokens=960 host_hit=960 node=95
+[2026-09-21 21:12:16] HICACHE_EVT h2d_submit nodes=1 tokens=960 bytes=157286400
+[2026-09-21 21:12:16] HICACHE_EVT h2d_done nodes=1 tokens=960 bytes=157286400 ms=3.5
+[2026-09-21 21:12:16] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:12:16] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 960, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 7.03
+[2026-09-21 21:12:16] HICACHE_EVT h2s_submit op=72 node=96 tokens=64
+[2026-09-21 21:12:16] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:12:16] INFO:     127.0.0.1:43064 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:12:16] HICACHE_EVT h2s_io op=72 pages=1 tokens=64 ms=5
+[2026-09-21 21:12:16] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:12:16] HICACHE_EVT h2s_done op=72 tokens=64
+[2026-09-21 21:12:16] INFO:     127.0.0.1:43080 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:12:22] Cache flushed successfully!
+[2026-09-21 21:12:22] INFO:     127.0.0.1:38714 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:12:25] HICACHE_EVT prefetch_start rid=713337456c9748fe8f9b58c389d73668 tokens=1023
+[2026-09-21 21:12:25] HICACHE_EVT s2h_query rid=713337456c9748fe8f9b58c389d73668 tokens_req=960 storage_hit=960
+[2026-09-21 21:12:25] HICACHE_EVT s2h_io rid=713337456c9748fe8f9b58c389d73668 pages=15 tokens=0 ms=105
+[2026-09-21 21:12:25] HiCache prefetch success req=713337456c9748fe8f9b58c389d73668 completed=960 matched=0 loaded=960 occupied=0
+[2026-09-21 21:12:25] HICACHE_EVT load_back_init rid=713337456c9748fe8f9b58c389d73668 tokens=960 host_hit=960 node=102
+[2026-09-21 21:12:25] HICACHE_EVT h2d_submit nodes=1 tokens=960 bytes=157286400
+[2026-09-21 21:12:25] HICACHE_EVT h2d_done nodes=1 tokens=960 bytes=157286400 ms=3.5
+[2026-09-21 21:12:25] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:12:25] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 960, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.95
+[2026-09-21 21:12:25] HICACHE_EVT h2s_submit op=74 node=103 tokens=64
+[2026-09-21 21:12:25] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:12:25] INFO:     127.0.0.1:38722 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:12:25] HICACHE_EVT h2s_io op=74 pages=1 tokens=64 ms=6
+[2026-09-21 21:12:25] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:12:25] HICACHE_EVT h2s_done op=74 tokens=64
+[2026-09-21 21:12:25] INFO:     127.0.0.1:38736 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:12:31] Cache flushed successfully!
+[2026-09-21 21:12:31] INFO:     127.0.0.1:56320 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:12:34] HICACHE_EVT prefetch_start rid=55a62b1e09914e32b1447520df67e30a tokens=1023
+[2026-09-21 21:12:34] HICACHE_EVT s2h_query rid=55a62b1e09914e32b1447520df67e30a tokens_req=960 storage_hit=960
+[2026-09-21 21:12:35] HICACHE_EVT s2h_io rid=55a62b1e09914e32b1447520df67e30a pages=15 tokens=0 ms=260
+[2026-09-21 21:12:35] HiCache prefetch success req=55a62b1e09914e32b1447520df67e30a completed=960 matched=0 loaded=960 occupied=0
+[2026-09-21 21:12:35] HICACHE_EVT load_back_init rid=55a62b1e09914e32b1447520df67e30a tokens=960 host_hit=960 node=109
+[2026-09-21 21:12:35] HICACHE_EVT h2d_submit nodes=1 tokens=960 bytes=157286400
+[2026-09-21 21:12:35] HICACHE_EVT h2d_done nodes=1 tokens=960 bytes=157286400 ms=3.5
+[2026-09-21 21:12:35] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:12:35] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 960, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.83
+[2026-09-21 21:12:35] HICACHE_EVT h2s_submit op=76 node=110 tokens=64
+[2026-09-21 21:12:35] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:12:35] INFO:     127.0.0.1:56332 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:12:35] HICACHE_EVT h2s_io op=76 pages=1 tokens=64 ms=5
+[2026-09-21 21:12:35] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:12:35] HICACHE_EVT h2s_done op=76 tokens=64
+[2026-09-21 21:12:35] INFO:     127.0.0.1:56336 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:12:41] Cache flushed successfully!
+[2026-09-21 21:12:41] INFO:     127.0.0.1:47632 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:12:44] HICACHE_EVT prefetch_start rid=2907262efda64b89a222475fb4275710 tokens=2047
+[2026-09-21 21:12:44] HICACHE_EVT s2h_query rid=2907262efda64b89a222475fb4275710 tokens_req=1984 storage_hit=1984
+[2026-09-21 21:12:44] HICACHE_EVT s2h_io rid=2907262efda64b89a222475fb4275710 pages=31 tokens=0 ms=174
+[2026-09-21 21:12:44] HiCache prefetch success req=2907262efda64b89a222475fb4275710 completed=1984 matched=0 loaded=1984 occupied=0
+[2026-09-21 21:12:44] HICACHE_EVT load_back_init rid=2907262efda64b89a222475fb4275710 tokens=1984 host_hit=1984 node=116
+[2026-09-21 21:12:44] HICACHE_EVT h2d_submit nodes=1 tokens=1984 bytes=325058560
+[2026-09-21 21:12:44] HICACHE_EVT h2d_done nodes=1 tokens=1984 bytes=325058560 ms=8.7
+[2026-09-21 21:12:44] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:12:44] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 1984, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.94
+[2026-09-21 21:12:44] HICACHE_EVT h2s_submit op=78 node=117 tokens=64
+[2026-09-21 21:12:44] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:12:44] INFO:     127.0.0.1:47646 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:12:44] HICACHE_EVT h2s_io op=78 pages=1 tokens=64 ms=5
+[2026-09-21 21:12:44] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:12:44] HICACHE_EVT h2s_done op=78 tokens=64
+[2026-09-21 21:12:44] INFO:     127.0.0.1:47658 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:12:50] Cache flushed successfully!
+[2026-09-21 21:12:50] INFO:     127.0.0.1:48580 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:12:53] HICACHE_EVT prefetch_start rid=b7f8c6e269e3436ea2de9715a4b3279e tokens=2047
+[2026-09-21 21:12:53] HICACHE_EVT s2h_query rid=b7f8c6e269e3436ea2de9715a4b3279e tokens_req=1984 storage_hit=1984
+[2026-09-21 21:12:53] HICACHE_EVT s2h_io rid=b7f8c6e269e3436ea2de9715a4b3279e pages=31 tokens=0 ms=166
+[2026-09-21 21:12:53] HiCache prefetch success req=b7f8c6e269e3436ea2de9715a4b3279e completed=1984 matched=0 loaded=1984 occupied=0
+[2026-09-21 21:12:53] HICACHE_EVT load_back_init rid=b7f8c6e269e3436ea2de9715a4b3279e tokens=1984 host_hit=1984 node=123
+[2026-09-21 21:12:53] HICACHE_EVT h2d_submit nodes=1 tokens=1984 bytes=325058560
+[2026-09-21 21:12:53] HICACHE_EVT h2d_done nodes=1 tokens=1984 bytes=325058560 ms=8.9
+[2026-09-21 21:12:53] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:12:53] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 1984, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.82
+[2026-09-21 21:12:53] HICACHE_EVT h2s_submit op=80 node=124 tokens=64
+[2026-09-21 21:12:53] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:12:53] INFO:     127.0.0.1:48584 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:12:53] HICACHE_EVT h2s_io op=80 pages=1 tokens=64 ms=7
+[2026-09-21 21:12:53] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:12:53] HICACHE_EVT h2s_done op=80 tokens=64
+[2026-09-21 21:12:53] INFO:     127.0.0.1:48594 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:12:59] Cache flushed successfully!
+[2026-09-21 21:12:59] INFO:     127.0.0.1:47868 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:13:02] HICACHE_EVT prefetch_start rid=232a68210c1f4a558aaa672f13741a94 tokens=2047
+[2026-09-21 21:13:02] HICACHE_EVT s2h_query rid=232a68210c1f4a558aaa672f13741a94 tokens_req=1984 storage_hit=1984
+[2026-09-21 21:13:03] HICACHE_EVT s2h_io rid=232a68210c1f4a558aaa672f13741a94 pages=31 tokens=0 ms=417
+[2026-09-21 21:13:03] HiCache prefetch success req=232a68210c1f4a558aaa672f13741a94 completed=1984 matched=0 loaded=1984 occupied=0
+[2026-09-21 21:13:03] HICACHE_EVT load_back_init rid=232a68210c1f4a558aaa672f13741a94 tokens=1984 host_hit=1984 node=130
+[2026-09-21 21:13:03] HICACHE_EVT h2d_submit nodes=1 tokens=1984 bytes=325058560
+[2026-09-21 21:13:03] HICACHE_EVT h2d_done nodes=1 tokens=1984 bytes=325058560 ms=8.9
+[2026-09-21 21:13:03] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:13:03] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 1984, token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.73
+[2026-09-21 21:13:03] HICACHE_EVT h2s_submit op=82 node=131 tokens=64
+[2026-09-21 21:13:03] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:13:03] INFO:     127.0.0.1:47884 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:13:03] HICACHE_EVT h2s_io op=82 pages=1 tokens=64 ms=5
+[2026-09-21 21:13:03] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:13:03] HICACHE_EVT h2s_done op=82 tokens=64
+[2026-09-21 21:13:03] INFO:     127.0.0.1:47890 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:13:09] Cache flushed successfully!
+[2026-09-21 21:13:09] INFO:     127.0.0.1:47900 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:13:12] HICACHE_EVT prefetch_start rid=a6367de198624eb5b7977821d3f18ea4 tokens=4095
+[2026-09-21 21:13:12] HICACHE_EVT s2h_query rid=a6367de198624eb5b7977821d3f18ea4 tokens_req=4032 storage_hit=4032
+[2026-09-21 21:13:12] HICACHE_EVT s2h_io rid=a6367de198624eb5b7977821d3f18ea4 pages=63 tokens=0 ms=256
+[2026-09-21 21:13:12] HiCache prefetch success req=a6367de198624eb5b7977821d3f18ea4 completed=4032 matched=0 loaded=4032 occupied=0
+[2026-09-21 21:13:12] HICACHE_EVT load_back_init rid=a6367de198624eb5b7977821d3f18ea4 tokens=4032 host_hit=4032 node=137
+[2026-09-21 21:13:12] HICACHE_EVT h2d_submit nodes=1 tokens=4032 bytes=660602880
+[2026-09-21 21:13:12] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:13:12] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 4032, token usage: 0.01, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.85
+[2026-09-21 21:13:12] HICACHE_EVT h2s_submit op=84 node=138 tokens=64
+[2026-09-21 21:13:12] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:13:12] HICACHE_EVT h2d_done nodes=1 tokens=4032 bytes=660602880 ms=24.3
+[2026-09-21 21:13:12] INFO:     127.0.0.1:46412 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:13:12] HICACHE_EVT h2s_io op=84 pages=1 tokens=64 ms=5
+[2026-09-21 21:13:12] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:13:12] HICACHE_EVT h2s_done op=84 tokens=64
+[2026-09-21 21:13:12] INFO:     127.0.0.1:46414 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:13:18] Cache flushed successfully!
+[2026-09-21 21:13:18] INFO:     127.0.0.1:46426 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:13:21] HICACHE_EVT prefetch_start rid=a34e86b0a363452da474d5abddbf96f9 tokens=4095
+[2026-09-21 21:13:21] HICACHE_EVT s2h_query rid=a34e86b0a363452da474d5abddbf96f9 tokens_req=4032 storage_hit=4032
+[2026-09-21 21:13:21] HICACHE_EVT s2h_io rid=a34e86b0a363452da474d5abddbf96f9 pages=63 tokens=0 ms=278
+[2026-09-21 21:13:21] HiCache prefetch success req=a34e86b0a363452da474d5abddbf96f9 completed=4032 matched=0 loaded=4032 occupied=0
+[2026-09-21 21:13:21] HICACHE_EVT load_back_init rid=a34e86b0a363452da474d5abddbf96f9 tokens=4032 host_hit=4032 node=144
+[2026-09-21 21:13:21] HICACHE_EVT h2d_submit nodes=1 tokens=4032 bytes=660602880
+[2026-09-21 21:13:21] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:13:21] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 4032, token usage: 0.01, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 7.03
+[2026-09-21 21:13:21] HICACHE_EVT h2s_submit op=86 node=145 tokens=64
+[2026-09-21 21:13:21] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:13:21] HICACHE_EVT h2d_done nodes=1 tokens=4032 bytes=660602880 ms=24.8
+[2026-09-21 21:13:21] INFO:     127.0.0.1:41976 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:13:21] HICACHE_EVT h2s_io op=86 pages=1 tokens=64 ms=5
+[2026-09-21 21:13:21] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:13:21] HICACHE_EVT h2s_done op=86 tokens=64
+[2026-09-21 21:13:21] INFO:     127.0.0.1:41978 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:13:27] Cache flushed successfully!
+[2026-09-21 21:13:27] INFO:     127.0.0.1:41994 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:13:30] HICACHE_EVT prefetch_start rid=dd50b711356b4e36a43cecae36318d84 tokens=4095
+[2026-09-21 21:13:30] HICACHE_EVT s2h_query rid=dd50b711356b4e36a43cecae36318d84 tokens_req=4032 storage_hit=4032
+[2026-09-21 21:13:30] HICACHE_EVT s2h_io rid=dd50b711356b4e36a43cecae36318d84 pages=63 tokens=0 ms=268
+[2026-09-21 21:13:30] HiCache prefetch success req=dd50b711356b4e36a43cecae36318d84 completed=4032 matched=0 loaded=4032 occupied=0
+[2026-09-21 21:13:30] HICACHE_EVT load_back_init rid=dd50b711356b4e36a43cecae36318d84 tokens=4032 host_hit=4032 node=151
+[2026-09-21 21:13:30] HICACHE_EVT h2d_submit nodes=1 tokens=4032 bytes=660602880
+[2026-09-21 21:13:31] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:13:31] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 4032, token usage: 0.01, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.85
+[2026-09-21 21:13:31] HICACHE_EVT h2s_submit op=88 node=152 tokens=64
+[2026-09-21 21:13:31] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:13:31] HICACHE_EVT h2d_done nodes=1 tokens=4032 bytes=660602880 ms=25.2
+[2026-09-21 21:13:31] INFO:     127.0.0.1:43464 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:13:31] HICACHE_EVT h2s_io op=88 pages=1 tokens=64 ms=5
+[2026-09-21 21:13:31] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:13:31] HICACHE_EVT h2s_done op=88 tokens=64
+[2026-09-21 21:13:31] INFO:     127.0.0.1:43470 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:13:37] Cache flushed successfully!
+[2026-09-21 21:13:37] INFO:     127.0.0.1:43480 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:13:40] HICACHE_EVT prefetch_start rid=bb2850fa09e74643a656c2b230e88c65 tokens=8191
+[2026-09-21 21:13:40] HICACHE_EVT s2h_query rid=bb2850fa09e74643a656c2b230e88c65 tokens_req=8128 storage_hit=8128
+[2026-09-21 21:13:40] HICACHE_EVT s2h_io rid=bb2850fa09e74643a656c2b230e88c65 pages=127 tokens=0 ms=455
+[2026-09-21 21:13:40] HiCache prefetch success req=bb2850fa09e74643a656c2b230e88c65 completed=8128 matched=0 loaded=8128 occupied=0
+[2026-09-21 21:13:40] HICACHE_EVT load_back_init rid=bb2850fa09e74643a656c2b230e88c65 tokens=8128 host_hit=8128 node=158
+[2026-09-21 21:13:40] HICACHE_EVT h2d_submit nodes=1 tokens=8128 bytes=1331691520
+[2026-09-21 21:13:40] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:13:40] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 8128, token usage: 0.02, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.50
+[2026-09-21 21:13:40] HICACHE_EVT h2s_submit op=90 node=159 tokens=64
+[2026-09-21 21:13:40] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.4
+[2026-09-21 21:13:40] HICACHE_EVT h2d_done nodes=1 tokens=8128 bytes=1331691520 ms=50.8
+[2026-09-21 21:13:40] INFO:     127.0.0.1:45172 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:13:40] HICACHE_EVT h2s_io op=90 pages=1 tokens=64 ms=5
+[2026-09-21 21:13:40] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:13:40] HICACHE_EVT h2s_done op=90 tokens=64
+[2026-09-21 21:13:40] INFO:     127.0.0.1:45182 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:13:46] Cache flushed successfully!
+[2026-09-21 21:13:46] INFO:     127.0.0.1:45190 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:13:49] HICACHE_EVT prefetch_start rid=3e848f8fd84b4908a7b04c1ea5558268 tokens=8191
+[2026-09-21 21:13:49] HICACHE_EVT s2h_query rid=3e848f8fd84b4908a7b04c1ea5558268 tokens_req=8128 storage_hit=8128
+[2026-09-21 21:13:50] HICACHE_EVT s2h_io rid=3e848f8fd84b4908a7b04c1ea5558268 pages=127 tokens=0 ms=427
+[2026-09-21 21:13:50] HiCache prefetch success req=3e848f8fd84b4908a7b04c1ea5558268 completed=8128 matched=0 loaded=8128 occupied=0
+[2026-09-21 21:13:50] HICACHE_EVT load_back_init rid=3e848f8fd84b4908a7b04c1ea5558268 tokens=8128 host_hit=8128 node=165
+[2026-09-21 21:13:50] HICACHE_EVT h2d_submit nodes=1 tokens=8128 bytes=1331691520
+[2026-09-21 21:13:50] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:13:50] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 8128, token usage: 0.02, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.66
+[2026-09-21 21:13:50] HICACHE_EVT h2s_submit op=92 node=166 tokens=64
+[2026-09-21 21:13:50] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:13:50] HICACHE_EVT h2d_done nodes=1 tokens=8128 bytes=1331691520 ms=51.6
+[2026-09-21 21:13:50] INFO:     127.0.0.1:60516 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:13:50] HICACHE_EVT h2s_io op=92 pages=1 tokens=64 ms=5
+[2026-09-21 21:13:50] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:13:50] HICACHE_EVT h2s_done op=92 tokens=64
+[2026-09-21 21:13:50] INFO:     127.0.0.1:60520 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:13:56] Cache flushed successfully!
+[2026-09-21 21:13:56] INFO:     127.0.0.1:60534 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:13:59] HICACHE_EVT prefetch_start rid=4f1019673384486ea660a693272805de tokens=8191
+[2026-09-21 21:13:59] HICACHE_EVT s2h_query rid=4f1019673384486ea660a693272805de tokens_req=8128 storage_hit=8128
+[2026-09-21 21:14:00] HICACHE_EVT s2h_io rid=4f1019673384486ea660a693272805de pages=127 tokens=0 ms=478
+[2026-09-21 21:14:00] HiCache prefetch success req=4f1019673384486ea660a693272805de completed=8128 matched=0 loaded=8128 occupied=0
+[2026-09-21 21:14:00] HICACHE_EVT load_back_init rid=4f1019673384486ea660a693272805de tokens=8128 host_hit=8128 node=172
+[2026-09-21 21:14:00] HICACHE_EVT h2d_submit nodes=1 tokens=8128 bytes=1331691520
+[2026-09-21 21:14:00] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:14:00] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 8128, token usage: 0.02, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.49
+[2026-09-21 21:14:00] HICACHE_EVT h2s_submit op=94 node=173 tokens=64
+[2026-09-21 21:14:00] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:14:00] HICACHE_EVT h2d_done nodes=1 tokens=8128 bytes=1331691520 ms=52.3
+[2026-09-21 21:14:00] INFO:     127.0.0.1:41788 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:14:00] HICACHE_EVT h2s_io op=94 pages=1 tokens=64 ms=6
+[2026-09-21 21:14:00] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:14:00] HICACHE_EVT h2s_done op=94 tokens=64
+[2026-09-21 21:14:00] INFO:     127.0.0.1:41792 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:14:06] Cache flushed successfully!
+[2026-09-21 21:14:06] INFO:     127.0.0.1:41794 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:14:09] HICACHE_EVT prefetch_start rid=775ed72ee368465a8a0dd09d9c52de4b tokens=16383
+[2026-09-21 21:14:09] HICACHE_EVT s2h_query rid=775ed72ee368465a8a0dd09d9c52de4b tokens_req=16320 storage_hit=16320
+[2026-09-21 21:14:10] HICACHE_EVT s2h_io rid=775ed72ee368465a8a0dd09d9c52de4b pages=255 tokens=8192 ms=822
+[2026-09-21 21:14:10] HiCache prefetch success req=775ed72ee368465a8a0dd09d9c52de4b completed=16320 matched=0 loaded=16320 occupied=0
+[2026-09-21 21:14:10] HICACHE_EVT load_back_init rid=775ed72ee368465a8a0dd09d9c52de4b tokens=16320 host_hit=16320 node=179
+[2026-09-21 21:14:10] HICACHE_EVT h2d_submit nodes=1 tokens=16320 bytes=2673868800
+[2026-09-21 21:14:10] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:14:10] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 16320, token usage: 0.03, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.34
+[2026-09-21 21:14:10] HICACHE_EVT h2s_submit op=96 node=180 tokens=64
+[2026-09-21 21:14:10] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:14:10] HICACHE_EVT h2d_done nodes=1 tokens=16320 bytes=2673868800 ms=122.2
+[2026-09-21 21:14:10] INFO:     127.0.0.1:55154 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:14:10] HICACHE_EVT h2s_io op=96 pages=1 tokens=64 ms=5
+[2026-09-21 21:14:10] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:14:10] HICACHE_EVT h2s_done op=96 tokens=64
+[2026-09-21 21:14:10] INFO:     127.0.0.1:55164 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:14:16] Cache flushed successfully!
+[2026-09-21 21:14:16] INFO:     127.0.0.1:55178 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:14:19] HICACHE_EVT prefetch_start rid=34bcac6c64514347b2337e5718a8b84f tokens=16383
+[2026-09-21 21:14:19] HICACHE_EVT s2h_query rid=34bcac6c64514347b2337e5718a8b84f tokens_req=16320 storage_hit=16320
+[2026-09-21 21:14:20] HICACHE_EVT s2h_io rid=34bcac6c64514347b2337e5718a8b84f pages=255 tokens=8192 ms=729
+[2026-09-21 21:14:20] HiCache prefetch success req=34bcac6c64514347b2337e5718a8b84f completed=16320 matched=0 loaded=16320 occupied=0
+[2026-09-21 21:14:20] HICACHE_EVT load_back_init rid=34bcac6c64514347b2337e5718a8b84f tokens=16320 host_hit=16320 node=186
+[2026-09-21 21:14:20] HICACHE_EVT h2d_submit nodes=1 tokens=16320 bytes=2673868800
+[2026-09-21 21:14:20] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:14:20] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 16320, token usage: 0.03, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.39
+[2026-09-21 21:14:20] HICACHE_EVT h2s_submit op=98 node=187 tokens=64
+[2026-09-21 21:14:20] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:14:20] HICACHE_EVT h2d_done nodes=1 tokens=16320 bytes=2673868800 ms=120.8
+[2026-09-21 21:14:20] INFO:     127.0.0.1:35764 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:14:20] HICACHE_EVT h2s_io op=98 pages=1 tokens=64 ms=5
+[2026-09-21 21:14:20] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:14:20] HICACHE_EVT h2s_done op=98 tokens=64
+[2026-09-21 21:14:20] INFO:     127.0.0.1:35768 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:14:26] Cache flushed successfully!
+[2026-09-21 21:14:26] INFO:     127.0.0.1:35770 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:14:29] HICACHE_EVT prefetch_start rid=3316bb2c310b4af4998d57b62aff9f4b tokens=16383
+[2026-09-21 21:14:29] HICACHE_EVT s2h_query rid=3316bb2c310b4af4998d57b62aff9f4b tokens_req=16320 storage_hit=16320
+[2026-09-21 21:14:30] HICACHE_EVT s2h_io rid=3316bb2c310b4af4998d57b62aff9f4b pages=255 tokens=8192 ms=681
+[2026-09-21 21:14:30] HiCache prefetch success req=3316bb2c310b4af4998d57b62aff9f4b completed=16320 matched=0 loaded=16320 occupied=0
+[2026-09-21 21:14:30] HICACHE_EVT load_back_init rid=3316bb2c310b4af4998d57b62aff9f4b tokens=16320 host_hit=16320 node=193
+[2026-09-21 21:14:30] HICACHE_EVT h2d_submit nodes=1 tokens=16320 bytes=2673868800
+[2026-09-21 21:14:30] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:14:30] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 16320, token usage: 0.03, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 6.44
+[2026-09-21 21:14:30] HICACHE_EVT h2s_submit op=100 node=194 tokens=64
+[2026-09-21 21:14:30] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:14:30] HICACHE_EVT h2d_done nodes=1 tokens=16320 bytes=2673868800 ms=121.7
+[2026-09-21 21:14:30] INFO:     127.0.0.1:56830 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:14:30] HICACHE_EVT h2s_io op=100 pages=1 tokens=64 ms=5
+[2026-09-21 21:14:30] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:14:30] HICACHE_EVT h2s_done op=100 tokens=64
+[2026-09-21 21:14:30] INFO:     127.0.0.1:56846 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:14:36] Cache flushed successfully!
+[2026-09-21 21:14:36] INFO:     127.0.0.1:56848 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:14:39] HICACHE_EVT prefetch_start rid=110f55e46be140299468a9b48c6a3736 tokens=32511
+[2026-09-21 21:14:39] HICACHE_EVT s2h_query rid=110f55e46be140299468a9b48c6a3736 tokens_req=32448 storage_hit=32448
+[2026-09-21 21:14:41] HICACHE_EVT s2h_io rid=110f55e46be140299468a9b48c6a3736 pages=507 tokens=24576 ms=1538
+[2026-09-21 21:14:41] HiCache prefetch success req=110f55e46be140299468a9b48c6a3736 completed=32448 matched=0 loaded=32448 occupied=0
+[2026-09-21 21:14:41] HICACHE_EVT load_back_init rid=110f55e46be140299468a9b48c6a3736 tokens=32448 host_hit=32448 node=200
+[2026-09-21 21:14:41] HICACHE_EVT h2d_submit nodes=1 tokens=32448 bytes=5316280320
+[2026-09-21 21:14:41] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:14:41] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 32448, token usage: 0.06, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 5.80
+[2026-09-21 21:14:41] HICACHE_EVT h2s_submit op=102 node=201 tokens=64
+[2026-09-21 21:14:41] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:14:41] HICACHE_EVT h2d_done nodes=1 tokens=32448 bytes=5316280320 ms=200.7
+[2026-09-21 21:14:41] INFO:     127.0.0.1:47082 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:14:41] HICACHE_EVT h2s_io op=102 pages=1 tokens=64 ms=4
+[2026-09-21 21:14:41] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:14:41] HICACHE_EVT h2s_done op=102 tokens=64
+[2026-09-21 21:14:41] INFO:     127.0.0.1:47088 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:14:47] Cache flushed successfully!
+[2026-09-21 21:14:47] INFO:     127.0.0.1:47102 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:14:50] HICACHE_EVT prefetch_start rid=fc6e039acc554f6082fde27e40d00eb1 tokens=32511
+[2026-09-21 21:14:50] HICACHE_EVT s2h_query rid=fc6e039acc554f6082fde27e40d00eb1 tokens_req=32448 storage_hit=32448
+[2026-09-21 21:14:52] HICACHE_EVT s2h_io rid=fc6e039acc554f6082fde27e40d00eb1 pages=507 tokens=24576 ms=1776
+[2026-09-21 21:14:52] HiCache prefetch success req=fc6e039acc554f6082fde27e40d00eb1 completed=32448 matched=0 loaded=32448 occupied=0
+[2026-09-21 21:14:52] HICACHE_EVT load_back_init rid=fc6e039acc554f6082fde27e40d00eb1 tokens=32448 host_hit=32448 node=207
+[2026-09-21 21:14:52] HICACHE_EVT h2d_submit nodes=1 tokens=32448 bytes=5316280320
+[2026-09-21 21:14:52] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:14:52] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 32448, token usage: 0.06, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 5.70
+[2026-09-21 21:14:52] HICACHE_EVT h2s_submit op=104 node=208 tokens=64
+[2026-09-21 21:14:52] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:14:52] HICACHE_EVT h2d_done nodes=1 tokens=32448 bytes=5316280320 ms=171.4
+[2026-09-21 21:14:52] INFO:     127.0.0.1:33852 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:14:52] HICACHE_EVT h2s_io op=104 pages=1 tokens=64 ms=5
+[2026-09-21 21:14:52] Cache not flushed because there are pending requests. #queue-req: 0, #running-req: 0
+[2026-09-21 21:14:52] HICACHE_EVT h2s_done op=104 tokens=64
+[2026-09-21 21:14:52] INFO:     127.0.0.1:33862 - "POST /flush_cache?timeout=0 HTTP/1.1" 400 Bad Request
+[2026-09-21 21:14:58] Cache flushed successfully!
+[2026-09-21 21:14:58] INFO:     127.0.0.1:33874 - "POST /flush_cache?timeout=0 HTTP/1.1" 200 OK
+[2026-09-21 21:15:01] HICACHE_EVT prefetch_start rid=b53bebd6971048fc9707ef91c9e64b69 tokens=32511
+[2026-09-21 21:15:01] HICACHE_EVT s2h_query rid=b53bebd6971048fc9707ef91c9e64b69 tokens_req=32448 storage_hit=32448
+[2026-09-21 21:15:03] HICACHE_EVT s2h_io rid=b53bebd6971048fc9707ef91c9e64b69 pages=507 tokens=24576 ms=1538
+[2026-09-21 21:15:03] HiCache prefetch success req=b53bebd6971048fc9707ef91c9e64b69 completed=32448 matched=0 loaded=32448 occupied=0
+[2026-09-21 21:15:03] HICACHE_EVT load_back_init rid=b53bebd6971048fc9707ef91c9e64b69 tokens=32448 host_hit=32448 node=214
+[2026-09-21 21:15:03] HICACHE_EVT h2d_submit nodes=1 tokens=32448 bytes=5316280320
+[2026-09-21 21:15:03] HICACHE_EVT d2h_submit nodes=1 tokens=64 bytes=10485760
+[2026-09-21 21:15:03] Prefill batch, #new-seq: 1, #new-token: 64, #cached-token: 32448, token usage: 0.06, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: True, input throughput (token/s): 5.82
+[2026-09-21 21:15:03] HICACHE_EVT h2s_submit op=106 node=215 tokens=64
+[2026-09-21 21:15:03] HICACHE_EVT d2h_done nodes=1 tokens=64 bytes=10485760 ms=0.3
+[2026-09-21 21:15:03] HICACHE_EVT h2d_done nodes=1 tokens=32448 bytes=5316280320 ms=184.6
+[2026-09-21 21:15:03] INFO:     127.0.0.1:50766 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-09-21 21:15:03] HICACHE_EVT h2s_io op=106 pages=1 tokens=64 ms=5
+[2026-09-21 21:15:03] HICACHE_EVT h2s_done op=106 tokens=64
+[2026-09-21 21:15:05] INFO:     127.0.0.1:50776 - "GET /metrics HTTP/1.1" 200 OK
+[2026-09-21 21:15:05] SIGTERM received. signum=None frame=None. Draining requests and shutting down...
+[2026-09-21 21:15:08] Gracefully exiting... Remaining number of requests 0. Remaining requests remaining_rids=[].
+[rank0]:[W921 21:15:10.345832410 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+[2026-09-21 21:15:11] kill_process_tree called: parent_pid=5622, include_parent=False, pid=5622
+[2026-09-21 21:15:11] ERROR:    Traceback (most recent call last):
+  File "/usr/lib/python3.12/asyncio/runners.py", line 194, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "uvloop/loop.pyx", line 1512, in uvloop.loop.Loop.run_until_complete
+  File "uvloop/loop.pyx", line 1505, in uvloop.loop.Loop.run_until_complete
+  File "uvloop/loop.pyx", line 1379, in uvloop.loop.Loop.run_forever
+  File "uvloop/loop.pyx", line 557, in uvloop.loop.Loop._run
+  File "uvloop/loop.pyx", line 476, in uvloop.loop.Loop._on_idle
+  File "uvloop/cbhandles.pyx", line 83, in uvloop.loop.Handle._run
+  File "uvloop/cbhandles.pyx", line 63, in uvloop.loop.Handle._run
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 3688, in print_exception_wrapper
+    await func()
+  File "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py", line 3240, in sigterm_watchdog
+    sys.exit(0)
+SystemExit: 0
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/sglang/lib/python3.12/site-packages/starlette/routing.py", line 655, in lifespan
+    await receive()
+  File "/opt/sglang/lib/python3.12/site-packages/uvicorn/lifespan/on.py", line 137, in receive
+    return await self.receive_queue.get()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/queues.py", line 158, in get
+    await getter
+asyncio.exceptions.CancelledError
+
+[2026-09-21 21:15:11] kill_process_tree called: parent_pid=5622, include_parent=False, pid=5622

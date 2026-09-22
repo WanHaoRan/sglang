@@ -1,0 +1,126 @@
+section,metric,unit,old,new,new_over_old
+Llama-3.3-70B-AWQ: setup,device pool (L1),tokens,194816,531008,2.7256898817345596
+Llama-3.3-70B-AWQ: setup,host pool (L2),tokens,610368,976576,1.599979029044773
+Llama-3.3-70B-AWQ: setup,KV bytes per token,B,163840,163840,1.0
+Llama-3.3-70B-AWQ: setup,attention backend,,triton,triton,
+Llama-3.3-70B-AWQ: setup,KV cache dtype,,torch.float8_e5m2,torch.float8_e5m2,
+Llama-3.3-70B-AWQ: setup,weight kernel path,,The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.,The model is convertible to awq_marlin during runtime. Using awq_marlin kernel.,
+"Llama-3.3-70B-AWQ: Exp 0: tier attribution, one 4096-token prompt, n=1",TTFT 1 cold recompute,s,3.2875680990000546,2.105729480001173,0.6405128096484605
+"Llama-3.3-70B-AWQ: Exp 0: tier attribution, one 4096-token prompt, n=1",TTFT 3 L1 hit,s,0.13224238500151841,0.07822139800009609,0.5915002062250915
+"Llama-3.3-70B-AWQ: Exp 0: tier attribution, one 4096-token prompt, n=1",TTFT 4 L2 hit,s,0.14976817199931247,0.08697617500001797,0.5807387099604664
+"Llama-3.3-70B-AWQ: Exp 0: tier attribution, one 4096-token prompt, n=1","TTFT 5 L3 hit, page cache dropped",s,1.0062418239995168,0.4263929080007074,0.42374794788982273
+"Llama-3.3-70B-AWQ: Exp 0: tier attribution, one 4096-token prompt, n=1","TTFT 6 L3 hit, page cache warm",s,1.03678960400066,0.3418710149999242,0.32974001058724606
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",P = marginal prefill rate,tok/s,819.6908752708647,1382.4439706781122,1.6865430766461653
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",recompute bar b*P,GiB/s,0.12507490162214122,0.2109442093930225,1.6865430766461653
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",recompute fit intercept,s,-1.5431417278393835,-0.946169094186929,0.6131446497216425
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L1 delivered rate (fit),GiB/s,12.09045483301462,18.957951716617487,1.568009804300351
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L1 fit intercept,s,0.07961440285143599,0.049691185400739246,0.624148189536323
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L2 delivered rate (fit),GiB/s,9.006262629122082,18.88554731850491,2.0969349991457937
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L2 fit intercept,s,0.07184161349496059,0.04756652915719629,0.6621027402249658
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L3 delivered rate (fit),GiB/s,0.6294979216687506,2.827566996203756,4.491781305183809
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L3 fit intercept,s,0.03609761527423758,0.19065417823771147,5.281628074023466
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3","host to device, differential (L2 - L1 slopes)",GiB/s,,,
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3","disk read, differential (L3 - L2 slopes)",GiB/s,0.6768034921633703,3.3254586960034604,4.913477448784712
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L2 rate / recompute bar,x,72.0069535319767,89.52863590257716,1.243333199241924
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L2 beats recompute above L (fit),tokens,1342.4301716128543,1389.301780828871,1.0349154914774472
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L3 rate / recompute bar,x,5.0329675538782475,13.404335697765235,2.6633065987950335
+"Llama-3.3-70B-AWQ: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L3 beats recompute above L (fit),tokens,1615.4646462089115,1698.291668848535,1.0512713310278858
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, recompute",L=512,s,0.406462,0.233099,0.5734828840088373
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, recompute",L=1024,s,0.784213,0.468937,0.5979714694859687
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, recompute",L=2048,s,1.557,0.916636,0.5887193320488119
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, recompute",L=4096,s,3.176665,1.862847,0.5864159425057411
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, recompute",L=8192,s,6.733061,3.916797,0.5817260529794694
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, recompute",L=16384,s,15.653404,9.136961,0.58370441342982
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, recompute",L=32512,s,39.902356,23.691901,0.593746920607896
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L1",L=512,s,0.088735,0.054944,0.6191919761086381
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L1",L=1024,s,0.093797,0.059411,0.6333997889058285
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L1",L=2048,s,0.102325,0.070091,0.6849841192279502
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L1",L=4096,s,0.141894,0.081551,0.5747318420792986
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L1",L=8192,s,0.172336,0.11145,0.6467017918484821
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L1",L=16384,s,0.282011,0.177284,0.6286421451645503
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L1",L=32512,s,0.493609,0.314409,0.6369596178351691
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L2",L=512,s,0.093615,0.054706,0.584372162580783
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L2",L=1024,s,0.098802,0.05823,0.5893605392603388
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L2",L=2048,s,0.111514,0.064943,0.5823753071363237
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L2",L=4096,s,0.131294,0.079286,0.6038813654850945
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L2",L=8192,s,0.199149,0.109012,0.5473891407940789
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L2",L=16384,s,0.330114,0.177326,0.5371659487328619
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L2",L=32512,s,0.63573,0.312763,0.49197458040363046
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L3",L=512,s,0.130402,0.150757,1.1560942316835632
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L3",L=1024,s,0.305507,0.238079,0.7792914728631424
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L3",L=2048,s,0.573796,0.311326,0.5425726216285928
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L3",L=4096,s,1.009373,0.415167,0.41131177473540503
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L3",L=8192,s,2.024979,0.756371,0.3735204167549392
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L3",L=16384,s,3.977024,1.012343,0.25454787298241094
+"Llama-3.3-70B-AWQ: Exp 1: median TTFT, L3",L=32512,s,7.931118,1.945701,0.24532493401308617
+Llama-3.3-70B-AWQ: Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=512,x,0.3208221186728403,0.6467509513125325,2.0159175869418764
+Llama-3.3-70B-AWQ: Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=1024,x,0.38957145571420004,0.5076993284812246,1.3032251748282253
+Llama-3.3-70B-AWQ: Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=2048,x,0.3685266538214515,0.3396397261290196,0.9216150924420587
+Llama-3.3-70B-AWQ: Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=4096,x,0.31774612683427433,0.22286693432149823,0.701399373587764
+Llama-3.3-70B-AWQ: Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=8192,x,0.3007516195085712,0.19310957397077255,0.6420898889466132
+Llama-3.3-70B-AWQ: Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=16384,x,0.2540676775479634,0.11079646722799846,0.4360903689021288
+Llama-3.3-70B-AWQ: Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=32512,x,0.19876315072724027,0.08212515323274396,0.41318097913150453
+Qwen3-32B-FP8: setup,device pool (L1),tokens,281216,705856,2.510013654984069
+Qwen3-32B-FP8: setup,host pool (L2),tokens,762944,1220736,1.6000335542320274
+Qwen3-32B-FP8: setup,KV bytes per token,B,131072,131072,1.0
+Qwen3-32B-FP8: setup,attention backend,,triton,triton,
+Qwen3-32B-FP8: setup,KV cache dtype,,torch.float8_e5m2,torch.float8_e5m2,
+Qwen3-32B-FP8: setup,weight kernel path,,Your GPU does not have native support for FP8 computation but FP8 quantization is being used. Weight-only FP8 ,Entering DeepGEMM JIT Pre-Compile session. It may take a long time (typically 10-20 mins) if you have not run ,
+"Qwen3-32B-FP8: Exp 0: tier attribution, one 4096-token prompt, n=1",TTFT 1 cold recompute,s,1.938290137999502,0.5261872980008775,0.2714698319333928
+"Qwen3-32B-FP8: Exp 0: tier attribution, one 4096-token prompt, n=1",TTFT 3 L1 hit,s,0.09743750199959322,0.049231240000153775,0.5052596689143294
+"Qwen3-32B-FP8: Exp 0: tier attribution, one 4096-token prompt, n=1",TTFT 4 L2 hit,s,0.1134908260028169,0.053135891999772866,0.4681954821480813
+"Qwen3-32B-FP8: Exp 0: tier attribution, one 4096-token prompt, n=1","TTFT 5 L3 hit, page cache dropped",s,0.9169443909995607,0.3191798640000343,0.3480907535211557
+"Qwen3-32B-FP8: Exp 0: tier attribution, one 4096-token prompt, n=1","TTFT 6 L3 hit, page cache warm",s,0.7717810370013467,0.2605362310005148,0.337577912010891
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",P = marginal prefill rate,tok/s,1226.3017878966277,3255.2217510211776,2.654502980546563
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",recompute bar b*P,GiB/s,0.14969504246785006,0.39736593640395235,2.654502980546563
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",recompute fit intercept,s,-1.2514927606469677,-0.7650653696765162,0.6113222495038728
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L1 delivered rate (fit),GiB/s,9.80795702645149,15.465214091139849,1.576802798934688
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L1 fit intercept,s,0.05303118665197326,0.0247237186215763,0.4662109257299892
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L2 delivered rate (fit),GiB/s,7.747906540804868,15.637230890784734,2.0182523896526385
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L2 fit intercept,s,0.047547009344077795,0.023670396480473838,0.49783144738254914
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L3 delivered rate (fit),GiB/s,0.6229747133118456,2.993891493015215,4.805799383251287
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L3 fit intercept,s,0.05800256190738533,0.12005403299125278,2.0698056955302624
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3","host to device, differential (L2 - L1 slopes)",GiB/s,,,
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3","disk read, differential (L3 - L2 slopes)",GiB/s,0.6774450581267141,3.7028328565231936,5.46587920614898
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L2 rate / recompute bar,x,51.75793675644858,39.352217838039124,0.7603127231136428
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L2 beats recompute above L (fit),tokens,1624.3993383212041,2634.455358893692,1.6218027776447925
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L3 rate / recompute bar,x,4.16162554912693,7.534343582917733,1.8104328450449774
+"Qwen3-32B-FP8: Exp 1: tier cost fits over 7 lengths (512 to 32512), medians of n=3",L3 beats recompute above L (fit),tokens,2113.751270102985,3322.200922329674,1.5717085398452826
+"Qwen3-32B-FP8: Exp 1: median TTFT, recompute",L=512,s,0.239316,0.058946,0.24631031773888917
+"Qwen3-32B-FP8: Exp 1: median TTFT, recompute",L=1024,s,0.455217,0.091766,0.2015873748124521
+"Qwen3-32B-FP8: Exp 1: median TTFT, recompute",L=2048,s,0.902125,0.175671,0.19473022031314952
+"Qwen3-32B-FP8: Exp 1: median TTFT, recompute",L=4096,s,1.859689,0.362426,0.19488527382804333
+"Qwen3-32B-FP8: Exp 1: median TTFT, recompute",L=8192,s,4.030282,0.880281,0.21841672617449598
+"Qwen3-32B-FP8: Exp 1: median TTFT, recompute",L=16384,s,9.876404,2.842148,0.28777154113987236
+"Qwen3-32B-FP8: Exp 1: median TTFT, recompute",L=32512,s,26.692228,10.129952,0.3795094212442663
+"Qwen3-32B-FP8: Exp 1: median TTFT, L1",L=512,s,0.063766,0.030542,0.47896998400401464
+"Qwen3-32B-FP8: Exp 1: median TTFT, L1",L=1024,s,0.06798,0.034462,0.5069432185937041
+"Qwen3-32B-FP8: Exp 1: median TTFT, L1",L=2048,s,0.075759,0.039486,0.5212054013384548
+"Qwen3-32B-FP8: Exp 1: median TTFT, L1",L=4096,s,0.104586,0.055149,0.5273076702426711
+"Qwen3-32B-FP8: Exp 1: median TTFT, L1",L=8192,s,0.150368,0.087651,0.5829099276441797
+"Qwen3-32B-FP8: Exp 1: median TTFT, L1",L=16384,s,0.255159,0.15591,0.6110307690498864
+"Qwen3-32B-FP8: Exp 1: median TTFT, L1",L=32512,s,0.459706,0.281094,0.6114647187550304
+"Qwen3-32B-FP8: Exp 1: median TTFT, L2",L=512,s,0.067965,0.033171,0.48806003089825645
+"Qwen3-32B-FP8: Exp 1: median TTFT, L2",L=1024,s,0.070548,0.033333,0.47248681748596705
+"Qwen3-32B-FP8: Exp 1: median TTFT, L2",L=2048,s,0.081087,0.039303,0.4847016167819749
+"Qwen3-32B-FP8: Exp 1: median TTFT, L2",L=4096,s,0.106715,0.05279,0.49468209717471767
+"Qwen3-32B-FP8: Exp 1: median TTFT, L2",L=8192,s,0.160412,0.084489,0.5266999975064209
+"Qwen3-32B-FP8: Exp 1: median TTFT, L2",L=16384,s,0.299247,0.147815,0.49395649747532977
+"Qwen3-32B-FP8: Exp 1: median TTFT, L2",L=32512,s,0.567292,0.280396,0.49427102797148553
+"Qwen3-32B-FP8: Exp 1: median TTFT, L3",L=512,s,0.090433,0.094332,1.0431147921665764
+"Qwen3-32B-FP8: Exp 1: median TTFT, L3",L=1024,s,0.215409,0.189722,0.8807524290999912
+"Qwen3-32B-FP8: Exp 1: median TTFT, L3",L=2048,s,0.39846,0.190547,0.4782086031220198
+"Qwen3-32B-FP8: Exp 1: median TTFT, L3",L=4096,s,1.002062,0.303678,0.303053104498524
+"Qwen3-32B-FP8: Exp 1: median TTFT, L3",L=8192,s,1.693674,0.449806,0.26558003488274606
+"Qwen3-32B-FP8: Exp 1: median TTFT, L3",L=16384,s,3.307288,0.827757,0.25028270897484584
+"Qwen3-32B-FP8: Exp 1: median TTFT, L3",L=32512,s,6.389817,1.42533,0.22306272620952994
+Qwen3-32B-FP8: Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=512,x,0.3778811278811279,1.6003121501034845,4.234961822721412
+Qwen3-32B-FP8: Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=1024,x,0.4732006932957249,2.067454176928274,4.369085265976621
+Qwen3-32B-FP8: Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=2048,x,0.4416904530968547,1.0846810230487673,2.4557493046174503
+Qwen3-32B-FP8: Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=4096,x,0.5388331059655674,0.8379034616721758,1.555033371920766
+Qwen3-32B-FP8: Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=8192,x,0.42023709507175927,0.510980016608333,1.2159326784825566
+Qwen3-32B-FP8: Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=16384,x,0.33486762995924424,0.29124345389473033,0.8697271036026286
+Qwen3-32B-FP8: Exp 1: L3 hit TTFT / recompute TTFT (below 1 = L3 wins),L=32512,x,0.23938867148894427,0.14070451666503456,0.5877659781888749
+Llama-3.3-70B-AWQ: recompute with and without HiCache write-through,P from p_measure (no HiCache),tok/s,819.6266645569301,1381.4447047735482,1.685456030789729
+Llama-3.3-70B-AWQ: recompute with and without HiCache write-through,P from the Exp 1 server (write_through on),tok/s,819.6908752708647,1382.4439706781122,1.6865430766461653
+Llama-3.3-70B-AWQ: recompute with and without HiCache write-through,Exp 1 P / p_measure P,x,1.000078341416539,1.000723348463468,1.0006449565201216

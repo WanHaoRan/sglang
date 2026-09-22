@@ -9,10 +9,10 @@
 
 Writes $RESULTS/COMPARISON.md and $RESULTS/comparison.csv. Every statistic is computed the same way
 on both sides, from the raw per-probe files, with the definitions the old analysis used:
-  Exp 1  fit = np.polyfit(L, per-L median TTFT, 1); rate = 147456/slope/2**30 GiB/s (analyze_nixl.py)
+  Exp 1  fit = np.polyfit(L, per-L median TTFT, 1); rate = 147456/slope/2**30 GiB/s (archive/analyze_nixl.py)
   Exp 2  loaded points use rep<2 (rep index is confounded with queue depth, HANDOFF §3); an L3 row
          counts only if cached_storage == 16320; a control row only if it hit no tier
-  Exp 3  bytes from the hicache_backup counters and the files on disk (exp3.py)
+  Exp 3  bytes from the hicache_backup counters and the files on disk (archive/exp3.py)
 Missing stages are skipped, so this can run while the campaign is still in progress.
 """
 import json

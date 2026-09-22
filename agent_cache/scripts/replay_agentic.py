@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--thinking", choices=["off", "on"], default="off", help="must match the server's replay template")
     ap.add_argument("--control-every", type=int, default=0, help="K: one recompute control every K returning turns; 0 = off")
     ap.add_argument("--check-ids", action="store_true", help="ask for sglext input/output ids and verify reply reuse exactly")
-    ap.add_argument("--max-seconds", type=float, default=0.0, help="stop starting conversations after this many seconds; 0 = none")
+    ap.add_argument("--max-seconds", type=float, default=0.0, help="wall cap: after this many seconds no conversation starts and running ones stop at their next turn boundary (the gap sleep never crosses the deadline, in-flight requests complete); 0 = none")
     ap.add_argument("--save-text", action="store_true", help="store each reply text in the JSONL (debugging)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--tag", default="")
@@ -83,7 +83,7 @@ class Replayer:
         self.gap_pool = json.load(open(args.gap_sample)) if args.gap_sample else None
         self.sem = asyncio.Semaphore(args.concurrency)
         self.t0 = time.perf_counter()
-        self.stats = {"turns": 0, "controls": 0, "errors": 0, "ttft_sum": 0.0, "reprefill_sum": 0, "reprefill_n": 0}
+        self.stats = {"turns": 0, "controls": 0, "errors": 0, "retries": 0, "capped_convs": 0, "ttft_sum": 0.0, "reprefill_sum": 0, "reprefill_n": 0}
         self.controls: list = []
 
     def write(self, rec: dict) -> None:
@@ -181,8 +181,14 @@ class Replayer:
                 gap_slept = 0.0
                 if turn_idx > 0:
                     gap_slept = self.next_gap(float(turn.get("pre_gap") or 0.0))
+                    if self.args.max_seconds:   # wall cap: never sleep past the deadline, then stop at this turn boundary
+                        gap_slept = max(0.0, min(gap_slept, self.args.max_seconds - (time.perf_counter() - self.t0)))
                     if gap_slept > 0:
                         await asyncio.sleep(gap_slept)   # measured from the end of the previous reply
+                    if self.args.max_seconds and time.perf_counter() - self.t0 >= self.args.max_seconds:
+                        self.stats["capped_convs"] += 1
+                        self.write({"kind": "conv_end", "conv": conv, "turns_done": turn_idx, "aborted": False, "capped": True})
+                        return
                 history = history + list(turn["messages"])
                 if self.args.control_every and turn_idx > 0 and (turn_idx + conv) % self.args.control_every == 0 \
                         and int(turn.get("prompt_tokens") or 0) > 0:
@@ -192,11 +198,24 @@ class Replayer:
                        "gap_slept": round(gap_slept, 3), "pre_gap": turn.get("pre_gap"),
                        "output_length": turn.get("output_length"),
                        "replay_prompt_tokens": turn.get("replay_prompt_tokens")}
-                try:
-                    r = await self.chat_turn(session, history, int(turn.get("output_length") or 1),
-                                             rid=f"{self.args.tag or 'replay'}-c{conv}-t{turn_idx}")
-                except Exception as e:  # noqa: BLE001
-                    rec["error"] = str(e)[:300]
+                r, err = None, None
+                for attempt in range(2):
+                    try:
+                        r = await self.chat_turn(session, history, int(turn.get("output_length") or 1),
+                                                 rid=f"{self.args.tag or 'replay'}-c{conv}-t{turn_idx}")
+                        break
+                    except aiohttp.ClientConnectionError as e:
+                        # a pooled keep-alive connection the server closed meanwhile (ServerDisconnected / [Errno 104]):
+                        # retry once on a fresh connection and say so in the record
+                        err = e
+                        if attempt == 0:
+                            rec["retried"] = f"{type(e).__name__}: {str(e)[:120]}"
+                            self.stats["retries"] += 1
+                    except Exception as e:  # noqa: BLE001
+                        err = e
+                        break
+                if r is None:
+                    rec["error"] = str(err)[:300]
                     self.stats["errors"] += 1
                     self.write(rec)
                     self.write({"kind": "conv_end", "conv": conv, "turns_done": turn_idx, "aborted": True})
@@ -257,7 +276,8 @@ class Replayer:
                 await asyncio.gather(*self.controls)
         s = self.stats
         summary = {"kind": "summary", "tag": self.args.tag, "elapsed_s": round(time.perf_counter() - self.t0, 1),
-                   "turns": s["turns"], "controls": s["controls"], "errors": s["errors"],
+                   "turns": s["turns"], "controls": s["controls"], "errors": s["errors"], "retries": s["retries"],
+                   "capped_convs": s["capped_convs"], "capped": s["capped_convs"] > 0,
                    "mean_ttft_s": round(s["ttft_sum"] / s["turns"], 4) if s["turns"] else None,
                    "mean_reply_reprefilled": round(s["reprefill_sum"] / s["reprefill_n"], 1) if s["reprefill_n"] else None}
         self.write(summary)

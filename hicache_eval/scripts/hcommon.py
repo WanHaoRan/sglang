@@ -9,7 +9,9 @@ import time
 import urllib.request
 
 BASE = os.environ.get("BASE", "http://127.0.0.1:30000")
-L3_DIR = os.environ.get("L3_DIR", "/var/hicache_l3")
+# Must match env.sh's default, or a script run without L3_DIR exported silently points at the wrong
+# device: l3_stats() would report 0 files and drop_page_cache() would fadvise nothing.
+L3_DIR = os.environ.get("L3_DIR", "/mnt/ssd/hicache_l3")
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3-8B")
 KV_BYTES_PER_TOKEN = int(os.environ.get("KV_BYTES_PER_TOKEN", 147456))
 

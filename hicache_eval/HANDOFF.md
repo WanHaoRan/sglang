@@ -1,8 +1,21 @@
 # HiCache evaluation — handoff
 
-Written 2026-09-08 after two evaluation campaigns. Read this before touching
-`hicache_eval/`. It exists because most of the effort in this work went into
-discovering that measurements were wrong, not into taking them.
+Written 2026-09-08 after two evaluation campaigns; updated 2026-09-21 for the port to the H200 box
+(campaign 6) and the script cleanup that went with it. Read this before touching `hicache_eval/`. It exists
+because most of the effort in this work went into discovering that measurements were wrong, not into taking
+them.
+
+**2026-09-21, two structural changes.**
+1. **`scripts/` is now 14 files, not 48.** Everything the Exp 0 / Exp 1 path does not run moved to
+   `scripts/archive/`, which has a README saying what each group was and when to bring it back. Nothing was
+   deleted and `git log --follow` still works; a pre-2026-09-21 report that cites `scripts/exp3.py` means
+   `scripts/archive/exp3.py`.
+2. **The active box is an H200, not the A100.** `.current_results` points at
+   `results/20260921_h200_nebius_32b70b_fp8kv/`, whose README has the box table and the run commands. The
+   driver is `scripts/run_h200.sh`. **Every GPU-derived constant in §2 below was measured on an H100 or an
+   A100 and does not transfer**: SM90 runs the FP8 checkpoints on native FP8 rather than the A100's
+   weight-only Marlin, so `P` — the denominator of the whole admission criterion — is a different number.
+   The disk changed too (1.88 GiB/s symmetric, against the A100's 0.68 read / 0.38 write).
 
 ---
 
@@ -18,9 +31,11 @@ discovering that measurements were wrong, not into taking them.
 | `../bench-local/CODEMAP.md` | 78 verified code anchors for the radix tree + HiCache movement paths |
 | `results/20260917_a100_gcp_qwen8b/` | campaign 4: Qwen3-8B rerun on a GCP A100 box with L3 on a local NVMe. Backend A/B, Exp 0, Exp 1 (Exp 2-4 not run). `REPORT.md`, `COMPARISON.md` (old vs new, same statistics both sides), `DEVIATIONS.md` |
 | `results/20260917_a100_gcp_32b70b_fp8kv/` | campaign 5: Exp 0/1 for the 70B and the 32B on the same A100 box. Its `REPORT.md` has the three-model table for both boxes |
-| `scripts/run_a100_rerun.sh`, `run_a100_rerun_c2.sh` | drivers for campaigns 4 and 5; every box-specific setting lives in them, the shared scripts keep their old behaviour when the env vars are unset |
-| `scripts/compare_campaigns.py` | side-by-side old vs new tables (`CAMPAIGN=8b` or `c2`); run on an old campaign alone it must reproduce that campaign's published numbers |
-| `scripts/plot_tier_ttft.py` | the three-model figure: TTFT by tier vs prompt length, A100 row over H100 row (`results/20260917_a100_gcp_32b70b_fp8kv/ttft_by_tier_3models.png`, plus a dark variant) |
+| `results/20260921_h200_nebius_32b70b_fp8kv/` | **campaign 6 (complete 2026-09-21; REPORT.md, DEVIATIONS.md, versions.txt written 2026-09-22)**: the same stages on the H200 box. Its `README.md` is the plan, the box table and the run commands |
+| `scripts/run_h200.sh` | the campaign-6 driver. Every box-specific setting lives in it; the shared scripts keep their old behaviour when the env vars are unset |
+| `scripts/archive/` | the 34 scripts the Exp 0/1 path does not run: Exp 2/3/4, the superseded per-campaign drivers, the one-off analyses. `archive/README.md` says why each group is there and what to do before reviving it |
+| `scripts/compare_campaigns.py` | side-by-side old vs new tables (`CAMPAIGN=8b` or `c2`); run on an old campaign alone it must reproduce that campaign's published numbers — re-verified byte-for-byte against campaign 5 on 2026-09-21 |
+| `scripts/plot_tier_ttft.py` | the three-model figure: TTFT by tier vs prompt length, **one row per box**, rows and panels with no data skipped so it can be made mid-campaign. `--boxes a100,h100` reproduces the two-row figure published in campaign 5 |
 
 `.current_results` holds the active results dir; `scripts/env.sh` reads it (a pre-set `RESULTS` wins).
 `.frozen_results` lists finished campaigns; `env.sh` refuses to run a driver against one, so a rerun
@@ -30,7 +45,11 @@ cannot append to or overwrite old evidence. Start a new campaign by pointing `.c
 
 ## 2. The results that are solid
 
-These reproduced across models, backends, or independent code paths. Trust them.
+These reproduced across models, backends, or independent code paths. Trust them — with one 2026-09-21
+qualification: **the numbers in the table below are H100 measurements, and the bar `b * P` is GPU-specific.**
+The criterion is what reproduced; the values did not survive the move to the A100 (campaign 5 re-measured
+every one) and will not survive the move to the H200 either. Read the table as "here is what the criterion
+looked like on one box", never as constants.
 
 **The admission criterion.** A tier is worth reading only when it delivers KV
 faster than the GPU regenerates it: `bandwidth(tier) > b * P`, where `b` = KV
@@ -168,12 +187,24 @@ size). It will quietly delete the pages you pre-populated. Check
   `/dev/nvme`, overlay fs).
 - **No NVMe.** L3 lives on `/dev/vda1`, a virtio-blk VM disk. Absolute L3
   bandwidth is a floor, not a datacenter-representative number.
+  *(2026-09-21: this paragraph describes the H100 box. Campaign 5 ran L3 on a
+  local NVMe at 0.68 GiB/s; campaign 6 runs it on a 2.27 TiB attached SSD that
+  sustains 1.88 GiB/s in both directions. GPUDirect Storage is still
+  unavailable — no `nvidia_fs` module on the H200 box either.)*
 
 ---
 
 ## 6. Where to pick up
 
-`results/20260908_nixl_exp234/PENDING.md` is the live todo. In priority order:
+**2026-09-22: campaign 6 is done.** `bash scripts/run_h200.sh all` ran 2026-09-21 (7 stages, 68 min), then
+`compare_campaigns.py` and `plot_tier_ttft.py`; `results/20260921_h200_nebius_32b70b_fp8kv/REPORT.md` has the finding
+(L3 clears the recompute bar 13.4x for the 70B and 7.5x for the 32B on this box; the 32B's L3 crossover moved up to
+4096 tokens because native FP8 makes short recomputes 4-5x faster). Two follow-ups are open there: the 8B block
+(`bash scripts/run_h200.sh all3`, DEVIATIONS.md D9) and device-side disk telemetry (`sysstat` is installed now; every
+campaign-6 `iostat.log` is empty, D7). A new box needs the container and the model snapshots first
+(`agent_cache/RUNBOOK.md` §2.3, §2.6).
+
+Afterwards, `results/20260908_nixl_exp234/PENDING.md` is the live todo. In priority order:
 
 1. **Re-run Exp 2 with a non-replaying write load** (per-invocation seed +
    index offset). This is the only way to separate write interference from L3
@@ -188,6 +219,13 @@ size). It will quietly delete the pages you pre-populated. Check
 4. Exp 2 `--duration` should scale with measured probe time, not be fixed at 150.
 
 ## 7. Environment
+
+*(2026-09-21: the paragraph below describes the H100 box. On the current H200 box the measurement container
+is `sglang_hicache` from `lmsysorg/sglang:nightly-dev-20260907-30705c00` — the image every A100 measurement
+used, pinned so the compiled dependencies stay comparable. The repo is bind-mounted at
+`/sgl-workspace/sglang`, `/mnt/ssd` is bind-mounted at the same path, and container writes are `root:root`
+on the host, so `sudo chown -R wanhr:wanhr` anything you need to edit. `agent_cache/RUNBOOK.md` §2 is the
+bring-up.)*
 
 Dev happens inside `lmsysorg/sglang:dev` (`sudo docker exec -it sglang_dev
 /bin/zsh`). The repo is bind-mounted at `/sgl-workspace/sglang` and is the same

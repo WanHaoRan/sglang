@@ -1,0 +1,157 @@
+{
+ "args": {
+  "parquet_dir": "/tmp/lmcache",
+  "out": "/sgl-workspace/sglang/agent_cache/traces/lmcache_agentic_trace_262k.json",
+  "tokenizer": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+  "revision": "main",
+  "tool_role_mode": "as_user",
+  "sources": null,
+  "max_sessions": 0,
+  "max_context": 262144,
+  "margin": 512,
+  "min_turns": 5,
+  "seed": null,
+  "workers": 16
+ },
+ "invariants": {
+  "parquet_rows": 24880,
+  "parquet_session_ids": 767,
+  "session_ids_with_several_chains": 1,
+  "chains": 769,
+  "selected_chains": 769,
+  "selected_rows": 24880,
+  "chains_failed": 0,
+  "turns_plus_merged_equals_rows": true,
+  "turn0_pre_gap_zero": true,
+  "turn0_starts_with_system": true,
+  "empty_messages_turns": 0,
+  "rows_merged_forward": 0,
+  "replay_within_context": true
+ },
+ "chains_emitted": 768,
+ "turns_emitted": 24879,
+ "chains_below_min_turns": 1,
+ "midrun_starts_emitted": 137,
+ "turns_without_assistant_after_turn0": 1779,
+ "pre_gap_raw_all_rows_excluding_first": {
+  "n": 24111,
+  "p50": 0.708,
+  "p90": 1.7663,
+  "p95": 3.724,
+  "p99": 11.75999000000044,
+  "mean": 2.0837003027663723,
+  "frac_ge_1s": 0.21334660528389532,
+  "frac_ge_5s": 0.0335531500145162,
+  "frac_ge_30s": 0.006594500435485878
+ },
+ "pre_gap_emitted_after_turn0": {
+  "n": 24111,
+  "p50": 0.708,
+  "p90": 1.7663,
+  "p95": 3.724,
+  "p99": 11.75999000000044,
+  "mean": 2.0837003027663723,
+  "frac_ge_1s": 0.21334660528389532,
+  "frac_ge_5s": 0.0335531500145162,
+  "frac_ge_30s": 0.006594500435485878
+ },
+ "output_length_emitted": {
+  "mean": 211.2043490493991,
+  "p50": 102.0,
+  "p95": 709.0999999999985
+ },
+ "prompt_tokens_emitted": {
+  "mean": 25525.463483258973,
+  "p50": 24597.0,
+  "p95": 47050.2
+ },
+ "replay_prompt_tokens_emitted": {
+  "mean": 25527.99618151855,
+  "p50": 24740.0,
+  "p95": 46260.2
+ },
+ "replay_over_recorded_ratio_mean": 1.0066893137903947,
+ "per_source": {
+  "swebench": {
+   "chains": 665,
+   "chains_emitted": 665,
+   "rows": 23356,
+   "chains_truncated_all": 0,
+   "chains_truncated_emitted": 0,
+   "turns_dropped_by_truncation_all": 0,
+   "midrun_starts_emitted": 136,
+   "chains_failed": 0,
+   "final_prompt_tokens_p50": 36653.0,
+   "final_prompt_tokens_max": 103885,
+   "emitted_prompt_tokens_mean": 26502.14223325912,
+   "emitted_prompt_tokens_p50": 25453.5,
+   "emitted_replay_prompt_tokens_mean": 26485.54431409488,
+   "emitted_output_length_mean": 212.2129217331735,
+   "pre_gap_after_turn0": {
+    "n": 22691,
+    "p50": 0.7063,
+    "p90": 1.3125,
+    "p95": 2.2862999999999998,
+    "p99": 10.220499999999998,
+    "mean": 1.9882566171609888,
+    "frac_ge_1s": 0.18372923185403905,
+    "frac_ge_5s": 0.02547265435635274,
+    "frac_ge_30s": 0.0059935657309065265
+   }
+  },
+  "gaia": {
+   "chains": 94,
+   "chains_emitted": 94,
+   "rows": 1377,
+   "chains_truncated_all": 0,
+   "chains_truncated_emitted": 0,
+   "turns_dropped_by_truncation_all": 0,
+   "midrun_starts_emitted": 0,
+   "chains_failed": 0,
+   "final_prompt_tokens_p50": 20994.5,
+   "final_prompt_tokens_max": 55666,
+   "emitted_prompt_tokens_mean": 9817.323166303559,
+   "emitted_prompt_tokens_p50": 7572.0,
+   "emitted_replay_prompt_tokens_mean": 10068.45751633987,
+   "emitted_output_length_mean": 180.63616557734204,
+   "pre_gap_after_turn0": {
+    "n": 1283,
+    "p50": 2.1824,
+    "p90": 6.58094,
+    "p95": 11.44897999999998,
+    "p99": 31.485120000000002,
+    "mean": 3.715179501169135,
+    "frac_ge_1s": 0.7248636009353079,
+    "frac_ge_5s": 0.16757599376461418,
+    "frac_ge_30s": 0.01558846453624318
+   }
+  },
+  "wildclaw": {
+   "chains": 10,
+   "chains_emitted": 9,
+   "rows": 147,
+   "chains_truncated_all": 0,
+   "chains_truncated_emitted": 0,
+   "turns_dropped_by_truncation_all": 0,
+   "midrun_starts_emitted": 1,
+   "chains_failed": 0,
+   "final_prompt_tokens_p50": 15564.5,
+   "final_prompt_tokens_max": 71620,
+   "emitted_prompt_tokens_mean": 17435.054794520547,
+   "emitted_prompt_tokens_p50": 11439.5,
+   "emitted_replay_prompt_tokens_mean": 18153.27397260274,
+   "emitted_output_length_mean": 338.16438356164383,
+   "pre_gap_after_turn0": {
+    "n": 137,
+    "p50": 0.1537,
+    "p90": 8.385440000000004,
+    "p95": 10.03738,
+    "p99": 44.51484799999969,
+    "mean": 2.6130788321167886,
+    "frac_ge_1s": 0.3284671532846715,
+    "frac_ge_5s": 0.11678832116788321,
+    "frac_ge_30s": 0.021897810218978103
+   }
+  }
+ }
+}

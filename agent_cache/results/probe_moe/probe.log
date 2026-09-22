@@ -1,0 +1,99 @@
+=== boot 2026-09-22T02:28:42Z ===
+arm: hbm_lru  level: NAT64 (L1=natural tokens, host=64 GB)  model: Qwen/Qwen3-30B-A3B-Instruct-2507  ctx: 131072  run dir: /sgl-workspace/sglang/agent_cache/results/20260922_022842_hbm_lru_NAT64
+launched hbm_lru: pid 14818   (watch: tail -f /sgl-workspace/sglang/agent_cache/results/20260922_022842_hbm_lru_NAT64/server.log)
+READY: hbm_lru after 104s
+template loaded:  0   (want 0: stock template)
+device pool:      max_total_num_tokens=668160   (want the profiled pool; record it)
+weight kernel:    mem usage=57.02 GB   marlin lines: 0 (want 0 on SM90)
+profiled warning: 0   (want 0)
+=== sanity generation ===
+  reply: 391
+=== P: recompute sweep 2026-09-22T02:30:29Z ===
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+### phase A/B: populate (emitting only requested tiers)
+{"tier": "recompute", "L": 512, "rep": 0, "ttft_s": 0.033522082998388214, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 512, "rep": 1, "ttft_s": 0.039948446003108984, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 512, "rep": 2, "ttft_s": 0.04442015400127275, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 1024, "rep": 0, "ttft_s": 0.05409329200119828, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 1024, "rep": 1, "ttft_s": 0.053589298000588315, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 1024, "rep": 2, "ttft_s": 0.051280922001751605, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 2048, "rep": 0, "ttft_s": 0.08114669499991578, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 2048, "rep": 1, "ttft_s": 0.07902387600188376, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 2048, "rep": 2, "ttft_s": 0.07543690400052583, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 4096, "rep": 0, "ttft_s": 0.15834201899997424, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 4096, "rep": 1, "ttft_s": 0.149754475998634, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 4096, "rep": 2, "ttft_s": 0.1385154430026887, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 8192, "rep": 0, "ttft_s": 0.33184470500054886, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 8192, "rep": 1, "ttft_s": 0.33059025699913036, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 8192, "rep": 2, "ttft_s": 0.32020720100263134, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 16384, "rep": 0, "ttft_s": 0.9063305510026112, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 16384, "rep": 1, "ttft_s": 0.9021218060006504, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 16384, "rep": 2, "ttft_s": 0.9503236509990529, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 32512, "rep": 0, "ttft_s": 3.5774631109998154, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 32512, "rep": 1, "ttft_s": 3.63476451400129, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 32512, "rep": 2, "ttft_s": 3.5751964909977687, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 65024, "rep": 0, "ttft_s": 13.86970871900121, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 65024, "rep": 1, "ttft_s": 13.72268535600233, "cached_device": null, "cached_host": null, "cached_storage": null}
+{"tier": "recompute", "L": 65024, "rep": 2, "ttft_s": 13.730400173000817, "cached_device": null, "cached_host": null, "cached_storage": null}
+
+DONE exp1
+=== decode: one_batch_server 2026-09-22T02:31:59Z ===
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+max_running_requests_per_dp=64
+dp_size=1
+skip_max_running_requests_threshold=64
+skip_token_capacity_threshold=668160
+#Input tokens: 25600
+#Output tokens: 220
+Warming up cache with 96.0% hit rate (24576 tokens per request)
+Cache warmup completed
+batch size: 1
+input_len: 25600
+output_len: 220
+latency: 3.96 s
+input throughput: 125466.57 tok/s
+output throughput: 58.56 tok/s
+last_ttft: 0.20 s
+last generation throughput: 58.25 tok/s
+cache hit rate: 0.9600
+#Input tokens: 204800
+#Output tokens: 1760
+Warming up cache with 96.0% hit rate (24576 tokens per request)
+Cache warmup completed
+batch size: 8
+input_len: 25600
+output_len: 220
+latency: 6.83 s
+input throughput: 82416.90 tok/s
+output throughput: 405.04 tok/s
+last_ttft: 2.48 s
+last generation throughput: 401.77 tok/s
+cache hit rate: 0.9600
+#Input tokens: 409600
+#Output tokens: 3520
+Warming up cache with 96.0% hit rate (24576 tokens per request)
+Cache warmup completed
+batch size: 16
+input_len: 25600
+output_len: 220
+latency: 7.66 s
+input throughput: 142133.43 tok/s
+output throughput: 736.99 tok/s
+last_ttft: 2.88 s
+last generation throughput: 734.72 tok/s
+cache hit rate: 0.9600
+========Skip benchmark batch_size=32 * (input_len=25600 + output_len=220) = 826240 > skip_token_capacity_threshold=668160 due to kv cache limit.========
+========Skip benchmark batch_size=64 * (input_len=25600 + output_len=220) = 1652480 > skip_token_capacity_threshold=668160 due to kv cache limit.========
+
+Results are saved to /sgl-workspace/sglang/agent_cache/results/probe_moe/warm_prefix.jsonl
+
+Input lens: [25600]. Output lens: [220]. Cache hit rate: 96.0%.
+|   batch size |   input len |   latency (s) |   input throughput (tok/s) |   output throughput (tok/s) | acc length   |   ITL (ms) |   input cost ($/1M) |   output cost ($/1M) |   cache hit rate |
+|--------------|-------------|---------------|----------------------------|-----------------------------|--------------|------------|---------------------|----------------------|------------------|
+|            1 |       25600 |          3.96 |                   125467   |                       58.56 | n/a          |      17.08 |                0.01 |                 9.49 |             0.96 |
+|            8 |       25600 |          6.83 |                    82416.9 |                      405.04 | n/a          |      19.75 |                0.01 |                 1.37 |             0.96 |
+|           16 |       25600 |          7.66 |                   142133   |                      736.99 | n/a          |      21.71 |                0.01 |                 0.75 |             0.96 |
+
+stopped: 20260922_022842_hbm_lru_NAT64 (pid 14818); port 30000 free
+PROBE DONE 2026-09-22T02:33:28Z
