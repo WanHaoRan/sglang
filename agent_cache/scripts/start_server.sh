@@ -58,7 +58,8 @@ mkdir -p "$RUN"; basename "$RUN" > "$RESULTS/.current_run"
 
 COMMON=(
   # no --reasoning-parser: under ignore_eos the reply tail can contain <think>, and a parser would move the rest of the
-  # text into reasoning_content, which the client does not re-feed (RUNBOOK 4.5; deviation from the measured launch line)
+  # text into reasoning_content, which the client does not re-feed (RUNBOOK 4.5; deviation from the measured launch line
+  # of the A100 campaign, which passed --reasoning-parser qwen3)
   --model-path "$MODEL" --host 0.0.0.0 --port "$PORT" --context-length "$CTX"
   # (replay template appended below when TEMPLATE is non-empty, RUNBOOK 4.5)
   # KV dtype + attention backend: the combination every prior number was taken with. On SM90 the default is fa3, which
@@ -69,6 +70,9 @@ COMMON=(
   --max-running-requests 64 --radix-eviction-policy lru
   # metrics (6.1) + per-response cached-token details (the client reads them)
   --enable-metrics --enable-cache-report
+  # one "queue_duration=..., forward_duration=..." line per finished request (added 2026-09-23, campaign 8 arm 4 onward;
+  # logging only: it separates the queue wait from the forward time for the delay decomposition)
+  --enable-request-time-stats-logging
 )
 [ -n "$L1" ] && COMMON+=(--max-total-tokens "$L1")
 # replay template (RUNBOOK 4.5): history renders like the generation prompt, so a re-fed reply is a cache hit. Qwen3 thinking
