@@ -14,15 +14,27 @@ reference for that turn.
 
 Trace: the 3.3 converter JSON (conversations[i] = list of turns with messages, output_length, pre_gap,
 prompt_tokens, replay_prompt_tokens).
+
+--dry-run sends nothing and needs no server: it walks the same conversations and turns in replay order (one
+conversation after another, no sleeping) and prints, per turn, the gap a live run would sleep (with --gap-sample:
+one seeded draw, exact only for --concurrency 1 closed loop), the token counts from the trace, every new message
+verbatim (tool results and user prompts) and the token budget of the reply the server would generate (the reply
+itself is skipped). Nothing is written to --output; --dry-run-max-chars shortens long messages.
 """
+from __future__ import annotations   # keep the aiohttp annotations lazy so --dry-run works without aiohttp
+
 import argparse
 import asyncio
 import json
 import random
+import signal
 import sys
 import time
 
-import aiohttp
+try:
+    import aiohttp
+except ImportError:  # only the live replay needs it; --dry-run runs on a bare Python
+    aiohttp = None
 
 DELTA_HEADER_TOKENS = 64  # tolerance: prefix matching is page-floored (page 64)
 
@@ -48,22 +60,34 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--save-text", action="store_true", help="store each reply text in the JSONL (debugging)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--tag", default="")
-    ap.add_argument("--output", required=True, help="JSONL, appended")
-    return ap.parse_args()
+    ap.add_argument("--output", default="", help="JSONL, appended (required unless --dry-run)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="send nothing: print each turn's messages and the token budget of the reply the server "
+                         "would generate, then exit")
+    ap.add_argument("--dry-run-max-chars", type=int, default=0,
+                    help="with --dry-run, print at most this many chars of each message; 0 = the whole message")
+    args = ap.parse_args()
+    if not args.dry_run and not args.output:
+        ap.error("--output is required (unless --dry-run)")
+    return args
 
 
-def load_conversations(args: argparse.Namespace) -> list:
+def load_conversations(args: argparse.Namespace) -> tuple:
+    """(session ids, conversations) in replay order: empty ones dropped, then --offset, --num-conversations, --max-turns."""
     with open(args.trace) as f:
         data = json.load(f)
-    convs = [c for c in data["conversations"] if c]
+    ids = data.get("session_ids")
+    if not ids or len(ids) != len(data["conversations"]):
+        ids = [None] * len(data["conversations"])
+    pairs = [(sid, c) for sid, c in zip(ids, data["conversations"]) if c]
     if args.offset:
-        k = args.offset % len(convs)
-        convs = convs[k:] + convs[:k]
+        k = args.offset % len(pairs)
+        pairs = pairs[k:] + pairs[:k]
     if args.num_conversations:
-        convs = convs[: args.num_conversations]
+        pairs = pairs[: args.num_conversations]
     if args.max_turns:
-        convs = [c[: args.max_turns] for c in convs]
-    return convs
+        pairs = [(sid, c[: args.max_turns]) for sid, c in pairs]
+    return [sid for sid, _ in pairs], [c for _, c in pairs]
 
 
 def lcp(a: list, b: list) -> int:
@@ -96,6 +120,63 @@ class Replayer:
         if self.args.gap_cap > 0:
             g = min(g, self.args.gap_cap)
         return max(0.0, g)
+
+    def dry_run(self, ids: list, convs: list) -> None:
+        """Print what every turn would send and get back, in replay order; no request, no sleep, no JSONL line."""
+        a = self.args
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(errors="replace")   # message content can hold anything; never die on the locale
+        if getattr(signal, "SIGPIPE", None):
+            signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # `| head` ends the dump quietly
+        cap = f", capped at {a.gap_cap} s" if a.gap_cap else ""
+        if self.gap_pool:
+            gap_note = (f"gap per turn = one seeded draw from {a.gap_sample} x {a.gap_scale}{cap}: exactly what a live run at "
+                        f"--concurrency 1 (closed loop) sleeps; at higher concurrency or with --arrival-rate the live run assigns "
+                        f"the draws to turns differently")
+            gap_label = "sampled gap"
+        else:
+            gap_note = f"gap per turn = pre_gap x {a.gap_scale}{cap} = exactly what a live run sleeps"
+            gap_label = "a live run would sleep"
+        print(f"DRY RUN: nothing is sent to {a.url}, nothing slept, nothing written; conversations play one after another; "
+              f"{gap_note}; live-only flags (--concurrency, --arrival-rate, --control-every, --check-ids, --max-seconds) "
+              f"have no effect", flush=True)
+        n_msgs = 0
+        for conv, (sid, turns) in enumerate(zip(ids, convs)):
+            first = turns[0]
+            print(f"\n{'=' * 100}\nconv {conv}: session {sid or '?'}  source {first.get('source')}  "
+                  f"recorded with {first.get('orig_model')}  turns {len(turns)}  "
+                  f"final replay prompt {turns[-1].get('replay_prompt_tokens')} tokens\n{'=' * 100}")
+            n_history = 0   # messages the live run would already carry: earlier turns' messages + one reply each
+            for turn_idx, turn in enumerate(turns):
+                gap = self.next_gap(float(turn.get("pre_gap") or 0.0)) if turn_idx > 0 else 0.0
+                msgs = list(turn["messages"])
+                merged = int(turn.get("merged_output_length") or 0)
+                max_tokens = max(1, int(turn.get("output_length") or 1))   # what conversation() + chat_turn() send
+                print(f"\n--- conv {conv} turn {turn_idx} [rid {a.tag or 'replay'}-c{conv}-t{turn_idx}]  "
+                      f"trace iteration {turn.get('iteration')}, rows {turn.get('source_rows')}\n"
+                      f"    gap: recorded pre_gap {float(turn.get('pre_gap') or 0.0):.3f} s, {gap_label} {gap:.3f} s\n"
+                      f"    prompt: {n_history} history + {len(msgs)} new messages = {turn.get('replay_prompt_tokens')} replay tokens "
+                      f"(recorded {turn.get('prompt_tokens')}); {turn.get('n_assistant_in_delta')} recorded assistant message(s) "
+                      f"dropped from this delta\n"
+                      f"    reply: max_tokens {max_tokens}"
+                      f"{' (+' + str(merged) + ' tokens of merged-forward calls, not replayed)' if merged else ''}")
+                for k, m in enumerate(msgs, 1):
+                    content = m.get("content")
+                    if not isinstance(content, str):
+                        content = json.dumps(content)
+                    extra = {key: v for key, v in m.items() if key not in ("role", "content")}
+                    shown = content
+                    if a.dry_run_max_chars > 0 and len(content) > a.dry_run_max_chars:
+                        shown = content[: a.dry_run_max_chars] + f"\n... [{len(content) - a.dry_run_max_chars} more chars]"
+                    print(f"[{m.get('role')}] message {k}/{len(msgs)}, {len(content)} chars"
+                          f"{' ' + json.dumps(extra) if extra else ''}\n{shown}")
+                    n_msgs += 1
+                print(f"[assistant] reply skipped (dry run): the server would generate {max_tokens} tokens here"
+                      f"{'' if turn_idx == len(turns) - 1 else ', re-fed verbatim as history on the next turn'}")
+                n_history += len(msgs) + 1
+            print(f"conv {conv} done: {len(turns)} turns (dry run)")
+        print(f"\ndry run summary: {len(convs)} conversations, {sum(len(c) for c in convs)} turns, {n_msgs} messages printed, "
+              f"0 requests sent{', ' + a.output + ' not written' if a.output else ''}", flush=True)
 
     async def chat_turn(self, session: aiohttp.ClientSession, messages: list, max_tokens: int, rid: str = "") -> dict:
         """One streamed chat completion; returns text, timings, usage and sglext fields."""
@@ -286,11 +367,18 @@ class Replayer:
 
 def main() -> int:
     args = parse_args()
-    convs = load_conversations(args)
-    print(f"#Conversations: {len(convs)}  turns: {sum(len(c) for c in convs)}  concurrency: {args.concurrency}"
+    ids, convs = load_conversations(args)
+    selection = f"#Conversations: {len(convs)}  turns: {sum(len(c) for c in convs)}"
+    if args.dry_run:
+        print(selection, flush=True)
+        Replayer(args, None).dry_run(ids, convs)
+        return 0
+    print(f"{selection}  concurrency: {args.concurrency}"
           f"{' (cap), arrival ' + str(args.arrival_rate) + ' conv/s' if args.arrival_rate > 0 else ' (closed loop)'}  "
           f"gap x{args.gap_scale}{' cap ' + str(args.gap_cap) + 's' if args.gap_cap else ''}"
           f"{' sampled from ' + args.gap_sample if args.gap_sample else ''}  thinking: {args.thinking}", flush=True)
+    if aiohttp is None:
+        sys.exit("aiohttp is not installed: the live replay needs it (only --dry-run runs without it)")
     with open(args.output, "a") as out:
         asyncio.run(Replayer(args, out).run(convs))
     return 0
