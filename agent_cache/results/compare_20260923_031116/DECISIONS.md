@@ -33,3 +33,11 @@ in all in each SSD arm counting warm-up); cold returns 59 / 59 / 59 / 82 %; ever
 native gaps: the arrival-time L2 hit expires in the queue, the SSD tier is never reached, all host-pool arms coincide.
 Figures: compare.png, timeline_<arm>.png; cross-scale set in ../analysis_gapscale/ (crossscale.csv/png,
 delay_components.png, turn_components_*.csv). The in-container iostat logger was stopped by chain_c9.sh at ALL DONE.
+
+## 2026-09-23 note: client-side connection-pool lag inflates this campaign's TTFT
+
+replay_agentic.py opened its aiohttp session with the default TCPConnector (limit 100), so with 128 live sessions up to
+28 requests waited inside the client before reaching the server. Measured at x1 (three_tier_to, ReqTimeStats entry_time
+vs client send): p50 7.35 s, p95 50.6 s; about 19.9 s of the 131.2 s mean x1 TTFT is client-side. At x70 it is negligible
+(p50 0.07 s). Server-side queue_duration (ReqTimeStats) is unaffected and is the number to use for queueing analysis.
+Fixed in replay_agentic.py (TCPConnector(limit=0)) after this campaign; not re-run.

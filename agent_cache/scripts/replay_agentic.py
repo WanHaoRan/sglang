@@ -343,7 +343,10 @@ class Replayer:
         self.write({"kind": "run", "tag": self.args.tag, "t_start": time.time(), "args": vars(self.args),
                     "conversations": len(convs), "turns": sum(len(c) for c in convs)})
         timeout = aiohttp.ClientTimeout(total=None, sock_read=3600)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        # limit=0: no client-side connection cap. aiohttp's default pool (100) queued requests beyond 100 in flight inside
+        # the client, which the server never saw (x1 campaign: p50 7.4 s, p95 51 s before server entry).
+        connector = aiohttp.TCPConnector(limit=0)
+        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
             if self.args.arrival_rate > 0:
                 # open loop: conversations arrive as a Poisson process; --concurrency only caps how many are live
                 tasks = []

@@ -288,20 +288,36 @@ def draw_compare(results: list, out_png: str) -> None:
     style(a_done, "turns completed over time (all conversations)", "turns done")
     a_done.set_xlabel("seconds since the client started", fontsize=8, color=MUTED)
     a_done.legend(fontsize=8, frameon=False, loc="lower right")
+    # log x when the arms span more than ~2 decades (a collapsed arm's tail would squash the healthy ones against 0)
+    sel_ret, sel_first = (lambda t: t["turn"] > 0), (lambda t: t["turn"] == 0)
+    def spans_decades(sel):
+        per_arm = [sorted(t["ttft"] for t in cl["turns"] if sel(t)) for _, cl, _, _ in results]
+        per_arm = [xs for xs in per_arm if xs]
+        if not per_arm:
+            return False
+        lo = min(xs[len(xs) // 2] for xs in per_arm)
+        hi = max(xs[min(len(xs) - 1, int(0.99 * len(xs)))] for xs in per_arm)
+        return lo > 0 and hi / lo > 50
     for arm, cl, sv, m in results:
         color = ARM_COLOR.get(arm, INK)
-        for ax, sel, in ((a_cdf, lambda t: t["turn"] > 0), (a_cdf0, lambda t: t["turn"] == 0)):
-            xs = sorted(t["ttft"] for t in cl["turns"] if sel(t))
+        for ax, sel, in ((a_cdf, sel_ret), (a_cdf0, sel_first)):
+            xs = sorted(max(0.01, t["ttft"]) for t in cl["turns"] if sel(t))
             if xs:
                 ax.plot(xs, [(i + 1) / len(xs) for i in range(len(xs))], color=color, linewidth=1.8, label=arm,
                         drawstyle="steps-post")
+    for ax, sel in ((a_cdf, sel_ret), (a_cdf0, sel_first)):
+        log = spans_decades(sel)
+        if log:
+            ax.set_xscale("log")
+        ax.set_xlabel("seconds (log)" if log else "seconds", fontsize=8, color=MUTED)
+        ax.legend(fontsize=8, frameon=False, loc="lower right")
     style(a_cdf, "TTFT of returning turns (ECDF)", "fraction of turns")
-    a_cdf.set_xlabel("seconds", fontsize=8, color=MUTED)
-    a_cdf.legend(fontsize=8, frameon=False, loc="lower right")
-    n_conv = max(len({t["conv"] for t in cl["turns"]}) for _, cl, _, _ in results)
-    style(a_cdf0, f"TTFT of first turns (ECDF; cold prefill under the {n_conv}-way start)", "fraction of turns")
-    a_cdf0.set_xlabel("seconds", fontsize=8, color=MUTED)
-    a_cdf0.legend(fontsize=8, frameon=False, loc="lower right")
+    # the start: a closed-loop cohort (arrival_rate 0: all C sessions start at once) or sessions arriving at a rate
+    args0 = results[0][1].get("args") or {}
+    conc, rate = args0.get("concurrency"), float(args0.get("arrival_rate") or 0)
+    start = (f"up to {conc} live sessions, arriving at {rate:g}/s" if rate > 0
+             else f"cold prefill under the {conc}-way start" if conc else "cold prefill")
+    style(a_cdf0, f"TTFT of first turns (ECDF; {start})", "fraction of turns")
     # tier share of returning turns, one bar per arm, 2px gaps between segments
     for i, (arm, cl, sv, m) in enumerate(results):
         n = max(1, m["hits_device"] + m["hits_host"] + m["hits_storage"] + m["cold_returns"])

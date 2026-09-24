@@ -66,3 +66,11 @@ Final per-arm means (compare.csv / delay_components.py): hbm_host 114.8 s, three
 hbm_lru 138.7 s returning-turn TTFT; storage hits 0 / 10 / 9 / 0; cold returns 53 / 54 / 54 / 82 %. Figures:
 compare.png, timeline_<arm>.png; per-turn splits in ../analysis_gapscale/turn_components_x10*.csv. Campaign 9 (GAP=1)
 was launched by chain_c9.sh at 03:11:16Z into ../compare_20260923_031116/.
+
+## 2026-09-23 note: client-side connection-pool lag inflates this campaign's TTFT
+
+replay_agentic.py opened its aiohttp session with the default TCPConnector (limit 100), so with 128 live sessions up to
+28 requests waited inside the client before reaching the server. Measured at x1 (three_tier_to, ReqTimeStats entry_time
+vs client send): p50 7.35 s, p95 50.6 s; about 19.9 s of the 131.2 s mean x1 TTFT is client-side. At x70 it is negligible
+(p50 0.07 s). Server-side queue_duration (ReqTimeStats) is unaffected and is the number to use for queueing analysis.
+Fixed in replay_agentic.py (TCPConnector(limit=0)) after this campaign; not re-run.
