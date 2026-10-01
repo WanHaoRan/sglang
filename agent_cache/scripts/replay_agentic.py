@@ -12,6 +12,12 @@ Optional paired recompute control (kind=control, RUNBOOK 6.5): every K turns a r
 turn's prompt_tokens length is sent to /generate outside the semaphore; its TTFT is the recompute
 reference for that turn.
 
+--oracle-hints (oracle admission-anchored staging, agent_cache/ORACLE_PLAN.md): every turn but the last carries a
+`kv_hints` envelope with one `sglang.next_turn` v1 action, payload {session, next_rid, next_gap_s}: the conversation id,
+the next turn's rid and the gap the client will sleep before sending it (drawn one turn early; refused with --gap-sample,
+whose draws depend on event order). A hint is suppressed when --max-seconds certainly cuts the next turn. The turn record
+carries oracle_hint = {next_rid, next_gap_s, suppressed}.
+
 Trace: the 3.3 converter JSON (conversations[i] = list of turns with messages, output_length, pre_gap,
 prompt_tokens, replay_prompt_tokens).
 
@@ -60,6 +66,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--save-text", action="store_true", help="store each reply text in the JSONL (debugging)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--tag", default="")
+    ap.add_argument("--oracle-hints", action="store_true",
+                    help="send each non-last turn's next rid and next gap as a kv_hints envelope (sglang.next_turn v1)")
     ap.add_argument("--output", default="", help="JSONL, appended (required unless --dry-run)")
     ap.add_argument("--dry-run", action="store_true",
                     help="send nothing: print each turn's messages and the token budget of the reply the server "
@@ -69,6 +77,8 @@ def parse_args() -> argparse.Namespace:
     args = ap.parse_args()
     if not args.dry_run and not args.output:
         ap.error("--output is required (unless --dry-run)")
+    if args.oracle_hints and args.gap_sample:
+        ap.error("--oracle-hints needs deterministic gaps: --gap-sample draws depend on event order")
     return args
 
 
@@ -114,6 +124,17 @@ class Replayer:
         self.out.write(json.dumps(rec) + "\n")
         self.out.flush()
 
+    def rid(self, conv: int, turn_idx: int) -> str:
+        return f"{self.args.tag or 'replay'}-c{conv}-t{turn_idx}"
+
+    def next_turn_hints(self, conv: int, turn_idx: int, next_gap_s: float) -> dict:
+        """kv_hints envelope sent with turn turn_idx: when the conversation's next turn will be sent, and its rid."""
+        payload = {"session": f"{self.args.tag or 'replay'}-c{conv}", "next_rid": self.rid(conv, turn_idx + 1),
+                   "next_gap_s": round(next_gap_s, 3)}
+        return {"protocol_version": "1", "message_id": self.rid(conv, turn_idx),
+                "actions": [{"action_id": "next_turn", "action_type": "sglang.next_turn", "action_version": "1",
+                             "payload": payload}]}
+
     def next_gap(self, pre_gap: float) -> float:
         g = self.rng.choice(self.gap_pool) if self.gap_pool else pre_gap
         g *= self.args.gap_scale
@@ -152,7 +173,7 @@ class Replayer:
                 msgs = list(turn["messages"])
                 merged = int(turn.get("merged_output_length") or 0)
                 max_tokens = max(1, int(turn.get("output_length") or 1))   # what conversation() + chat_turn() send
-                print(f"\n--- conv {conv} turn {turn_idx} [rid {a.tag or 'replay'}-c{conv}-t{turn_idx}]  "
+                print(f"\n--- conv {conv} turn {turn_idx} [rid {self.rid(conv, turn_idx)}]  "
                       f"trace iteration {turn.get('iteration')}, rows {turn.get('source_rows')}\n"
                       f"    gap: recorded pre_gap {float(turn.get('pre_gap') or 0.0):.3f} s, {gap_label} {gap:.3f} s\n"
                       f"    prompt: {n_history} history + {len(msgs)} new messages = {turn.get('replay_prompt_tokens')} replay tokens "
@@ -160,6 +181,9 @@ class Replayer:
                       f"dropped from this delta\n"
                       f"    reply: max_tokens {max_tokens}"
                       f"{' (+' + str(merged) + ' tokens of merged-forward calls, not replayed)' if merged else ''}")
+                if a.oracle_hints and turn_idx + 1 < len(turns):
+                    hint = self.next_turn_hints(conv, turn_idx, self.next_gap(float(turns[turn_idx + 1].get("pre_gap") or 0.0)))
+                    print(f"    oracle hint (kv_hints): {json.dumps(hint['actions'][0]['payload'])}")
                 for k, m in enumerate(msgs, 1):
                     content = m.get("content")
                     if not isinstance(content, str):
@@ -178,7 +202,8 @@ class Replayer:
         print(f"\ndry run summary: {len(convs)} conversations, {sum(len(c) for c in convs)} turns, {n_msgs} messages printed, "
               f"0 requests sent{', ' + a.output + ' not written' if a.output else ''}", flush=True)
 
-    async def chat_turn(self, session: aiohttp.ClientSession, messages: list, max_tokens: int, rid: str = "") -> dict:
+    async def chat_turn(self, session: aiohttp.ClientSession, messages: list, max_tokens: int, rid: str = "",
+                        kv_hints: dict | None = None) -> dict:
         """One streamed chat completion; returns text, timings, usage and sglext fields."""
         body = {
             "rid": rid or None,   # shows up in the server's --log-requests and HICACHE_EVT lines
@@ -193,6 +218,8 @@ class Replayer:
             "chat_template_kwargs": {"enable_thinking": self.args.thinking == "on"},
             "return_cached_tokens_details": True,
         }
+        if kv_hints is not None:
+            body["kv_hints"] = kv_hints
         if self.args.check_ids:
             body["return_input_ids_in_sglext"] = True
             body["return_output_ids_in_sglext"] = True
@@ -258,10 +285,11 @@ class Replayer:
                         "start_s": round(t_start, 3), "queued_s": round(t_start - t_arrival, 3)})
             history: list = []
             prev = None  # last turn's result, for the reuse check
+            pending_gap = None  # with --oracle-hints, turn t+1's gap is drawn (and hinted) when turn t is sent
             for turn_idx, turn in enumerate(turns):
                 gap_slept = 0.0
                 if turn_idx > 0:
-                    gap_slept = self.next_gap(float(turn.get("pre_gap") or 0.0))
+                    gap_slept = pending_gap if pending_gap is not None else self.next_gap(float(turn.get("pre_gap") or 0.0))
                     if self.args.max_seconds:   # wall cap: never sleep past the deadline, then stop at this turn boundary
                         gap_slept = max(0.0, min(gap_slept, self.args.max_seconds - (time.perf_counter() - self.t0)))
                     if gap_slept > 0:
@@ -279,11 +307,21 @@ class Replayer:
                        "gap_slept": round(gap_slept, 3), "pre_gap": turn.get("pre_gap"),
                        "output_length": turn.get("output_length"),
                        "replay_prompt_tokens": turn.get("replay_prompt_tokens")}
+                hints = None
+                if self.args.oracle_hints and turn_idx + 1 < len(turns):
+                    pending_gap = self.next_gap(float(turns[turn_idx + 1].get("pre_gap") or 0.0))
+                    # the next send is at least pending_gap away: past the wall cap it is certainly never sent
+                    suppressed = bool(self.args.max_seconds) and \
+                        time.perf_counter() - self.t0 + pending_gap >= self.args.max_seconds
+                    if not suppressed:
+                        hints = self.next_turn_hints(conv, turn_idx, pending_gap)
+                    rec["oracle_hint"] = {"next_rid": self.rid(conv, turn_idx + 1), "next_gap_s": round(pending_gap, 3),
+                                          "suppressed": suppressed}
                 r, err = None, None
                 for attempt in range(2):
                     try:
                         r = await self.chat_turn(session, history, int(turn.get("output_length") or 1),
-                                                 rid=f"{self.args.tag or 'replay'}-c{conv}-t{turn_idx}")
+                                                 rid=self.rid(conv, turn_idx), kv_hints=hints)
                         break
                     except aiohttp.ClientConnectionError as e:
                         # a pooled keep-alive connection the server closed meanwhile (ServerDisconnected / [Errno 104]):

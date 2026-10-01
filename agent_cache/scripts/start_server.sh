@@ -7,6 +7,8 @@
 #   ARM    hbm_lru (default; single tier, arm a) | hbm_host (L1+L2, arm b)
 #          three_tier_to (L1+L2+L3 nixl on /mnt/ssd, prefetch policy `timeout`; `three_tier` is an alias, it is what C18 ran)
 #          three_tier_wc (same, prefetch policy `wait_complete`)
+#          three_tier_wc_norq (three_tier_wc with the admission-time SSD re-query of upstream #39283 disabled:
+#          --hicache-storage-prefetch-retry-max-attempts 0; isolates #39283 on the same engine, campaign 11)
 #   LEVEL  P0 (default: L1 262144 tok, host 64 GB) | PH (131072 / 48) | PL (131072 / 18)          (RUNBOOK 5.3)
 #          NAT64 / NAT160: NO --max-total-tokens (the profiled device pool), host 64 / 160 GB   (campaigns 6-7, "natural")
 #   Overrides (env): L1_TOKENS=<tokens> and/or HOST_GB=<GB> replace the level's pools; the run dir is then named custom_L1<tokens>_H<GB>.
@@ -105,7 +107,9 @@ case "$ARM" in
   hbm_host)      ARGS=("${COMMON[@]}" "${HOST[@]}"); ENVV=() ;;
   three_tier_to) l3_prep; POLICY=timeout;       ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_TO[@]}"); ENVV=("${L3ENV[@]}") ;;
   three_tier_wc) l3_prep; POLICY=wait_complete; ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_WC[@]}"); ENVV=("${L3ENV[@]}") ;;
-  *) echo "STOP: unknown ARM '$ARM' (hbm_lru | hbm_host | three_tier_to | three_tier_wc)"; exit 1 ;;
+  three_tier_wc_norq) l3_prep; POLICY=wait_complete
+    ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_WC[@]}" --hicache-storage-prefetch-retry-max-attempts 0); ENVV=("${L3ENV[@]}") ;;
+  *) echo "STOP: unknown ARM '$ARM' (hbm_lru | hbm_host | three_tier_to | three_tier_wc | three_tier_wc_norq)"; exit 1 ;;
 esac
 
 echo "arm: $ARM  level: $LEVEL (L1=${L1:-natural} tokens, host=$HSIZE GB)  model: $MODEL  ctx: $CTX  run dir: $RUN"
@@ -141,5 +145,6 @@ case "$ARM" in three_tier_*)
   echo "nixl backend:     $(grep -c 'Backend POSIX was instantiated' "$RUN/server.log")   (want 1)"
   echo "prefetch policy:  $(grep -ao "'hicache_storage_prefetch_policy': '[a-z_]*'" "$RUN/server.log" | head -1)   (want $POLICY)"
   echo "L3 cleaner dir:   $(grep -aoE "HiCacheL3Cleaner started: dirs=\[[^]]*\]" "$RUN/server.log" | head -1)   (want /mnt/ssd/hicache_l3)"
-  echo "L3 cleaner marks: $(grep -aoE 'high=[0-9.]+% low=[0-9.]+%' "$RUN/server.log" | head -1)   (want ${L3_CLEANER_PCT:-80,70})" ;;
+  echo "L3 cleaner marks: $(grep -aoE 'high=[0-9.]+% low=[0-9.]+%' "$RUN/server.log" | head -1)   (want ${L3_CLEANER_PCT:-80,70})"
+  echo "re-query cap:     $(grep -aoE "'hicache_storage_prefetch_retry_max_attempts': [0-9]+" "$RUN/server.log" | head -1)   (want $([ "$ARM" = three_tier_wc_norq ] && echo 0 || echo 8))" ;;
 esac

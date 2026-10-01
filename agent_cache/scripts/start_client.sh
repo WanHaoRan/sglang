@@ -6,6 +6,8 @@
 #
 # Knobs (environment variables, defaults = the 4-conversation observation run):
 #   NCONV=4  TURNS=10  C=4  GAP=1.0  GAP_CAP=0  K=0  THINKING=off  CHECK_IDS=1  ARRIVAL=0  TAG=observe_c4  OFFSET=0  SEED=0  MODEL=<the server's>  MAX_SECONDS=0
+#   ORACLE_HINTS=0
+#   ORACLE_HINTS=1 sends each non-last turn's next rid and next gap as a kv_hints envelope (--oracle-hints, agent_cache/ORACLE_PLAN.md).
 #   MAX_SECONDS>0 is the wall cap (--max-seconds): conversations stop at their next turn boundary after that many seconds, in-flight
 #   requests complete, every completed turn is kept and the summary line carries "capped": true.
 #   GAP_CAP>0 caps every (scaled) sleep at that many seconds (the trace has 300 s gaps that GAP=10 turns into 50 min).
@@ -19,7 +21,7 @@ AC=/sgl-workspace/sglang/agent_cache
 PORT=30000
 NCONV=${NCONV:-4}; TURNS=${TURNS:-10}; C=${C:-4}; GAP=${GAP:-1.0}; K=${K:-0}
 THINKING=${THINKING:-off}; CHECK_IDS=${CHECK_IDS:-1}; ARRIVAL=${ARRIVAL:-0}; GAP_CAP=${GAP_CAP:-0}
-TAG=${TAG:-observe_c${C}}; OFFSET=${OFFSET:-0}; SEED=${SEED:-0}; MAX_SECONDS=${MAX_SECONDS:-0}
+TAG=${TAG:-observe_c${C}}; OFFSET=${OFFSET:-0}; SEED=${SEED:-0}; MAX_SECONDS=${MAX_SECONDS:-0}; ORACLE_HINTS=${ORACLE_HINTS:-0}
 TRACE=${TRACE:-$AC/traces/lmcache_agentic_trace.json}   # the committed 32K-cut trace; campaign 7 uses the 262K re-conversion
 
 [ -d "$AC" ] || { echo "STOP: $AC not found; run inside the container (docker exec -it sglang_hicache bash $0)"; exit 1; }
@@ -35,8 +37,9 @@ EXTRA=()
 [ "$ARRIVAL" != 0 ] && EXTRA+=(--arrival-rate "$ARRIVAL")
 [ "$GAP_CAP" != 0 ] && EXTRA+=(--gap-cap "$GAP_CAP")
 [ "$MAX_SECONDS" != 0 ] && EXTRA+=(--max-seconds "$MAX_SECONDS")
+[ "$ORACLE_HINTS" = 1 ] && EXTRA+=(--oracle-hints)
 
-echo "client: $NCONV conversations x <= $TURNS turns, concurrency $C, gap x$GAP cap ${GAP_CAP}s, wall cap ${MAX_SECONDS}s, controls every ${K:-0}, thinking $THINKING -> $OUT"
+echo "client: $NCONV conversations x <= $TURNS turns, concurrency $C, gap x$GAP cap ${GAP_CAP}s, wall cap ${MAX_SECONDS}s, controls every ${K:-0}, thinking $THINKING, oracle hints $ORACLE_HINTS -> $OUT"
 cd "$AC/scripts"
 python3 replay_agentic.py \
   --url "http://127.0.0.1:$PORT" --model "${MODEL:-Qwen/Qwen3-32B-FP8}" \

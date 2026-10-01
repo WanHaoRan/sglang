@@ -2,9 +2,10 @@
 """delay_components.py --out DIR <label>=<manifest> [<label>=<manifest> ...]
 
 Per returning turn, split the client-measured latency into: queue wait (send -> admission), of which the L3 read
-(prefetch_start -> s2h_io done); admission -> first token ("prefill", includes the layer-wise H2D load-back); decode
-(first token -> last token). Admission is measured where the server log has `HICACHE_EVT load_back_init rid=...`
-(host and storage hits) or a `queue_duration=` time-stats line; elsewhere (device hits, recomputes on servers without
+(last prefetch_start before the read -> s2h_io done; #39283 re-issues the lookup at admission); admission -> first
+token ("prefill", includes the layer-wise H2D load-back); decode (first token -> last token). Admission is measured
+where the server log has `HICACHE_EVT load_back_init rid=...` (host and storage hits) or a `queue_duration=` time-stats
+line; elsewhere (device hits, recomputes on servers without
 --enable-request-time-stats-logging) the admission -> first-token time is estimated from the measured turns of the same
 tier and load regime (server queue depth at arrival >= 10 = saturated), pooled over every campaign given, and the queue
 wait is the remainder. With no measured turn to calibrate from, 0.05 s + uncached / P is used.
@@ -30,7 +31,9 @@ def load_arm(results, arm, run, client):
     for line in open(os.path.join(results, run, "server.log"), errors="replace"):
         m = EVT.match(line)
         if m:
-            d = ev.setdefault(m[3], {}); d.setdefault(m[2], ts(m[1])); continue
+            d = ev.setdefault(m[3], {}); d.setdefault(m[2], ts(m[1]))
+            if m[2] == "prefetch_start": d.setdefault("_ps", []).append(ts(m[1]))
+            continue
         m = BATCH.match(line)
         if m:
             qt.append(ts(m[1])); qd.append(int(m[3])); continue
@@ -51,7 +54,8 @@ def load_arm(results, arm, run, client):
             queue = min(ttft, max(0.0, e["load_back_init"] - send)); how = "load_back_init"
         else:
             queue = None; how = "estimated"
-        l3 = max(0.0, e["s2h_io"] - e["prefetch_start"]) if "s2h_io" in e and "prefetch_start" in e else 0.0
+        ps = [t for t in e.get("_ps", ()) if "s2h_io" in e and t <= e["s2h_io"]]
+        l3 = e["s2h_io"] - ps[-1] if ps else 0.0
         out.append(dict(arm=arm, conv=r["conv"], turn=r["turn"], tier=tier, t_send=round(r["t_send"], 3), prompt=prompt, uncached=unc,
                         ttft=round(ttft, 4), latency=round(lat, 4), queue=queue, l3_read=round(l3, 4), prefill=None,
                         decode=round(max(0.0, lat - ttft), 4), how=how, qdepth=qdepth))
@@ -128,7 +132,7 @@ def main():
         axA = fig.add_subplot(gs[i, 0]); axA.set_facecolor(SURF); draw_rows(axA, pa, f"{label}: where a returning turn's time goes, per arm")
         axB = fig.add_subplot(gs[i, 1]); axB.set_facecolor(SURF); draw_rows(axB, pt, f"{label}: the same split per arm and tier (tiers with >= 20 turns)")
     from matplotlib.patches import Patch
-    fig.legend(handles=[Patch(color=C_QUEUE, label="queue wait (send -> admission), excluding the L3 read"), Patch(color=C_L3, label="L3 read while queued (prefetch_start -> s2h_io)"),
+    fig.legend(handles=[Patch(color=C_QUEUE, label="queue wait (send -> admission), excluding the L3 read"), Patch(color=C_L3, label="L3 read while queued (last prefetch_start -> s2h_io)"),
                         Patch(color=C_PREFILL, label="admission -> first token (prefill + layer-wise H2D)"), Patch(color=C_DECODE, label="decode (first -> last token)")],
                loc="upper left", bbox_to_anchor=(0.01, 0.995), fontsize=8.5, frameon=False, ncol=2)
     fig.text(0.01, 0.003, "Admission time measured from HICACHE_EVT load_back_init (host/storage hits) or ReqTimeStats queue_duration where logged; otherwise the admission -> first-token time is the mean of the measured turns of the same tier and load regime (server queue depth at arrival >= 10 = saturated), pooled over all campaigns shown, and the queue wait is the remainder ('% measured' = share of turns with a measured admission). TTFT = queue + first-token segment.",

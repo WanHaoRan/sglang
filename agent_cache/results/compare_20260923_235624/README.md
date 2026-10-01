@@ -57,8 +57,11 @@ paired against `hbm_host` (`gapclass.csv`, `gapclass_paired.csv`):
    restored from it with one. The SSD's whole benefit sits in the 2-4% of turns that follow a human think pause.
 2. **The SSD turns those returns from a 3.2 s recompute into a 1.0 s restore** (paired −2.2 s) and cuts the p99 of all
    returning turns from 4.90 to 1.37 s. Short-gap turns also get faster (−0.08 to −0.18 s mean): the host-only arm's
-   long recomputes slow the batches they share. At the median the SSD arms are ~0.02 s slower (paired p50 +0.02 s),
-   a small fixed cost of the storage tier whose cause is not established.
+   long recomputes slow the batches they share. At the median the SSD arms are ~0.02 s slower (paired p50 +0.02 s).
+   Cause (measured 2026-10-01): a GPU-hit return whose new tail is ≥ 256 tokens (`prefetch_threshold`) triggers an SSD
+   existence query at arrival and waits for it before admission: server queue p50 38 ms vs 1.0 ms in hbm_host, TTFT p50
+   0.350 vs 0.307 s. Tails < 256 tokens are identical in all arms (~1 ms, 0.24 s). The query can never hit, since a new
+   tail is fresh tool output.
 3. **The prefetch policy does not matter at this load.** The SSD was lightly used (≤ 34% utilization; 678 GB read and
    1,421 GB written over the campaign, i.e. per SSD arm ~347 GB restored and ~725 GB written through), so `timeout` and
    `wait_complete` are each other's replicate: they differ by ≤ 0.06 s, against the 2.2 s SSD effect.

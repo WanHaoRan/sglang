@@ -32,7 +32,8 @@ BLUE, ORANGE, AQUA, GRAY, INK, MUTED = "#2a78d6", "#eb6834", "#1baf7a", "#9a9891
 GREEN = "#2e7d32"  # three_tier_wc, distinct from the AQUA of three_tier_to
 TIER_COLOR = {"cold": GRAY, "device": BLUE, "host": ORANGE, "storage": AQUA}
 ARM_COLOR = {"hbm_lru": GRAY, "hbm_host": ORANGE, "three_tier": AQUA,
-             "three_tier_to": AQUA, "three_tier_wc": GREEN}   # campaign 6: the two prefetch policies
+             "three_tier_to": AQUA, "three_tier_wc": GREEN,   # campaign 6: the two prefetch policies
+             "three_tier_wc_norq": "#4a3aa7"}   # campaign 11: wait_complete with the #39283 re-query disabled
 TS_RE = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d{3})?)\]\s*(.*)$")
 KV_RE = re.compile(r"(\w+)=(-?[\w./-]+)")
 

@@ -3,7 +3,8 @@
 Evidence: code under `python/sglang/srt` (the live cache class is `UnifiedRadixCache`, not `HiRadixCache`); campaigns 7/8/9
 = gap scale x70/x10/x1, 128 live sessions, SWE-bench replay, up to 40 turns, mean 36.5 (`../compare_20260922_023714`,
 `../compare_20260922_165655`, `../compare_20260923_031116`); campaign 10 = 80 live sessions × 50 turns at a
-TraceLab-calibrated cadence (`../compare_20260923_235624`). Raw analysis, scripts and citation checks:
+TraceLab-calibrated cadence (`../compare_20260923_235624`); campaign 11 = campaign 8 on the merged engine with #39283
+(`../compare_20261001_013443`). Raw analysis, scripts and citation checks:
 `takeaway_assessment/`. "to" / "wc" = the `timeout` / `wait_complete` prefetch-policy arms.
 
 ## Takeaway 1 — sparse load: start the SSD fetch before the next turn arrives
@@ -98,6 +99,15 @@ a look-ahead LRU); py-kvcache (arXiv 2609.11744: native vLLM's disk→CPU promot
 preloads a bounded lookahead of waiting requests, one at a time, yielding to demand loads); SGLang #39283 (reactive
 re-query at admission; also pins the device prefix under staged buffer-mode fetches).
 
+**Campaign 11 update (x10, #39283 measured).** With the admission re-query on, both SSD arms cut mean returning-turn
+TTFT from 116 to 68-69 s (paired against the same engine with it off: −47.8 s [−49.3, −46.5]). About 1,150 turns per arm
+are restored from the SSD at admission instead of recomputed; recomputes fall from 56% to 30% of returns and the mean
+server queue wait from 113 to 67 s. With the re-query off, the arm reproduces campaign 8 to within 0.2 s. Correction 3 is
+therefore the largest single lever at x10. Two gaps remain. 93% of the remaining recomputes had spent all 8 retry
+attempts on paced polls for the fresh tail while queued, which blocks the admission re-query (untested fix: poll
+interval 0). And each re-queried restore still adds ~4 s (2.1 s to host memory, then ~2 s to admission), which a lead
+before admission would hide.
+
 ## One design covering both: admission-anchored staging
 
 - Predict each session's admission time Â: in a gap, a low quantile of its return time plus the predicted server wait;
@@ -111,7 +121,7 @@ re-query at admission; also pins the device prefix under staged buffer-mode fetc
 
 **Novelty.** No single piece is new (forestall: Kimbrel et al., OSDI '96; CachedAttention; TokenCake). Defensible: the
 cross-regime measurement; one admission-anchored controller over in-gap and queued sessions with an SSD tier and a
-backlog-aware lead; a misprediction-robustness study. Threats: #39283 alone may fix the dense regime; mirror reclaim alone
+backlog-aware lead; a misprediction-robustness study. Threats: #39283 alone recovers ~41% of x10 TTFT (campaign 11) and a retry-budget fix may recover more; mirror reclaim alone
 may cut x70 SSD/cold returns (LRU model, to arm: 21% → 2.7-4.5%).
 
 ## Measurement caveat
@@ -119,11 +129,13 @@ may cut x70 SSD/cold returns (LRU model, to arm: 21% → 2.7-4.5%).
 The replay client used aiohttp's default 100-connection pool with 128 sessions: at x1 requests waited p50 7.35 s / p95
 50.6 s client-side (~20 s of the 131 s mean TTFT), x10 p50 2.1-2.4 s / p95 42 s; x70 was unaffected (p50 0.07 s).
 Server-side queue times exclude this lag, but the cap held ≤ 100 requests at the server, so the x10/x1 server queues
-were shaped by it; uncapped runs will queue more at the server. Fixed on 2026-09-23 (`TCPConnector(limit=0)`).
+were shaped by it. Fixed on 2026-09-23 (`TCPConnector(limit=0)`). Campaign 11 reran x10 uncapped: hbm_host and hbm_lru
+TTFT moved by ≤ 1 s, so the cap changed where requests waited, not how long.
 
 ## Next experiments
 
-1. x10: port #39283 or enable the paced retry; queue-tail-first eviction; `--schedule-policy lpm`.
+1. x10: #39283 measured (campaign 11). Next: re-query only (poll interval 0, max attempts 8); queue-tail-first
+   eviction; `--schedule-policy lpm`.
 2. Oracle headroom per regime.
 3. Gap predictability: human think pauses (campaign 10: they cause every SSD restore); real Claude Code traces.
 4. Mirror-reclaim ablation.
