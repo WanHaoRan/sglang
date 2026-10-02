@@ -71,6 +71,7 @@ except:
     StructuralTag = Any
 
 from sglang.utils import convert_json_schema_to_str
+from sglang.srt.managers.kv_hints import KvHintsEnvelope
 
 logger = logging.getLogger(__name__)
 
@@ -949,6 +950,9 @@ class ChatCompletionRequest(BaseModel):
     # Custom logit processor for advanced sampling control
     custom_logit_processor: Optional[Union[List[Optional[str]], str]] = None
     custom_params: Optional[Dict] = None
+
+    # [Haoran] Add Kv hint parameters
+    kv_hints: Optional[KvHintsEnvelope] = None
 
     # Pre-computed prompt token IDs: when provided, bypasses chat template
     # tokenization entirely.  Messages are still used to derive stop tokens

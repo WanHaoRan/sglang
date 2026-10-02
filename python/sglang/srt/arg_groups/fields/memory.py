@@ -218,6 +218,19 @@ class Memory(msgspec.Struct):
         bool,
         "Load replicated MLA KV on rank 0 and broadcast each layer with the Mooncake linker.",
     ] = False
+    hicache_storage_next_turn_prefetch: A[
+        str,
+        Arg(
+            help=(
+                "Oracle next-turn prefetch from storage, driven by the "
+                "sglang.next_turn kv_hints action (session, next request id, gap). "
+                "'observe' predicts and logs only; 'on' also starts each prefetch at "
+                "the predicted admission time minus the estimated load time. "
+                "Experimental; needs the hierarchical cache with a storage backend."
+            ),
+            choices=["off", "observe", "on"],
+        ),
+    ] = "off"
 
     # -------------------------------------------------------------------------
     # Hierarchical sparse attention

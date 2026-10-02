@@ -18,6 +18,10 @@ the next turn's rid and the gap the client will sleep before sending it (drawn o
 whose draws depend on event order). A hint is suppressed when --max-seconds certainly cuts the next turn. The turn record
 carries oracle_hint = {next_rid, next_gap_s, suppressed}.
 
+--turns-range LO:HI varies conversation lengths: each conversation replays min(its recorded turns, a uniform draw in
+[LO, HI]) turns. The draws come from their own RNG (--turns-seed), one per conversation in replay order, so the arrival
+and gap draws are unchanged and every arm replays the same lengths.
+
 Trace: the 3.3 converter JSON (conversations[i] = list of turns with messages, output_length, pre_gap,
 prompt_tokens, replay_prompt_tokens).
 
@@ -53,6 +57,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--num-conversations", type=int, default=0, help="0 = all")
     ap.add_argument("--offset", type=int, default=0, help="rotate the conversation list")
     ap.add_argument("--max-turns", type=int, default=0, help="0 = all")
+    ap.add_argument("--turns-range", default="",
+                    help="LO:HI: each conversation replays min(recorded turns, a seeded uniform draw in [LO, HI]); '' = off")
+    ap.add_argument("--turns-seed", type=int, default=0, help="seed of the --turns-range draws")
     ap.add_argument("--concurrency", type=int, default=1, help="live conversations (closed loop); with --arrival-rate, the cap")
     ap.add_argument("--arrival-rate", type=float, default=0.0,
                     help="open loop: start conversations as a Poisson process at this many per second (0 = closed loop)")
@@ -77,13 +84,21 @@ def parse_args() -> argparse.Namespace:
     args = ap.parse_args()
     if not args.dry_run and not args.output:
         ap.error("--output is required (unless --dry-run)")
+    if args.turns_range:
+        try:
+            lo, hi = (int(x) for x in args.turns_range.split(":"))
+        except ValueError:
+            ap.error(f"--turns-range wants LO:HI, got {args.turns_range!r}")
+        if not 1 <= lo <= hi:
+            ap.error(f"--turns-range wants 1 <= LO <= HI, got {args.turns_range!r}")
     if args.oracle_hints and args.gap_sample:
         ap.error("--oracle-hints needs deterministic gaps: --gap-sample draws depend on event order")
     return args
 
 
 def load_conversations(args: argparse.Namespace) -> tuple:
-    """(session ids, conversations) in replay order: empty ones dropped, then --offset, --num-conversations, --max-turns."""
+    """(session ids, conversations) in replay order: empty ones dropped, then --offset, --num-conversations, --max-turns,
+    --turns-range."""
     with open(args.trace) as f:
         data = json.load(f)
     ids = data.get("session_ids")
@@ -97,6 +112,10 @@ def load_conversations(args: argparse.Namespace) -> tuple:
         pairs = pairs[: args.num_conversations]
     if args.max_turns:
         pairs = [(sid, c[: args.max_turns]) for sid, c in pairs]
+    if args.turns_range:
+        lo, hi = (int(x) for x in args.turns_range.split(":"))
+        rng = random.Random(args.turns_seed)   # its own stream: the arrival and gap draws are unchanged
+        pairs = [(sid, c[: rng.randint(lo, hi)]) for sid, c in pairs]
     return [sid for sid, _ in pairs], [c for _, c in pairs]
 
 
@@ -278,7 +297,7 @@ class Replayer:
         t_arrival = time.perf_counter() - self.t0
         async with self.sem:
             if self.args.max_seconds and time.perf_counter() - self.t0 > self.args.max_seconds:
-                self.write({"kind": "conv_skipped", "conv": conv, "reason": "max_seconds"})
+                self.write({"kind": "conv_skipped", "conv": conv, "reason": "max_seconds", "arrival_s": round(t_arrival, 3)})
                 return
             t_start = time.perf_counter() - self.t0
             self.write({"kind": "conv_start", "conv": conv, "turns": len(turns), "arrival_s": round(t_arrival, 3),
@@ -296,7 +315,8 @@ class Replayer:
                         await asyncio.sleep(gap_slept)   # measured from the end of the previous reply
                     if self.args.max_seconds and time.perf_counter() - self.t0 >= self.args.max_seconds:
                         self.stats["capped_convs"] += 1
-                        self.write({"kind": "conv_end", "conv": conv, "turns_done": turn_idx, "aborted": False, "capped": True})
+                        self.write({"kind": "conv_end", "conv": conv, "turns_done": turn_idx, "aborted": False, "capped": True,
+                                    "end_s": round(time.perf_counter() - self.t0, 3)})
                         return
                 history = history + list(turn["messages"])
                 if self.args.control_every and turn_idx > 0 and (turn_idx + conv) % self.args.control_every == 0 \
@@ -337,7 +357,8 @@ class Replayer:
                     rec["error"] = str(err)[:300]
                     self.stats["errors"] += 1
                     self.write(rec)
-                    self.write({"kind": "conv_end", "conv": conv, "turns_done": turn_idx, "aborted": True})
+                    self.write({"kind": "conv_end", "conv": conv, "turns_done": turn_idx, "aborted": True,
+                                "end_s": round(time.perf_counter() - self.t0, 3)})
                     return
                 u = r["usage"] or {}
                 cd = r["cached_details"] or {}
@@ -374,7 +395,8 @@ class Replayer:
                 prev = {"prompt_tokens": prompt_tokens, "completion": completion,
                         "ids": (r["input_ids"] or []) + (r["output_ids"] or []) if self.args.check_ids else None,
                         "prompt_ids": len(r["input_ids"] or [])}
-            self.write({"kind": "conv_end", "conv": conv, "turns_done": len(turns), "aborted": False})
+            self.write({"kind": "conv_end", "conv": conv, "turns_done": len(turns), "aborted": False,
+                        "end_s": round(time.perf_counter() - self.t0, 3)})
             print(f"conv {conv} done: {len(turns)} turns, {time.perf_counter() - self.t0:.0f} s elapsed", flush=True)
 
     async def run(self, convs: list) -> None:

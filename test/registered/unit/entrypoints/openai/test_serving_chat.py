@@ -53,6 +53,9 @@ from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils import get_or_create_event_loop
 from sglang.test.ci.ci_register import register_cpu_ci
 
+from pydantic import ValidationError 
+from sglang.srt.managers.kv_hints import KvHintsEnvelope
+
 register_cpu_ci(est_time=13, suite="base-a-test-cpu")
 
 # Every spec resolve_chat_encoding_spec can return; pinned by the guard below.
@@ -612,13 +615,30 @@ class ServingChatTestCase(unittest.TestCase):
             self.basic_req.return_sampling_mask = True
             self.basic_req.sampling_logprobs_mode = "support"
             self.basic_req.return_meta_info = True
+            self.basic_req.kv_hints = KvHintsEnvelope(protocol_version="1", message_id="m-1")
             adapted, processed = self.chat._convert_to_internal_request(self.basic_req)
+            self.assertIs(adapted.kv_hints, self.basic_req.kv_hints)
             self.assertIsInstance(adapted, GenerateReqInput)
             self.assertFalse(adapted.stream)
             self.assertTrue(adapted.return_sampling_mask)
             self.assertEqual(adapted.sampling_logprobs_mode, "support")
             self.assertEqual(adapted.session_id, "session-1")
             self.assertEqual(processed, self.basic_req)
+
+    def test_chat_request_kv_hints_validated_at_the_boundary(self):
+        msgs = [{"role": "user", "content": "Hi?"}]
+        env = {"protocol_version": "1", "message_id": "replay-c0-t0", 
+               "actions": [{"action_id": "next_turn", 
+                            "action_type": "sglang.next_turn", 
+                            "action_version": "1",
+                            "payload": {"session": "replay-c0",
+                                        "next_rid": "replay-c0-t1", 
+                                        "next_gap_s": 7.048}}]}
+        req = ChatCompletionRequest(model="x", messages=msgs, kv_hints=env)
+        self.assertIsInstance(req.kv_hints, KvHintsEnvelope)
+        self.assertEqual(req.kv_hints.actions[0].payload["next_rid"], "replay-c0-t1")
+        with self.assertRaises(ValidationError):
+            ChatCompletionRequest(model="x", messages=msgs, kv_hints={"actions": 3})
 
     def test_chat_applies_pd_header_overrides(self):
         request = ChatCompletionRequest(
