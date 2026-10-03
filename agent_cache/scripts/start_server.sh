@@ -113,11 +113,16 @@ case "$ARM" in
 esac
 
 echo "arm: $ARM  level: $LEVEL (L1=${L1:-natural} tokens, host=$HSIZE GB)  model: $MODEL  ctx: $CTX  run dir: $RUN"
+# ENGINE_PYTHONPATH (optional): import sglang from a frozen copy of python/ instead of the working tree, so edits made
+# while a campaign runs do not reach its later arms (campaign 12: agent_cache/frozen/engine_<commit>/python)
+ENGINE=$(env ${ENGINE_PYTHONPATH:+PYTHONPATH=$ENGINE_PYTHONPATH} python3 -c 'import os, sglang; print(os.path.dirname(sglang.__file__))')
+[ -n "${ENGINE_PYTHONPATH:-}" ] && ENVV+=("PYTHONPATH=$ENGINE_PYTHONPATH")
+echo "engine: $ENGINE"
 # setsid + nohup: the server survives the end of this docker exec session; SGLANG_LOG_MS=1 -> millisecond log timestamps
 env SGLANG_LOG_MS=1 "${ENVV[@]}" setsid nohup python3 -m sglang.launch_server "${ARGS[@]}" > "$RUN/server.log" 2>&1 < /dev/null &
 echo $! > "$RUN/server.pid"
-printf 'arm=%s\nlevel=%s\nL1=%s\nhost_gb=%s\nmodel=%s\nctx=%s\nkv_dtype=%s\ntemplate=%s\nprefetch_policy=%s\nl3_cleaner_pct=%s\nstarted_utc=%s\n' \
-  "$ARM" "$LEVEL" "${L1:-natural}" "$HSIZE" "$MODEL" "$CTX" "$KV_DTYPE" "$TEMPLATE" "$POLICY" "${L3_CLEANER_PCT:-default}" "$(date -u +%FT%TZ)" > "$RUN/run.txt"
+printf 'arm=%s\nlevel=%s\nL1=%s\nhost_gb=%s\nmodel=%s\nctx=%s\nkv_dtype=%s\ntemplate=%s\nprefetch_policy=%s\nl3_cleaner_pct=%s\nengine=%s\nstarted_utc=%s\n' \
+  "$ARM" "$LEVEL" "${L1:-natural}" "$HSIZE" "$MODEL" "$CTX" "$KV_DTYPE" "$TEMPLATE" "$POLICY" "${L3_CLEANER_PCT:-default}" "$ENGINE" "$(date -u +%FT%TZ)" > "$RUN/run.txt"
 echo "launched $ARM: pid $(cat "$RUN/server.pid")   (watch: tail -f $RUN/server.log)"
 
 # wait up to 2400 s (JIT-cold boot ~633 s, warm 278-285 s, RUNBOOK 2.6): /health AND the 'fired up' log line

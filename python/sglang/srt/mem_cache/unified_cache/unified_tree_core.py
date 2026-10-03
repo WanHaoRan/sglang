@@ -928,6 +928,42 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
             key = key[prefix_len:]
         return matched_len, node.id, pinned_len
 
+    def resident_prefix_len(self, key: RadixKey) -> tuple[int, int]:
+        """Return the sizes of prefix cache hit in device (L1) and device + host 
+           memory (L1 + L2). Read-only, will not update the node states."""
+        key, _ = key.maybe_to_bigram_view(self.is_eagle)
+        key = key.page_aligned(self.page_size)
+        if len(key) == 0:
+            return (0, 0)
+
+        # Walk along the hiradix tree without updating the nodes
+        node = self.root_node
+        key_offset = 0
+        l1_len = 0
+        l12_len = 0
+        child_key = key.child_key_at(key_offset, self.page_size)
+        while key_offset < len(key) and child_key in node.children:
+            child = node.children[child_key]
+
+            # HiCache: dead node (evicted + not backuped) — stop traversal
+            if child.evicted and not child.backuped:
+                break
+
+            prefix_len = child.key.match_at(key, key_offset, page_size=self.page_size)
+            l12_len += prefix_len
+            if not child.evicted:
+                l1_len += prefix_len
+
+            if prefix_len < len(child.key):
+                # Shouldn't split, we just break here
+                break
+
+            node = child
+            key_offset += prefix_len
+            if key_offset < len(key):
+                child_key = key.child_key_at(key_offset, self.page_size)
+        return (l1_len, l12_len)
+
     def _match_post_processor(
         self,
         params: MatchPrefixParams,

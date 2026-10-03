@@ -396,6 +396,10 @@ class UnifiedTreeCoreInterface(ABC):
         """Return (matched tokens, deepest node, FULL tokens pinned by it)."""
         ...
 
+    def resident_prefix_len(self, key: RadixKey) -> tuple[int, int]:
+        """Return the matched prefix on device (L1) and device + host (L1 + L2)"""
+        raise NotImplementedError("Not implemented!")
+
     @abstractmethod
     def inc_full_pin(self, node_id: NodeId) -> None:
         """Pin only FULL device values on the node's root path."""

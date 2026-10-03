@@ -25,9 +25,11 @@ export OFFSET=${OFFSET:-29} SEED=${SEED:-0} K=${K:-0}
 # A no-tiering arm recomputes every evicted session and can run 2-10x longer than the tiered ones; cap it and compare
 # over the common window (RUNBOOK 7.3).
 export CLIENT_TIMEOUT=${CLIENT_TIMEOUT:-0}
+# ARRIVAL (conversations/s, Poisson; 0 = all start at once) and TURNS_RANGE/TURNS_SEED (varied lengths) go to start_client.sh
+export ARRIVAL=${ARRIVAL:-0} TURNS_RANGE=${TURNS_RANGE:-} TURNS_SEED=${TURNS_SEED:-0}
 CMP="$AC/results/compare_$(date -u +%Y%m%d_%H%M%S)"; mkdir -p "$CMP"; MANIFEST="$CMP/manifest.txt"
-printf 'arms=%s level=%s L1_TOKENS=%s HOST_GB=%s MODEL=%s CTX=%s KV_DTYPE=%s TRACE=%s L3_CLEANER_PCT=%s NCONV=%s C=%s TURNS=%s GAP=%s GAP_CAP=%s OFFSET=%s SEED=%s K=%s CLIENT_TIMEOUT=%s ARRIVAL=%s SGLANG_TIMEOUT_KEEP_ALIVE=%s started_utc=%s\n' \
-  "$ARMS" "$LEVEL" "${L1_TOKENS:-natural}" "${HOST_GB:-level}" "$MODEL" "$CTX" "${KV_DTYPE:-fp8_e5m2}" "${TRACE:-default}" "$L3_CLEANER_PCT" "$NCONV" "$C" "$TURNS" "$GAP" "$GAP_CAP" "$OFFSET" "$SEED" "$K" "$CLIENT_TIMEOUT" "${ARRIVAL:-0}" "${SGLANG_TIMEOUT_KEEP_ALIVE:-default}" "$(date -u +%FT%TZ)" > "$CMP/config.txt"
+printf 'arms=%s level=%s L1_TOKENS=%s HOST_GB=%s MODEL=%s CTX=%s KV_DTYPE=%s TRACE=%s L3_CLEANER_PCT=%s NCONV=%s C=%s TURNS=%s GAP=%s GAP_CAP=%s OFFSET=%s SEED=%s K=%s CLIENT_TIMEOUT=%s ARRIVAL=%s TURNS_RANGE=%s TURNS_SEED=%s SGLANG_TIMEOUT_KEEP_ALIVE=%s started_utc=%s\n' \
+  "$ARMS" "$LEVEL" "${L1_TOKENS:-natural}" "${HOST_GB:-level}" "$MODEL" "$CTX" "${KV_DTYPE:-fp8_e5m2}" "${TRACE:-default}" "$L3_CLEANER_PCT" "$NCONV" "$C" "$TURNS" "$GAP" "$GAP_CAP" "$OFFSET" "$SEED" "$K" "$CLIENT_TIMEOUT" "$ARRIVAL" "${TURNS_RANGE:-fixed}" "$TURNS_SEED" "${SGLANG_TIMEOUT_KEEP_ALIVE:-default}" "$(date -u +%FT%TZ)" > "$CMP/config.txt"
 echo "compare dir: $CMP"; cat "$CMP/config.txt"
 
 for ARM in $ARMS; do
