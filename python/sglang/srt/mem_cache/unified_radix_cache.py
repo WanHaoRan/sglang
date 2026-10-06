@@ -2169,6 +2169,16 @@ class UnifiedRadixCache(BasePrefixCache):
     def has_ongoing_prefetch(self, handle: CacheRequestHandle) -> bool:
         return handle in self.ongoing_prefetch
 
+    def resident_prefix_len(self, key: RadixKey) -> tuple[int, int]:
+        if self.disable:
+            return (0, 0)
+        return self.tree_core.resident_prefix_len(key)
+
+    def storage_read_backlog_pages(self) -> int:
+        # slight overcount, finished unacked reads also count here
+        return sum(len(info.operation.hash_value) for info in self.ongoing_prefetch.values() 
+                   if info.host_indices is not None)
+
     def bind_prefetch_ticket(self, req_id: str, decision: bool = True) -> None:
         # PP0 also records misses/skips; only hits travel with the request relay.
         with self.cache_controller.pp_prefetch_state_lock:

@@ -24,11 +24,11 @@ from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 from sglang.test.test_utils import CustomTestCase
 
 
-def make_params(enable_session: bool) -> CacheInitParams:
+def make_params(enable_session: bool, page_size: int = 1) -> CacheInitParams:
     dtype = torch.float16
     kv_pool = MHATokenToKVPool(
         size=64,
-        page_size=1,
+        page_size=page_size,
         dtype=dtype,
         head_num=2,
         head_dim=8,
@@ -53,7 +53,7 @@ def make_params(enable_session: bool) -> CacheInitParams:
         disable=False,
         req_to_token_pool=req_pool,
         token_to_kv_pool_allocator=allocator,
-        page_size=1,
+        page_size=page_size,
         eviction_policy="lru",
         enable_session_radix_cache=enable_session,
         tree_components=(ComponentType.FULL,),
