@@ -294,6 +294,7 @@ from sglang.srt.mem_cache.common import (
     maybe_cache_unfinished_req,
     release_kv_cache,
 )
+from sglang.srt.mem_cache.next_turn_prefetch import NextTurnPrefetcher
 from sglang.srt.model_executor.forward_batch_info import PPProxyTensors
 from sglang.srt.model_executor.runner_utils.pool import prewarm_graph_pool_borrow
 from sglang.srt.model_loader.utils import get_resolved_model_impl
@@ -641,6 +642,7 @@ class Scheduler(
 
         # Init schedule policy and new token estimation
         self.init_schedule_policy()
+        self.maybe_init_next_turn_prefetch()
 
         # Init watchdog, memory saver, input blocker and recv skipper
         self.init_watch_dog_memory_saver_input_blocker()
@@ -1411,6 +1413,24 @@ class Scheduler(
         )
 
         self.new_token_ratio_tracker = NewTokenRatioTracker.from_config()
+
+    def maybe_init_next_turn_prefetch(self) -> None:
+        """Oracle next-turn SSD prefetch driven by sglang.next_turn kv_hints."""
+        self.next_turn_prefetch: Optional[NextTurnPrefetcher] = None
+        mode = get_memory().hicache_storage_next_turn_prefetch
+        if mode == "off":
+            return
+        self.next_turn_prefetch = NextTurnPrefetcher.create(
+            mode=mode,
+            tree_cache=self.tree_cache,
+            page_size=self.page_size,
+            enable_hicache_storage=self.enable_hicache_storage,
+            tp_size=get_parallel().tp_size,
+            pp_size=get_parallel().pp_size,
+            enable_dp_attention=self.enable_dp_attention,
+            disaggregation_mode=DisaggregationMode(get_disagg().disaggregation_mode),
+        )
+        self.tree_cache.next_turn_prefetch = self.next_turn_prefetch
 
     def init_soft_watchdog(self):
         if (x := get_device().soft_watchdog_timeout) is not None:
@@ -3171,6 +3191,24 @@ class Scheduler(
         ):
             self._retry_storage_prefetch(req, storage_hit_end)
 
+    def _process_next_turn_prefetch(self) -> None:
+        """Advance the next-turn prefetcher; re-issue the prefetches it asks for."""
+        if self.next_turn_prefetch is None:
+            return
+        for req in self.next_turn_prefetch.tick(
+            waiting_queue=self.waiting_queue, now=time.perf_counter()
+        ):
+            self._on_next_turn_refetch(req)
+
+    def _on_next_turn_refetch(self, req: Req) -> None:
+        # Not _retry_storage_prefetch: the oracle must not spend the re-issue
+        # budget that the request's own retries and the admission re-query share.
+        self._prefetch_kvcache(req)
+        self.next_turn_prefetch.on_refetch_result(
+            req=req,
+            issued=self.tree_cache.has_ongoing_prefetch(req.cache_request_handle),
+        )
+
     def _retry_storage_prefetch(
         self, req: Req, storage_hit_end: Optional[int] = None
     ) -> None:
@@ -3615,6 +3653,7 @@ class Scheduler(
             self.tree_cache.check_hicache_events()
             if self.enable_hicache_storage:
                 self._process_storage_prefetch_retries()
+                self._process_next_turn_prefetch()
 
     @scheduler_stage_method(SCHEDULER_STAGE_GET_NEXT_BATCH)
     def get_next_batch_to_run(

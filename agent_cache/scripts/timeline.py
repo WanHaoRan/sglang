@@ -6,10 +6,14 @@ seconds since the client started (client `run.t_start` is epoch; server stamps a
 
   python3 timeline.py --manifest results/compare_<t>/manifest.txt        # every arm + a comparison figure
   python3 timeline.py --run results/<boot dir> [--client client_<...>]    # one arm
+  --tier-rule private: classify by the private history (vs_baseline.tier_of, the rule of the READMEs since campaign 12)
 
-Outputs next to the manifest (or in the run dir): timeline_<arm>.png, events_<arm>.csv, turns_<arm>.csv,
-compare.png, compare.csv. Colors: blue = writes (d2h, h2s) / device hit, orange = restores (h2d, s2h) / host hit,
-aqua = evictions / storage hit, gray = cold/recompute (less than half the prompt cached); the three hues are the validated first three slots of the
+Outputs next to the manifest (or in the run dir): timeline_<arm>.png, events_<arm>.csv, turns_<arm>.csv (its last
+column, mid_start, marks the first request of a user who started mid-session), compare.png, compare.csv. A user's first
+request (turn 0 or mid_start, vs_baseline.is_first) is not a returning turn.
+Colors: blue = writes (d2h, h2s) / device hit, orange = restores (h2d, s2h) / host hit,
+aqua = evictions / storage hit, gray = cold/recompute (default: less than half the prompt cached; private: over half of
+the prompt beyond the shared system prompt uncached); the three hues are the validated first three slots of the
 dataviz reference palette.
 """
 import argparse
@@ -26,11 +30,16 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.collections import LineCollection  # noqa: E402
+from matplotlib.colors import to_rgba  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
+
+from vs_baseline import is_first, is_returning, tier_of  # noqa: E402
 
 BLUE, ORANGE, AQUA, GRAY, INK, MUTED = "#2a78d6", "#eb6834", "#1baf7a", "#9a9891", "#0b0b0b", "#52514e"
 GREEN = "#2e7d32"  # three_tier_wc, distinct from the AQUA of three_tier_to
 TIER_COLOR = {"cold": GRAY, "device": BLUE, "host": ORANGE, "storage": AQUA}
+COLD_LABEL = {"prompt": "cold/recompute", "private": "recompute (over half of the private prompt uncached)"}
 ARM_COLOR = {"hbm_lru": GRAY, "hbm_host": ORANGE, "three_tier": AQUA,
              "three_tier_to": AQUA, "three_tier_wc": GREEN,   # campaign 6: the two prefetch policies
              "three_tier_wc_norq": "#4a3aa7"}   # campaign 11: wait_complete with the #39283 re-query disabled
@@ -52,7 +61,7 @@ def host_path(p: str) -> str:
 
 
 # ----------------------------------------------------------------------------- parsing
-def parse_client(path: str) -> dict:
+def parse_client(path: str, tier_rule: str = "prompt") -> dict:
     rows = [json.loads(l) for l in open(path)]
     run = next(r for r in rows if r["kind"] == "run")
     t_start = run["t_start"]
@@ -64,18 +73,21 @@ def parse_client(path: str) -> dict:
         host, storage = int(cd.get("host") or 0), int(cd.get("storage") or 0)
         cached = int(r.get("cached_tokens") or 0)
         prompt = int(r.get("prompt_tokens") or 0)
-        # a turn that finds less than half its prompt in any tier lost its own prefix (only the shared system prompt hit):
-        # count it as cold/recompute, not as a device hit
-        if cached < 0.5 * prompt:
+        # private: over half of the prompt beyond the shared system prompt uncached is cold/recompute. prompt (older):
+        # a turn that finds less than half its prompt lost its own prefix (only the shared system prompt hit)
+        if tier_rule == "private":
+            tier = tier_of(r).replace("recompute", "cold")
+        elif cached < 0.5 * prompt:
             tier = "cold"
         else:
             tier = "storage" if storage > 0 else "host" if host > 0 else "device"
         turns.append(dict(conv=r["conv"], turn=r["turn"], t0=r["t_send"], ttft=r.get("ttft") or 0.0,
                           lat=r["latency"], tier=tier, prompt=r.get("prompt_tokens", 0), cached=cached,
                           uncached=r.get("prompt_tokens", 0) - cached, host=host, storage=storage,
-                          gap=r.get("gap_slept", 0.0), rid=f"{run['args'].get('tag') or 'replay'}-c{r['conv']}-t{r['turn']}"))
+                          gap=r.get("gap_slept", 0.0), rid=f"{run['args'].get('tag') or 'replay'}-c{r['conv']}-t{r['turn']}",
+                          mid_start=bool(r.get("mid_start"))))   # a mid-session start's first request (is_first)
     summary = next((r for r in rows if r["kind"] == "summary"), None)
-    return dict(t_start=t_start, turns=turns, summary=summary, args=run["args"])
+    return dict(t_start=t_start, turns=turns, summary=summary, args=run["args"], tier_rule=tier_rule)
 
 
 def parse_server(path: str, t_start: float) -> dict:
@@ -160,25 +172,36 @@ def style(ax, title=None, ylabel=None):
 def draw_timeline(arm: str, cl: dict, sv: dict, out_png: str) -> None:
     turns = cl["turns"]
     t_end = max([t["t0"] + t["lat"] for t in turns] + [b["t"] for b in sv["batches"]] + [1.0])
-    fig, axes = plt.subplots(5, 1, figsize=(16, 14), sharex=True,
-                             gridspec_kw=dict(height_ratios=[4.2, 1.2, 1.2, 2.2, 1.6], hspace=0.28))
+    convs = sorted({t["conv"] for t in turns})
+    # the layout was drawn for 128 rows; more rows (users of a held-population run) get up to twice the lane panel
+    lane = 4.2 * min(2.0, max(1.0, len(convs) / 128))
+    fig, axes = plt.subplots(5, 1, figsize=(16, 14 + (lane - 4.2) * 14 / 10.4), sharex=True,
+                             gridspec_kw=dict(height_ratios=[lane, 1.2, 1.2, 2.2, 1.6], hspace=0.28))
     fig.patch.set_facecolor("#fcfcfb")
     a_req, a_pool, a_queue, a_evt, a_cum = axes
 
     # A. request lanes: one row per conversation; prefill/queue segment thick, decode segment thin
-    convs = sorted({t["conv"] for t in turns})
+    row = {c: i for i, c in enumerate(convs)}
+    pitch = a_req.get_position().height * fig.get_figheight() * 72 / max(1, len(convs))   # points per row
+    scale = min(1.0, pitch / 2.0)   # 2.0 pt: the 128-row panel, where the 4 pt / 1.2 pt lanes were chosen
+    segs, colors, widths = [], [], []
     for t in turns:
-        y = convs.index(t["conv"])
-        c = TIER_COLOR[t["tier"]]
-        a_req.plot([t["t0"], t["t0"] + t["ttft"]], [y, y], color=c, linewidth=4, solid_capstyle="butt")
-        a_req.plot([t["t0"] + t["ttft"], t["t0"] + t["lat"]], [y, y], color=c, linewidth=1.2, alpha=0.7)
+        y, c = row[t["conv"]], TIER_COLOR[t["tier"]]
+        segs += [[(t["t0"], y), (t["t0"] + t["ttft"], y)], [(t["t0"] + t["ttft"], y), (t["t0"] + t["lat"], y)]]
+        colors += [to_rgba(c), to_rgba(c, 0.7)]
+        widths += [4 * scale, 1.2 * scale]
+    a_req.add_collection(LineCollection(segs, colors=colors, linewidths=widths, capstyle="butt"))
+    a_req.autoscale_view()
     step = max(1, len(convs) // 32)  # at most ~32 labels: 128 conversations would otherwise print as a black bar
     a_req.set_yticks(range(0, len(convs), step))
     a_req.set_yticklabels([f"c{c}" for c in convs[::step]], fontsize=7)
     a_req.invert_yaxis()
-    style(a_req, f"{arm}: requests per conversation (thick = send to first token, thin = decode); color = where the prefix was found",
-          "conversation")
-    a_req.legend(handles=[Patch(color=TIER_COLOR[k], label=("cold/recompute" if k == "cold" else k)) for k in ("cold", "device", "host", "storage")],
+    n_conv = int((cl.get("args") or {}).get("num_conversations") or len(convs))
+    who = "conversation" if len(convs) <= n_conv else f"user ({len(convs)} users replay {n_conv} conversations)"
+    style(a_req, f"{arm}: requests per {who} (thick = send to first token, thin = decode); color = where the prefix was found",
+          "user" if len(convs) > n_conv else "conversation")
+    a_req.legend(handles=[Patch(color=TIER_COLOR[k], label=(COLD_LABEL[cl["tier_rule"]] if k == "cold" else k))
+                          for k in ("cold", "device", "host", "storage")],
                  loc="upper right", fontsize=8, frameon=False, ncol=4)
 
     # B. device pool usage (one measure per axis)
@@ -191,34 +214,34 @@ def draw_timeline(arm: str, cl: dict, sv: dict, out_png: str) -> None:
     a_queue.plot(bt, [b["queue"] for b in sv["batches"]], color=ORANGE, linewidth=1.5, label="queued (#queue-req)")
     a_queue.plot(bt, [b["running"] for b in sv["batches"]], color=BLUE, linewidth=1.5, label="running (#running-req)")
     style(a_queue, "scheduler queue and running requests", "requests")
+    a_queue.set_ylim(0, 1.3 * max([b["queue"] for b in sv["batches"]] + [b["running"] for b in sv["batches"]] + [1]))
     a_queue.legend(loc="upper right", fontsize=8, frameon=False, ncol=2)
 
     # D. tier events: one lane per type; bars where a duration is known, ticks otherwise (size ~ tokens)
     lanes = ["d2h", "h2s", "s2h", "h2d", "evict_device", "evict_host"]
     ypos = {k: i for i, k in enumerate(lanes)}
-    def bar(y, t0, t1, color):
-        a_evt.plot([t0, max(t1, t0 + 0.25)], [y, y], color=color, linewidth=6, solid_capstyle="butt", alpha=0.85)
-    def copy_bar(lane, e, color):
-        t0 = e["t1"] - e["ms"] / 1000 if e["ms"] > 0 else e["t0"]
-        bar(ypos[lane], t0, e["t1"], color)
-    for e in sv["d2h"]:
-        copy_bar("d2h", e, BLUE)
-    for op in sv["h2s"].values():
-        if "t_io_end" in op:
-            bar(ypos["h2s"], op["t_io_end"] - op["io_ms"] / 1000, op["t_io_end"], BLUE)
-        elif "t_submit" in op:
-            a_evt.plot([op["t_submit"]], [ypos["h2s"]], marker="|", color=BLUE, markersize=8)
-    for rid, op in sv["s2h"].items():
-        if "t_io_end" in op:
-            bar(ypos["s2h"], op["t_io_end"] - op["io_ms"] / 1000, op["t_io_end"], ORANGE)
-        elif "t_start" in op:
-            a_evt.plot([op["t_start"]], [ypos["s2h"]], marker="|", color=ORANGE, markersize=8, alpha=0.6)
-    for e in sv["h2d"]:
-        copy_bar("h2d", e, ORANGE)
-    for e in sv["evict_device"]:
-        a_evt.scatter([e["t"]], [ypos["evict_device"]], s=6 + e["tokens"] / 200, color=AQUA, alpha=0.7, linewidths=0)
-    for e in sv["evict_host"]:
-        a_evt.scatter([e["t"]], [ypos["evict_host"]], s=6 + e["tokens"] / 200, color=AQUA, alpha=0.7, linewidths=0)
+    def bars(lane, spans, color):
+        y = ypos[lane]
+        if spans:
+            a_evt.add_collection(LineCollection([[(t0, y), (max(t1, t0 + 0.25), y)] for t0, t1 in spans],
+                                                colors=[to_rgba(color, 0.85)], linewidths=6, capstyle="butt"))
+    def ticks(lane, ts, color, alpha=1.0):
+        if ts:
+            a_evt.plot(ts, [ypos[lane]] * len(ts), linestyle="none", marker="|", color=color, markersize=8, alpha=alpha)
+    def copy_spans(evs):
+        return [(e["t1"] - e["ms"] / 1000 if e["ms"] > 0 else e["t0"], e["t1"]) for e in evs]
+    def io_spans(ops):
+        return [(op["t_io_end"] - op["io_ms"] / 1000, op["t_io_end"]) for op in ops if "t_io_end" in op]
+    bars("d2h", copy_spans(sv["d2h"]), BLUE)
+    bars("h2s", io_spans(sv["h2s"].values()), BLUE)
+    ticks("h2s", [op["t_submit"] for op in sv["h2s"].values() if "t_io_end" not in op and "t_submit" in op], BLUE)
+    bars("s2h", io_spans(sv["s2h"].values()), ORANGE)
+    ticks("s2h", [op["t_start"] for op in sv["s2h"].values() if "t_io_end" not in op and "t_start" in op], ORANGE, 0.6)
+    bars("h2d", copy_spans(sv["h2d"]), ORANGE)
+    for lane in ("evict_device", "evict_host"):
+        if sv[lane]:
+            a_evt.scatter([e["t"] for e in sv[lane]], [ypos[lane]] * len(sv[lane]),
+                          s=[6 + e["tokens"] / 200 for e in sv[lane]], color=AQUA, alpha=0.7, linewidths=0)
     a_evt.set_yticks(range(len(lanes)))
     a_evt.set_yticklabels(lanes, fontsize=8)
     a_evt.set_ylim(-0.7, len(lanes) - 0.3)
@@ -255,8 +278,8 @@ def draw_timeline(arm: str, cl: dict, sv: dict, out_png: str) -> None:
 
 def arm_metrics(arm: str, cl: dict, sv: dict) -> dict:
     turns = cl["turns"]
-    ret = [t for t in turns if t["turn"] > 0]
-    first = [t for t in turns if t["turn"] == 0]
+    ret = [t for t in turns if is_returning(t)]
+    first = [t for t in turns if is_first(t)]   # turn 0, or a mid-session start's first request
     tiers = collections.Counter(t["tier"] for t in ret)
     pct = lambda xs, p: sorted(xs)[min(len(xs) - 1, int(p * len(xs)))] if xs else float("nan")
     ttft_ret = [t["ttft"] for t in ret]
@@ -290,7 +313,7 @@ def draw_compare(results: list, out_png: str) -> None:
     a_done.set_xlabel("seconds since the client started", fontsize=8, color=MUTED)
     a_done.legend(fontsize=8, frameon=False, loc="lower right")
     # log x when the arms span more than ~2 decades (a collapsed arm's tail would squash the healthy ones against 0)
-    sel_ret, sel_first = (lambda t: t["turn"] > 0), (lambda t: t["turn"] == 0)
+    sel_ret, sel_first = is_returning, is_first
     def spans_decades(sel):
         per_arm = [sorted(t["ttft"] for t in cl["turns"] if sel(t)) for _, cl, _, _ in results]
         per_arm = [xs for xs in per_arm if xs]
@@ -316,7 +339,9 @@ def draw_compare(results: list, out_png: str) -> None:
     # the start: a closed-loop cohort (arrival_rate 0: all C sessions start at once) or sessions arriving at a rate
     args0 = results[0][1].get("args") or {}
     conc, rate = args0.get("concurrency"), float(args0.get("arrival_rate") or 0)
-    start = (f"up to {conc} live sessions, arriving at {rate:g}/s" if rate > 0
+    live = (f"a cap from {conc} set by the server backlog" if args0.get("cap_mode") == "backlog"
+            else f"up to {conc} live sessions")
+    start = (f"{live}, arriving at {rate:g}/s" if rate > 0
              else f"cold prefill under the {conc}-way start" if conc else "cold prefill")
     style(a_cdf0, f"TTFT of first turns (ECDF; {start})", "fraction of turns")
     # tier share of returning turns, one bar per arm, 2px gaps between segments
@@ -336,7 +361,8 @@ def draw_compare(results: list, out_png: str) -> None:
     a_tier.set_xlim(0, 1.0)
     a_tier.invert_yaxis()
     style(a_tier, "where returning turns found their prefix", None)
-    a_tier.legend(handles=[Patch(color=TIER_COLOR[k], label=("cold/recompute" if k == "cold" else k)) for k in ("device", "host", "storage", "cold")],
+    a_tier.legend(handles=[Patch(color=TIER_COLOR[k], label=(COLD_LABEL[results[0][1]["tier_rule"]] if k == "cold" else k))
+                           for k in ("device", "host", "storage", "cold")],
                   fontsize=8, frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.04), ncol=4)  # below the bars: any arm count
     fig.tight_layout()
     fig.savefig(out_png, dpi=130, bbox_inches="tight")
@@ -376,6 +402,9 @@ def main() -> int:
     ap.add_argument("--client", help="client dir name inside --run (default: the last client_* dir)")
     ap.add_argument("--arm", default=None, help="label for --run (default: from run.txt)")
     ap.add_argument("--out", default=None, help="output dir (default: next to the manifest, or the run dir)")
+    ap.add_argument("--tier-rule", choices=("prompt", "private"), default="prompt",
+                    help="recompute when under half the prompt is cached (prompt), or when over half of the prompt beyond "
+                         "the shared system prompt is uncached (private)")
     args = ap.parse_args()
 
     jobs = []
@@ -402,7 +431,7 @@ def main() -> int:
 
     results = []
     for arm, run, client in jobs:
-        cl = parse_client(os.path.join(client, "client.jsonl"))
+        cl = parse_client(os.path.join(client, "client.jsonl"), args.tier_rule)
         sv = parse_server(os.path.join(run, "server.log"), cl["t_start"])
         m = arm_metrics(arm, cl, sv)
         results.append((arm, cl, sv, m))

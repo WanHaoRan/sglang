@@ -23,6 +23,17 @@ def tier_of(r):
     return "storage" if (cd.get("storage") or 0) > 0 else "host" if (cd.get("host") or 0) > 0 else "device"
 
 
+def is_first(r):
+    """A user's first request: turn 0, or the first request of a user who starts mid-session (replay_agentic.py
+    --start-phase stationary marks it mid_start; its prompt carries a synthetic history nothing had cached)."""
+    return r["turn"] == 0 or bool(r.get("mid_start"))
+
+
+def is_returning(r):
+    """A returning turn: any request after the user's first, so its own history was sent before."""
+    return not is_first(r)
+
+
 def q(xs, f):
     xs = sorted(xs)
     return xs[min(len(xs) - 1, int(f * len(xs)))] if xs else float("nan")
@@ -76,7 +87,7 @@ def load_arm(results, arm, run, client, iostat):
             m = TSL.search(line)
             if m:
                 queue[m[1]] = float(m[2]) / (1000.0 if m[3] == "ms" else 1.0)
-    ret = {(r["conv"], r["turn"]): r for r in turns if r["turn"] > 0 and r.get("ttft")}
+    ret = {(r["conv"], r["turn"]): r for r in turns if is_returning(r) and r.get("ttft")}
     t0, wall = run_rec["t_start"], summ.get("elapsed_s") or max(ends.values())
     io = [x for x in iostat if t0 < x[0] <= t0 + wall + 10] if iostat else []
     tt = [r["ttft"] for r in ret.values()]

@@ -15,6 +15,7 @@ import argparse, bisect, calendar, csv, json, os, re, statistics as st
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
+from vs_baseline import is_first   # turn 0, or the first request of a user who started mid-session
 
 SURF, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e0"
 ARM_COLOR = {"three_tier_to": "#1baf7a", "three_tier_wc": "#2a78d6"}
@@ -54,7 +55,7 @@ def load_arm(results, arm, run, client):
     head = head_of_queue_times(arm, rows, ev, t0)
     out = []
     for r in rows:
-        if r.get("kind") != "turn" or "t_send" not in r or r["turn"] == 0 or not r.get("ttft"):
+        if r.get("kind") != "turn" or "t_send" not in r or is_first(r) or not r.get("ttft"):
             continue
         rid = f"cmp_{arm}-c{r['conv']}-t{r['turn']}"
         e = ev.get(rid, {})

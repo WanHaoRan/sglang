@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from sglang.srt.managers.cache_controller import HiCacheController
     from sglang.srt.managers.schedule_batch import Req
     from sglang.srt.mem_cache.buffer_mode.pipeline import BufferModePipeline
+    from sglang.srt.mem_cache.next_turn_prefetch import NextTurnPrefetcher
     from sglang.srt.mem_cache.radix_cache import RadixKey
     from sglang.srt.mem_cache.storage_prefetch import StoragePrefetchRetries
     from sglang.srt.mem_cache.unified_cache.cache_action import (
@@ -337,6 +338,8 @@ class BasePrefixCache(ABC, PrefixCacheTrait):
     cache_controller: Optional[HiCacheController] = None
     buffer_pipeline: Optional[BufferModePipeline] = None
     storage_prefetch_retries: Optional[StoragePrefetchRetries] = None
+    # Set by the Scheduler when --hicache-storage-next-turn-prefetch is not off.
+    next_turn_prefetch: Optional[NextTurnPrefetcher] = None
     # Set by caches that publish KV placement events; None means they don't.
     kv_events: Optional[KVCacheEventRecorder] = None
 

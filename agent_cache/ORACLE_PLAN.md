@@ -420,23 +420,30 @@ Files: `python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py`, `.../un
   (match_prefix would split and stamp).
 Acceptance: the test passes; no caller yet, so no behaviour change.
 
-### Step 4 — estimators module (pure)
-File: new `python/sglang/srt/mem_cache/next_turn_estimators.py` + `test/registered/unit/mem_cache/test_next_turn_estimators.py`.
-State in `msgspec.Struct`; the clock is passed in (perf_counter seconds).
-- `ArrivalOffset`: EWMA α = 1/8 of `arrival − t_commit − gap`, seed 0.10 s; samples outside [0, 5] s discarded (count them).
-- `AdmissionRate`: deque of admission stamps; `rate(now)` = admissions in 60 s / 60 s, falling back to 300 s;
-  `wait_ewma` updated only from admitted requests with `storage_hit_length == 0`;
-  `wait_at_arrival(queue_len, now) -> (Optional[float], Optional[float])`: `w_ql = 0` when `queue_len == 0`, else
-  `(queue_len + 0.5) / λ̂` with the 60 s → 300 s fallback and `None` below 5 admissions in 300 s; `w_ewma` is None until
-  the first sample. `residual(position, now) -> Optional[float]` = `(k + 0.5) / λ̂`, `None` below 5 admissions in 300 s.
-  The caller logs which estimator was used.
-- `L3LoadModel` (frozen seeds a = 0.044, b = 0.0025, b_backlog = 0.0025 (consider 0.0031, section 2.4),
-  lag_alloc = 0.5, lag_drain = 0.36): `seconds(own_pages, backlog_pages)`.
-- `trigger_time(A, L, margin) = A − L − margin`.
-Tests (derived properties / bookkeeping, per unit-test-admission): window expiry and the 60 → 300 s fallback; no
-division by zero with no admissions; offset outlier discard; the wait filter excludes requests credited with their own
-SSD read. Optional (scratch, not committed): replay campaign-11 `ReqTimeStats` lines through `AdmissionRate` and compare
-MAE with the offline numbers (W_ql ≈ 12 s at x10).
+### Step 4 — estimators module (pure) (DONE, 2026-10-09)
+Files: `python/sglang/srt/mem_cache/next_turn_estimators.py` + `test/registered/unit/mem_cache/test_next_turn_estimators.py`.
+State in `msgspec.Struct`; every time is a `time.perf_counter()` value the caller passes in (the module reads no clock).
+- `ArrivalOffset`: `observe(offset_s) -> bool` folds `arrival − t_commit − gap` into an EWMA (α = 1/8, seed 0.10 s);
+  samples outside [0, 5] s are dropped and counted (`discarded`), never clipped. `predict_arrival(t_commit=, gap_s=)` = P.
+- `AdmissionRate`: `record_admission(now=, wait_s=, storage_hit=)` appends the detecting tick's time (must not decrease)
+  and prunes stamps older than 300 s; `wait_ewma` (None until the first sample) skips storage hits, which still count
+  as admissions. `rate(now) -> Optional[Rate]` = admissions in 60 s / 60 s, else in 300 s / 300 s, None below 5;
+  `Rate.window_s` names the window used (log it as the estimator).
+- Pure functions taking the tick's `Rate` (call `rate(now)` once per tick, not once per plan):
+  `wait_at_arrival(queue_len=, rate=, wait_ewma=) -> (w_ql, w_ewma)`, both 0 for an empty queue, else
+  `w_ql = (queue_len + 0.5) / λ̂`; `residual_wait(position=, rate=)` = `(k + 0.5) / λ̂`; None without a rate.
+- `L3LoadModel` (frozen, kw_only): `read_fixed_s` 0.044 (a), `read_s_per_page` 0.0025 (b), `backlog_s_per_page` 0.0025
+  (b_backlog; consider 0.0031, section 2.4), `alloc_lag_s` 0.5, `drain_lag_s` 0.36; `seconds(own_pages=, backlog_pages=)`.
+- `trigger_time(admission_at=, load_s=, margin_s=0)` = A − L̂ − margin.
+Tests (4, per unit-test-admission): outliers dropped, not clipped; the 60 → 300 s → None fallback and stamp pruning; no
+estimate (not a division by zero) without admissions, but an empty queue needs none; storage hits count as admissions,
+not as waits. Each test caught a deliberately injected bug (8 mutants: clipping, no fallback, no pruning, storage hits
+left out of the rate or fed to the wait EWMA, EWMA starting at 0, empty queue needing a rate, no None guard). The load
+model and `trigger_time` are formulas with no derived property, so they have no test.
+Replay of campaign-11 three_tier_wc `ReqTimeStats` (scratch, not committed; 4,676 requests, 1,158 storage hits): true
+wait mean / p50 / p90 = 65.5 / 55.2 / 141.4 s; W_ql MAE 14.2 s (bias +2.4 s; the offline estimate was ≈ 12 s), W_ewma
+MAE 9.8 s (bias −2.2 s). At arrival the 60 s window always held ≥ 5 admissions (219 empty-queue arrivals, 18 without a
+rate during warm-up), so the 300 s fallback is for sparse load.
 
 ### Step 5 — the prefetcher, observe mode, wired in, plus the arms to boot it
 Files: new `python/sglang/srt/mem_cache/next_turn_prefetch.py` + test; small edits in `mem_cache/base_prefix_cache.py`,
@@ -463,7 +470,8 @@ Files: new `python/sglang/srt/mem_cache/next_turn_prefetch.py` + test; small edi
      `ntp_admit` with both wait predictions and errors, drop the plan. Departed with `forward_entry_time == 0` → abort:
      drop. Dedupe by rid (retraction / preemption re-enter the queue).
   2. Pending plans: once `now ≥ P + Ŵ − L̂(whole chain)` (cheap window), probe `resident_prefix_len(plan.key)` at most
-     every 0.5 s and compute T. Arrived plans: `A = now + residual(position)` (or fallback).
+     every 0.5 s and compute T. Arrived plans: `A = now + residual_wait(position=k, rate=rate)` with
+     `rate = admissions.rate(now)` computed once per tick (or fallback).
   3. When `now ≥ T`, log `ntp_due` once per plan (case, l3_pages, backlog_pages, load_ms, wait_ms, lead_ms, est).
   4. Expire **pending** plans only, at `P + max(60 s, gap)`; log `ntp_expire`. Arrived plans leave by admission/abort.
   5. Observe mode returns `[]` and calls no state-changing cache API. Keep the tick O(due plans) (heap by next check time).
@@ -512,6 +520,16 @@ docker exec sglang_hicache bash -c 'cd /sgl-workspace/sglang/agent_cache/scripts
 Pass: boot prints mode `observe` and cap 8; one `ntp_plan` per hinted turn; `ntp_arrive` + `ntp_admit` for every hinted
 rid; `|arr_err_ms|` p50 ≲ 50 (raw `delta_ms` p50 ≈ 90-125); the per-rid `prefetch_start` pattern identical to a
 mode-off run.
+**Implemented (2026-10-09).** `mem_cache/next_turn_prefetch.py`: `NextTurnHint`, `read_next_turn_hint`, `TurnPlan`,
+`NextTurnPrefetcher` (`create`, `on_turn_committed`, `tick`); `BasePrefixCache.next_turn_prefetch`; the hook at the end of
+`cache_finished_req`; `Scheduler.maybe_init_next_turn_prefetch` (after `init_schedule_policy`) and
+`_process_next_turn_prefetch` (after the paced retries). Differences from the text above: `on_turn_committed` takes the
+clock (`now=time.perf_counter()` from the hook); pending plans sit in a heap, and once a probe puts the trigger T before
+the next 0.5 s check, the next check is scheduled at T itself (a fixed 0.5 s cadence fired up to 0.5 s late); due checks
+are popped before any is re-queued, so "retry next tick" cannot loop within a tick; an abort while queued logs
+`ntp_expire reason=abort`. Tests: `test_next_turn_prefetch.py` (factory refusals and the real `cache_finished_req` hook on
+a CPU cache, registration filters, queue tracking, trigger timing, probe economy) and `test_scheduler_hicache_events.py`
+(fixture line, tick after the paced retries). The two arms are in `start_server.sh` with step 9's.
 
 ### Step 6 — case 1: staging before arrival
 File: `next_turn_prefetch.py` + tests. When a pending plan reaches T (mode `on`):
@@ -545,10 +563,13 @@ docker exec sglang_hicache bash -c 'cd /sgl-workspace/sglang/agent_cache/scripts
 Pass: `ntp_stage` lines; `s2h_io` for rid X stamped before X's `ntp_arrive`; those turns report
 `cached_details.storage > 0` with `queue_duration` ≈ GPU-hit turns (~0.03 s) instead of ~0.6 s; "Replacing unresolved
 storage-hit accounting" not above an observe-mode run of the same config (`three_tier_wc_ntpobs`).
+**Implemented (2026-10-09)** as specified: `_check_pending` → `_stage` (prefix keys passed when
+`hicache_storage_pass_prefix_keys` is on) and `_expire`. `ntp_stage` carries `tokens matched gate inflight`. Tests: the
+`TestCase1Staging` class of `test_next_turn_prefetch.py`, one per rule above.
 
 ### Step 7 — case 2: refetch while queued
 Files: `next_turn_prefetch.py`, the step-5 scheduler delegate + tests. For each arrived plan per tick (mode `on`):
-1. `A = now + residual(position)` (or fallback); probe `l12`; `evicted = baseline − l12` where `baseline =
+1. `A = now + residual_wait(position=k, rate=rate)` (or fallback); probe `l12`; `evicted = baseline − l12` where `baseline =
    max(len(plan.key), req.storage_prefetch_last_match_len or 0)`; `T = A − L̂(evicted pages, backlog)`.
 2. When `now ≥ T` and `evicted ≥ prefetch_threshold` and not `has_ongoing_prefetch(req.cache_request_handle)` and not
    `prefetch_rate_limited()` (else retry next tick): return the `Req`.
@@ -572,6 +593,12 @@ before its admission (log misses separately); fewer "device prefix shrank ... re
 losses (rids with "reissue cap reached" admitted with a cached prefix below their arrival match) than observe mode on
 the same config. The "reissue cap reached" count itself is expected to stay about the same: the paced polls spend the
 budget within seconds of arrival, long before case 2 fires.
+**Implemented (2026-10-09).** `_check_queued` (returns True to refetch) → `_wants_refetch`, `on_refetch_result`
+(`RefetchDecision` carries the log fields), `MAX_REFETCHES = 2`; `Scheduler._on_next_turn_refetch`. Attempts are at least
+a probe interval (0.5 s) apart, `refetches` counts only issued reads, and the capped `ntp_reevict` is logged once. Tests:
+`TestCase2Refetch` (+ the call-order test in `test_scheduler_hicache_events.py`). A mutation check of steps 5-7 (24
+single-point bugs: filters, dedupe, trigger timing, probe economy, gate, handle, limiter, cleanup, cap, observe purity)
+fails at least one test each.
 
 ### Step 8 — analysis scripts
 - `delay_components.py` (`load_arm`, ~28-58): drop `prefetch_start`/`s2h_query`/`s2h_io` events stamped before the
@@ -586,6 +613,15 @@ budget within seconds of arrival, long before case 2 fires.
   staged reads (expired, or staged pages evicted before admission); tokens refetched vs recovered; re-evictions.
 Acceptance: campaign-11 outputs unchanged (no `ntp` lines, no pre-send prefetches); `oracle_eval.py` matches a hand
 grep of a few rids on the smoke logs.
+**Implemented (2026-10-09).** One deviation: `timeline.py` keeps the last `prefetch_start` per rid as before (keeping the
+first after the send would have changed campaign-11 outputs) and only moves a rid's events stamped before its send, or
+every event of a planned rid that was never sent, into `s2h_staged` (oracle lane + `s2h_staged` rows). A turn's own
+first lookup comes 16-19 ms or more after its send in campaigns 10-13 (35k turns), so the pre-send filter needs no slack.
+`oracle_eval.py` writes `oracle_eval.csv` and `oracle_rids_<arm>.csv`; late = admission within 50 ms of the end of the last
+read the oracle started; admission time = the `ntp_arrive` stamp + the measured wait. Verified: on campaign 11 every
+printed line and every CSV of the four scripts is unchanged (`turn_components_*` gains an all-zero `staged_l3` column); a
+synthetic oracle run (staged read before the send, refetch + re-eviction, an expired staged plan) checks each oracle path
+by hand.
 
 ### Step 9 — `_norq` variants and the campaign driver
 - `start_server.sh`: optional `three_tier_wc_ntpobs_norq` / `three_tier_wc_oracle_norq` arms pinning
@@ -597,6 +633,12 @@ Acceptance (container, campaign knobs; the script defaults are a different model
 `<section-5 common knobs> TRACE=/sgl-workspace/sglang/agent_cache/traces/lmcache_agentic_trace_262k.json NCONV=16 C=16
 TURNS=8 GAP=10 GAP_CAP=1200 OFFSET=32 ARMS="three_tier_wc three_tier_wc_ntpobs" CLIENT_TIMEOUT=600 bash run_compare.sh`
 writes a manifest; `config.txt` records `ORACLE_HINTS=1`; the observe arm logs `ntp_plan`, the baseline does not.
+**Implemented (2026-10-09).** `start_server.sh`: the four arms `three_tier_wc_ntpobs | _oracle | _ntpobs_norq |
+_oracle_norq` (wait_complete; retry flags pinned 8/8, or max attempts 0 for `_norq`); a guard refuses them on an engine
+without `next_turn_prefetch.py` (the frozen `2abe005bb2` copy accepts the flag and silently ignores it); boot checks print
+the re-query cap (0 for `*_norq`) and the next-turn mode with the prefetcher's startup banner; `run.txt` records
+`next_turn_prefetch`. `run_compare.sh` exports `ORACLE_HINTS` and records it in `config.txt`. Smokes for steps 5-9:
+`agent_cache/frozen/oracle_scripts_staging/oracle_smokes.sh` (A observe vs off, B case 1, C case 2).
 
 ---
 
@@ -692,5 +734,11 @@ To re-measure on a new box: run the campaign-11 config for one `three_tier_wc` a
 | Step | State | Date |
 |---|---|---|
 | 1 | done: client hints (`replay_agentic.py`, `start_client.sh` `ORACLE_HINTS`), verified offline (dry run, stub server); live smoke deferred to step 2 | 2026-10-01 |
-| 2 | in progress (user, on another machine) | |
-| 3-9 | not started | |
+| 2 | code done (`2abe005bb2`): chat `kv_hints` + mode flag, unit tests pass, every boot since logs the flag `'off'`; open: lint (isort, trailing spaces, `[Haoran]` comments), live curl 200/400 and the `ORACLE_HINTS=1` client smoke | 2026-10-02 |
+| 3 | done: residency probe + read-backlog helper (`fca11af340`, `ead87198a0`), `test_resident_prefix_probe.py`; open: two trailing spaces | 2026-10-06 |
+| 4 | done: `next_turn_estimators.py` + `test_next_turn_estimators.py`, replayed against campaign 11 (uncommitted) | 2026-10-09 |
+| 5 | done: prefetcher in observe mode, wired into the Scheduler and `cache_finished_req`; CPU tests pass (uncommitted) | 2026-10-09 |
+| 6 | done: case 1 staging; CPU tests pass (uncommitted) | 2026-10-09 |
+| 7 | done: case 2 refetch + re-eviction cap; CPU tests pass (uncommitted) | 2026-10-09 |
+| 8 | done: analysis scripts + `oracle_eval.py`; campaign-11 outputs unchanged, synthetic oracle run checked (uncommitted) | 2026-10-09 |
+| 9 | done: oracle arms incl. `_norq`, engine guard, `ORACLE_HINTS` in `run_compare.sh` (uncommitted) | 2026-10-09 |

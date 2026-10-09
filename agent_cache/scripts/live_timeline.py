@@ -10,6 +10,7 @@ Phases per arm: arrival = before the last conversation arrives; peak = from then
 """
 import argparse, csv, json, os, statistics as st
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+from vs_baseline import is_returning   # not turn 0, nor the first request of a user who started mid-session
 
 SH = 7808  # shared system prompt (tokens), cached for every returning turn
 SURF, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e0"
@@ -61,7 +62,7 @@ def phase_rows(label, arm, arrive, end, turns):
     last, drop, peak, _, _ = phases(arrive, end)
     out = []
     for name, lo, hi in (("arrival", 0.0, last), ("peak", last, drop), ("departure", drop, float("inf")), ("all", 0.0, float("inf"))):
-        sel = [r for r in turns if r["turn"] > 0 and r.get("ttft") and lo <= r["t_send"] < hi]
+        sel = [r for r in turns if is_returning(r) and r.get("ttft") and lo <= r["t_send"] < hi]
         if not sel:
             continue
         tt = [r["ttft"] for r in sel]
@@ -132,7 +133,7 @@ def main():
         labels.append((ax1, xs[-1], live[-1], arm))
         bins = {}
         for r in turns:
-            if r["turn"] > 0 and r.get("ttft"):
+            if is_returning(r) and r.get("ttft"):
                 bins.setdefault(int(r["t_send"] // a.bin), []).append(r["ttft"])
         ks = sorted(k for k, v in bins.items() if len(v) >= 3)
         bx = [(k + 0.5) * a.bin / 60 for k in ks]

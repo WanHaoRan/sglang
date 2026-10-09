@@ -15,6 +15,9 @@ import random
 import re
 import statistics as st
 
+# is_first: turn 0, or the first request of a user who started mid-session
+from vs_baseline import is_first
+
 SH = 7808  # shared system prompt, tokens (cached for every returning turn)
 CLASSES = [("<1 min", 0, 60), ("1-5 min", 60, 300), ("5-10 min", 300, 600), (">=10 min", 600, 1e12)]
 TIERS = ("device", "host", "storage", "recompute")
@@ -51,7 +54,7 @@ def load(results, arm, run, client):
                 queue[m[1]] = float(m[2]) / (1000.0 if m[3] == "ms" else 1.0)
     out = {}
     for r in rows:
-        if r.get("kind") != "turn" or "t_send" not in r or r["turn"] == 0 or not r.get("ttft"):
+        if r.get("kind") != "turn" or "t_send" not in r or is_first(r) or not r.get("ttft"):
             continue
         rid = f"cmp_{arm}-c{r['conv']}-t{r['turn']}"
         out[(r["conv"], r["turn"])] = dict(t=r["t_send"], gap=r.get("gap_slept") or 0.0, ttft=r["ttft"], tier=tier_of(r),

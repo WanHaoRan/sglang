@@ -13,6 +13,7 @@ Writes turn_components_<label>_<arm>.csv and delay_components.png (one row per l
 """
 import argparse, csv, datetime as dt, json, os, re, statistics as st
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+from vs_baseline import is_first   # turn 0, or the first request of a user who started mid-session
 
 P_TOK_S = 4903.0     # single-stream prefill rate measured on this box (results/probe_moe), estimate only
 SURF, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e0"
@@ -42,7 +43,7 @@ def load_arm(results, arm, run, client):
             if m: ev.setdefault(m[2], {})["queue_duration"] = float(m[3]) / (1000.0 if m[4] == "ms" else 1.0)
     out = []
     for r in rows:
-        if r.get("kind") != "turn" or "t_send" not in r or r["turn"] == 0 or not r.get("ttft"): continue
+        if r.get("kind") != "turn" or "t_send" not in r or is_first(r) or not r.get("ttft"): continue
         rid = f"cmp_{arm}-c{r['conv']}-t{r['turn']}"; e = ev.get(rid, {})
         prompt = int(r.get("prompt_tokens") or 0); cached = int(r.get("cached_tokens") or 0); cd = r.get("cached_details") or {}
         tier = "cold" if cached < 0.5 * prompt else ("storage" if (cd.get("storage") or 0) > 0 else "host" if (cd.get("host") or 0) > 0 else "device")

@@ -4,8 +4,9 @@ its server.log (RUNBOOK 5.2 boot facts).
   python3 plot_token_tiers.py --client ../results/<boot>/client_<...>/client.jsonl [--server-log <boot>/server.log] [--out <png>]
 
 Panel A: what one turn sends, by turn index, as the MEAN over the replayed conversations (means add up, so the stack height
-         is the mean turn size): the cross-session shared prefix (the mode of turn-0 cached_tokens), the session's own
-         history re-sent from earlier turns, and the new input of this turn (tool results + user message = delta_tokens).
+         is the mean turn size): the cross-session shared prefix (the mode of the first requests' cached_tokens), the
+         session's own history re-sent from earlier turns, and the new input of this turn (tool results + user message =
+         delta_tokens).
          The reply (completion_tokens, ~90 tokens) is too small to draw and is given as text. This is content anatomy, not
          a cache outcome: in this run most of the re-sent history was re-prefilled. The dot is the p90 of prompt + reply.
 Panel B: this boot's L1 (--max-total-tokens) and L2 (--hicache-size) pools next to the workload's demand at several
@@ -31,6 +32,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
+
+from vs_baseline import is_first, is_returning  # noqa: E402
 
 SURFACE, INK, SECONDARY, MUTED, GRID, AXIS = "#fcfcfb", "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7"
 CAPACITY = MUTED                                                     # documented muted ink, 3.5:1 on the surface
@@ -84,15 +87,16 @@ def load_run(args):
 
 
 def turn_anatomy(by_conv):
-    """Per turn index: means of (shared, carried, new) and of the reply, p90 of prompt+reply, n; shared = mode of turn-0 cached."""
-    t0 = [c[0]["cached_tokens"] for c in by_conv.values() if 0 in c and c[0]["cached_tokens"] > 0]
+    """Per turn index: means of (shared, carried, new) and of the reply, p90 of prompt+reply, n; shared = mode of the
+    first requests' cached tokens (turn 0, or a mid-session start's first request: only the shared prefix can hit)."""
+    t0 = [r["cached_tokens"] for r in (c[min(c)] for c in by_conv.values()) if is_first(r) and r["cached_tokens"] > 0]
     shared = collections.Counter(t0).most_common(1)[0][0] if t0 else 0
     parts = collections.defaultdict(lambda: collections.defaultdict(list))
     for c in by_conv.values():
         for k in sorted(c):
             r = c[k]
             prompt, reply = r["prompt_tokens"], r["completion_tokens"]
-            if k == 0 or (k - 1) not in c:
+            if is_first(r) or (k - 1) not in c:
                 new = max(0, prompt - shared)
             else:
                 new = max(0, prompt - c[k - 1]["prompt_tokens"] - c[k - 1]["completion_tokens"])   # = delta_tokens
@@ -107,7 +111,7 @@ def turn_anatomy(by_conv):
 
 
 def demand_rows(by_conv, turns, shared, pinned):
-    ret = [r for r in turns if r["turn"] > 0]
+    ret = [r for r in turns if is_returning(r)]
     turn_p50 = pct([r["prompt_tokens"] + r["completion_tokens"] for r in ret], 50)
     ctx_mean = mean([r["prompt_tokens"] + r["completion_tokens"] for r in turns])
     last = [c[max(c)] for c in by_conv.values()]

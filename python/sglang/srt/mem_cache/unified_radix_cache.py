@@ -1105,6 +1105,15 @@ class UnifiedRadixCache(BasePrefixCache):
             ):
                 self.session_refs.register_session_ref(req)
 
+        # result is set only by an insert, so radix_key is bound here.
+        if self.next_turn_prefetch is not None and result is not None:
+            self.next_turn_prefetch.on_turn_committed(
+                req=req,
+                key=radix_key,
+                rotation_tail_declined=result.rotation_tail_declined,
+                now=time.perf_counter(),
+            )
+
     @rank_consensus(same_params=["req.rid", "chunked"])
     def advance_unpublished_req(self, req: Req, chunked: bool = False) -> None:
         assert not self.supports_mamba()

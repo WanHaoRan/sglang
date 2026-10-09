@@ -8,7 +8,8 @@ Writes summary.csv (one row per arm) and paired.csv (mean TTFT difference over t
 bootstrap CI: three_tier_to - hbm_host, three_tier_wc - three_tier_to, hbm_lru - hbm_host) and prints both as Markdown.
 
 Definitions (shared with vs_baseline.py and live_timeline.py where they overlap):
-- returning turn: turn > 0 with a first token; TTFT as measured by the client.
+- returning turn: any request after the user's first (vs_baseline.is_returning: not turn 0, nor the first request of a
+  user who started mid-session) with a first token; TTFT as measured by the client.
 - tier: recompute when more than half of the private prompt (prompt - 7,808 shared tokens) was uncached, otherwise
   storage / host / device by where the cached tokens came from. compare.csv's hits_* columns use timeline.py's older rule
   (cold when less than half of the whole prompt was cached), so they differ.
@@ -26,7 +27,7 @@ import statistics as st
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vs_baseline import load_arm, load_iostat, paired, q, tier_of  # noqa: E402
+from vs_baseline import is_returning, load_arm, load_iostat, paired, q, tier_of  # noqa: E402
 
 WINDOW_S, MIN_TURNS = 600, 20      # worst-window bin width (s) and minimum returning turns per bin
 ACTIVE_KBS = 1024.0                # iostat rkB/s above which the SSD counts as reading
@@ -40,7 +41,7 @@ def extra_stats(results, run, client, iostat):
     rows = [json.loads(l) for l in open(os.path.join(results, run, client, "client.jsonl")) if l.strip()]
     run_rec = next(r for r in rows if r.get("kind") == "run")
     summ = next((r for r in rows if r.get("kind") == "summary"), {})
-    ret = [r for r in rows if r.get("kind") == "turn" and "t_send" in r and r["turn"] > 0 and r.get("ttft")]
+    ret = [r for r in rows if r.get("kind") == "turn" and "t_send" in r and is_returning(r) and r.get("ttft")]
     bins = {}
     for r in ret:
         bins.setdefault(int(r["t_send"] // WINDOW_S), []).append(r["ttft"])

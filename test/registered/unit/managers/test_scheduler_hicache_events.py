@@ -2,7 +2,7 @@
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock, call, patch
+from unittest.mock import ANY, Mock, call, patch
 
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import (
@@ -29,6 +29,7 @@ class TestSchedulerHiCacheEvents(unittest.TestCase):
         s.enable_hicache_storage = True
         s.tree_cache = SimpleNamespace(check_hicache_events=self.calls.drain)
         s._process_storage_prefetch_retries = self.calls.retry
+        s.next_turn_prefetch = None
         s.process_pending_chunked_abort = Mock()
         s.process_prefill_chunk = Mock()
         s.dp_attn_adapter = Mock()
@@ -67,6 +68,29 @@ class TestSchedulerHiCacheEvents(unittest.TestCase):
                 if storage:
                     expected.append(call.retry())
                 self.assertEqual(self.calls.mock_calls, expected)
+
+    def test_next_turn_refetch_reissues_then_reports_after_the_retries(self):
+        """The next-turn prefetcher ticks after the paced retries (so it sees
+        their reads); each request it returns gets its own prefetch re-issued,
+        then whether a read started is reported back."""
+        s = self.scheduler
+        req = SimpleNamespace(cache_request_handle="handle")
+        s.waiting_queue = [req]
+        s.next_turn_prefetch = self.calls.ntp
+        self.calls.ntp.tick.return_value = [req]
+        s._prefetch_kvcache = self.calls.prefetch
+        s.tree_cache.has_ongoing_prefetch = lambda handle: handle == "handle"
+        s._process_hicache_events()
+        self.assertEqual(
+            self.calls.mock_calls,
+            [
+                call.drain(),
+                call.retry(),
+                call.ntp.tick(waiting_queue=[req], now=ANY),
+                call.prefetch(req),
+                call.ntp.on_refetch_result(req=req, issued=True),
+            ],
+        )
 
     def test_pd_prefill_drains_before_admission_even_with_empty_queue(self):
         s = self.scheduler

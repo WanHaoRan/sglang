@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vs_baseline import load_iostat, q, tier_of  # noqa: E402
+from vs_baseline import is_returning, load_iostat, q, tier_of  # noqa: E402
 
 SURF, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e0"
 # First three slots of the dataviz reference palette (validated all-pairs), in the order of the example figure.
@@ -47,7 +47,7 @@ def campaign_gaps(path):
     results, arms = manifest_arms(path)
     _, run, client = arms[0]
     run_rec, rows = read_client(results=results, run=run, client=client)
-    gaps = [r.get("gap_slept") or 0.0 for r in rows if r.get("kind") == "turn" and r.get("turn", 0) > 0 and "t_send" in r]
+    gaps = [r.get("gap_slept") or 0.0 for r in rows if r.get("kind") == "turn" and "t_send" in r and is_returning(r)]
     return gaps, run_rec["args"], rows
 
 
@@ -60,7 +60,7 @@ def restore_reference(path, iostat_path):
         if not arm.startswith("three_tier"):
             continue
         run_rec, rows = read_client(results=results, run=run, client=client)
-        ret = [r for r in rows if r.get("kind") == "turn" and r.get("turn", 0) > 0 and "t_send" in r and r.get("ttft")]
+        ret = [r for r in rows if r.get("kind") == "turn" and "t_send" in r and is_returning(r) and r.get("ttft")]
         tokens += [(r.get("cached_details") or {}).get("storage") or 0 for r in ret if tier_of(r) == "storage"]
         summ = next((r for r in rows if r.get("kind") == "summary"), {})
         t0, wall = run_rec["t_start"], summ.get("elapsed_s") or 0
