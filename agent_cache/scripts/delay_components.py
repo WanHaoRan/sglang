@@ -9,6 +9,9 @@ line; elsewhere (device hits, recomputes on servers without
 --enable-request-time-stats-logging) the admission -> first-token time is estimated from the measured turns of the same
 tier and load regime (server queue depth at arrival >= 10 = saturated), pooled over every campaign given, and the queue
 wait is the remainder. With no measured turn to calibrate from, 0.05 s + uncached / P is used.
+Only lookups and reads stamped after the turn's send count toward its L3 read: the oracle (ORACLE_PLAN.md) stages reads
+under the next turn's rid before that turn is sent, and their time is the staged_l3 column (ntp_stage -> its s2h_io),
+never queue time.
 Writes turn_components_<label>_<arm>.csv and delay_components.png (one row per label: per arm, then per arm x tier).
 """
 import argparse, csv, datetime as dt, json, os, re, statistics as st
@@ -33,7 +36,7 @@ def load_arm(results, arm, run, client):
         m = EVT.match(line)
         if m:
             d = ev.setdefault(m[3], {}); d.setdefault(m[2], ts(m[1]))
-            if m[2] == "prefetch_start": d.setdefault("_ps", []).append(ts(m[1]))
+            if m[2] in ("prefetch_start", "s2h_io"): d.setdefault("_" + m[2], []).append(ts(m[1]))
             continue
         m = BATCH.match(line)
         if m:
@@ -55,11 +58,16 @@ def load_arm(results, arm, run, client):
             queue = min(ttft, max(0.0, e["load_back_init"] - send)); how = "load_back_init"
         else:
             queue = None; how = "estimated"
-        ps = [t for t in e.get("_ps", ()) if "s2h_io" in e and t <= e["s2h_io"]]
-        l3 = e["s2h_io"] - ps[-1] if ps else 0.0
+        # A turn's own lookups start >= 16 ms after its send (campaigns 10-13); earlier ones were staged for it.
+        io = [t for t in e.get("_s2h_io", ()) if t >= send]
+        ps = [t for t in e.get("_prefetch_start", ()) if io and send <= t <= io[0]]
+        l3 = io[0] - ps[-1] if ps else 0.0
+        stage = e.get("ntp_stage")
+        staged_io = [t for t in e.get("_s2h_io", ()) if stage is not None and t >= stage]
+        staged_l3 = staged_io[0] - stage if stage is not None and stage < send and staged_io else 0.0
         out.append(dict(arm=arm, conv=r["conv"], turn=r["turn"], tier=tier, t_send=round(r["t_send"], 3), prompt=prompt, uncached=unc,
                         ttft=round(ttft, 4), latency=round(lat, 4), queue=queue, l3_read=round(l3, 4), prefill=None,
-                        decode=round(max(0.0, lat - ttft), 4), how=how, qdepth=qdepth))
+                        decode=round(max(0.0, lat - ttft), 4), how=how, qdepth=qdepth, staged_l3=round(staged_l3, 4)))
     return out
 
 def calibrate(all_turns):

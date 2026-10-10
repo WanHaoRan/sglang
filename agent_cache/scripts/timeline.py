@@ -42,7 +42,12 @@ TIER_COLOR = {"cold": GRAY, "device": BLUE, "host": ORANGE, "storage": AQUA}
 COLD_LABEL = {"prompt": "cold/recompute", "private": "recompute (over half of the private prompt uncached)"}
 ARM_COLOR = {"hbm_lru": GRAY, "hbm_host": ORANGE, "three_tier": AQUA,
              "three_tier_to": AQUA, "three_tier_wc": GREEN,   # campaign 6: the two prefetch policies
-             "three_tier_wc_norq": "#4a3aa7"}   # campaign 11: wait_complete with the #39283 re-query disabled
+             "three_tier_wc_norq": "#4a3aa7",   # campaign 11: wait_complete with the #39283 re-query disabled
+             # the oracle (ORACLE_PLAN.md): next reference-palette slots, validated with GREEN and the violet above
+             "three_tier_wc_ntpobs": "#eda100", "three_tier_wc_oracle": "#e87ba4",
+             "three_tier_wc_ntpobs_norq": BLUE, "three_tier_wc_oracle_norq": "#e34948",
+             # campaign 15: violet again, never in a figure with three_tier_wc_norq (campaign 11)
+             "three_tier_to_oracle": "#4a3aa7"}
 TS_RE = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d{3})?)\]\s*(.*)$")
 KV_RE = re.compile(r"(\w+)=(-?[\w./-]+)")
 
@@ -90,15 +95,23 @@ def parse_client(path: str, tier_rule: str = "prompt") -> dict:
     return dict(t_start=t_start, turns=turns, summary=summary, args=run["args"], tier_rule=tier_rule)
 
 
-def parse_server(path: str, t_start: float) -> dict:
+def parse_server(path: str, t_start: float, sends: dict = None) -> dict:
     """Everything relative to t_start (seconds). Submit/done pairs are matched FIFO for d2h/h2d
-    (the ack queues are FIFO), by op id for h2s, by rid for s2h."""
+    (the ack queues are FIFO), by op id for h2s, by rid for s2h. sends maps a rid to its client send time: storage
+    events of a rid stamped before it was sent were staged by the oracle and go to s2h_staged, not to the turn."""
     batches, evd, evh, lbi = [], [], [], []
     d2h_sub, h2d_sub = collections.deque(), collections.deque()
     d2h, h2d = [], []
     h2s = collections.defaultdict(dict)
     s2h = collections.defaultdict(dict)
+    s2h_staged = collections.defaultdict(dict)
+    ntp = []
     posts = []
+    sends = sends or {}
+    planned = set()   # rids the oracle planned for: one never sent had all its reads staged
+    def s2h_of(rid, t):
+        staged = t < sends[rid] if rid in sends else rid in planned
+        return s2h_staged[rid] if staged else s2h[rid]
     for line in open(path, errors="replace"):
         m = TS_RE.match(line)
         if not m:
@@ -132,11 +145,15 @@ def parse_server(path: str, t_start: float) -> dict:
             elif ev == "h2s_done":
                 h2s[kv["op"]].update(t_done=t, tokens_done=toks)
             elif ev == "prefetch_start":
-                s2h[kv["rid"]].update(t_start=t, tokens_req=toks)
+                s2h_of(kv["rid"], t).update(t_start=t, tokens_req=toks)
             elif ev == "s2h_query":
-                s2h[kv["rid"]].update(t_query=t, storage_hit=int(kv.get("storage_hit", 0)))
+                s2h_of(kv["rid"], t).update(t_query=t, storage_hit=int(kv.get("storage_hit", 0)))
             elif ev == "s2h_io":
-                s2h[kv["rid"]].update(t_io_end=t, io_ms=float(kv.get("ms", 0)), tokens_io=toks)
+                s2h_of(kv["rid"], t).update(t_io_end=t, io_ms=float(kv.get("ms", 0)), tokens_io=toks)
+            elif ev == "ntp_plan":
+                planned.add(kv.get("rid"))
+            elif ev in ("ntp_due", "ntp_stage", "ntp_refetch", "ntp_admit"):
+                ntp.append(dict(kind=ev, t=t, rid=kv.get("rid"), fields=kv))
             elif ev == "evict_device":
                 evd.append(dict(t=t, tokens=toks, requested=int(kv.get("requested", 0))))
             elif ev == "evict_host":
@@ -146,12 +163,12 @@ def parse_server(path: str, t_start: float) -> dict:
         elif "HiCache prefetch" in msg:
             kv = dict(KV_RE.findall(msg))
             if "req" in kv:
-                s2h[kv["req"]].update(t_end=t, completed=int(kv.get("completed", 0)), loaded=int(kv.get("loaded", 0)),
-                                      dropped="dropped" in msg)
+                s2h_of(kv["req"], t).update(t_end=t, completed=int(kv.get("completed", 0)),
+                                            loaded=int(kv.get("loaded", 0)), dropped="dropped" in msg)
         elif '"POST /v1/chat/completions' in msg:
             posts.append(t)
     return dict(batches=batches, d2h=d2h, h2d=h2d, h2s=dict(h2s), s2h=dict(s2h), evict_device=evd, evict_host=evh,
-                load_back_init=lbi, posts=posts)
+                load_back_init=lbi, posts=posts, s2h_staged=dict(s2h_staged), ntp=ntp)
 
 
 # ----------------------------------------------------------------------------- figures
@@ -219,6 +236,9 @@ def draw_timeline(arm: str, cl: dict, sv: dict, out_png: str) -> None:
 
     # D. tier events: one lane per type; bars where a duration is known, ticks otherwise (size ~ tokens)
     lanes = ["d2h", "h2s", "s2h", "h2d", "evict_device", "evict_host"]
+    oracle = bool(sv["ntp"] or sv["s2h_staged"])   # runs with --hicache-storage-next-turn-prefetch observe | on
+    if oracle:
+        lanes.append("oracle")
     ypos = {k: i for i, k in enumerate(lanes)}
     def bars(lane, spans, color):
         y = ypos[lane]
@@ -242,11 +262,21 @@ def draw_timeline(arm: str, cl: dict, sv: dict, out_png: str) -> None:
         if sv[lane]:
             a_evt.scatter([e["t"] for e in sv[lane]], [ypos[lane]] * len(sv[lane]),
                           s=[6 + e["tokens"] / 200 for e in sv[lane]], color=AQUA, alpha=0.7, linewidths=0)
+    title = "HiCache tier events (bars = measured copy/IO time ending at completion; dots = evictions, area ~ tokens)"
+    if oracle:
+        # the oracle lane: staged reads (I/O before the turn was sent), trigger times, and re-issued prefetches
+        bars("oracle", io_spans(sv["s2h_staged"].values()), ORANGE)
+        ticks("oracle", [e["t"] for e in sv["ntp"] if e["kind"] == "ntp_due"], GRAY)
+        ticks("oracle", [e["t"] for e in sv["ntp"] if e["kind"] == "ntp_stage"], ORANGE)
+        refetched = [e["t"] for e in sv["ntp"] if e["kind"] == "ntp_refetch" and e["fields"].get("issued") == "1"]
+        if refetched:
+            a_evt.plot(refetched, [ypos["oracle"]] * len(refetched), linestyle="none", marker="x", color=BLUE, markersize=6)
+        title += "; oracle: | trigger due (gray), staged read (orange), x re-issued prefetch"
     a_evt.set_yticks(range(len(lanes)))
     a_evt.set_yticklabels(lanes, fontsize=8)
     a_evt.set_ylim(-0.7, len(lanes) - 0.3)
     a_evt.invert_yaxis()
-    style(a_evt, "HiCache tier events (bars = measured copy/IO time ending at completion; dots = evictions, area ~ tokens)")
+    style(a_evt, title)
 
     # E. cumulative tokens moved per event type
     def cum(xs, ys, label, color, ls="-"):
@@ -389,6 +419,11 @@ def write_csvs(arm: str, cl: dict, sv: dict, out_dir: str) -> None:
         rows.append(dict(kind="evict_host", t0=e["t"], t1=e["t"], tokens=e["tokens"], ms="", key=""))
     for e in sv["load_back_init"]:
         rows.append(dict(kind="load_back_init", t0=e["t"], t1=e["t"], tokens=e["tokens"], ms="", key=e["rid"]))
+    for rid, op in sv["s2h_staged"].items():
+        rows.append(dict(kind="s2h_staged", t0=op.get("t_start"), t1=op.get("t_end"), tokens=op.get("loaded"),
+                         ms=op.get("io_ms"), key=rid))
+    for e in sv["ntp"]:
+        rows.append(dict(kind=e["kind"], t0=e["t"], t1=e["t"], tokens=e["fields"].get("tokens", ""), ms="", key=e["rid"]))
     rows.sort(key=lambda r: (r["t0"] if r["t0"] is not None else 1e18))
     with open(os.path.join(out_dir, f"events_{arm}.csv"), "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["kind", "t0", "t1", "tokens", "ms", "key"])
@@ -432,7 +467,7 @@ def main() -> int:
     results = []
     for arm, run, client in jobs:
         cl = parse_client(os.path.join(client, "client.jsonl"), args.tier_rule)
-        sv = parse_server(os.path.join(run, "server.log"), cl["t_start"])
+        sv = parse_server(os.path.join(run, "server.log"), cl["t_start"], {t["rid"]: t["t0"] for t in cl["turns"]})
         m = arm_metrics(arm, cl, sv)
         results.append((arm, cl, sv, m))
         draw_timeline(arm, cl, sv, os.path.join(out_dir, f"timeline_{arm}.png"))

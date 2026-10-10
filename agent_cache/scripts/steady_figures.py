@@ -31,7 +31,8 @@ from timeline import parse_server  # noqa: E402
 from vs_baseline import TIERS, is_returning, q, tier_of  # noqa: E402
 
 SURF, INK, INK2, MUTED, GRID, BASE = "#fcfcfb", "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7"
-ARM_COLOR = {"hbm_host": "#eb6834", "three_tier_to": "#1baf7a", "three_tier_wc": "#2a78d6", "hbm_lru": "#6b6a66"}
+ARM_COLOR = {"hbm_host": "#eb6834", "three_tier_to": "#1baf7a", "three_tier_wc": "#2a78d6", "hbm_lru": "#6b6a66",
+             "three_tier_wc_oracle": "#e87ba4", "three_tier_to_oracle": "#4a3aa7"}
 # Ordinal blue ramp for the cache tiers, cheapest to costliest (validated --ordinal: monotone L, light end 2.06:1);
 # a recompute reused nothing, so it gets the neutral.
 TIER_COLOR = {"device": "#86b6ef", "host": "#3987e5", "storage": "#256abf", "recompute": BASE}

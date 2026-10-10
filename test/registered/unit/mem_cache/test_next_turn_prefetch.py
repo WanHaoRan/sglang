@@ -621,6 +621,20 @@ class TestCase2Refetch(PrefetcherTestCase):
         self.assertEqual(self.scheduler_pass(5.1, queue=others + [self.req])[0], [])
         self.assertEqual(self.scheduler_pass(5.7)[0], ["s-t1"])
 
+    def test_a_landed_read_is_not_taken_for_a_re_eviction(self):
+        """A residency probe taken while a re-fetch is in flight goes stale when
+        the read lands; acting on it re-fetched pages that were already back
+        (logged as ntp_reevict) and spent the read cap on them."""
+        self.scheduler_pass(5.1)
+        self.cache.resident = 0
+        self.assertEqual(self.scheduler_pass(5.7)[0], ["s-t1"])  # read in flight
+        self.scheduler_pass(6.25)  # periodic probe: still missing, read running
+        self.cache.ongoing.clear()
+        self.cache.resident = KEY_TOKENS  # the read lands
+        returned, found = self.scheduler_pass(6.5)
+        self.assertEqual(returned, [])
+        self.assertNotIn("ntp_reevict", [kind for kind, _ in found])
+
     def test_admitted_turn_drops_its_plan(self):
         """After admission a retracted re-entry is a different story: no refetch."""
         self.scheduler_pass(5.1)

@@ -599,6 +599,12 @@ a probe interval (0.5 s) apart, `refetches` counts only issued reads, and the ca
 `TestCase2Refetch` (+ the call-order test in `test_scheduler_hicache_events.py`). A mutation check of steps 5-7 (24
 single-point bugs: filters, dedupe, trigger timing, probe economy, gate, handle, limiter, cleanup, cap, observe purity)
 fails at least one test each.
+**Fixed after smoke C (uncommitted).** `_wants_refetch` judged a re-eviction by the last 0.5 s-cadence probe, which could
+predate the landing of the read it judged: about half of C's re-evictions were landed reads, re-fetched as tails or
+declined as too short, and each issued one spent the cap. It now probes again right before deciding
+(regression test `test_a_landed_read_is_not_taken_for_a_re_eviction`; mutation check 26/26). Reruns C2/C3 (fixed) and
+C4 (pre-fix, frozen copy): no tail-only lookups or too-short declines left, TTFT unchanged (README of
+`compare_20261009_082335`). Next: hold a host lock on re-fetched and staged pages until admission (section 7).
 
 ### Step 8 — analysis scripts
 - `delay_components.py` (`load_arm`, ~28-58): drop `prefetch_start`/`s2h_query`/`s2h_io` events stamped before the
@@ -640,6 +646,28 @@ the re-query cap (0 for `*_norq`) and the next-turn mode with the prefetcher's s
 `next_turn_prefetch`. `run_compare.sh` exports `ORACLE_HINTS` and records it in `config.txt`. Smokes for steps 5-9:
 `agent_cache/frozen/oracle_scripts_staging/oracle_smokes.sh` (A observe vs off, B case 1, C case 2).
 
+### GPU smokes of steps 2 and 5-9 (2026-10-09, H200; engine `294c82b7fc`, scripts as applied)
+Logs under `results/oracle_smokes_1009_0701/`; every arm ORACLE_HINTS=1, cold L3, observe vs on unless noted; per-rid
+tables in each compare dir (`oracle_eval.csv`, `oracle_rids_<arm>.csv`). The frozen `2abe005bb2` engine is refused by the
+new guard (checked).
+
+| Run (compare dir) | Load | Result |
+|---|---|---|
+| A `compare_20261009_070112`, off vs observe | 16 x 8, x10, natural pools | Steps 2/5/9: boot checks (off/banner 0, observe/banner 1, cap 8); curl valid 200 / malformed 400; 109 hinted turns -> 109 `ntp_plan` / `ntp_arrive` / `ntp_admit`; arrival \|err\| p50 38 ms, p90 121; TTFT p50/p90 0.145/0.471 vs 0.142/0.466 s, tiers identical; `prefetch_start` per turn identical on all 109 hinted turns (12 first turns differ: a cold-start race on the shared prompt's backup, before any plan exists); `oracle_eval` rows match a hand grep |
+| B `compare_20261009_074959` | the step-6 config, 8 x 6, x10, L1 65,536 / host 12 GB | No eviction at all: the 8 sessions' private KV (~48K tokens) fits in L1. Not a case-1 test |
+| C `compare_20261009_082335` | 32 x 12, GAP 1, small pools | Step 7: TTFT mean 16.76 -> 13.13 s; SSD-restored turns 64 -> 157; recomputes 103 -> 45; "prefix shrank" 80 -> 45; cap hits 139 -> 104; 238 issued refetches: 202 SSD hits all read before admission, 36 misses; 144 re-evictions (40 capped), about half of them a stale probe (fixed after the smoke). Reruns C2/C3 (fixed) and C4 (pre-fix): no stale re-evictions left, TTFT unchanged (+0.07 s), run-to-run spread ~1 s; README in the compare dir |
+| B2 `compare_20261009_084120` | 48 x 10, x10, small pools | Congested, so case 2 only: TTFT 21.99 -> 15.36 s; SSD turns 33 -> 228; recomputes 116 -> 28; 341 refetches: 256 hit + done before admission, 1 not, 84 misses |
+| B3 `compare_20261009_092437` | 96 x 4, x70, small pools | Step 6: 120 staged reads, 116 landed before arrival, all 116 credited as storage with queue p50 0.016 s vs 5.27 s for the arm's other SSD-restored turns; TTFT 3.66 -> 3.13 s; SSD turns 198 -> 246; recomputes 1 -> 0 |
+
+"Replacing unresolved storage-hit accounting" rises with the oracle (C 0 -> 107, B3 0 -> 39) but only on requests read
+from SSD twice (a refetch after the request's own read); staged reads cause none. In B3 all 39, in C 84 of 107 re-credit
+the identical span; the rest move the credit to the later read (C: net 5,952 of 1.2M tokens). Reporting only.
+For E1: reads land ~0.8-1.0 s (p50) before admission and `L̂` overestimates the read by 0.7-0.9 s (the dense lag seeds),
+the queue-length wait estimate is off by 4-7 s under load (B3: over, C/B2: under), re-evictions are frequent at small
+pools (the cascade risk of section 7): after the stale-probe fix 52-61 real ones per C run, and a re-fetched context
+can be evicted by another turn's read milliseconds before admission, which neither #39283 nor the 0.5 s re-probe sees.
+Single runs differ by up to ~1 s mean TTFT on identical code (C vs C4): compare arms over repeated runs.
+
 ---
 
 ## 5. Experiments
@@ -669,8 +697,92 @@ LEVEL=NAT160 L3_CLEANER_PCT=70,60 SGLANG_TIMEOUT_KEEP_ALIVE=3600 ORACLE_HINTS=1`
   (optionally `three_tier_wc_oracle_norq` vs `three_tier_wc_norq`). Metrics: TTFT (c11 wc mean 68 s, norq 116 s);
   cap-blocked losses (c11 wc: 1,214 requests admitted ≥ 256 tokens below their arrival match after the cap, 24.8 M
   tokens); "device prefix shrank" counts; refetch lead vs L̂; late fraction; re-evictions (eviction cascade); total SSD reads.
+- **Campaign 15** (launched 2026-10-09 16:41Z, `results/campaign15/DECISIONS.md`): oracle vs baseline on campaign 14's
+  workload (x70, 768 fresh users, backlog cap, 5 h per arm), `wait_complete` and `timeout`. Oracle arms only; the
+  baselines are campaign 14's runs (user, 16:47Z). Done 2026-10-10 02:48Z; results and both policies in
+  `results/campaign15/README.md`, the analysis below.
 - **E4 later:** `timeout`-policy arms; misprediction (gap × 0.75 / 1.25, noise); online-learned load model; a
   CachedAttention-faithful baseline.
+
+### Campaign 15, `wait_complete`: why the gain is small (2026-10-09)
+
+`three_tier_wc_oracle` (5 h, finished 21:43Z) against campaign 14's `three_tier_wc`, single runs, window 2,700-16,800 s
+after the client started (campaign 14's analysis window). Outputs in `frozen/oracle_scripts_staging/c15_pairs/wc/`
+(git-ignored): `steady.csv` and `steady_paired.csv` from `scripts/steady_state.py --manifest <that dir>/manifest.txt
+--results results --window-start 2700 --window-end 16800 --iostat <that dir>/iostat_c14_c15.log --out <that dir>`, and
+`diagnosis.txt` from `frozen/oracle_scripts_staging/c15_diagnosis.py` (usage in its docstring).
+
+| | c14 `three_tier_wc` | c15 `three_tier_wc_oracle` |
+|---|---|---|
+| TTFT mean / p50 / p90 / p99 (s) | 22.2 / 10.4 / 40.4 / 173.9 | 20.8 / 16.8 / 36.1 / 154.9 |
+| queue wait, mean (s) | 21.6 | 20.2 |
+| turns/s; users finished per hour | 1.217; 169 | 1.218; 169 |
+| user cap, mean; live users | 171; 133 | 178; 130 |
+| returns: device / host / SSD / recompute | 21 / 16 / 50 / 13 % | 21 / 10 / 58 / 11 % |
+| uncached tokens per returning turn | 1,846 | 1,389 |
+| SSD read / written | 15.6 / 3.4 TB | 18.0 / 2.7 TB |
+| SSD ≥ 90 % busy (10-s iostat samples) | 49 % | 68 % |
+| host pool held by in-flight SSD reads, p50 | 382K tokens (23 %) | 642K tokens (39 %) |
+
+Same (conversation, turn): −1.41 s [−2.09, −0.73], p50 +0.01 s (16,594 pairs). The CI covers within-run noise only: two
+runs of identical code differed by 0.98 s at 32 sessions (smoke C, section 4).
+
+The x70 gaps gave the oracle time; the SSD and the host pool had no room:
+
+1. **Reads waited in the queue; they were not slow.** A staged context is ~250 pages (~0.6 s of I/O), but it joined the
+   single FIFO read queue behind a median 9,820 pages (~60 GB; p90 12,933). Case 1 fired a median 33 s before admission
+   (`trig_lead`), and the read still ended a median 29 ms before it: 7,183 of 9,397 case-1 reads (76 %) were late
+   (admission ≤ 50 ms after the read ended). Trigger to read end p50 32.8 s for ~10,070 pages ≈ 3.2 ms per queued page;
+   L̂'s seed is 2.5 ms, so L̂ under-predicted the read by 6.5 s (p50, `oracle_eval` `load_err`). Case 2 (1,587 due): 52 s.
+2. **When the read queue never empties, timing only reorders it.** The SSD was ≥ 90 % busy in 49 % of the samples
+   without the oracle and 68 % with it (ceiling ~2.1 GB/s). Issuing one read earlier delays the reads behind it; issuing
+   all of them earlier lengthens the queue. An earlier read gains only by filling idle SSD time, and the oracle's 9
+   extra points of busy time match its 16 % extra read volume, not old reads moved into idle time.
+3. **Early reads hold host memory.** A prefetch allocates its host pages when its lookup hits, before it joins the FIFO,
+   and evicts cached host contexts if the pool is full (`_try_alloc_storage_hit`, `unified_radix_cache.py:2856-2970`),
+   so a read that queues 30 s holds its pages 30 s. In-flight reads held a median 642K tokens (39 % of the pool; 23 %
+   without the oracle) and at p90 811K, the rate limiter's ceiling (0.5 × pool). Under write-through the host also keeps
+   copies of the 668K device-resident tokens, so the room for cached host-only contexts fell from ~578K to ~318K tokens.
+   Host hits fell from 16 % to 10 % of returns, those turns read the SSD instead (+16 % read volume), and the median
+   TTFT rose (10.4 → 16.8 s).
+4. **The backlog cap fixes the mean TTFT.** The client steers the user cap to a backlog of requests awaiting their first
+   token, so mean queue wait ≈ backlog / throughput (Little's law): 26.2 / 1.217 = 21.5 s (c14) and 24.6 / 1.218 = 20.2 s
+   (c15), the measured waits. A better cache shows up as throughput, and the mean turns/s did not move. Split by phase
+   (`steady_bins.csv`, 5-min bins), the oracle arm completed 17 % more turns/s while congested (TTFT median above 10 s:
+   1.34 → 1.57; 13-31 % for thresholds of 3-30 s) and fewer while light (0.74 against 1.06), when fewer users were live
+   (73 against 94). Light phases are demand-limited, so the mean hides a capacity gain under congestion, despite items
+   1-3.
+
+v1 is per-request timing: each turn triggers at `A − L̂` on its own, reads join one FIFO, and host eviction is LRU. Timing
+is the wrong lever when SSD bandwidth and host space are both full. The hints also say which context is needed when,
+which v1 uses for neither eviction nor read order.
+
+### Campaign 15, `timeout` (2026-10-10)
+
+`three_tier_to_oracle` against campaign 14's `three_tier_to`, same window; numbers in `results/campaign15/README.md` and
+`results/campaign15/three_tier_to_oracle/`. The oracle clearly helps here: mean TTFT 53.3 → 41.1 s, p90 / p99 −27 %,
+paired −7.28 s [−8.38, −6.16]; turns/s +13 % (0.988 → 1.114), 708 against 646 users finished; turns/s while congested
++22 % (0.64 → 0.78) and 34 % of the bins light against 28 %. The baseline left the SSD idle (54 % busy; ≥ 90 % in 22 % of
+samples), because the timeout cut reads and 35 % of returns recomputed; the oracle's earlier reads used that bandwidth
+(86 % busy, 18.0 against 11.0 TB read) and cut uncached tokens per turn by 12 %. The read queue at a trigger was short
+(p50 1,203 / 2,941 pages for case 1 / 2), L̂ was close (read − L̂ p50 −0.3 s) and 34 % of the reads were late.
+It is wasteful, as decision 3 expected: the timeout cut 5,018 of 9,663 oracle reads (52 %, 73.7M tokens short) against
+11 % of the requests' own reads; 28 % of all reads were cut while still queued and skipped (campaign 14: 6 %); 37 % of
+the 116M re-fetched tokens were credited from the SSD. `wait_complete` without the oracle is still better (22.2 s, 1.22
+turns/s). Together with the `wait_complete` arm: the oracle gains where the SSD has idle bandwidth, and timing alone
+cannot gain where it has none.
+
+### Options after campaign 15 (decision 8, open)
+
+Ordered by expected effect at campaign 14's load.
+
+| | Change | Why (campaign 15 `wait_complete`) | Cost; first test |
+|---|---|---|---|
+| a | Evict by next use: when the host (or device) pool must free space, evict the context whose session's next turn is furthest away, ended sessions first (decision 7), instead of LRU; Belady's MIN with the hints | Fewer SSD reads is the only lever that adds capacity when the SSD is the bottleneck; host hits fell 16 → 10 % | Medium: an eviction priority in the tree core from the prefetcher's plans. First an offline replay of campaign 14's accesses through an L1 + L2 model, LRU vs next use (no GPU) |
+| b | Order SSD reads by deadline (predicted admission) instead of FIFO; staging for far-off turns yields to queued turns | 76 % of case-1 reads late behind a ~30 s queue | Medium: the read queue (`prefetch_buffer`) becomes a priority queue fed by the prefetcher; speculative reads can starve |
+| c | Allocate a read's host pages when it leaves the queue, or cap the share speculative reads may hold | In-flight reads held 39 % of the host pool | Medium-high: allocation timing in the cache controller (the transfer needs its pages; the rate limiter counts requested spans) |
+| d | Online load model: measured ms per queued page (EWMA) instead of the 2.5 ms seed (decision 6) | L̂ under-predicted by 6.5 s | Small. Alone it moves every trigger earlier and adds no capacity in a full queue; (b) and the `timeout` arms need it |
+| e | Evaluate capacity: users or turns per second at a fixed backlog target, or fixed-load arms without the cap, with repeated runs | The cap turns speed-ups into load; single runs vary ~1 s | Analysis or workload only |
 
 ---
 
@@ -680,11 +792,12 @@ LEVEL=NAT160 L3_CLEANER_PCT=70,60 SGLANG_TIMEOUT_KEEP_ALIVE=3600 ORACLE_HINTS=1`
 |---|---|---|
 | 1 | Transport: `kv_hints` on the chat route (vs `custom_params`, or a literal `metadata` field, which chat lacks) | **taken** (go on step 1) |
 | 2 | Trigger margin: exactly `A − L̂` (offline ~20-30 % of reads partly exposed) or + one inter-admission gap | open; decide after E1 |
-| 3 | Prefetch policy: `wait_complete` arms only in v1 (a staged read's `timeout` deadline counts from staging) | proposed |
+| 3 | Prefetch policy: `wait_complete` arms only in v1 (a staged read's `timeout` deadline counts from staging) | proposed; campaign 15 measured it: `three_tier_to_oracle` beats campaign 14's `three_tier_to` (TTFT 53.3 → 41.1 s, +13 % turns/s) but the timeout cut 52 % of its reads (11 % of the requests' own), 28 % of all reads skipped while queued; `wait_complete` stays the better policy (section 5) |
 | 4 | Case 2 scope: hinted requests only, or every queued request (needs no hint) | proposed: hinted only |
 | 5 | Ŵ estimator: `W_ql` vs `W_ewma` (both logged in observe) | open; decide after E1 |
-| 6 | Load model: static seeds (v1) vs online EWMA (needs an `io_seconds` field from the I/O thread); separate `b_backlog` | static in v1; `b_backlog` after E1 |
+| 6 | Load model: static seeds (v1) vs online EWMA (needs an `io_seconds` field from the I/O thread); separate `b_backlog` | static in v1; `b_backlog` after E1. Campaign 15 `wait_complete`: the seeds under-predict the read by 6.5 s (p50) at campaign 14's load (≈ 3.2 ms per queued page vs 2.5) |
 | 7 | Evicting ended sessions first (the oracle knows there is no next turn) | out of the headline; separate ablation only |
+| 8 | Next lever after campaign 15: next-use eviction, deadline-ordered reads, host pages at dequeue, an online load model, capacity-based evaluation (section 5, options a-e) | open; the user decides |
 
 ---
 
@@ -694,7 +807,11 @@ LEVEL=NAT160 L3_CLEANER_PCT=70,60 SGLANG_TIMEOUT_KEEP_ALIVE=3600 ORACLE_HINTS=1`
   `timeline.py` and `read_backlog.py` misattribute them.
 - Staged and refetched pages are unprotected after insert (an evictable host leaf): a too-early trigger wastes the read;
   at x10 a refetch for queue position k can evict position k+1's context (cascade). Measure re-evictions.
-- One FIFO SSD read thread: oracle reads delay later, more urgent reads; reads ~1.9× slower during SSD writes.
+- One FIFO SSD read thread: oracle reads delay later, more urgent reads; reads ~1.9× slower during SSD writes. Campaign
+  15 `wait_complete`: staged reads waited behind a median 9,820 pages (~30 s); 76 % of case-1 reads were late.
+- Host pages are allocated when a lookup hits, before the read waits in the FIFO (`_try_alloc_storage_hit`), so a long
+  read queue holds them. Campaign 15 `wait_complete`: in-flight reads held a median 39 % of the host pool (23 % without
+  the oracle), and host hits fell from 16 % to 10 % of returns.
 - Shared rate limit (0.5 × host pool): many staged reads push live arrivals into declined + paced retries.
 - Prometheus storage counters skew: a request arriving after its staged read finished has its own new-tail miss resolve
   the staged hit as "dropped" (or, if its lookup hits, "Replacing unresolved storage-hit accounting"). Client numbers
@@ -722,6 +839,7 @@ LEVEL=NAT160 L3_CLEANER_PCT=70,60 SGLANG_TIMEOUT_KEEP_ALIVE=3600 ORACLE_HINTS=1`
 | Queue wait | sparse p50 0.03 s; x10 p50 55 s (all requests; 73 s for returning turns), mean 66 s, p90 142 s | c10, c11 wc `ReqTimeStats` |
 | Admission rate x10 | 60-s window p50 0.5/s; inter-admission p50 0.41 s, p90 3.4 s; 18 of 117 60-s windows empty | c11 wc |
 | Restore TTFT vs backlog (x70) | ≈ 1.0 s + GB ahead / 2.0 GB/s (wc), 1.1 s + GB / 1.3 GB/s (to); wait = 58 % (to) / 80 % (wc) of TTFT | c7, `read_backlog.py` |
+| Read queue at campaign 14's load (x70, 768 users, backlog cap) | ahead of a staged read p50 9,820 pages, p90 12,933; ≈ 3.2 ms per queued page; SSD ≥ 90 % busy in 49 % of 10-s samples (68 % with the oracle) | c14 wc, c15 wc_oracle (`c15_diagnosis.py`) |
 | Retry budget | 2,162 of 4,660 client rids hit the cap ("reissue cap reached"; ≥ 9 `prefetch_start`) | c11 wc |
 
 To re-measure on a new box: run the campaign-11 config for one `three_tier_wc` arm and use
@@ -734,11 +852,12 @@ To re-measure on a new box: run the campaign-11 config for one `three_tier_wc` a
 | Step | State | Date |
 |---|---|---|
 | 1 | done: client hints (`replay_agentic.py`, `start_client.sh` `ORACLE_HINTS`), verified offline (dry run, stub server); live smoke deferred to step 2 | 2026-10-01 |
-| 2 | code done (`2abe005bb2`): chat `kv_hints` + mode flag, unit tests pass, every boot since logs the flag `'off'`; open: lint (isort, trailing spaces, `[Haoran]` comments), live curl 200/400 and the `ORACLE_HINTS=1` client smoke | 2026-10-02 |
+| 2 | done (`2abe005bb2`): chat `kv_hints` + mode flag; live curl 200/400 and the `ORACLE_HINTS=1` client verified in smoke A (2026-10-09); open: lint (isort, trailing spaces, `[Haoran]` comments) | 2026-10-02 |
 | 3 | done: residency probe + read-backlog helper (`fca11af340`, `ead87198a0`), `test_resident_prefix_probe.py`; open: two trailing spaces | 2026-10-06 |
-| 4 | done: `next_turn_estimators.py` + `test_next_turn_estimators.py`, replayed against campaign 11 (uncommitted) | 2026-10-09 |
-| 5 | done: prefetcher in observe mode, wired into the Scheduler and `cache_finished_req`; CPU tests pass (uncommitted) | 2026-10-09 |
-| 6 | done: case 1 staging; CPU tests pass (uncommitted) | 2026-10-09 |
-| 7 | done: case 2 refetch + re-eviction cap; CPU tests pass (uncommitted) | 2026-10-09 |
-| 8 | done: analysis scripts + `oracle_eval.py`; campaign-11 outputs unchanged, synthetic oracle run checked (uncommitted) | 2026-10-09 |
-| 9 | done: oracle arms incl. `_norq`, engine guard, `ORACLE_HINTS` in `run_compare.sh` (uncommitted) | 2026-10-09 |
+| 4 | done: `next_turn_estimators.py` + `test_next_turn_estimators.py` (`294c82b7fc`), replayed against campaign 11 | 2026-10-09 |
+| 5 | done: prefetcher in observe mode, wired into the Scheduler and `cache_finished_req` (`294c82b7fc`); CPU tests; GPU smoke A | 2026-10-09 |
+| 6 | done: case 1 staging (`294c82b7fc`); CPU tests; GPU smoke B3 (116 of 120 staged reads before arrival) | 2026-10-09 |
+| 7 | done: case 2 refetch + re-eviction cap (`294c82b7fc`); CPU tests; GPU smokes C and B2; stale re-eviction probe fixed (uncommitted), reruns C2-C4 | 2026-10-09 |
+| 8 | done: analysis scripts + `oracle_eval.py` (uncommitted); campaign-11 outputs unchanged; hand-grep match on smoke A | 2026-10-09 |
+| 9 | done: oracle arms incl. `_norq`, engine guard, `ORACLE_HINTS` in `run_compare.sh` (uncommitted); smoke A | 2026-10-09 |
+| C15 | campaign 15 done (2026-10-10 02:48Z): both oracle arms against campaign 14's baselines, `results/campaign15/README.md`; analysis and options in section 5 (decision 8 open) | 2026-10-10 |

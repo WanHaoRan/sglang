@@ -442,7 +442,13 @@ class NextTurnPrefetcher:
         if self._mode != "on":
             return False
         return self._wants_refetch(
-            plan, req=req, position=position, wait_s=wait, load_s=load_s, now=now
+            plan,
+            req=req,
+            baseline=baseline,
+            position=position,
+            wait_s=wait,
+            load_s=load_s,
+            now=now,
         )
 
     def _wants_refetch(
@@ -450,6 +456,7 @@ class NextTurnPrefetcher:
         plan: TurnPlan,
         *,
         req: Req,
+        baseline: int,
         position: int,
         wait_s: float,
         load_s: float,
@@ -464,6 +471,10 @@ class NextTurnPrefetcher:
             or plan.refetch_capped
             or cache.cache_controller.prefetch_rate_limited()
         ):
+            return False
+        # The last probe may predate a read that has since landed.
+        plan.missing_tokens = baseline - self._resident_tokens(plan, now=now)
+        if plan.missing_tokens < cache.prefetch_threshold:
             return False
         if plan.refetches > 0:
             # The fetched pages were evicted again before admission.

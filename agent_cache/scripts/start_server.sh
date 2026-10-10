@@ -9,6 +9,11 @@
 #          three_tier_wc (same, prefetch policy `wait_complete`)
 #          three_tier_wc_norq (three_tier_wc with the admission-time SSD re-query of upstream #39283 disabled:
 #          --hicache-storage-prefetch-retry-max-attempts 0; isolates #39283 on the same engine, campaign 11)
+#          three_tier_wc_ntpobs / three_tier_wc_oracle (three_tier_wc + --hicache-storage-next-turn-prefetch observe / on,
+#          the oracle of agent_cache/ORACLE_PLAN.md; retry flags pinned to 8 / 8; the client needs ORACLE_HINTS=1) and their
+#          _norq variants (re-query off, as three_tier_wc_norq). They need an engine with the prefetcher (step 5 on).
+#          three_tier_to_ntpobs / three_tier_to_oracle (+ _norq): the same on three_tier_to (`timeout` policy; plan decision 3:
+#          a staged or re-fetched read's timeout budget runs from the read's start, so admission can cut it).
 #   LEVEL  P0 (default: L1 262144 tok, host 64 GB) | PH (131072 / 48) | PL (131072 / 18)          (RUNBOOK 5.3)
 #          NAT64 / NAT160: NO --max-total-tokens (the profiled device pool), host 64 / 160 GB   (campaigns 6-7, "natural")
 #   Overrides (env): L1_TOKENS=<tokens> and/or HOST_GB=<GB> replace the level's pools; the run dir is then named custom_L1<tokens>_H<GB>.
@@ -101,7 +106,7 @@ l3_prep() {
     printf '{"prefetch_threshold": 256, "prefetch_timeout_base": 1.0, "prefetch_timeout_per_ki_token": 0.25}\n' > "$RUN/l3_extra.json"
   fi
 }
-POLICY=none
+POLICY=none; NTP=off
 case "$ARM" in
   hbm_lru)       ARGS=("${COMMON[@]}"); ENVV=() ;;
   hbm_host)      ARGS=("${COMMON[@]}" "${HOST[@]}"); ENVV=() ;;
@@ -109,7 +114,18 @@ case "$ARM" in
   three_tier_wc) l3_prep; POLICY=wait_complete; ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_WC[@]}"); ENVV=("${L3ENV[@]}") ;;
   three_tier_wc_norq) l3_prep; POLICY=wait_complete
     ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_WC[@]}" --hicache-storage-prefetch-retry-max-attempts 0); ENVV=("${L3ENV[@]}") ;;
-  *) echo "STOP: unknown ARM '$ARM' (hbm_lru | hbm_host | three_tier_to | three_tier_wc | three_tier_wc_norq)"; exit 1 ;;
+  three_tier_wc_ntpobs|three_tier_wc_oracle|three_tier_wc_ntpobs_norq|three_tier_wc_oracle_norq|\
+  three_tier_to_ntpobs|three_tier_to_oracle|three_tier_to_ntpobs_norq|three_tier_to_oracle_norq)
+    l3_prep
+    case "$ARM" in three_tier_to_*) POLICY=timeout; L3=("${L3_TO[@]}") ;; *) POLICY=wait_complete; L3=("${L3_WC[@]}") ;; esac
+    case "$ARM" in *_ntpobs*) NTP=observe ;; *) NTP=on ;; esac
+    case "$ARM" in
+      *_norq) RQ=(--hicache-storage-prefetch-retry-max-attempts 0) ;;
+      *)      RQ=(--hicache-storage-prefetch-retry-poll-interval 8 --hicache-storage-prefetch-retry-max-attempts 8) ;;
+    esac
+    ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3[@]}" "${RQ[@]}" --hicache-storage-next-turn-prefetch "$NTP"); ENVV=("${L3ENV[@]}") ;;
+  *) echo "STOP: unknown ARM '$ARM' (hbm_lru | hbm_host | three_tier_to | three_tier_wc | three_tier_wc_norq |" \
+          "three_tier_{wc,to}_ntpobs | three_tier_{wc,to}_oracle | three_tier_{wc,to}_ntpobs_norq | three_tier_{wc,to}_oracle_norq)"; exit 1 ;;
 esac
 
 echo "arm: $ARM  level: $LEVEL (L1=${L1:-natural} tokens, host=$HSIZE GB)  model: $MODEL  ctx: $CTX  run dir: $RUN"
@@ -118,11 +134,16 @@ echo "arm: $ARM  level: $LEVEL (L1=${L1:-natural} tokens, host=$HSIZE GB)  model
 ENGINE=$(env ${ENGINE_PYTHONPATH:+PYTHONPATH=$ENGINE_PYTHONPATH} python3 -c 'import os, sglang; print(os.path.dirname(sglang.__file__))')
 [ -n "${ENGINE_PYTHONPATH:-}" ] && ENVV+=("PYTHONPATH=$ENGINE_PYTHONPATH")
 echo "engine: $ENGINE"
+# an engine without the prefetcher (e.g. the frozen 2abe005bb2 copy) accepts the flag and ignores it
+if [ "$NTP" != off ] && [ ! -f "$ENGINE/srt/mem_cache/next_turn_prefetch.py" ]; then
+  echo "STOP: $ARM needs the next-turn prefetcher, which $ENGINE lacks (unset ENGINE_PYTHONPATH or freeze a newer copy)"
+  rm -rf -- "$RUN"; exit 1
+fi
 # setsid + nohup: the server survives the end of this docker exec session; SGLANG_LOG_MS=1 -> millisecond log timestamps
 env SGLANG_LOG_MS=1 "${ENVV[@]}" setsid nohup python3 -m sglang.launch_server "${ARGS[@]}" > "$RUN/server.log" 2>&1 < /dev/null &
 echo $! > "$RUN/server.pid"
-printf 'arm=%s\nlevel=%s\nL1=%s\nhost_gb=%s\nmodel=%s\nctx=%s\nkv_dtype=%s\ntemplate=%s\nprefetch_policy=%s\nl3_cleaner_pct=%s\nengine=%s\nstarted_utc=%s\n' \
-  "$ARM" "$LEVEL" "${L1:-natural}" "$HSIZE" "$MODEL" "$CTX" "$KV_DTYPE" "$TEMPLATE" "$POLICY" "${L3_CLEANER_PCT:-default}" "$ENGINE" "$(date -u +%FT%TZ)" > "$RUN/run.txt"
+printf 'arm=%s\nlevel=%s\nL1=%s\nhost_gb=%s\nmodel=%s\nctx=%s\nkv_dtype=%s\ntemplate=%s\nprefetch_policy=%s\nnext_turn_prefetch=%s\nl3_cleaner_pct=%s\nengine=%s\nstarted_utc=%s\n' \
+  "$ARM" "$LEVEL" "${L1:-natural}" "$HSIZE" "$MODEL" "$CTX" "$KV_DTYPE" "$TEMPLATE" "$POLICY" "$NTP" "${L3_CLEANER_PCT:-default}" "$ENGINE" "$(date -u +%FT%TZ)" > "$RUN/run.txt"
 echo "launched $ARM: pid $(cat "$RUN/server.pid")   (watch: tail -f $RUN/server.log)"
 
 # wait up to 2400 s (JIT-cold boot ~633 s, warm 278-285 s, RUNBOOK 2.6): /health AND the 'fired up' log line
@@ -151,5 +172,6 @@ case "$ARM" in three_tier_*)
   echo "prefetch policy:  $(grep -ao "'hicache_storage_prefetch_policy': '[a-z_]*'" "$RUN/server.log" | head -1)   (want $POLICY)"
   echo "L3 cleaner dir:   $(grep -aoE "HiCacheL3Cleaner started: dirs=\[[^]]*\]" "$RUN/server.log" | head -1)   (want /mnt/ssd/hicache_l3)"
   echo "L3 cleaner marks: $(grep -aoE 'high=[0-9.]+% low=[0-9.]+%' "$RUN/server.log" | head -1)   (want ${L3_CLEANER_PCT:-80,70})"
-  echo "re-query cap:     $(grep -aoE "'hicache_storage_prefetch_retry_max_attempts': [0-9]+" "$RUN/server.log" | head -1)   (want $([ "$ARM" = three_tier_wc_norq ] && echo 0 || echo 8))" ;;
+  echo "re-query cap:     $(grep -aoE "'hicache_storage_prefetch_retry_max_attempts': [0-9]+" "$RUN/server.log" | head -1)   (want $(case "$ARM" in *_norq) echo 0 ;; *) echo 8 ;; esac))"
+  echo "next-turn mode:   $(grep -aoE "'hicache_storage_next_turn_prefetch': '[a-z]+'" "$RUN/server.log" | head -1), prefetcher banner $(grep -ac 'HiCache next-turn prefetch: mode=' "$RUN/server.log")   (want $NTP, banner $([ "$NTP" = off ] && echo 0 || echo 1))" ;;
 esac

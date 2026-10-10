@@ -5,6 +5,8 @@
 # Knobs (env): ARMS="hbm_lru hbm_host three_tier_to three_tier_wc"  LEVEL=NAT64  [L1_TOKENS= HOST_GB= only to override the level]
 #              MODEL=Qwen/Qwen3-32B  CTX=40960  L3_CLEANER_PCT=70,60  NCONV=48  C=48  TURNS=24  GAP=21  GAP_CAP=600  CHECK_IDS=0
 #              CAP_MODE ORDER START_PHASE and their knobs (start_client.sh; unset = the client's defaults, recorded as such)
+#              ORACLE_HINTS=0 (1: every arm's client sends the next-turn kv_hints, so an oracle campaign keeps the client
+#              bodies identical and only the server mode differs; agent_cache/ORACLE_PLAN.md)
 # C18 (2026-09-18, A100) was: ARMS="hbm_lru hbm_host three_tier" LEVEL=PL L1_TOKENS=65536 HOST_GB=12 NCONV=32 C=32 TURNS=12 GAP=10 GAP_CAP=600
 # Writes results/compare_<UTC time>/manifest.txt: one line per arm  "<arm> <server run dir> <client dir>"  (input of timeline.py).
 # Progress: lines "STAGE START|DONE|FAILED <arm>" in the driver log; "ALL DONE" at the end. Stop cleanly: kill this script, then stop_server.sh.
@@ -38,10 +40,11 @@ export TRUNCATE_TO=${TRUNCATE_TO:-0.5} STOP_AFTER_USERS=${STOP_AFTER_USERS:-0}
 export CAP_MODE=${CAP_MODE:-} CAP_TARGET=${CAP_TARGET:-} CAP_INTERVAL=${CAP_INTERVAL:-} CAP_GAIN=${CAP_GAIN:-} CAP_STEP=${CAP_STEP:-}
 export CAP_MIN=${CAP_MIN:-} CAP_MAX=${CAP_MAX:-} ADMIT_SPACING=${ADMIT_SPACING:-} ORDER=${ORDER:-} ORDER_SEED=${ORDER_SEED:-}
 export START_PHASE=${START_PHASE:-} START_USERS=${START_USERS:-} START_SEED=${START_SEED:-} START_SERVICE=${START_SERVICE:-}
+export ORACLE_HINTS=${ORACLE_HINTS:-0}
 CMP="$AC/results/compare_$(date -u +%Y%m%d_%H%M%S)"; mkdir -p "$CMP"; MANIFEST="$CMP/manifest.txt"
-printf 'arms=%s level=%s L1_TOKENS=%s HOST_GB=%s MODEL=%s CTX=%s KV_DTYPE=%s TRACE=%s L3_CLEANER_PCT=%s NCONV=%s C=%s TURNS=%s GAP=%s GAP_CAP=%s OFFSET=%s SEED=%s K=%s CLIENT_TIMEOUT=%s ARRIVAL=%s TURNS_RANGE=%s TURNS_SEED=%s ARRIVAL_UNTIL=%s SESSION_TASKS=%s SESSION_SEED=%s TASK_GAP=%s CONTEXT_POLICY=%s MAX_CONTEXT=%s CONTEXT_TRIGGER=%s COMPACT_TOKENS=%s COMPACT_KEEP=%s COMPACT_MODE=%s TRUNCATE_TO=%s STOP_AFTER_USERS=%s CAP_MODE=%s CAP_TARGET=%s CAP_INTERVAL=%s CAP_GAIN=%s CAP_STEP=%s CAP_MIN=%s CAP_MAX=%s ADMIT_SPACING=%s ORDER=%s ORDER_SEED=%s START_PHASE=%s START_USERS=%s START_SEED=%s START_SERVICE=%s SGLANG_TIMEOUT_KEEP_ALIVE=%s started_utc=%s\n' \
+printf 'arms=%s level=%s L1_TOKENS=%s HOST_GB=%s MODEL=%s CTX=%s KV_DTYPE=%s TRACE=%s L3_CLEANER_PCT=%s NCONV=%s C=%s TURNS=%s GAP=%s GAP_CAP=%s OFFSET=%s SEED=%s K=%s CLIENT_TIMEOUT=%s ARRIVAL=%s TURNS_RANGE=%s TURNS_SEED=%s ARRIVAL_UNTIL=%s SESSION_TASKS=%s SESSION_SEED=%s TASK_GAP=%s CONTEXT_POLICY=%s MAX_CONTEXT=%s CONTEXT_TRIGGER=%s COMPACT_TOKENS=%s COMPACT_KEEP=%s COMPACT_MODE=%s TRUNCATE_TO=%s STOP_AFTER_USERS=%s CAP_MODE=%s CAP_TARGET=%s CAP_INTERVAL=%s CAP_GAIN=%s CAP_STEP=%s CAP_MIN=%s CAP_MAX=%s ADMIT_SPACING=%s ORDER=%s ORDER_SEED=%s START_PHASE=%s START_USERS=%s START_SEED=%s START_SERVICE=%s ORACLE_HINTS=%s SGLANG_TIMEOUT_KEEP_ALIVE=%s started_utc=%s\n' \
   "$ARMS" "$LEVEL" "${L1_TOKENS:-natural}" "${HOST_GB:-level}" "$MODEL" "$CTX" "${KV_DTYPE:-fp8_e5m2}" "${TRACE:-default}" "$L3_CLEANER_PCT" "$NCONV" "$C" "$TURNS" "$GAP" "$GAP_CAP" "$OFFSET" "$SEED" "$K" "$CLIENT_TIMEOUT" "$ARRIVAL" "${TURNS_RANGE:-fixed}" "$TURNS_SEED" "$ARRIVAL_UNTIL" "${SESSION_TASKS:-1:1}" "$SESSION_SEED" "$TASK_GAP" "$CONTEXT_POLICY" "$MAX_CONTEXT" "$CONTEXT_TRIGGER" "$COMPACT_TOKENS" "$COMPACT_KEEP" "$COMPACT_MODE" "$TRUNCATE_TO" "$STOP_AFTER_USERS" \
-  "${CAP_MODE:-fixed}" "${CAP_TARGET:-default}" "${CAP_INTERVAL:-default}" "${CAP_GAIN:-default}" "${CAP_STEP:-default}" "${CAP_MIN:-default}" "${CAP_MAX:-default}" "${ADMIT_SPACING:-default}" "${ORDER:-cycle}" "${ORDER_SEED:-default}" "${START_PHASE:-zero}" "${START_USERS:-default}" "${START_SEED:-default}" "${START_SERVICE:-default}" \
+  "${CAP_MODE:-fixed}" "${CAP_TARGET:-default}" "${CAP_INTERVAL:-default}" "${CAP_GAIN:-default}" "${CAP_STEP:-default}" "${CAP_MIN:-default}" "${CAP_MAX:-default}" "${ADMIT_SPACING:-default}" "${ORDER:-cycle}" "${ORDER_SEED:-default}" "${START_PHASE:-zero}" "${START_USERS:-default}" "${START_SEED:-default}" "${START_SERVICE:-default}" "$ORACLE_HINTS" \
   "${SGLANG_TIMEOUT_KEEP_ALIVE:-default}" "$(date -u +%FT%TZ)" > "$CMP/config.txt"
 echo "compare dir: $CMP"; cat "$CMP/config.txt"
 # pre-flight: the client's flags checked and every session planned before any boot, so a bad knob fails here once

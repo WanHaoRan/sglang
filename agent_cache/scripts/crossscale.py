@@ -11,8 +11,14 @@ from delay_components import load_calibrated
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 
 SURF, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e0"
-ARM_COLOR = {"hbm_lru": "#9a9891", "hbm_host": "#eb6834", "three_tier_to": "#1baf7a", "three_tier_wc": "#2e7d32"}
-ARM_MARK = {"hbm_lru": "s", "hbm_host": "o", "three_tier_to": "^", "three_tier_wc": "v"}
+ARM_COLOR = {"hbm_lru": "#9a9891", "hbm_host": "#eb6834", "three_tier_to": "#1baf7a", "three_tier_wc": "#2e7d32",
+             # the oracle arms (ORACLE_PLAN.md); same colors as timeline.py
+             "three_tier_wc_ntpobs": "#eda100", "three_tier_wc_oracle": "#e87ba4",
+             "three_tier_wc_ntpobs_norq": "#2a78d6", "three_tier_wc_oracle_norq": "#e34948",
+             "three_tier_to_oracle": "#4a3aa7"}   # campaign 15: violet as wc_norq, never plotted together
+ARM_MARK = {"hbm_lru": "s", "hbm_host": "o", "three_tier_to": "^", "three_tier_wc": "v",
+            "three_tier_wc_ntpobs": "D", "three_tier_wc_oracle": "P", "three_tier_wc_ntpobs_norq": "<",
+            "three_tier_wc_oracle_norq": "X", "three_tier_to_oracle": ">"}
 def q(xs, f): xs = sorted(xs); return xs[min(len(xs) - 1, int(f * len(xs)))]
 
 def main():

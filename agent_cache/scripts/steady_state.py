@@ -161,7 +161,8 @@ def draw(data: dict, windows: dict, all_bins: list, out_png: str) -> bool:
         import matplotlib.pyplot as plt
     except ImportError:
         return False
-    colors = {"hbm_host": "#eb6834", "three_tier_to": "#1baf7a", "three_tier_wc": "#2a78d6", "hbm_lru": "#6b6a66"}
+    colors = {"hbm_host": "#eb6834", "three_tier_to": "#1baf7a", "three_tier_wc": "#2a78d6", "hbm_lru": "#6b6a66",
+              "three_tier_wc_oracle": "#e87ba4", "three_tier_to_oracle": "#4a3aa7"}
     fig, axes = plt.subplots(3, 1, figsize=(12, 9.5), sharex=True, gridspec_kw=dict(hspace=0.16))
     for arm in data:
         b = [x for x in all_bins if x["arm"] == arm]

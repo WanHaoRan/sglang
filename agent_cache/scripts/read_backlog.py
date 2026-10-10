@@ -18,7 +18,11 @@ from matplotlib.lines import Line2D
 from vs_baseline import is_first   # turn 0, or the first request of a user who started mid-session
 
 SURF, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e0"
-ARM_COLOR = {"three_tier_to": "#1baf7a", "three_tier_wc": "#2a78d6"}
+ARM_COLOR = {"three_tier_to": "#1baf7a", "three_tier_wc": "#2a78d6",
+             # the oracle arms (ORACLE_PLAN.md): the reference-palette slots after the two above
+             "three_tier_wc_ntpobs": "#eda100", "three_tier_wc_oracle": "#e87ba4",
+             "three_tier_wc_ntpobs_norq": "#4a3aa7", "three_tier_wc_oracle_norq": "#e34948",
+             "three_tier_to_oracle": "#4a3aa7"}   # campaign 15; the _norq arms never ran
 C_QUERY, C_WAIT, C_IO, C_ADMIT, C_PREFILL = "#9a9891", "#eb6834", "#1baf7a", "#d6b22a", "#2a78d6"
 EVT = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\.(\d{3})\] HICACHE_EVT (\w+) rid=(\S+)(.*)")
 BYTES_PER_TOKEN, PAGE = 98304, 64  # bf16 KV of Qwen3-30B-A3B; pages of 64 tokens
@@ -42,16 +46,16 @@ def load_arm(results, arm, run, client):
         if not m:
             continue
         t, kind, rid, rest = ts(m[1], m[2]), m[3], m[4], kv(m[5])
-        d = ev.setdefault(rid, {})
         if kind == "s2h_io":
             ms = float(rest["ms"]) / 1000.0
-            reads.append((t - ms, t, rid, int(rest["pages"])))
-        if kind in ("prefetch_start", "s2h_query", "s2h_io", "load_back_init") and kind not in d:
-            d[kind] = (t, rest)
+            reads.append((t - ms, t, rid, int(rest["pages"])))   # staged reads too: they are backlog for others
+        if kind in ("prefetch_start", "s2h_query", "s2h_io", "load_back_init"):
+            ev.setdefault(rid, {}).setdefault(kind, []).append((t, rest))
     reads.sort()
     starts = [r[0] for r in reads]
     rows = [json.loads(l) for l in open(os.path.join(results, run, client, "client.jsonl")) if l.strip()]
     t0 = next(r["t_start"] for r in rows if r.get("kind") == "run")
+    ev = first_after_send(arm, rows, ev, t0)
     head = head_of_queue_times(arm, rows, ev, t0)
     out = []
     for r in rows:
@@ -82,6 +86,24 @@ def load_arm(results, arm, run, client):
                         admit_to_ft=max(0.0, r["ttft"] - (lb - send)) if lb else None, send_to_ps=ps - send,
                         head_lo=head[rid][0] - ps, head_hi=head[rid][1] - ps))
     return out, reads, t0
+
+
+def first_after_send(arm, rows, ev, t0):
+    """Per client rid, the first event of each kind stamped at or after the turn's send. A turn's own lookups start
+    >= 16 ms after its send (campaigns 10-13); earlier events of its rid are reads the oracle staged for it."""
+    out = {}
+    for r in rows:
+        if r.get("kind") != "turn" or "t_send" not in r:
+            continue
+        rid = f"cmp_{arm}-c{r['conv']}-t{r['turn']}"
+        send = t0 + r["t_send"]
+        firsts = {}
+        for kind, events in ev.get(rid, {}).items():
+            after = [e for e in events if e[0] >= send]
+            if after:
+                firsts[kind] = after[0]
+        out[rid] = firsts
+    return out
 
 
 def head_of_queue_times(arm, rows, ev, t0):
