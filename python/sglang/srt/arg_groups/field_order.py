@@ -518,5 +518,8 @@ POSITIONAL_FIELD_ORDER = (
     "enable_response_store",
     "disaggregation_decode_host_receive_threshold",
     "hicache_storage_next_turn_prefetch",
+    "hicache_storage_read_order",
+    "hicache_storage_read_window_pages",
+    "hicache_storage_prefetch_pin_fraction",
 )
 # fmt: on

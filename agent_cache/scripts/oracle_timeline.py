@@ -3,9 +3,11 @@
   python3 oracle_timeline.py --run results/<boot dir> [--client client_<...>] --start 7200 [--seconds 120]
                              [--lanes 40] [--out <png>] [--csv <csv>]
 
-The clock is seconds since the client started (timeline.py's). Top panel: one row per hinted turn with something in the
-window, labeled user (conversation) and turn; --lanes rows are spread evenly over the window by admission time.
-Each row has three lines:
+The clock is seconds since the client started (timeline.py's). Top panel: one row per conversation with a hinted turn in
+the window; its turns are drawn left to right on that row, each labeled t<turn> above its admission (or arrival), and a
+dark segment from a turn's admission to the next turn's plan tick marks the turn running (prefill + decode); --lanes
+conversations are spread evenly over the window by their first admission in it.
+Each turn has three lines:
   request  the previous turn ended (the plan is registered), think time, the predicted arrival (hollow diamond) and
            the arrival (triangle), the wait in the scheduler queue (gray band), the predicted admission at the trigger
            (hollow circle) and the admission (dot);
@@ -13,7 +15,7 @@ Each row has three lines:
   read     each SSD read for the turn, waiting in the FIFO read queue (thin) then in I/O (thick); a read the
            `timeout` policy cut while it was still queued (the read thread then skips it: s2h_io ms=0) ends at the
            cut with a cross and leaves the queue there.
-Rows run off the window's edges where the turn started earlier or ends later.
+Rows run off the window's edges where a turn started earlier or ends later.
 Panels below: pages waiting in the SSD read queue (rebuilt from the completed reads; dots are the read backlog the
 oracle saw at each trigger in the window), the SSD read rate (s2h_io, 1-s bins), requests waiting for admission.
 Colors: blue = staged before arrival (case 1), orange = re-fetched while queued (case 2), aqua = the request's own
@@ -36,7 +38,7 @@ from matplotlib.lines import Line2D  # noqa: E402
 
 from timeline import AQUA, BLUE, INK, MUTED, ORANGE, TS_RE, parse_ts, style  # noqa: E402
 
-SURF, BAND, THINK = "#fcfcfb", "#d9d8d2", "#b9b8b1"
+SURF, BAND, THINK, RUN = "#fcfcfb", "#d9d8d2", "#b9b8b1", "#52514e"
 SOURCE_COLOR = {"staged": BLUE, "refetch": ORANGE, "own": AQUA}
 SOURCE_LABEL = {"staged": "staged before arrival (case 1)", "refetch": "re-fetched while queued (case 2)",
                 "own": "own lookup or #39283 re-query"}
@@ -137,7 +139,8 @@ def plans_in_window(data: dict, w0: float, w1: float) -> list:
         if t_plan > w1 or max([end] + [x["io_end"] for x in reads]) < w0:
             continue
         sess, turn = rid.rsplit("-t", 1)
-        r = dict(rid=rid, label=f"{sess.rsplit('-', 1)[-1]} t{turn}", t_plan=t_plan, pred_arr=pred_arr,
+        r = dict(rid=rid, label=f"{sess.rsplit('-', 1)[-1]} t{turn}", conv=sess.rsplit("-", 1)[-1], turn=int(turn),
+                 next_rid=f"{sess}-t{int(turn) + 1}", t_plan=t_plan, pred_arr=pred_arr,
                  t_arr=t_arr, t_adm=t_adm, t_exp=t_exp,
                  t_due=t_due, case=int(due.get("case", 0)) if due else 0, reads=reads)
         if t_due is not None:
@@ -151,21 +154,29 @@ def plans_in_window(data: dict, w0: float, w1: float) -> list:
     return rows
 
 
-def select_rows(rows: list, w0: float, w1: float, lanes: int) -> list:
-    """Up to `lanes` rows spread evenly over the window by admission time; turns not admitted in it fill the rest."""
+def select_lanes(rows: list, w0: float, w1: float, lanes: int) -> list:
+    """Up to `lanes` conversations, each with every turn of its that has something in the window, spread evenly over the
+    window by the conversation's first admission in it; conversations with no admission in the window fill the rest."""
     in_win = lambda t: t is not None and w0 <= t <= w1
-    admitted = sorted((r for r in rows if in_win(r["t_adm"])), key=lambda r: r["t_adm"])
-    others = sorted((r for r in rows if not in_win(r["t_adm"])),
-                    key=lambda r: min([t for t in (r["t_due"], r["t_arr"]) if in_win(t)] + [w1]))
-    if lanes <= 0 or len(rows) <= lanes:
+    by_conv = collections.defaultdict(list)
+    for r in rows:
+        by_conv[r["conv"]].append(r)
+    convs = []
+    for conv, turns in by_conv.items():
+        turns.sort(key=lambda r: (r["t_plan"], r["turn"]))
+        adm = [r["t_adm"] for r in turns if in_win(r["t_adm"])]
+        first = min([t for r in turns for t in (r["t_due"], r["t_arr"]) if in_win(t)] + [w1])
+        convs.append(dict(conv=conv, turns=turns, first_adm=min(adm) if adm else None, first=first))
+    admitted = sorted((c for c in convs if c["first_adm"] is not None), key=lambda c: c["first_adm"])
+    others = sorted((c for c in convs if c["first_adm"] is None), key=lambda c: c["first"])
+    if lanes <= 0 or len(convs) <= lanes:
         chosen = admitted + others
     elif len(admitted) >= lanes:
         step = (len(admitted) - 1) / max(lanes - 1, 1)
         chosen = [admitted[round(i * step)] for i in range(lanes)]
     else:
         chosen = admitted + others[:lanes - len(admitted)]
-    return sorted(chosen, key=lambda r: (r["t_adm"] if in_win(r["t_adm"]) else float("inf"),
-                                         r["t_arr"] if r["t_arr"] is not None else float("inf")))
+    return sorted(chosen, key=lambda c: (c["first_adm"] if c["first_adm"] is not None else float("inf"), c["first"]))
 
 
 def queue_series(data: dict, w0: float, w1: float):
@@ -213,6 +224,7 @@ def legend_keys() -> list:
            Line2D([], [], color=MUTED, marker="D", markerfacecolor="none", linestyle="", label="predicted arrival"),
            Line2D([], [], color=INK, marker="^", linestyle="", label="arrival"),
            Line2D([], [], color=BAND, linewidth=6, label="waiting in the scheduler queue"),
+           Line2D([], [], color=RUN, linewidth=2, label="running: admission -> turn ended (next plan registered)"),
            Line2D([], [], color=MUTED, marker="o", markerfacecolor="none", linestyle="",
                   label="predicted admission, at the trigger"),
            Line2D([], [], color=INK, marker="o", linestyle="", label="admission"),
@@ -226,6 +238,39 @@ def legend_keys() -> list:
     return key
 
 
+def draw_turn(a_lane, r: dict, y: float, w0: float, w1: float, clip, inside) -> None:
+    """One turn's three lines on the lane at y: request (y + 0.27), plan (y), reads (y - 0.27)."""
+    y_req, y_plan, y_read = y + 0.27, y, y - 0.27
+    t_arr_or_end = r["t_arr"] if r["t_arr"] is not None else w1
+    if inside(r["t_plan"], t_arr_or_end):
+        a_lane.plot([clip(r["t_plan"]), clip(t_arr_or_end)], [y_req] * 2, color=THINK, linewidth=1, zorder=1)
+    if r["t_arr"] is not None and inside(r["t_arr"], r["t_adm"] if r["t_adm"] is not None else w1):
+        a_lane.plot([clip(r["t_arr"]), clip(r["t_adm"] if r["t_adm"] is not None else w1)], [y_req] * 2,
+                    color=BAND, linewidth=5, solid_capstyle="butt", zorder=2)
+    for t, mk, face in ((r["t_plan"], "|", INK), (r["pred_arr"], "D", "none"), (r["t_arr"], "^", INK),
+                        (r.get("pred_adm"), "o", "none"), (r["t_adm"], "o", INK)):
+        if t is not None and w0 <= t <= w1:
+            a_lane.plot(t, y_req, marker=mk, markersize=8 if mk == "|" else 6, markerfacecolor=face,
+                        markeredgecolor=INK if face != "none" else MUTED, markeredgewidth=1.2, linestyle="", zorder=5)
+    if "trigger" in r:
+        col = SOURCE_COLOR["staged" if r["case"] == 1 else "refetch"]
+        if inside(r["trigger"], r["pred_adm"]):
+            a_lane.plot([clip(r["trigger"]), clip(r["pred_adm"])], [y_plan] * 2, color=col, linewidth=1, alpha=0.6,
+                        zorder=2)
+        if w0 <= r["t_due"] <= w1:
+            a_lane.plot(r["t_due"], y_plan, marker="|", markersize=9, color=col, markeredgewidth=2, zorder=4)
+    for x in r["reads"]:
+        col = SOURCE_COLOR[x["src"]]
+        if inside(x["enq"], x["io_start"]):
+            a_lane.plot([clip(x["enq"]), clip(x["io_start"])], [y_read] * 2, color=col, linewidth=1.4, zorder=3)
+        if x["cut"] is not None:
+            if w0 <= x["cut"] <= w1:
+                a_lane.plot(x["cut"], y_read, marker="x", markersize=6, color=col, markeredgewidth=1.6, zorder=4)
+        elif inside(x["io_start"], x["io_end"]):
+            a_lane.plot([clip(x["io_start"]), clip(x["io_end"])], [y_read] * 2, color=col, linewidth=5,
+                        solid_capstyle="butt", zorder=4)
+
+
 def draw(shown: list, all_rows: list, data: dict, w0: float, w1: float, title: str, out_png: str) -> None:
     n = len(shown)
     lane_h = max(3.0, 0.32 * n)
@@ -236,45 +281,25 @@ def draw(shown: list, all_rows: list, data: dict, w0: float, w1: float, title: s
     a_lane, a_queue, a_rate, a_sched = axes
     clip = lambda t: min(max(t, w0), w1)
     inside = lambda a, b: b > w0 and a < w1
-    for i, r in enumerate(shown):
+    for i, c in enumerate(shown):
         y = n - 1 - i
-        y_req, y_plan, y_read = y + 0.27, y, y - 0.27
-        t_arr_or_end = r["t_arr"] if r["t_arr"] is not None else w1
-        if inside(r["t_plan"], t_arr_or_end):
-            a_lane.plot([clip(r["t_plan"]), clip(t_arr_or_end)], [y_req] * 2, color=THINK, linewidth=1, zorder=1)
-        if r["t_arr"] is not None and inside(r["t_arr"], r["t_adm"] if r["t_adm"] is not None else w1):
-            a_lane.plot([clip(r["t_arr"]), clip(r["t_adm"] if r["t_adm"] is not None else w1)], [y_req] * 2,
-                        color=BAND, linewidth=5, solid_capstyle="butt", zorder=2)
-        for t, mk, face in ((r["t_plan"], "|", INK), (r["pred_arr"], "D", "none"), (r["t_arr"], "^", INK),
-                            (r.get("pred_adm"), "o", "none"), (r["t_adm"], "o", INK)):
-            if t is not None and w0 <= t <= w1:
-                a_lane.plot(t, y_req, marker=mk, markersize=8 if mk == "|" else 6, markerfacecolor=face,
-                            markeredgecolor=INK if face != "none" else MUTED, markeredgewidth=1.2, linestyle="",
-                            zorder=5)
-        if "trigger" in r:
-            col = SOURCE_COLOR["staged" if r["case"] == 1 else "refetch"]
-            if inside(r["trigger"], r["pred_adm"]):
-                a_lane.plot([clip(r["trigger"]), clip(r["pred_adm"])], [y_plan] * 2, color=col, linewidth=1,
-                            alpha=0.6, zorder=2)
-            if w0 <= r["t_due"] <= w1:
-                a_lane.plot(r["t_due"], y_plan, marker="|", markersize=9, color=col, markeredgewidth=2, zorder=4)
-        for x in r["reads"]:
-            col = SOURCE_COLOR[x["src"]]
-            if inside(x["enq"], x["io_start"]):
-                a_lane.plot([clip(x["enq"]), clip(x["io_start"])], [y_read] * 2, color=col, linewidth=1.4, zorder=3)
-            if x["cut"] is not None:
-                if w0 <= x["cut"] <= w1:
-                    a_lane.plot(x["cut"], y_read, marker="x", markersize=6, color=col, markeredgewidth=1.6, zorder=4)
-            elif inside(x["io_start"], x["io_end"]):
-                a_lane.plot([clip(x["io_start"]), clip(x["io_end"])], [y_read] * 2, color=col, linewidth=5,
-                            solid_capstyle="butt", zorder=4)
+        turns = c["turns"]
+        for k, r in enumerate(turns):
+            draw_turn(a_lane, r, y, w0, w1, clip, inside)
+            # the turn running (prefill + decode): its admission -> the next turn's plan tick, which is its end
+            nxt = turns[k + 1]["t_plan"] if k + 1 < len(turns) else first(data["ev"].get(r["next_rid"], {}), "ntp_plan")[0]
+            if r["t_adm"] is not None and nxt is not None and inside(r["t_adm"], nxt):
+                a_lane.plot([clip(r["t_adm"]), clip(nxt)], [y + 0.27] * 2, color=RUN, linewidth=2, zorder=3)
+            at = next((t for t in (r["t_adm"], r["t_arr"], r["t_due"], r["t_plan"]) if t is not None and w0 <= t <= w1), None)
+            if at is not None:
+                a_lane.text(at, y + 0.42, f"t{r['turn']}", ha="center", va="bottom", fontsize=6, color=MUTED, clip_on=True)
     a_lane.set_yticks(range(n))
-    a_lane.set_yticklabels([r["label"] for r in reversed(shown)], fontsize=7)
-    a_lane.set_ylim(-0.6, n - 0.4)
+    a_lane.set_yticklabels([c["conv"] for c in reversed(shown)], fontsize=7)
+    a_lane.set_ylim(-0.6, n - 0.25)
     style(a_lane)
     left = a_lane.get_position().x0
     fig.text(left, 1 - 0.12 / fig_h, title, ha="left", va="top", fontsize=10, color=INK)
-    fig.legend(handles=legend_keys(), loc="upper left", bbox_to_anchor=(left, 1 - 0.38 / fig_h), ncol=4,
+    fig.legend(handles=legend_keys(), loc="upper left", bbox_to_anchor=(left, 1 - 0.38 / fig_h), ncol=5,
                fontsize=7.5, frameon=False, borderaxespad=0)
 
     t_s, waiting = queue_series(data, w0, w1)
@@ -325,7 +350,7 @@ def main() -> None:
     ap.add_argument("--client", default=None, help="client dir inside --run (default: the last client_* dir)")
     ap.add_argument("--start", type=float, required=True, help="window start, seconds since the client started")
     ap.add_argument("--seconds", type=float, default=120.0, help="window length (default 120)")
-    ap.add_argument("--lanes", type=int, default=40, help="rows to draw, spread over the window (0: all)")
+    ap.add_argument("--lanes", type=int, default=40, help="conversations to draw, spread over the window (0: all)")
     ap.add_argument("--out", default=None, help="png path (default: oracle_timeline_<start>_<seconds>.png in --run)")
     ap.add_argument("--csv", default=None, help="also write the drawn rows' events as CSV")
     a = ap.parse_args()
@@ -333,19 +358,20 @@ def main() -> None:
     w0, w1 = a.start, a.start + a.seconds
     data = load(a.run, client, w0, w1)
     rows = plans_in_window(data, w0, w1)
-    shown = select_rows(rows, w0, w1, a.lanes)
+    shown = select_lanes(rows, w0, w1, a.lanes)
     admitted = [r for r in rows if r["t_adm"] is not None and w0 <= r["t_adm"] <= w1]
     with_read = [r for r in admitted if r["read_before_adm"]]
     utc = lambda t: dt.datetime.fromtimestamp(data["t_start"] + t, tz=dt.timezone.utc).strftime("%H:%M:%S")
     title = (f"{os.path.basename(os.path.normpath(a.run))}: {w0:.0f}-{w1:.0f} s after the client started "
              f"({utc(w0)}-{utc(w1)} UTC). {len(admitted)} hinted turns admitted in the window, {len(with_read)} after an "
              f"SSD read, {sum(r['late'] for r in with_read)} of those within {LATE_S * 1000:.0f} ms of its end (late); "
-             f"{len(shown)} rows drawn")
+             f"{len(shown)} conversations drawn ({sum(len(c['turns']) for c in shown)} turns)")
     out = a.out or os.path.join(a.run, f"oracle_timeline_{w0:.0f}_{a.seconds:.0f}.png")
     draw(shown, rows, data, w0, w1, title, out)
     if a.csv:
-        write_csv(shown, a.csv)
-    print(f"wrote {out}" + (f" and {a.csv}" if a.csv else "") + f"; {len(shown)} of {len(rows)} turns drawn")
+        write_csv([r for c in shown for r in c["turns"]], a.csv)
+    print(f"wrote {out}" + (f" and {a.csv}" if a.csv else "")
+          + f"; {len(shown)} conversations, {sum(len(c['turns']) for c in shown)} of {len(rows)} turns drawn")
 
 
 if __name__ == "__main__":

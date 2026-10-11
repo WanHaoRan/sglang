@@ -390,6 +390,22 @@ def handle_cache_compatibility(server_args: Any) -> None:
                 "ever TEL-safe and T-LRU is exactly LRU."
             )
 
+    if cfg.radix_eviction_policy == "next_use":
+        if cfg.hicache_storage_next_turn_prefetch == "off":
+            raise ValueError(
+                "--radix-eviction-policy next_use orders eviction by the hinted next "
+                "arrival, which only --hicache-storage-next-turn-prefetch observe|on "
+                "provides."
+            )
+        config = cfg.radix_eviction_policy_config or {}
+        for key, default in (("horizon_s", 300.0), ("overdue_grace_s", 60.0)):
+            value = config.get(key, default)
+            if not isinstance(value, (int, float)) or value < 0:
+                raise ValueError(
+                    f"--radix-eviction-policy next_use needs a non-negative {key!r} "
+                    f"in --radix-eviction-policy-config, got {value!r}."
+                )
+
     if cfg.enable_hierarchical_cache and cfg.disable_radix_cache:
         raise ValueError(
             "The arguments enable-hierarchical-cache and disable-radix-cache are mutually exclusive "

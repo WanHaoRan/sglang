@@ -56,6 +56,7 @@ from sglang.srt.mem_cache.evict_policy import (
     SLRUStrategy,
     TLRUStrategy,
 )
+from sglang.srt.mem_cache.next_use_eviction import NextUseStrategy
 
 _EVICTION_POLICY_FACTORIES: dict[str, Callable[..., EvictionStrategy]] = {
     "lru": LRUStrategy,
@@ -66,6 +67,7 @@ _EVICTION_POLICY_FACTORIES: dict[str, Callable[..., EvictionStrategy]] = {
     "priority": PriorityStrategy,
     "slru": SLRUStrategy,
     "tlru": TLRUStrategy,
+    "next_use": NextUseStrategy,
 }
 
 

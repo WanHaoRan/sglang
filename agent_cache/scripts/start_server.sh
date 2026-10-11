@@ -14,6 +14,10 @@
 #          _norq variants (re-query off, as three_tier_wc_norq). They need an engine with the prefetcher (step 5 on).
 #          three_tier_to_ntpobs / three_tier_to_oracle (+ _norq): the same on three_tier_to (`timeout` policy; plan decision 3:
 #          a staged or re-fetched read's timeout budget runs from the read's start, so admission can cut it).
+#          three_tier_wc_dl | three_tier_wc_oracle_v2 | three_tier_wc_oracle_v2_nu | three_tier_wc_wb: the Oracle v2 arms of
+#          agent_cache/ORACLE_V2_PLAN.md section 5 (dl: deadline read order + pinned staging, oracle off; oracle_v2: + the
+#          next-turn prefetcher on; oracle_v2_nu: + next-use eviction; wb: write_back instead of write_through, v2 levers off).
+#          Retry flags pinned to 8 / 8; the client needs ORACLE_HINTS=1 on every arm; the engine needs storage_read_scheduler.py.
 #   LEVEL  P0 (default: L1 262144 tok, host 64 GB) | PH (131072 / 48) | PL (131072 / 18)          (RUNBOOK 5.3)
 #          NAT64 / NAT160: NO --max-total-tokens (the profiled device pool), host 64 / 160 GB   (campaigns 6-7, "natural")
 #   Overrides (env): L1_TOKENS=<tokens> and/or HOST_GB=<GB> replace the level's pools; the run dir is then named custom_L1<tokens>_H<GB>.
@@ -94,6 +98,23 @@ HOST=(
 L3_TO=(--hicache-storage-backend nixl --hicache-storage-prefetch-policy timeout       --hicache-storage-backend-extra-config "@$RUN/l3_extra.json")
 L3_WC=(--hicache-storage-backend nixl --hicache-storage-prefetch-policy wait_complete --hicache-storage-backend-extra-config "@$RUN/l3_extra.json")
 L3ENV=(SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR=/mnt/ssd/hicache_l3 SGLANG_HICACHE_NIXL_BACKEND_PLUGIN=POSIX)
+# Oracle v2 levers (ORACLE_V2_PLAN.md 4.1): storage hits park without host memory and are dispatched by deadline into a
+# 512-page read window; a landed span stays pinned until its request admits, up to 30 % of the host pool
+V2=(--hicache-storage-read-order deadline --hicache-storage-read-window-pages 512 --hicache-storage-prefetch-pin-fraction 0.3)
+# next-use eviction (ORACLE_V2_PLAN.md 4.5): ended sessions first, then sessions returning after 300 s, then LRU
+NU=(--radix-eviction-policy next_use --radix-eviction-policy-config '{"horizon_s": 300}')
+HOST_WB=(
+  # L2 mirror ablation (ORACLE_V2_PLAN.md 1.4): write_back copies a device page to the host only when it is evicted
+  --enable-hierarchical-cache --hicache-size "$HSIZE"
+  --hicache-write-policy write_back --hicache-io-backend kernel --hicache-mem-layout page_first
+)
+# COMMON without "--radix-eviction-policy lru": the _nu arm passes its own policy, so the resolved line is unambiguous
+COMMON_NU=(); skip=0
+for a in "${COMMON[@]}"; do
+  if [ "$skip" = 1 ]; then skip=0; continue; fi
+  if [ "$a" = --radix-eviction-policy ]; then skip=1; continue; fi
+  COMMON_NU+=("$a")
+done
 
 l3_prep() {
   [ "$(findmnt -n -o SOURCE -T /mnt/ssd/hicache_l3 2>/dev/null)" = /dev/vdc ] \
@@ -124,8 +145,21 @@ case "$ARM" in
       *)      RQ=(--hicache-storage-prefetch-retry-poll-interval 8 --hicache-storage-prefetch-retry-max-attempts 8) ;;
     esac
     ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3[@]}" "${RQ[@]}" --hicache-storage-next-turn-prefetch "$NTP"); ENVV=("${L3ENV[@]}") ;;
+  three_tier_wc_dl|three_tier_wc_oracle_v2|three_tier_wc_oracle_v2_nu|three_tier_wc_wb)
+    l3_prep; POLICY=wait_complete
+    RQ=(--hicache-storage-prefetch-retry-poll-interval 8 --hicache-storage-prefetch-retry-max-attempts 8)
+    case "$ARM" in
+      three_tier_wc_wb)           ARGS=("${COMMON[@]}" "${HOST_WB[@]}" "${L3_WC[@]}" "${RQ[@]}") ;;
+      three_tier_wc_dl)           ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_WC[@]}" "${RQ[@]}" "${V2[@]}") ;;
+      three_tier_wc_oracle_v2)    NTP=on
+                                  ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_WC[@]}" "${RQ[@]}" "${V2[@]}" --hicache-storage-next-turn-prefetch on) ;;
+      three_tier_wc_oracle_v2_nu) NTP=on
+                                  ARGS=("${COMMON_NU[@]}" "${HOST[@]}" "${L3_WC[@]}" "${RQ[@]}" "${V2[@]}" "${NU[@]}" --hicache-storage-next-turn-prefetch on) ;;
+    esac
+    ENVV=("${L3ENV[@]}") ;;
   *) echo "STOP: unknown ARM '$ARM' (hbm_lru | hbm_host | three_tier_to | three_tier_wc | three_tier_wc_norq |" \
-          "three_tier_{wc,to}_ntpobs | three_tier_{wc,to}_oracle | three_tier_{wc,to}_ntpobs_norq | three_tier_{wc,to}_oracle_norq)"; exit 1 ;;
+          "three_tier_{wc,to}_ntpobs | three_tier_{wc,to}_oracle | three_tier_{wc,to}_ntpobs_norq | three_tier_{wc,to}_oracle_norq |" \
+          "three_tier_wc_dl | three_tier_wc_oracle_v2 | three_tier_wc_oracle_v2_nu | three_tier_wc_wb)"; exit 1 ;;
 esac
 
 echo "arm: $ARM  level: $LEVEL (L1=${L1:-natural} tokens, host=$HSIZE GB)  model: $MODEL  ctx: $CTX  run dir: $RUN"
@@ -139,6 +173,12 @@ if [ "$NTP" != off ] && [ ! -f "$ENGINE/srt/mem_cache/next_turn_prefetch.py" ]; 
   echo "STOP: $ARM needs the next-turn prefetcher, which $ENGINE lacks (unset ENGINE_PYTHONPATH or freeze a newer copy)"
   rm -rf -- "$RUN"; exit 1
 fi
+case "$ARM" in three_tier_wc_dl|three_tier_wc_oracle_v2*)
+  if [ ! -f "$ENGINE/srt/mem_cache/storage_read_scheduler.py" ]; then
+    echo "STOP: $ARM needs the storage read scheduler (ORACLE_V2_PLAN.md 4.2), which $ENGINE lacks (unset ENGINE_PYTHONPATH or freeze a newer copy)"
+    rm -rf -- "$RUN"; exit 1
+  fi ;;
+esac
 # setsid + nohup: the server survives the end of this docker exec session; SGLANG_LOG_MS=1 -> millisecond log timestamps
 env SGLANG_LOG_MS=1 "${ENVV[@]}" setsid nohup python3 -m sglang.launch_server "${ARGS[@]}" > "$RUN/server.log" 2>&1 < /dev/null &
 echo $! > "$RUN/server.pid"
@@ -173,5 +213,10 @@ case "$ARM" in three_tier_*)
   echo "L3 cleaner dir:   $(grep -aoE "HiCacheL3Cleaner started: dirs=\[[^]]*\]" "$RUN/server.log" | head -1)   (want /mnt/ssd/hicache_l3)"
   echo "L3 cleaner marks: $(grep -aoE 'high=[0-9.]+% low=[0-9.]+%' "$RUN/server.log" | head -1)   (want ${L3_CLEANER_PCT:-80,70})"
   echo "re-query cap:     $(grep -aoE "'hicache_storage_prefetch_retry_max_attempts': [0-9]+" "$RUN/server.log" | head -1)   (want $(case "$ARM" in *_norq) echo 0 ;; *) echo 8 ;; esac))"
-  echo "next-turn mode:   $(grep -aoE "'hicache_storage_next_turn_prefetch': '[a-z]+'" "$RUN/server.log" | head -1), prefetcher banner $(grep -ac 'HiCache next-turn prefetch: mode=' "$RUN/server.log")   (want $NTP, banner $([ "$NTP" = off ] && echo 0 || echo 1))" ;;
+  echo "next-turn mode:   $(grep -aoE "'hicache_storage_next_turn_prefetch': '[a-z]+'" "$RUN/server.log" | head -1), prefetcher banner $(grep -ac 'HiCache next-turn prefetch: mode=' "$RUN/server.log")   (want $NTP, banner $([ "$NTP" = off ] && echo 0 || echo 1))"
+  case "$ARM" in three_tier_wc_dl|three_tier_wc_oracle_v2*|three_tier_wc_wb)
+    echo "read order:       $(grep -aoE "'hicache_storage_read_order': '[a-z]+'" "$RUN/server.log" | head -1), $(grep -aoE "'hicache_storage_prefetch_pin_fraction': [0-9.]+" "$RUN/server.log" | head -1), srs banner $(grep -ac 'HiCache storage reads: order=deadline' "$RUN/server.log")   (want $(case "$ARM" in three_tier_wc_wb) echo "fifo, pin 0.0, banner 0" ;; *) echo "deadline, pin 0.3, banner 1" ;; esac))"
+    echo "write policy:     $(grep -aoE "'hicache_write_policy': '[a-z_]+'" "$RUN/server.log" | head -1)   (want $(case "$ARM" in three_tier_wc_wb) echo write_back ;; *) echo write_through ;; esac))"
+    echo "eviction policy:  $(grep -aoE "'radix_eviction_policy': '[a-z_]+'" "$RUN/server.log" | head -1)   (want $(case "$ARM" in *_nu) echo next_use ;; *) echo lru ;; esac))" ;;
+  esac ;;
 esac

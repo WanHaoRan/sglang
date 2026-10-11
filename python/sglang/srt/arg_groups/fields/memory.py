@@ -32,7 +32,14 @@ class Memory(msgspec.Struct):
                 "lower-priority requests first, and 'tlru' stands for "
                 "Tail-Optimized LRU (arXiv:2510.15152), which evicts the part of "
                 "a conversation that cannot affect tail TTFT before falling back "
-                "to LRU. See "
+                "to LRU. 'next_use' evicts by the next arrival the next-turn "
+                "prefetcher registered: ended sessions first, then sessions "
+                "whose turn is overdue by more than overdue_grace_s (default "
+                "60), then sessions returning after horizon_s (default 300; "
+                "both in --radix-eviction-policy-config), then un-hinted nodes "
+                "by LRU, and last the sessions returning soonest; it needs "
+                "--hicache-storage-next-turn-prefetch observe|on and degrades to "
+                "finished-first LRU on un-hinted traffic. See "
                 "https://docs.sglang.io/docs/advanced_features/radix_eviction_policy "
                 "for what each policy optimizes for."
             ),
@@ -231,6 +238,37 @@ class Memory(msgspec.Struct):
             choices=["off", "observe", "on"],
         ),
     ] = "off"
+    hicache_storage_read_order: A[
+        str,
+        Arg(
+            help=(
+                "Order of storage (L3) reads on the single read thread. 'fifo': a hit "
+                "allocates its host pages at once and queues in arrival order. "
+                "'deadline': hits park without host memory and are dispatched by "
+                "deadline: a next-turn prefetch before its turn arrives is due at the "
+                "predicted admission, a queued turn the prefetcher knows is due at "
+                "its position's residual wait, and anything else (no prefetcher, a "
+                "head-of-queue request) is 'now' and bypasses the limits. Host pages "
+                "are allocated at dispatch and at most "
+                "--hicache-storage-read-window-pages are in flight. Experimental; "
+                "needs --hicache-host-memory-mode cache, a storage backend and "
+                "TP = PP = 1."
+            ),
+            choices=["fifo", "deadline"],
+        ),
+    ] = "fifo"
+    hicache_storage_read_window_pages: A[
+        int,
+        "Pages the storage read thread may hold in flight under --hicache-storage-read-order deadline.",
+    ] = 512
+    hicache_storage_prefetch_pin_fraction: A[
+        float,
+        (
+            "Share of the host pool that storage-prefetched spans may hold locked "
+            "until their request is admitted, aborted or expired (0 = no pin, at "
+            "most 0.5: the prefetch cap). Needs --hicache-storage-read-order deadline."
+        ),
+    ] = 0.0
 
     # -------------------------------------------------------------------------
     # Hierarchical sparse attention

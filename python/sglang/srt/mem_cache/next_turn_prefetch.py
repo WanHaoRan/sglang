@@ -10,6 +10,13 @@ HICACHE_EVT ntp_* lines and changes nothing; mode on also acts on them. Case 1,
 before the turn arrives, stages the read under the next request's own handle;
 case 2, while it waits in the queue, has the Scheduler re-issue its prefetch.
 
+Under --hicache-storage-read-order deadline (agent_cache/ORACLE_V2_PLAN.md 4.4)
+the prefetcher stops timing reads: it issues a plan's lookup as soon as the span
+is missing and the predicted admission is within NTP_LEAD_HORIZON_S, labels the
+parked read with its predicted admission through read_deadline(), and the cache's
+read scheduler decides the dispatch order. With --radix-eviction-policy next_use it
+also registers each committed turn's tail node with the predicted next admission.
+
 The decisions use this rank's wall clock, so create() refuses multi-rank setups.
 """
 
@@ -22,6 +29,7 @@ import math
 from typing import TYPE_CHECKING, Annotated, Optional
 
 import msgspec
+import msgspec.structs
 
 from sglang.srt.mem_cache.base_prefix_cache import (
     CacheRequestHandle,
@@ -38,6 +46,7 @@ from sglang.srt.mem_cache.next_turn_estimators import (
     trigger_time,
     wait_at_arrival,
 )
+from sglang.srt.mem_cache.next_use_eviction import NextUseStrategy
 from sglang.srt.mem_cache.radix_cache import RadixKey
 
 if TYPE_CHECKING:
@@ -62,6 +71,12 @@ TRIGGER_MARGIN_S = 0.0
 # Reads per queued request: under heavy eviction a refetch for one request can
 # evict the next one's pages, so re-evicted pages are fetched again only once.
 MAX_REFETCHES = 2
+# Deadline read order: a lookup is issued at most this long before the predicted
+# admission, and at most this many parked reads may wait for dispatch.
+# 120 s is about three drains of the prefetch cap (42 s at 302 pages/s, measured
+# in campaign 15); 256 is arbitrary, it bounds the anchor locks parked lookups hold.
+NTP_LEAD_HORIZON_S = 120.0
+NTP_MAX_PARKED = 256
 
 
 class NextTurnHint(msgspec.Struct, frozen=True):
@@ -171,6 +186,18 @@ class NextTurnPrefetcher:
         # Admission tick by rid, oldest first: a retracted request re-enters the
         # queue and leaves it again, but counts once.
         self._admitted: dict[str, float] = {}
+        # Deadline read order: the cache parks hits and asks read_deadline().
+        self._deadline_mode = tree_cache.read_scheduler is not None
+        self._last_now = -math.inf
+        self._last_rate: Optional[Rate] = None
+        self._positions: dict[str, int] = {}
+        if self._deadline_mode:
+            tree_cache.read_deadline_fn = self.read_deadline
+        # Next-use eviction: the strategy's registry, when that policy is on.
+        strategy = tree_cache.tree_core.eviction_strategy
+        self._next_use = strategy.registry if isinstance(strategy, NextUseStrategy) else None
+        self._session_tail: dict[str, int] = {}
+        self._rid_session: dict[str, str] = {}
 
     @classmethod
     def create(
@@ -216,23 +243,50 @@ class NextTurnPrefetcher:
         return cls(mode=mode, tree_cache=tree_cache, page_size=page_size)
 
     def on_turn_committed(
-        self, *, req: Req, key: RadixKey, rotation_tail_declined: bool, now: float
+        self,
+        *,
+        req: Req,
+        key: RadixKey,
+        rotation_tail_declined: bool,
+        now: float,
+        tail_node_id: Optional[int] = None,
     ) -> None:
         """Called once a finished turn's KV is in the tree; keeps the key only."""
         from sglang.srt.managers.schedule_batch import FINISH_ABORT
 
+        if rotation_tail_declined or not req.finished():
+            return
+        # The session recorded for this rid by the previous turn's hint, if any.
+        session = self._rid_session.pop(req.rid, None)
         # A running request that is aborted also finishes through insertion.
-        if (
-            rotation_tail_declined
-            or len(key) == 0
-            or not req.finished()
-            or isinstance(req.finished_reason, FINISH_ABORT)
-        ):
+        if len(key) == 0 or isinstance(req.finished_reason, FINISH_ABORT):
+            self._end_session(rid=req.rid, session=session, now=now)
             return
         hint = read_next_turn_hint(req.kv_hints)
         if hint is None:
+            # The session ended (or the client sends no hints): evict it first.
+            self._register_next_use(
+                rid=req.rid,
+                session=session,
+                tail_node_id=tail_node_id,
+                next_use=None,
+                now=now,
+            )
+            if session is not None:
+                self._session_tail.pop(session, None)
             return
         predicted = self._offset.predict_arrival(t_commit=now, gap_s=hint.next_gap_s)
+        wait, _ = self._wait_after_arrival(
+            queue_len=len(self._queued), rate=self._last_rate
+        )
+        self._register_next_use(
+            rid=req.rid,
+            session=hint.session,
+            tail_node_id=tail_node_id,
+            next_use=predicted + (wait or 0.0),
+            now=now,
+        )
+        self._rid_session[hint.next_rid] = hint.session
         plan = TurnPlan(
             next_rid=hint.next_rid,
             session=hint.session,
@@ -262,10 +316,15 @@ class NextTurnPrefetcher:
             if rid not in queued:
                 self._on_departure(req, now=now)
         self._queued = queued
+        self._last_now = now
+        self._positions = {req.rid: position for position, req in enumerate(waiting_queue)}
+        if self._deadline_mode:
+            self._refresh_load_model()
         if not self._plans:
             return []
 
         rate = self._admissions.rate(now)
+        self._last_rate = rate
         backlog_pages = self._tree_cache.storage_read_backlog_pages()
         refetch = []
         for position, req in enumerate(waiting_queue):
@@ -322,6 +381,7 @@ class NextTurnPrefetcher:
         stats = req.time_stats
         if stats.forward_entry_time <= 0:
             if plan is not None:
+                self._end_session(rid=req.rid, session=plan.session, now=now)
                 _log_event(
                     "ntp_expire", req.rid, staged=int(plan.staged), reason="abort"
                 )
@@ -376,6 +436,13 @@ class NextTurnPrefetcher:
         offset = arrival - plan.t_commit - plan.gap_s
         self._offset.observe(offset)
         plan.arrival_t = arrival
+        self._register_next_use(
+            rid=plan.next_rid,
+            session=plan.session,
+            tail_node_id=self._session_tail.get(plan.session),
+            next_use=now,
+            now=now,
+        )
         plan.pred_wait_ql, plan.pred_wait_ewma = wait_at_arrival(
             queue_len=position, rate=rate, wait_ewma=self._admissions.wait_ewma
         )
@@ -410,7 +477,7 @@ class NextTurnPrefetcher:
         admission_at = now + wait
         baseline = max(len(plan.key), req.storage_prefetch_last_match_len or 0)
         # Not even a read of the whole key would need to start yet: skip the probe.
-        if now < trigger_time(
+        if not self._deadline_mode and now < trigger_time(
             admission_at=admission_at,
             load_s=self._load_seconds(baseline, backlog_pages),
             margin_s=TRIGGER_MARGIN_S,
@@ -422,9 +489,8 @@ class NextTurnPrefetcher:
         trigger_at = trigger_time(
             admission_at=admission_at, load_s=load_s, margin_s=TRIGGER_MARGIN_S
         )
-        if (
-            plan.missing_tokens < self._tree_cache.prefetch_threshold
-            or now < trigger_at
+        if plan.missing_tokens < self._tree_cache.prefetch_threshold or (
+            not self._deadline_mode and now < trigger_at
         ):
             return False
         if plan.due_case == 0:
@@ -553,6 +619,16 @@ class NextTurnPrefetcher:
         if wait is None:
             return recheck
         admission_at = plan.predicted_arrival + wait
+        if self._deadline_mode:
+            return self._check_pending_deadline(
+                plan,
+                admission_at=admission_at,
+                wait=wait,
+                est=est,
+                backlog_pages=backlog_pages,
+                now=now,
+                recheck=recheck,
+            )
         window = trigger_time(
             admission_at=admission_at,
             load_s=self._load_seconds(len(plan.key), backlog_pages),
@@ -591,6 +667,117 @@ class NextTurnPrefetcher:
             return now
         self._stage(plan)
         return recheck
+
+    def _check_pending_deadline(
+        self,
+        plan: TurnPlan,
+        *,
+        admission_at: float,
+        wait: float,
+        est: str,
+        backlog_pages: int,
+        now: float,
+        recheck: float,
+    ) -> float:
+        """Case 1 under the deadline order: issue the lookup within the lead
+        horizon; the cache's read scheduler orders the dispatch."""
+        if admission_at - now > NTP_LEAD_HORIZON_S:
+            return min(admission_at - NTP_LEAD_HORIZON_S, recheck)
+        if now - plan.last_probe_t >= PROBE_INTERVAL_S:
+            plan.missing_tokens = len(plan.key) - self._resident_tokens(plan, now=now)
+        enough = plan.missing_tokens >= self._tree_cache.prefetch_threshold
+        load_s = self._load_seconds(plan.missing_tokens, backlog_pages)
+        if plan.due_case == 0 and enough:
+            self._mark_due(
+                plan,
+                case=1,
+                backlog_pages=backlog_pages,
+                load_s=load_s,
+                wait_s=wait,
+                admission_at=admission_at,
+                trigger_at=now,
+                est=est,
+                now=now,
+            )
+        if self._mode != "on" or plan.staged or not enough:
+            return recheck
+        cache = self._tree_cache
+        if (
+            cache.read_scheduler.parked_count() >= NTP_MAX_PARKED
+            or cache.cache_controller.prefetch_rate_limited()
+        ):
+            # Declining in the cache would arm a paced retry for a rid that is
+            # not queued; wait here instead.
+            return min(now + PROBE_INTERVAL_S, recheck)
+        self._stage(plan)
+        return recheck
+
+    def read_deadline(self, handle: CacheRequestHandle) -> Optional[float]:
+        """Dispatch deadline of a parked read, for the cache; None = needed now."""
+        plan = self._plans.get(handle.rid)
+        if plan is None:
+            return None
+        now = self._last_now
+        if plan.arrival_t is None:
+            wait, _ = self._wait_after_arrival(
+                queue_len=len(self._queued), rate=self._last_rate
+            )
+            deadline = plan.predicted_arrival + (wait or 0.0)
+            return deadline if deadline > now else None
+        position = self._positions.get(handle.rid)
+        if position is None or position <= 1:
+            return None
+        wait = residual_wait(position=position, rate=self._last_rate)
+        return None if wait is None else now + wait
+
+    def _refresh_load_model(self) -> None:
+        """Replace the load model's per-page seeds with the read thread's EWMA."""
+        ms_per_page = self._tree_cache.cache_controller.storage_read_ms_per_page
+        if ms_per_page is None:
+            return
+        s_per_page = ms_per_page / 1000.0
+        if self._load.read_s_per_page == s_per_page:
+            return
+        self._load = msgspec.structs.replace(
+            self._load, read_s_per_page=s_per_page, backlog_s_per_page=s_per_page
+        )
+
+    def _end_session(self, *, rid: str, session: Optional[str], now: float) -> None:
+        """The session's next turn is not coming: its tail is evicted first."""
+        if session is None:
+            return
+        self._register_next_use(
+            rid=rid,
+            session=session,
+            tail_node_id=self._session_tail.get(session),
+            next_use=None,
+            now=now,
+        )
+        self._session_tail.pop(session, None)
+
+    def _register_next_use(
+        self,
+        *,
+        rid: str,
+        session: Optional[str],
+        tail_node_id: Optional[int],
+        next_use: Optional[float],
+        now: float,
+    ) -> None:
+        if self._next_use is None or tail_node_id is None:
+            return
+        if session is not None:
+            previous = self._session_tail.get(session)
+            if previous is not None and previous != tail_node_id:
+                self._next_use.forget(previous)
+            self._session_tail[session] = tail_node_id
+        self._next_use.register(tail_node_id, next_use)
+        _log_event(
+            "nue_register",
+            rid,
+            node=tail_node_id,
+            next_use_ms="ended" if next_use is None else _ms(next_use - now),
+        )
 
     def _stage(self, plan: TurnPlan) -> None:
         """Case 1: read the evicted span under the next request's own handle; if the
@@ -640,6 +827,8 @@ class NextTurnPrefetcher:
                 return now
             # Pops the loaded-span records and any paced retry left for the rid.
             self._tree_cache.finish(handle, CacheRequestOutcome.ABORT)
+        self._rid_session.pop(plan.next_rid, None)
+        self._end_session(rid=plan.next_rid, session=plan.session, now=now)
         _log_event(
             "ntp_expire", plan.next_rid, staged=int(plan.staged), reason="timeout"
         )

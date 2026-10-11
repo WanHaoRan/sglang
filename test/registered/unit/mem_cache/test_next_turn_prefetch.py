@@ -22,9 +22,19 @@ from sglang.srt.mem_cache.base_prefix_cache import (
     CacheRequestHandle,
     CacheRequestOutcome,
 )
-from sglang.srt.mem_cache.next_turn_estimators import ArrivalOffset, L3LoadModel
-from sglang.srt.mem_cache.next_turn_prefetch import NextTurnPrefetcher
+from sglang.srt.mem_cache.next_turn_estimators import (
+    ArrivalOffset,
+    L3LoadModel,
+    residual_wait,
+)
+from sglang.srt.mem_cache.next_turn_prefetch import (
+    NTP_LEAD_HORIZON_S,
+    NTP_MAX_PARKED,
+    NextTurnPrefetcher,
+)
+from sglang.srt.mem_cache.next_use_eviction import NextUseStrategy
 from sglang.srt.mem_cache.radix_cache import RadixKey
+from sglang.srt.mem_cache.storage_read_scheduler import StorageReadScheduler
 from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 
 LOGGER = "sglang.srt.mem_cache.next_turn_prefetch"
@@ -71,6 +81,9 @@ class ReadOnlyCache:
     """The only calls an observe-mode prefetcher may make; any other is an error."""
 
     prefetch_threshold = 256
+    # v1 wiring: no read scheduler (fifo order) and an eviction strategy without a next-use registry
+    read_scheduler = None
+    tree_core = SimpleNamespace(eviction_strategy=None)
 
     def __init__(self):
         self.resident = 0
@@ -104,7 +117,8 @@ class ActingCache(ReadOnlyCache):
         self.finished = []
         self.cancelled = []
         self.cache_controller = SimpleNamespace(
-            prefetch_rate_limited=lambda: self.rate_limited
+            prefetch_rate_limited=lambda: self.rate_limited,
+            storage_read_ms_per_page=None,
         )
         self.storage_prefetch_retries = SimpleNamespace(cancel=self.cancelled.append)
 
@@ -643,6 +657,152 @@ class TestCase2Refetch(PrefetcherTestCase):
         self.scheduler_pass(5.6, queue=[])
         self.req.time_stats.wait_queue_entry_time = 6.0
         self.assertEqual(self.scheduler_pass(6.7)[0], [])
+
+
+class DeadlineCache(ActingCache):
+    """ActingCache under the deadline read order: a real read scheduler and a
+    next-use registry on the eviction strategy (ORACLE_V2_PLAN.md 4.4, 4.5)."""
+
+    def __init__(self):
+        super().__init__()
+        self.read_scheduler = StorageReadScheduler(
+            window_pages=512, budget_tokens=10**9, page_size=PAGE
+        )
+        self.tree_core = SimpleNamespace(
+            eviction_strategy=NextUseStrategy(horizon_s=300.0, clock=lambda: 0.0)
+        )
+
+
+class TestDeadlineMode(PrefetcherTestCase):
+    mode = "on"
+
+    def make_cache(self):
+        return DeadlineCache()
+
+    def setUp(self):
+        super().setUp()
+        self.matched = self.cache.resident = self.cache.matched_tokens = 4 * PAGE
+        self.arrival = ArrivalOffset().predict_arrival(t_commit=0.0, gap_s=5.0)
+        self.handle = CacheRequestHandle(rid="s-t1", attempt_id=0)
+
+    def tick(self, now, queue=()):
+        return self.events(lambda: self.ntp.tick(waiting_queue=list(queue), now=now))
+
+    def commit_tail(self, rid, next_rid, *, now, tail_node_id, gap_s=5.0):
+        self.ntp.on_turn_committed(
+            req=make_req(rid, kv_hints=None if next_rid is None else hints(next_rid, gap_s)),
+            key=key_of(KEY_TOKENS),
+            rotation_tail_declined=False,
+            now=now,
+            tail_node_id=tail_node_id,
+        )
+
+    def registry(self):
+        return self.cache.tree_core.eviction_strategy.registry
+
+    def test_stages_as_soon_as_the_plan_is_within_the_lead_horizon(self):
+        """v1 waits for admission minus the load estimate; under the deadline
+        order the lookup is issued at once and the dispatcher times the read."""
+        self.commit("s-t0", "s-t1", now=0.0)
+        found = self.tick(0.01)
+        self.assertEqual([h for h, *_ in self.cache.prefetches], [self.handle])
+        (due,) = [f for kind, f in found if kind == "ntp_due"]
+        self.assertGreater(int(due["lead_ms"]), int(due["load_ms"]))
+        self.assertEqual(self.ntp.read_deadline(self.handle), self.arrival)
+
+    def test_plan_beyond_the_horizon_waits_for_it(self):
+        gap = NTP_LEAD_HORIZON_S + 100.0
+        self.commit("s-t0", "s-t1", now=0.0, gap_s=gap)
+        arrival = ArrivalOffset().predict_arrival(t_commit=0.0, gap_s=gap)
+        self.tick(arrival - NTP_LEAD_HORIZON_S - 1.0)
+        self.assertEqual(self.cache.prefetches, [])
+        self.tick(arrival - NTP_LEAD_HORIZON_S + 0.01)
+        self.assertEqual(len(self.cache.prefetches), 1)
+
+    def test_parked_cap_defers_the_lookup(self):
+        self.commit("s-t0", "s-t1", now=0.0)
+        for i in range(NTP_MAX_PARKED):
+            self.cache.read_scheduler.park(handle=i, operation=None, pages=1, now=0.0)
+        self.tick(0.01)
+        self.assertEqual(self.cache.prefetches, [])
+        self.cache.read_scheduler.clear()
+        # The plan is rechecked a probe interval later, not on the next tick.
+        self.tick(0.3)
+        self.assertEqual(self.cache.prefetches, [])
+        self.tick(0.6)
+        self.assertEqual(len(self.cache.prefetches), 1)
+
+    def test_deadline_after_arrival_follows_the_queue_position(self):
+        """Queued behind others with a measured rate: now plus the residual wait
+        at its position; at the head: needed now."""
+        self.commit("s-t0", "s-t1", now=0.0)
+        self.tick(0.01)
+        self.admit_through_queue([f"x{i}" for i in range(30)], now=1.0)
+        req = make_req("s-t1", entered=self.arrival)
+        others = [make_req(f"y{i}", entered=self.arrival) for i in range(5)]
+        self.tick(self.arrival, queue=others + [req])
+        rate = self.ntp._last_rate
+        self.assertIsNotNone(rate)
+        self.assertAlmostEqual(
+            self.ntp.read_deadline(self.handle),
+            self.arrival + residual_wait(position=5, rate=rate),
+        )
+        self.tick(self.arrival + 0.1, queue=[others[0], req])
+        self.assertIsNone(self.ntp.read_deadline(self.handle))  # position 1
+        self.assertIsNone(self.ntp.read_deadline(CacheRequestHandle("unknown", 0)))
+
+    def test_overdue_staged_plan_is_needed_now(self):
+        """Past its predicted admission a staged read has no deadline left."""
+        self.commit("s-t0", "s-t1", now=0.0)
+        self.tick(0.01)
+        self.assertEqual(self.ntp.read_deadline(self.handle), self.arrival)
+        self.tick(self.arrival + 1.0)
+        self.assertIsNone(self.ntp.read_deadline(self.handle))
+
+    def test_online_read_rate_replaces_the_load_model_seeds(self):
+        self.cache.cache_controller.storage_read_ms_per_page = 5.0
+        self.ntp.tick(waiting_queue=[], now=0.0)
+        self.assertEqual(
+            (self.ntp._load.read_s_per_page, self.ntp._load.backlog_s_per_page),
+            (0.005, 0.005),
+        )
+        self.cache.cache_controller.storage_read_ms_per_page = None
+        self.ntp.tick(waiting_queue=[], now=0.1)
+        self.assertEqual(self.ntp._load.read_s_per_page, 0.005)
+
+    def test_commit_registers_the_tail_and_forgets_the_sessions_previous_one(self):
+        self.commit_tail("s-t0", "s-t1", now=0.0, tail_node_id=7)
+        self.assertEqual(self.registry().lookup(7), (True, self.arrival))
+        self.commit_tail("s-t1", "s-t2", now=10.0, tail_node_id=9)
+        self.assertEqual(self.registry().lookup(7), (False, None))
+        self.assertTrue(self.registry().lookup(9)[0])
+        # The session ends: its tail is registered as ended, evicted first.
+        self.commit_tail("s-t2", None, now=20.0, tail_node_id=11)
+        self.assertEqual(self.registry().lookup(11), (True, None))
+        self.assertEqual(self.registry().lookup(9), (False, None))
+
+    def test_expired_or_aborted_plan_ends_the_sessions_registration(self):
+        """A tail left registered with a past next use would sit in the most
+        protected tier for ever; the dead session must become 'ended'."""
+        self.commit_tail("s-t0", "s-t1", now=0.0, tail_node_id=7)
+        self.ntp.tick(waiting_queue=[], now=self.arrival + 61.0)
+        self.assertEqual(self.registry().lookup(7), (True, None))
+        self.assertNotIn("s", self.ntp._session_tail)
+        # A queued turn aborted before admission ends it as well.
+        self.commit_tail("u-t0", "u-t1", now=100.0, tail_node_id=9)
+        req = make_req("u-t1", entered=100.0 + self.arrival)
+        req.__dict__["kv_hints"] = hints("u-t2", payload={"session": "u", "next_rid": "u-t2", "next_gap_s": 5.0})
+        self.ntp.tick(waiting_queue=[req], now=100.0 + self.arrival)
+        self.assertEqual(self.registry().lookup(9), (True, 100.0 + self.arrival))
+        self.ntp.tick(waiting_queue=[], now=101.0 + self.arrival)
+        self.assertEqual(self.registry().lookup(9), (True, None))
+
+    def test_arrival_marks_the_tail_as_in_use_now(self):
+        self.commit_tail("s-t0", "s-t1", now=0.0, tail_node_id=7)
+        self.tick(0.01)
+        req = make_req("s-t1", entered=self.arrival + 1.0)
+        self.tick(self.arrival + 1.0, queue=[req])
+        self.assertEqual(self.registry().lookup(7), (True, self.arrival + 1.0))
 
 
 if __name__ == "__main__":

@@ -53,6 +53,7 @@ def handle_hicache(server_args: Any):
         return
 
     validate_hicache_host_memory_mode(server_args)
+    validate_storage_read_order(server_args)
 
     if cfg.disaggregation_decode_host_receive_threshold > 0:
         # The shared host pool must match KV transfer's per-layer buffers.
@@ -201,6 +202,43 @@ def resolve_storage_layout_compatibility(server_args: Any):
         f"Mooncake/Ascend MemCache storage backend does not support layer_first layout, "
         f"switching to {new_layout} layout for {cfg.hicache_io_backend} io backend"
     )
+
+
+def validate_storage_read_order(server_args: Any):
+    cfg = resolving_view(server_args)
+    pin = cfg.hicache_storage_prefetch_pin_fraction
+    if not 0.0 <= pin <= 0.5:
+        # The prefetch cap is half the host pool; pins above it would gate
+        # every lookup on their own.
+        raise ValueError(
+            f"--hicache-storage-prefetch-pin-fraction must be in [0, 0.5], got {pin}."
+        )
+    if cfg.hicache_storage_read_window_pages < 1:
+        raise ValueError(
+            "--hicache-storage-read-window-pages must be at least 1, got "
+            f"{cfg.hicache_storage_read_window_pages}."
+        )
+    if cfg.hicache_storage_read_order == "fifo":
+        if pin > 0:
+            raise ValueError(
+                "--hicache-storage-prefetch-pin-fraction > 0 needs "
+                "--hicache-storage-read-order deadline."
+            )
+        return
+    if cfg.hicache_storage_backend is None:
+        raise ValueError(
+            "--hicache-storage-read-order deadline needs a storage backend "
+            "(--hicache-storage-backend)."
+        )
+    if cfg.hicache_host_memory_mode != "cache":
+        raise ValueError(
+            "--hicache-storage-read-order deadline needs --hicache-host-memory-mode "
+            "cache: the parked reads are inserted into the resident host tier."
+        )
+    if cfg.tp_size != 1 or cfg.pp_size != 1:
+        raise ValueError(
+            "--hicache-storage-read-order deadline is validated for TP = PP = 1 only."
+        )
 
 
 def validate_hicache_host_memory_mode(server_args: Any):

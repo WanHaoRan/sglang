@@ -252,6 +252,11 @@ HICACHE_LOAD_POOL_USAGE_FRACTION = 0.9
 # Write-staging floor: writes are deferrable, so the flush gate grows the
 # write window dynamically into whatever load staging is not using.
 HICACHE_WRITE_STAGING_POOL_FRACTION = 0.2
+# Read-thread drain-rate EWMA (agent_cache/ORACLE_V2_PLAN.md 4.4): weight of a
+# new sample (~8-read memory), samples before the value is published, log cadence.
+STORAGE_READ_RATE_ALPHA = 1 / 8
+STORAGE_READ_RATE_MIN_SAMPLES = 8
+STORAGE_READ_RATE_LOG_EVERY = 64
 
 
 class PrefetchOperation(StorageOperation):
@@ -326,6 +331,14 @@ class HiCacheController:
         # Buffer mode: wired by the tree cache after attach; the load rate
         # limiter subtracts write staging from actual pool usage.
         self.host_write_staged_tokens_fn: Optional[Callable[[], int]] = None
+        # Host tokens charged to prefetching outside prefetch_tokens_occupied
+        # (landed spans pinned until admission under the deadline read order).
+        self.extra_occupancy_fn: Optional[Callable[[], int]] = None
+        # EWMA of the read thread's ms per page, written by the I/O thread and
+        # read by the scheduler thread; None until STORAGE_READ_RATE_MIN_SAMPLES.
+        self.storage_read_ms_per_page: Optional[float] = None
+        self._storage_read_ms_ewma: Optional[float] = None
+        self._storage_read_samples = 0
 
         # Default storage page IO functions (may be overridden by attach).
         self.page_get_func = self._generic_page_get
@@ -581,6 +594,9 @@ class HiCacheController:
                 self.prefetch_capacity_limit = int(0.5 * self.mem_pool_host.size)
             # tracking the number of tokens locked in prefetching, updated by the main scheduler thread
             self.prefetch_tokens_occupied = 0
+            self.storage_read_ms_per_page = None
+            self._storage_read_ms_ewma = None
+            self._storage_read_samples = 0
 
             # Use dedicated gloo groups so storage prefetch sync is isolated
             # from other collectives and consistent across CPxTP participants.
@@ -768,6 +784,9 @@ class HiCacheController:
             self.ack_backup_queue.queue.clear()
             self.host_mem_release_queue.queue.clear()
             self.prefetch_tokens_occupied = 0
+            self.storage_read_ms_per_page = None
+            self._storage_read_ms_ewma = None
+            self._storage_read_samples = 0
 
         self.storage_stop_event.clear()
 
@@ -1175,6 +1194,9 @@ class HiCacheController:
                 logger.info("HICACHE_EVT s2h_io rid=%s pages=%d tokens=%d ms=%.0f",
                             operation.request_id, len(operation.hash_value), operation.completed_tokens,
                             (time.perf_counter() - _t0) * 1000)  # EVAL-PATCH
+                self._observe_storage_read(
+                    pages=len(operation.hash_value), seconds=time.perf_counter() - _t0
+                )
 
                 self.prefetch_sync_queue.put(
                     PrefetchAck(
@@ -1185,6 +1207,20 @@ class HiCacheController:
                 )
             except Empty:
                 continue
+
+    def _observe_storage_read(self, *, pages: int, seconds: float) -> None:
+        """Fold one completed read into the ms-per-page EWMA (I/O thread)."""
+        if pages <= 0 or seconds <= 0:
+            return
+        ms_per_page = seconds * 1000.0 / pages
+        ewma = self._storage_read_ms_ewma
+        ewma = ms_per_page if ewma is None else ewma + STORAGE_READ_RATE_ALPHA * (ms_per_page - ewma)
+        self._storage_read_ms_ewma = ewma
+        self._storage_read_samples += 1
+        if self._storage_read_samples >= STORAGE_READ_RATE_MIN_SAMPLES:
+            self.storage_read_ms_per_page = ewma
+        if self._storage_read_samples % STORAGE_READ_RATE_LOG_EVERY == 0:
+            logger.info("HICACHE_EVT srs_rate rid=io ms_per_page=%.3f samples=%d", ewma, self._storage_read_samples)
 
     def prefetch_rate_limited(self) -> bool:
         """
@@ -1200,8 +1236,11 @@ class HiCacheController:
             if self.host_write_staged_tokens_fn is not None:
                 used -= self.host_write_staged_tokens_fn()
             return max(0, used) >= self.prefetch_capacity_limit
+        occupied = self.prefetch_tokens_occupied
+        if self.extra_occupancy_fn is not None:
+            occupied += self.extra_occupancy_fn()
         # cancel prefetch if too much memory is occupied
-        if self.prefetch_tokens_occupied >= self.prefetch_capacity_limit:
+        if occupied >= self.prefetch_capacity_limit:
             return True
         # todo: more sophisticated rate limiting based on storage backend performance
         return False
