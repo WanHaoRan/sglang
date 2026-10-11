@@ -577,10 +577,12 @@ class UnifiedRadixCache(BasePrefixCache):
         cc.extra_occupancy_fn = lambda: self.pinned_prefetch_tokens
         logger.info(
             "HiCache storage reads: order=deadline window_pages=%d budget_tokens=%d "
-            "pin_budget_tokens=%d",
+            "pin_budget_tokens=%d retry_poll_interval=%d retry_max_attempts=%d",
             self.read_scheduler.window_pages,
             self.read_scheduler.budget_tokens,
             self.prefetch_pin_budget_tokens,
+            memory.hicache_storage_prefetch_retry_poll_interval,
+            memory.hicache_storage_prefetch_retry_max_attempts,
         )
 
     def register_sidecar_pool(

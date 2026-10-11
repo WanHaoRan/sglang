@@ -53,7 +53,7 @@ def handle_hicache(server_args: Any):
         return
 
     validate_hicache_host_memory_mode(server_args)
-    validate_storage_read_order(server_args)
+    resolve_storage_read_order(server_args)
 
     if cfg.disaggregation_decode_host_receive_threshold > 0:
         # The shared host pool must match KV transfer's per-layer buffers.
@@ -204,7 +204,7 @@ def resolve_storage_layout_compatibility(server_args: Any):
     )
 
 
-def validate_storage_read_order(server_args: Any):
+def resolve_storage_read_order(server_args: Any):
     cfg = resolving_view(server_args)
     pin = cfg.hicache_storage_prefetch_pin_fraction
     if not 0.0 <= pin <= 0.5:
@@ -238,6 +238,14 @@ def validate_storage_read_order(server_args: Any):
     if cfg.tp_size != 1 or cfg.pp_size != 1:
         raise ValueError(
             "--hicache-storage-read-order deadline is validated for TP = PP = 1 only."
+        )
+    if cfg.hicache_storage_next_turn_prefetch == "on":
+        # Paced miss retries are off: the prefetcher's refetch re-issues lookups
+        # for queued turns. The admission re-query keeps the attempt budget.
+        declare_resolution(
+            server_args,
+            "resolve_storage_read_order",
+            hicache_storage_prefetch_retry_poll_interval=0,
         )
 
 

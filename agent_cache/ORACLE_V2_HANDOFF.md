@@ -136,7 +136,9 @@ ARM=three_tier_wc_dl && bash start_server.sh $ARM NAT160
 -> ends with `READY: <arm> after Ns` and the startup-facts block; for `_dl` and the two `_oracle_v2` arms the
 `read order:` line must read `deadline, pin 0.3, banner 1`, for `_wb` `fifo, pin 0.0, banner 0`; `write policy:`
 `write_back` only on `_wb`; `eviction policy:` `next_use` only on `_nu`; `next-turn mode:` `on` with `banner 1` on the
-two `_oracle_v2` arms.
+two `_oracle_v2` arms. The retries: the banner's `retry_poll_interval=` reads 0 on the two `_oracle_v2` arms (paced
+miss retries off, plan §3.1) and 8 on `_dl`; `re-query cap:` reads 8 on every v2 arm, because the admission re-query
+keeps its budget. A `retry_poll_interval=8` on an `_oracle_v2` arm means the engine predates the retry rule.
 
 ```bash
 # container: 32 sessions x 12 turns with the next-turn hints, x10 gaps capped at 600 s (~8 min; stop early: pkill -f replay_agentic.py)

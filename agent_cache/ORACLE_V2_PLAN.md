@@ -167,6 +167,63 @@ byte-for-byte the default.
 Everything runs on the scheduler thread at the existing lockstep points (the storage-event drain), so TP determinism
 is untouched; v2 is validated for TP = PP = 1 only, like v1, because deadlines come from a rank-local clock.
 
+### 3.1 Paced storage retries are off when the oracle runs under the deadline order
+
+Decision of 2026-10-11, implemented the same day. With `--hicache-storage-read-order deadline` and
+`--hicache-storage-next-turn-prefetch on`, argument resolution sets `--hicache-storage-prefetch-retry-poll-interval` to 0
+(`resolve_storage_read_order` in `python/sglang/srt/arg_groups/hicache_hook.py`), so a lookup that misses, is refused at
+the prefetch cap, or loses its host allocation at dispatch is no longer re-issued every 8 scheduler passes. Every other
+combination keeps the defaults: FIFO with the oracle (campaign 15's arms), the deadline order without the oracle (`_dl`),
+and the deadline order with the oracle in `observe` mode, which issues nothing. The resolved value is what the scheduler
+reads (checked by publishing a resolved config: poll interval 0, attempts 8); the boot banner prints it as
+`retry_poll_interval=`. The record keeps the operator's input, so the two `_oracle_v2` arms pass 0 explicitly and their
+startup log agrees with the engine.
+
+**Why.** Under FIFO the paced retries mostly spent their budget against a full prefetch cap. Campaign 15's `wc` oracle
+run, measured 2026-10-11 from its `server.log`:
+
+| requests that used all 8 re-issues | lookups started per such request, median | L3 queries actually issued per such request, median |
+|---|---|---|
+| 250 | 9 | 2 |
+
+A typical case is `c335-t19`. Its arrival lookup and all eight retries were refused at the cap within 8 s while it
+waited 13 s in the queue, and it was admitted without ever querying L3 for its 11K missing tokens. Under the deadline
+order with the oracle on, a queued hinted turn already has a re-issue path that reacts to its state rather than to a
+fixed pace: the case-2 refetch (`_check_queued`, `_wants_refetch` in `next_turn_prefetch.py`), which probes what is
+resident and re-issues when at least `prefetch_threshold` tokens are missing. The two would run two re-query streams for
+the same requests, so they are made mutually exclusive.
+
+**What stays on.** The attempt budget (`--hicache-storage-prefetch-retry-max-attempts`, 8) stays, for the
+admission-time re-query of upstream #39283 (`_prefetch_after_device_hit_loss` in `scheduler.py`). It is not a polled
+retry: it runs once per admission attempt, just before admission, and it is the only check that catches a prefix lost
+between the oracle's last probe and admission. The first version of this rule zeroed the budget too; the claim review
+below found that this also turned the re-query off, so the rule touches the poll interval only.
+
+**What the refetch covers.** Checked on 2026-10-11 by two independent reviewers per claim against the code:
+
+- While a request waits in the queue, re-issues now come only from the refetch, and at admission from the re-query.
+  Lookups at the queue door are not affected: the arrival lookup, and the lookup a request makes when it re-enters the
+  queue after decode retraction, priority preemption or a pause.
+- The refetch fires for a queued turn that has a plan, at most once per 0.5 s (`PROBE_INTERVAL_S`), never while a read
+  for it is parked or in flight, never while the prefetch cap is full, and at most twice per plan (`MAX_REFETCHES`).
+  A refetch counts when its lookup is registered, so one that later misses or is revoked at dispatch still uses one of
+  the two, and the next shortfall is logged as `ntp_reevict` although nothing was evicted again.
+- It does not fire for a request at queue position 2 or later while there is no admission-rate estimate (fewer than 5
+  admissions in 300 s).
+- It fires for the queue head too, where the old paced retries deliberately stood aside; under `wait_complete` the head
+  then waits for that read, which the deadline order dispatches as "now".
+- A request has a plan only if its predecessor committed with a hint naming its rid, and only until its first
+  admission or the plan's expiry. Requests without a plan get no re-issue while queued: each session's first turn, a
+  turn whose predecessor aborted or sent no hint, and a request re-queued after retraction or preemption. Their matched
+  path is still protected from host eviction while their own lookup is outstanding (the anchor lock) and after it lands
+  (the pin of 4.3).
+
+**Consequence for the experiments.** The `_oracle_v2` arms now differ from `_dl` in two ways: timed deadlines and the
+paced retries. `_dl` keeps campaign 15's retry settings, and with the prefetcher off every read there is "now": the
+read scheduler dispatches each hit in the pass that parks it, so `_dl` should still show campaign 15's refusals and
+budget exhaustion. It measures the pin, the re-eviction row of §6; the queued-pages and host-held rows of §6 need the
+`_v2` arms.
+
 ---
 
 ## 4. Implementation steps
@@ -192,6 +249,8 @@ resolution so a bad combination fails at boot, not mid-campaign.
 - Validation: `deadline` needs `--hicache-host-memory-mode cache`, a storage backend and TP = PP = 1; `next_use` needs
   `--hicache-storage-next-turn-prefetch` not `off` and non-negative `horizon_s` / `overdue_grace_s`; F in [0, 0.5]
   (the prefetch cap is half the host pool, and pinned tokens count against it); the pin needs `deadline`.
+- Resolution: `deadline` with `--hicache-storage-next-turn-prefetch on` sets the paced-retry poll interval to 0; the
+  attempt budget is kept for the admission re-query (§3.1).
 
 ```bash
 # host: the flag definitions and their validation hook resolve and reject a bad combination (CPU, < 10 s)
@@ -200,7 +259,8 @@ cd /home/wanhr/Documents/codes/sglang && python3 -m pytest -q test/registered/un
 
 -> prints `passed`; a failure names the flag whose validation changed.
 
-**Expected result:** the five tests pass (measured 2026-10-10: `5 passed`); `python3 -m sglang.launch_server --help | grep -c "storage-read-order"` prints 1.
+**Expected result:** the six tests pass (measured 2026-10-11: `6 passed`, including the §3.1 retry rule and its three
+negative cases); `python3 -m sglang.launch_server --help | grep -c "storage-read-order"` prints 1.
 **Expected lessons:** every lever is reachable from the command line and off by default, so campaign 14's baseline
 command still boots the FIFO path unchanged.
 
@@ -442,7 +502,7 @@ Arms, all on campaign 14's workload and client (`ORACLE_HINTS=1` on every arm so
 | arm                            | server, on top of`three_tier_wc`                                                                | isolates                               |
 | ------------------------------ | ------------------------------------------------------------------------------------------------- | -------------------------------------- |
 | `three_tier_wc_dl`           | `--hicache-storage-read-order deadline --hicache-storage-prefetch-pin-fraction 0.3`, oracle off | lever c alone: every deadline is "now" |
-| `three_tier_wc_oracle_v2`    | the above +`--hicache-storage-next-turn-prefetch on`                                            | b + b' + c + d                         |
+| `three_tier_wc_oracle_v2`    | the above +`--hicache-storage-next-turn-prefetch on`; paced retries off (poll interval 0, §3.1)  | b + b' + c + d                         |
 | `three_tier_wc_oracle_v2_nu` | the above +`--radix-eviction-policy next_use`                                                   | + a                                    |
 | `three_tier_wc_wb`           | `--hicache-write-policy write_back`, oracle off                                                 | the mirror, as an ablation             |
 
@@ -496,6 +556,11 @@ over LRU, skip the `_nu` arm and move the mirror lever up.
 - `next_use` keeps up to 65,536 registrations; past that the oldest are dropped, so on a very large tree an old but
   live session can fall back to plain LRU (tier 3) rather than its registered tier.
 - `next_use` treats un-hinted traffic as ended-first; never deploy it on a mixed workload without hints.
+- Under the `_oracle_v2` arms, a queued request without a plan has no re-issue while it waits (§3.1): first turns,
+  turns after an aborted or hint-less predecessor, and re-queued requests. Count them in campaign 16 before crediting
+  or blaming the oracle for their TTFT.
+- `next_use` and late arrivals: when a plan expires before its turn arrives, `_expire` ends the session's
+  registration, so a turn that arrives after its plan's expiry finds its context first in line for eviction.
 - Deadlines use `time.perf_counter()`; TP/PP > 1 is refused at boot, as in v1.
 - The to policy with v2: a dispatched read's clock starts at dispatch, so the cut-while-queued class disappears, but
   a read that is slow in I/O is still cut at 1.0 s + 0.25 s per 1,024 hit tokens; wc remains the policy of record.
@@ -533,4 +598,5 @@ over LRU, skip the `_nu` arm and move the mirror lever up.
 | unchanged suites                                 | `test_storage_prefetch_lifecycle.py` 8, `test_resident_prefix_probe.py` 4, `test_scheduler_hicache_events.py` 5, `test_session_unified_radix_cache.py` 3, `test_unified_hicache_regressions.py` 13, `test_evict_policy.py` 23, `test_mem_cache_utils.py` 36, `test_server_args_namespaces.py` 4, `test_runtime_context_config_bags.py` 18, `test_server_args.py` 279 passed (one case needs the optional `soundfile` package), `test_unified_radix_cache_unittest.py` 1280 passed with 2 CUDA out-of-memory artifacts of the laptop's 8 GB GPU (2026-10-11, laptop) |
 | review                                           | adversarial review of the engine diff (6 dimensions, 14 findings verified by 3 refuters each): 8 confirmed and fixed (stale next-use entries, budget double count, unbounded registry, five coverage gaps), 6 refuted, 20 low-ranked left unverified; the two environment-only findings in the unverified list (the`launched` field, pin fraction vs cap) were fixed as well                                                                                                                                                                                                              |
 | server arms                                      | `scripts/start_server.sh`: `three_tier_wc_dl`, `three_tier_wc_oracle_v2`, `three_tier_wc_oracle_v2_nu`, `three_tier_wc_wb` (dispatch dry-run checked on CPU; never booted)                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 3.1 paced retries off under oracle + deadline    | done 2026-10-11; resolution in `hicache_hook.py`, `test_oracle_v2_flags.py` 6 passed, resolved config checked as the scheduler publishes it, `_oracle_v2` arms pass poll interval 0, claims reviewed by 2 refuters each |
 | 5 smokes + campaign 16                           | not started: needs the H200 (`ORACLE_V2_HANDOFF.md`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |

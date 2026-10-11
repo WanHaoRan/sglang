@@ -17,7 +17,9 @@
 #          three_tier_wc_dl | three_tier_wc_oracle_v2 | three_tier_wc_oracle_v2_nu | three_tier_wc_wb: the Oracle v2 arms of
 #          agent_cache/ORACLE_V2_PLAN.md section 5 (dl: deadline read order + pinned staging, oracle off; oracle_v2: + the
 #          next-turn prefetcher on; oracle_v2_nu: + next-use eviction; wb: write_back instead of write_through, v2 levers off).
-#          Retry flags pinned to 8 / 8; the client needs ORACLE_HINTS=1 on every arm; the engine needs storage_read_scheduler.py.
+#          Retry flags pinned to 8 / 8 on dl and wb; the two oracle_v2 arms pass poll interval 0 (paced miss retries off, the
+#          value the engine resolves for the deadline order with the prefetcher on, ORACLE_V2_PLAN.md 3.1) and keep 8 attempts
+#          for the admission re-query. The client needs ORACLE_HINTS=1 on every arm; the engine needs storage_read_scheduler.py.
 #   LEVEL  P0 (default: L1 262144 tok, host 64 GB) | PH (131072 / 48) | PL (131072 / 18)          (RUNBOOK 5.3)
 #          NAT64 / NAT160: NO --max-total-tokens (the profiled device pool), host 64 / 160 GB   (campaigns 6-7, "natural")
 #   Overrides (env): L1_TOKENS=<tokens> and/or HOST_GB=<GB> replace the level's pools; the run dir is then named custom_L1<tokens>_H<GB>.
@@ -147,7 +149,11 @@ case "$ARM" in
     ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3[@]}" "${RQ[@]}" --hicache-storage-next-turn-prefetch "$NTP"); ENVV=("${L3ENV[@]}") ;;
   three_tier_wc_dl|three_tier_wc_oracle_v2|three_tier_wc_oracle_v2_nu|three_tier_wc_wb)
     l3_prep; POLICY=wait_complete
-    RQ=(--hicache-storage-prefetch-retry-poll-interval 8 --hicache-storage-prefetch-retry-max-attempts 8)
+    case "$ARM" in
+      # deadline order + prefetcher on: paced miss retries off, the prefetcher's refetch re-issues for queued turns
+      three_tier_wc_oracle_v2*) RQ=(--hicache-storage-prefetch-retry-poll-interval 0 --hicache-storage-prefetch-retry-max-attempts 8) ;;
+      *)                        RQ=(--hicache-storage-prefetch-retry-poll-interval 8 --hicache-storage-prefetch-retry-max-attempts 8) ;;
+    esac
     case "$ARM" in
       three_tier_wc_wb)           ARGS=("${COMMON[@]}" "${HOST_WB[@]}" "${L3_WC[@]}" "${RQ[@]}") ;;
       three_tier_wc_dl)           ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_WC[@]}" "${RQ[@]}" "${V2[@]}") ;;
@@ -215,7 +221,7 @@ case "$ARM" in three_tier_*)
   echo "re-query cap:     $(grep -aoE "'hicache_storage_prefetch_retry_max_attempts': [0-9]+" "$RUN/server.log" | head -1)   (want $(case "$ARM" in *_norq) echo 0 ;; *) echo 8 ;; esac))"
   echo "next-turn mode:   $(grep -aoE "'hicache_storage_next_turn_prefetch': '[a-z]+'" "$RUN/server.log" | head -1), prefetcher banner $(grep -ac 'HiCache next-turn prefetch: mode=' "$RUN/server.log")   (want $NTP, banner $([ "$NTP" = off ] && echo 0 || echo 1))"
   case "$ARM" in three_tier_wc_dl|three_tier_wc_oracle_v2*|three_tier_wc_wb)
-    echo "read order:       $(grep -aoE "'hicache_storage_read_order': '[a-z]+'" "$RUN/server.log" | head -1), $(grep -aoE "'hicache_storage_prefetch_pin_fraction': [0-9.]+" "$RUN/server.log" | head -1), srs banner $(grep -ac 'HiCache storage reads: order=deadline' "$RUN/server.log")   (want $(case "$ARM" in three_tier_wc_wb) echo "fifo, pin 0.0, banner 0" ;; *) echo "deadline, pin 0.3, banner 1" ;; esac))"
+    echo "read order:       $(grep -aoE "'hicache_storage_read_order': '[a-z]+'" "$RUN/server.log" | head -1), $(grep -aoE "'hicache_storage_prefetch_pin_fraction': [0-9.]+" "$RUN/server.log" | head -1), srs banner $(grep -ac 'HiCache storage reads: order=deadline' "$RUN/server.log") $(grep -aoE 'retry_poll_interval=[0-9]+' "$RUN/server.log" | head -1)   (want $(case "$ARM" in three_tier_wc_wb) echo "fifo, pin 0.0, banner 0" ;; three_tier_wc_dl) echo "deadline, pin 0.3, banner 1 retry_poll_interval=8" ;; *) echo "deadline, pin 0.3, banner 1 retry_poll_interval=0" ;; esac))"
     echo "write policy:     $(grep -aoE "'hicache_write_policy': '[a-z_]+'" "$RUN/server.log" | head -1)   (want $(case "$ARM" in three_tier_wc_wb) echo write_back ;; *) echo write_through ;; esac))"
     echo "eviction policy:  $(grep -aoE "'radix_eviction_policy': '[a-z_]+'" "$RUN/server.log" | head -1)   (want $(case "$ARM" in *_nu) echo next_use ;; *) echo lru ;; esac))" ;;
   esac ;;

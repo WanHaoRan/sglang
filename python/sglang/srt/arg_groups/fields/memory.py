@@ -192,7 +192,10 @@ class Memory(msgspec.Struct):
                 "first check can run before it does). A re-issue that waits on "
                 "staging or a moved match instead goes out on the next pass. "
                 "Only passes that reach prefill scheduling count. 0 disables "
-                "miss retries; known-hit deferrals are always re-issued."
+                "miss retries; known-hit deferrals are always re-issued. Resolved "
+                "to 0 under --hicache-storage-read-order deadline with "
+                "--hicache-storage-next-turn-prefetch on: the prefetcher's refetch "
+                "then re-issues lookups for queued turns."
             ),
         ),
     ] = 8
@@ -250,9 +253,10 @@ class Memory(msgspec.Struct):
                 "its position's residual wait, and anything else (no prefetcher, a "
                 "head-of-queue request) is 'now' and bypasses the limits. Host pages "
                 "are allocated at dispatch and at most "
-                "--hicache-storage-read-window-pages are in flight. Experimental; "
-                "needs --hicache-host-memory-mode cache, a storage backend and "
-                "TP = PP = 1."
+                "--hicache-storage-read-window-pages are in flight. With "
+                "--hicache-storage-next-turn-prefetch on the paced storage miss "
+                "retries are disabled. Experimental; needs --hicache-host-memory-mode "
+                "cache, a storage backend and TP = PP = 1."
             ),
             choices=["fifo", "deadline"],
         ),

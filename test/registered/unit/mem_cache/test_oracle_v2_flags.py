@@ -14,6 +14,7 @@ from sglang.srt.arg_groups.hicache_hook import (
     handle_hicache_ratio_default,
 )
 from sglang.srt.arg_groups.kv_cache_hook import handle_cache_compatibility
+from sglang.srt.arg_groups.overrides import resolution_result
 from sglang.srt.server_args import ServerArgs
 from sglang.test.test_utils import CustomTestCase
 
@@ -99,6 +100,33 @@ class TestOracleV2Flags(CustomTestCase):
             with self.subTest(message=message):
                 with self.assertRaisesRegex(ValueError, re.escape(message)):
                     handle_hicache(make_args(**overrides))
+
+    def test_paced_retries_are_off_only_for_the_deadline_order_with_the_prefetcher_on(self):
+        """The prefetcher's refetch of queued turns replaces the paced miss
+        retries under the deadline order, and the attempt budget stays for the
+        admission re-query. Every other combination keeps both, so campaign
+        15's FIFO oracle arm and the dl arm still run with retries."""
+        retry_fields = (
+            "hicache_storage_prefetch_retry_poll_interval",
+            "hicache_storage_prefetch_retry_max_attempts",
+        )
+        cases = [
+            ("deadline", "on", (0, 8)),
+            ("deadline", "observe", (8, 8)),
+            ("deadline", "off", (8, 8)),
+            ("fifo", "on", (8, 8)),
+        ]
+        for order, prefetch, expected in cases:
+            with self.subTest(order=order, prefetch=prefetch):
+                args = make_args(
+                    **THREE_TIER,
+                    hicache_storage_read_order=order,
+                    hicache_storage_next_turn_prefetch=prefetch,
+                )
+                handle_hicache(args)
+                self.assertEqual(
+                    tuple(resolution_result(args, f) for f in retry_fields), expected
+                )
 
     def test_next_use_needs_the_prefetcher_and_a_non_negative_horizon(self):
         with self.assertRaisesRegex(ValueError, "next-turn-prefetch"):
