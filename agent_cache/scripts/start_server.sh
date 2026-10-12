@@ -59,12 +59,15 @@ fi
 case "$ARM" in three_tier) ARM=three_tier_to ;; esac
 RUN="$RESULTS/$(date -u +%Y%m%d_%H%M%S)_${ARM}_${LEVEL}"
 
+# A pid counts as running unless it is gone or a zombie: the container's PID 1 (a bare /bin/zsh, no init) does not
+# reap orphans, so an exited server stays a zombie that kill -0 still reports alive.
+alive() { local s; s=$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' '); [ -n "$s" ] && [ "${s#Z}" = "$s" ]; }
 # refuse to double-boot: the port must be free (raw TCP probe: anything listening counts, not only a server with /health) and no previous pid of this arm alive
 if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
   echo "STOP: something is already listening on port $PORT; stop it first (bash stop_server.sh)"; exit 1
 fi
 if [ -s "$RESULTS/.current_run" ] && [ -f "$RESULTS/$(cat "$RESULTS/.current_run")/server.pid" ] \
-   && kill -0 "$(cat "$RESULTS/$(cat "$RESULTS/.current_run")/server.pid")" 2>/dev/null; then
+   && alive "$(cat "$RESULTS/$(cat "$RESULTS/.current_run")/server.pid")"; then
   echo "STOP: a server is already running: $(cat "$RESULTS/.current_run") (bash stop_server.sh first)"; exit 1
 fi
 mkdir -p "$RUN"; basename "$RUN" > "$RESULTS/.current_run"
@@ -198,7 +201,7 @@ for i in $(seq 1 2400); do
      && grep -q 'fired up and ready to roll' "$RUN/server.log"; then
     echo "READY: $ARM after ${i}s"; break
   fi
-  if ! kill -0 "$(cat "$RUN/server.pid")" 2>/dev/null; then
+  if ! alive "$(cat "$RUN/server.pid")"; then
     echo "STOP: $ARM died during startup; last lines:"; tail -20 "$RUN/server.log"; exit 1
   fi
   sleep 1

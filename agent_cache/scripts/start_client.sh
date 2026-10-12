@@ -81,7 +81,10 @@ fi
 RESULTS="$AC/results"
 [ -s "$RESULTS/.current_run" ] || { echo "STOP: $RESULTS/.current_run missing: no server booted by start_server.sh yet"; exit 1; }
 RUN="$RESULTS/$(cat "$RESULTS/.current_run")"
-[ -f "$RUN/server.pid" ] && kill -0 "$(cat "$RUN/server.pid")" 2>/dev/null || { echo "STOP: the server of $RUN is not running (start_server.sh first)"; exit 1; }
+# A pid counts as running unless it is gone or a zombie: the container's PID 1 (a bare /bin/zsh, no init) does not
+# reap orphans, so an exited server stays a zombie that kill -0 still reports alive.
+alive() { local s; s=$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' '); [ -n "$s" ] && [ "${s#Z}" = "$s" ]; }
+[ -f "$RUN/server.pid" ] && alive "$(cat "$RUN/server.pid")" || { echo "STOP: the server of $RUN is not running (start_server.sh first)"; exit 1; }
 OUT="$RUN/client_$(date -u +%H%M%S)_$TAG"; mkdir -p "$OUT"
 curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$PORT/health" || { echo "STOP: no server on port $PORT (start_server.sh first)"; exit 1; }
 

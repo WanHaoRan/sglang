@@ -24,7 +24,9 @@ code it started with while the working tree moves on.
 
 ## H1 Box and checkout state
 
-**Status:** not started
+**Status:** done 2026-10-11 18:24Z. The host had rebooted at 18:00Z: the container was `Exited (255)` (restarted with
+`docker start sglang_hicache`), and `/mnt/ssd/hicache_l3` still held campaign 15's 1.6 TB at the cleaner's 70 % mark
+(`start_server.sh` does not wipe it; the smoke driver of §H4 wipes it before every boot, as `run_compare.sh` does).
 **Goal:** make sure the box runs the v2 code and the campaign-14 environment, so a smoke failure is a code failure and
 not a stale checkout or an unmounted SSD.
 **Runs on:** host, as `wanhr`
@@ -57,7 +59,8 @@ v2 flag defaults to the old behaviour.
 
 ## H2 Freeze the engine
 
-**Status:** not started
+**Status:** done 2026-10-11: `agent_cache/frozen/engine_5df71c4bf0_v2` (0 diff lines), run after §H3 so a failing test
+would not have needed a second freeze.
 **Goal:** a copy of `python/` that campaign 16 imports, so edits during the 22 h do not reach later arms.
 **Runs on:** container `sglang_hicache` (`docker exec -it sglang_hicache bash`), in `/sgl-workspace/sglang`
 **Touches:** creates `agent_cache/frozen/engine_<commit>_v2/`
@@ -82,7 +85,9 @@ ls agent_cache/frozen/engine_*_v2/python/sglang/srt/mem_cache/storage_read_sched
 
 ## H3 CPU gate inside the container
 
-**Status:** not started
+**Status:** done 2026-10-11: 6, 6, 6, 15, 32, 4, 8, 5 passed (`test_oracle_v2_flags.py` has 6 since the §3.1 retry rule,
+not the 5 below). The plan's unchanged suites pass as well; `test_unified_radix_cache_unittest.py` 1,282 passed with the
+GPU visible.
 **Goal:** the unit tests that pass on the laptop also pass on the box's Python (same sglang, the real `sgl_kernel`), so
 a smoke failure is not an import-level mismatch.
 **Runs on:** container, `/sgl-workspace/sglang`
@@ -108,7 +113,19 @@ stop and fix before booting anything.
 
 ## H4 Smoke each arm
 
-**Status:** not started
+**Status:** done 2026-10-11, with three deviations (`results/campaign16/DECISIONS.md` has the table):
+1. Small pools: at NAT160 a 32-session client never fills the host pool in 8 min, so no read would park. The smokes ran
+   on smoke C's pools (`L1_TOKENS=65536 HOST_GB=12`), 32 sessions x 12 turns at x1 gaps, from
+   `frozen/oracle_scripts_staging/v2_smokes.sh` (`results/oracle_v2_smokes_1011_1831/` and `_1848/`). All boot checks
+   matched; 0 errors, 0 tracebacks. `srs_dispatch launched=0` was 33 / 136 / 113 on `_dl` / `_v2` / `_v2_nu`: the 12 GB
+   pool is oversubscribed by construction (host copy of L1 65,536 + prefetch cap 61,056 > 122,112 tokens).
+2. Zombie servers: since the reboot the container's PID 1 (`/bin/zsh`) does not reap, an exited server stays a zombie,
+   `kill -0` calls it alive and the next boot is refused. `stop_server.sh`, `start_server.sh` and `start_client.sh` now
+   treat a zombie as stopped.
+3. `_wb` is held: its L3 was written (33 GB) but 0 of 1,281 lookups hit and 133 of 352 returning turns recomputed.
+   `Scheduler._prefetch_kvcache` looks up L3 only when the match's last host node is host-backed or the root (a
+   write-through assumption); under write-back that anchor is usually a device-only node, so the lookup and the #39283
+   re-query are skipped (70 of the 133 issued none, the other 63 only their tail).
 **Goal:** each new arm boots, the v2 events appear in the proportions the design implies, and nothing crashes in a
 short run; this is the gate before 22 h of GPU time.
 **Runs on:** container, `/sgl-workspace/sglang/agent_cache/scripts`
@@ -180,7 +197,11 @@ whether the pin releases balance; it says nothing about the gains, which need §
 
 ## H5 Campaign 16
 
-**Status:** not started
+**Status:** running since 2026-10-11 19:17:35Z with three arms (`_dl`, `_oracle_v2`, `_oracle_v2_nu`; `_wb` held, §H4),
+expected done ~11:30Z on 2026-10-12. The command below had a bug: `$(docker exec ...)` runs inside the container's
+`bash -c`, where there is no `docker`, so `ENGINE_PYTHONPATH` would have been empty and the arms would have imported the
+working tree. The launch used `ENGINE_PYTHONPATH=$(ls -d /sgl-workspace/sglang/agent_cache/frozen/engine_5df71c4bf0_v2/python)`
+(`results/campaign16/DECISIONS.md`).
 **Goal:** the four arms on campaign 14's workload, 5 h each, against the campaign 14 and 15 baselines.
 **Runs on:** container, detached (`docker exec -d`), as in campaign 15
 **Touches:** `agent_cache/results/campaign16/` (driver logs, manifest, iostat) and one boot directory per arm under
@@ -255,8 +276,8 @@ has the `late`, `staged`, `reevicts`, `load_err_p50_ms` and `slack_p50_ms` colum
 cd /home/wanhr/sglang/agent_cache && ls frozen/oracle_scripts_staging/c15_diagnosis.py && for A in three_tier_wc_dl three_tier_wc_oracle_v2 three_tier_wc_oracle_v2_nu; do \
   python3 frozen/oracle_scripts_staging/c15_diagnosis.py --manifest results/campaign16/$A/manifest_vs_baselines.txt > results/campaign16/$A/diagnosis.txt 2>&1; head -8 results/campaign16/$A/diagnosis.txt; done
 ```
--> prints the SSD and host-pool blocks per arm; `c15_diagnosis.py` lives only on the box (it was never committed), so
-its flags may differ from this line: read its docstring first.
+-> prints the SSD and host-pool blocks per arm; `c15_diagnosis.py` lives only on the box (it was never committed). It
+takes `--baseline <run> <client> <iostat>` and `--oracle <run> <client> <iostat>`, not `--manifest`.
 
 **Expected result:** per arm, `steady.csv`, `steady_paired.csv`, `steady_bins.csv`, `steady.png`, `oracle_eval.csv`,
 `srs_summary.txt`, `oracle_timeline_7200_120.png`, `diagnosis.txt`.

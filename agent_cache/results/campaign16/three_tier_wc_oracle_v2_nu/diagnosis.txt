@@ -1,0 +1,15 @@
+SSD, 2700-16800 s after the client started
+  baseline: read GB/s mean 1.11, p50 1.37, p90 1.95, max 2.12; %util mean 61, >= 90 % in 49% of samples, >= 99 % in 14%
+  oracle: read GB/s mean 0.98, p50 1.62, p90 1.92, max 2.14; %util mean 51, >= 90 % in 49% of samples, >= 99 % in 2%
+host pool held by in-flight SSD reads (whole run)
+  baseline: in-flight reads hold mean 358,664, p50 381,952 (23% of the 1,627,648-token pool), p90 663,552, max 839,424 tokens (9,989 reads); room for cached host-only contexts at the p50 hold: 577,536 tokens (L1 668,160)
+  oracle: in-flight reads hold mean 26,981, p50 26,560 (2% of the 1,627,648-token pool), p90 45,440, max 109,888 tokens (8,419 reads); room for cached host-only contexts at the p50 hold: 932,928 tokens (L1 668,160)
+oracle reads by case (whole run)
+  case 1: 7,635 due; trigger to read end p10/p50/p90 4.4/47.9/105.1 s; L-hat p50 4.3 s; own pages p50 257; read-queue backlog at the trigger p10/p50/p90 549/733/1019 pages; late 70 of 7,625
+  case 2: 2 due; trigger to read end p10/p50/p90 2.0/3.0/3.0 s; L-hat p50 4.4 s; own pages p50 105; read-queue backlog at the trigger p10/p50/p90 560/873/873 pages; late 0 of 2
+Little's law (steady_state.py window)
+  three_tier_wc: backlog 26.2 / 1.217 turns/s = 21.5 s; measured queue wait 21.6 s
+  three_tier_wc_oracle: backlog 24.6 / 1.218 turns/s = 20.2 s; measured queue wait 20.2 s
+  three_tier_wc_dl: backlog 18.8 / 1.219 turns/s = 15.4 s; measured queue wait 15.4 s
+  three_tier_wc_oracle_v2: backlog 16.5 / 1.218 turns/s = 13.5 s; measured queue wait 13.6 s
+  three_tier_wc_oracle_v2_nu: backlog 8.3 / 1.258 turns/s = 6.6 s; measured queue wait 6.2 s

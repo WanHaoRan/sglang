@@ -1,0 +1,52 @@
+smokes -> /sgl-workspace/sglang/agent_cache/results/oracle_v2_smokes_1011_1831, engine /sgl-workspace/sglang/agent_cache/frozen/engine_5df71c4bf0_v2/python
+=== three_tier_wc_dl start 18:31:17
+already stopped: 20261009_214342_three_tier_to_oracle_NAT160 (pid 66738)
+L3 wiped: 0 files left
+engine: /sgl-workspace/sglang/agent_cache/frozen/engine_5df71c4bf0_v2/python/sglang
+READY: three_tier_wc_dl after 202s
+template loaded:  0   (want 0: stock template)
+device pool:      max_total_num_tokens=65536   (want 65536)
+weight kernel:    mem usage=57.02 GB   marlin lines: 0 (want 0 on SM90)
+profiled warning: 0   (want 0)
+host pool:        host pool: 122112 tokens, 12.00 GB   (want 12 GB)
+nixl backend:     1   (want 1)
+prefetch policy:  'hicache_storage_prefetch_policy': 'wait_complete'   (want wait_complete)
+L3 cleaner dir:   HiCacheL3Cleaner started: dirs=['/mnt/ssd/hicache_l3']   (want /mnt/ssd/hicache_l3)
+L3 cleaner marks: high=70.0% low=60.0%   (want 70,60)
+re-query cap:     'hicache_storage_prefetch_retry_max_attempts': 8   (want 8)
+next-turn mode:   'hicache_storage_next_turn_prefetch': 'off', prefetcher banner 0   (want off, banner 0)
+read order:       'hicache_storage_read_order': 'deadline', 'hicache_storage_prefetch_pin_fraction': 0.3, srs banner 1 retry_poll_interval=8   (want deadline, pin 0.3, banner 1 retry_poll_interval=8)
+write policy:     'hicache_write_policy': 'write_through'   (want write_through)
+eviction policy:  'radix_eviction_policy': 'lru'   (want lru)
+{"kind": "summary", "tag": "smoke_three_tier_wc_dl", "elapsed_s": 461.5, "turns": 384, "controls": 0, "errors": 0, "retries": 0, "capped_convs": 0, "capped": false, "mean_ttft_s": 15.1757, "mean_reply_reprefilled": 2985.5}
+run /sgl-workspace/sglang/agent_cache/results/20261011_183123_three_tier_wc_dl_custom_L165536_H12
+  s2h_query hit         185
+  s2h_query miss      1,195
+  s2h_io                143
+  srs_park              176
+  srs_dispatch          176
+  srs_pin                97
+  srs_pin_skipped        46
+  srs_unpin              97
+  srs_rate                2
+  nue_register            0
+  srs_park with deadline=now: 176 of 176
+  srs_dispatch launched=0:    33
+  waited_ms at dispatch:      p50=0 p90=0 p99=2
+  inflight_pages at dispatch: p50=162 p90=542 p99=1163
+  pinned_tokens at dispatch:  p50=24192 p90=33920 p99=36352
+  unpin reasons:              {'admit': 97}
+  ms_per_page (srs_rate):     p10=3 p50=3 p90=3
+  dispatch count equals s2h_io count: NO (a FIFO-order run has 0 dispatches; under deadline order every read is dispatched once)
+tracebacks: 0
+pid 3566 still alive after 120 s, SIGKILL
+stopped: 20261011_183123_three_tier_wc_dl_custom_L165536_H12 (pid 3566); port 30000 free
+=== three_tier_wc_dl done 18:44:39 -> /sgl-workspace/sglang/agent_cache/results/20261011_183123_three_tier_wc_dl_custom_L165536_H12
+=== three_tier_wc_oracle_v2 start 18:44:39
+pid 3566 still alive after 120 s, SIGKILL
+stopped: 20261011_183123_three_tier_wc_dl_custom_L165536_H12 (pid 3566); port 30000 free
+L3 wiped: 0 files left
+STAGE FAILED three_tier_wc_oracle_v2 (boot)
+STOP: a server is already running: 20261011_183123_three_tier_wc_dl_custom_L165536_H12 (bash stop_server.sh first)
+stop_server.sh: line 16: syntax error near unexpected token `}'
+stop_server.sh: line 16: `cal s; s=$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' '); [ -n "$s" ] && [ "${s#Z}" = "$s" ]; }'

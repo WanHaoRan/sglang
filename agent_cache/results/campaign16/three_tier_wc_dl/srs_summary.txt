@@ -1,0 +1,39 @@
+run results/20261011_191741_three_tier_wc_dl_NAT160
+  s2h_query hit      11,168
+  s2h_query miss      5,302
+  s2h_io             11,079
+  srs_park           11,110
+  srs_dispatch       11,110
+  srs_pin            11,074
+  srs_pin_skipped         0
+  srs_unpin          11,074
+  srs_rate              173
+  nue_register            0
+  srs_park with deadline=now: 11,110 of 11,110
+  srs_dispatch launched=0:    31
+  waited_ms at dispatch:      p50=0 p90=0 p99=2
+  inflight_pages at dispatch: p50=7444 p90=10643 p99=12547
+  pinned_tokens at dispatch:  p50=0 p90=0 p99=47744
+  unpin reasons:              {'admit': 11074}
+  ms_per_page (srs_rate):     p10=3 p50=3 p90=4
+  dispatch count equals s2h_io count: NO (a FIFO-order run has 0 dispatches; under deadline order every read is dispatched once)
+
+run results/20261011_191741_three_tier_wc_dl_NAT160, window 7200-7320 s
+  s2h_query hit         144
+  s2h_query miss         41
+  s2h_io                151
+  srs_park              143
+  srs_dispatch          143
+  srs_pin               151
+  srs_pin_skipped         0
+  srs_unpin             151
+  srs_rate                3
+  nue_register            0
+  srs_park with deadline=now: 143 of 143
+  srs_dispatch launched=0:    0
+  waited_ms at dispatch:      p50=0 p90=0 p99=1
+  inflight_pages at dispatch: p50=7627 p90=9012 p99=9511
+  pinned_tokens at dispatch:  p50=0 p90=0 p99=26944
+  unpin reasons:              {'admit': 151}
+  ms_per_page (srs_rate):     p10=3 p50=3 p90=4
+  dispatch count equals s2h_io count: NO (a FIFO-order run has 0 dispatches; under deadline order every read is dispatched once)
