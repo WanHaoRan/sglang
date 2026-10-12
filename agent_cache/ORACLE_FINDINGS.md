@@ -29,8 +29,8 @@ depth but are not needed here. Where each number comes from is in section 10. A 
   turns:
 
 | c14 baseline | c15 + oracle v1 | `_dl`: pin fetched spans | `_oracle_v2`: + deadline-ordered reads | `_oracle_v2_nu`: + next-use eviction |
-|---|---|---|---|---|
-| 18.5 s | 17.3 s | 13.2 s | 11.6 s | **5.7 s** |
+| ------------ | --------------- | -------------------------- | ---------------------------------------- | -------------------------------------- |
+| 18.5 s       | 17.3 s          | 13.2 s                     | 11.6 s                                   | **5.7 s**                        |
 
 - **Pinning** a fetched span until its request is admitted (`_dl`, needs no hints) removed the lost-after-landing
   failure entirely (0 turns) and with it the storm: p99 TTFT 169 s -> 46 s.
@@ -51,29 +51,29 @@ depth but are not needed here. Where each number comes from is in section 10. A 
 
 ### 2.1 Hardware, model and cache tiers
 
-| item | value |
-|---|---|
-| GPU, model | one H200; Qwen3-30B-A3B-Instruct-2507 (MoE, 3B active), bf16 KV, TP 1, triton attention, context 131,072 |
-| KV size | 96 KiB per token (48 layers x 4 KV heads x 128 dims x K and V x 2 bytes); a page is 64 tokens = 6 MiB |
-| L1, GPU KV pool | 668,160 tokens (~61 GiB) |
-| L2, host pool | 160 GB = 1,627,648 tokens |
-| L3, SSD | NIXL file backend on a 2.3 TB disk (`/mnt/ssd`), wiped before each run; reads ~2 GB/s when busy, ~3 ms per page |
-| SSD cleaner | when the disk passes 70 % full, deletes the oldest files down to 60 % (about 230 GiB per cleanup) |
-| write policy | write-through: everything prefilled on the GPU is copied to host memory and on to the SSD |
+| item            | value                                                                                                                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GPU, model      | one H200; Qwen3-30B-A3B-Instruct-2507 (MoE, 3B active), bf16 KV, TP 1, triton attention, context 131,072                                                                                          |
+| KV size         | 96 KiB per token (48 layers x 4 KV heads x 128 dims x K and V x 2 bytes); a page is 64 tokens = 6 MiB                                                                                             |
+| L1, GPU KV pool | 668,160 tokens (~61 GiB)                                                                                                                                                                          |
+| L2, host pool   | 160 GB = 1,627,648 tokens                                                                                                                                                                         |
+| L3, SSD         | NIXL file backend on a 2.3 TB disk (`/mnt/ssd`), wiped before each run; reads ~2 GB/s when busy, ~3 ms per page                                                                                 |
+| SSD cleaner     | when the disk passes 70 % full, deletes the oldest files down to 60 % (about 230 GiB per cleanup)                                                                                                 |
+| write policy    | write-through: everything prefilled on the GPU is copied to host memory and on to the SSD                                                                                                         |
 | prefetch policy | `wait_complete`: a request whose history is on the SSD waits for its read before admission. (`timeout`, the other policy studied, waits up to a deadline and recomputes what has not landed.) |
-| scheduler | FCFS, at most 64 running requests, chunked prefill 8,192 tokens, page size 64 |
+| scheduler       | FCFS, at most 64 running requests, chunked prefill 8,192 tokens, page size 64                                                                                                                     |
 
 Under write-through a host copy can only be evicted after its GPU copy is gone, so 41 % of the host pool always mirrors
 the GPU pool. What is left holds host-only contexts and, while reads run, the pages they are filling.
 
 A returning turn's history is served from one of four places, at very different costs:
 
-| source | cost (campaign 15, p50) |
-|---|---|
-| GPU | nothing to load |
-| host memory | ~0.3 s TTFT |
-| SSD | ~22 s TTFT under load, almost all of it queueing behind other reads (a typical restore is ~250 pages, ~1.5 GB) |
-| recompute | prefill of the lost tokens on the GPU, which delays every other request |
+| source      | cost (campaign 15, p50)                                                                                        |
+| ----------- | -------------------------------------------------------------------------------------------------------------- |
+| GPU         | nothing to load                                                                                                |
+| host memory | ~0.3 s TTFT                                                                                                    |
+| SSD         | ~22 s TTFT under load, almost all of it queueing behind other reads (a typical restore is ~250 pages, ~1.5 GB) |
+| recompute   | prefill of the lost tokens on the GPU, which delays every other request                                        |
 
 ### 2.2 Workload (identical in campaigns 14, 15 and 16)
 
@@ -128,12 +128,12 @@ A returning turn's history is served from one of four places, at very different 
 
 Campaign 14 is the baseline for everything below:
 
-| campaign 14, window 2,700-16,800 s | `wait_complete` (wc) | `timeout` (to) |
-|---|---|---|
-| TTFT mean / p50 / p90 | 22.2 / 10.4 / 40.4 s | 53.3 / 10.7 / 155.4 s |
-| turns/s; users finished in 5 h | 1.22; 765 | 0.99; 646 |
-| returns from GPU / host / SSD / recompute | 21 / 16 / 50 / 13 % | 11 / 26 / 28 / 35 % |
-| SSD read / written | 15.6 / 3.4 TB | 11.0 / 7.9 TB |
+| campaign 14, window 2,700-16,800 s        | `wait_complete` (wc) | `timeout` (to)      |
+| ----------------------------------------- | ---------------------- | --------------------- |
+| TTFT mean / p50 / p90                     | 22.2 / 10.4 / 40.4 s   | 53.3 / 10.7 / 155.4 s |
+| turns/s; users finished in 5 h            | 1.22; 765              | 0.99; 646             |
+| returns from GPU / host / SSD / recompute | 21 / 16 / 50 / 13 %    | 11 / 26 / 28 / 35 %   |
+| SSD read / written                        | 15.6 / 3.4 TB          | 11.0 / 7.9 TB         |
 
 `wait_complete` was the better policy, and the rest of this document is about it.
 
@@ -145,15 +145,14 @@ The figure in section 7.2 shows it. From about 2.1 h to 3.0 h, campaign 14's wc 
 TTFT of 100-180 s, completed 0.5 turns/s instead of 1.8-2.0, and recomputed 10,000-13,000 history tokens per
 returning turn (normally about 35). Campaign 15's run had the same episode from 1.3 h to 1.8 h.
 
-The server logs say why. A turn "lost a read after landing" when its SSD read completed (`HiCache prefetch success ...
-loaded=N`) and its admission nevertheless credited less than half of N as coming from the SSD and recomputed more than a
+The server logs say why. A turn "lost a read after landing" when its SSD read completed (`HiCache prefetch success ... loaded=N`) and its admission nevertheless credited less than half of N as coming from the SSD and recomputed more than a
 page:
 
-| run | turns that lost a read after landing | their recomputed tokens | share of all recomputed history |
-|---|---|---|---|
-| c14 wc | 665 | 12.2M | 59 % |
-| c15 wc + oracle v1 | 509 | 8.9M | 67 % |
-| c16 `_dl`, `_oracle_v2`, `_oracle_v2_nu` | 0, 1, 3 | 0.0-0.1M | 0-7 % of a far smaller total |
+| run                                           | turns that lost a read after landing | their recomputed tokens | share of all recomputed history |
+| --------------------------------------------- | ------------------------------------ | ----------------------- | ------------------------------- |
+| c14 wc                                        | 665                                  | 12.2M                   | 59 %                            |
+| c15 wc + oracle v1                            | 509                                  | 8.9M                    | 67 %                            |
+| c16`_dl`, `_oracle_v2`, `_oracle_v2_nu` | 0, 1, 3                              | 0.0-0.1M                | 0-7 % of a far smaller total    |
 
 In campaign 14's storm the typical such turn had 17,120 tokens loaded from the SSD, 0 credited at admission and
 17,111 recomputed. The mechanism:
@@ -186,13 +185,13 @@ page). When `now >= admission - load time` it acts:
 
 **Results** (window 2,700-16,800 s; same turns paired against campaign 14):
 
-| | wc | wc + oracle v1 | to | to + oracle v1 |
-|---|---|---|---|---|
-| TTFT mean / p50 / p90 | 22.2 / 10.4 / 40.4 s | 20.8 / 16.8 / 36.1 s | 53.3 / 10.7 / 155.4 s | 41.1 / 8.7 / 112.9 s |
-| paired mean difference | | -1.41 s [-2.09, -0.73] | | -7.28 s [-8.38, -6.16] |
-| turns/s while congested | 1.34 | 1.57 | 0.64 | 0.78 |
-| returns from GPU / host / SSD / recompute | 21 / 16 / 50 / 13 % | 21 / 10 / 58 / 11 % | 11 / 26 / 28 / 35 % | 8 / 21 / 36 / 35 % |
-| host pool held by reads in flight, p50 | 23 % | 39 % | 3 % | 11 % |
+|                                           | wc                   | wc + oracle v1         | to                    | to + oracle v1         |
+| ----------------------------------------- | -------------------- | ---------------------- | --------------------- | ---------------------- |
+| TTFT mean / p50 / p90                     | 22.2 / 10.4 / 40.4 s | 20.8 / 16.8 / 36.1 s   | 53.3 / 10.7 / 155.4 s | 41.1 / 8.7 / 112.9 s   |
+| paired mean difference                    |                      | -1.41 s [-2.09, -0.73] |                       | -7.28 s [-8.38, -6.16] |
+| turns/s while congested                   | 1.34                 | 1.57                   | 0.64                  | 0.78                   |
+| returns from GPU / host / SSD / recompute | 21 / 16 / 50 / 13 %  | 21 / 10 / 58 / 11 %    | 11 / 26 / 28 / 35 %   | 8 / 21 / 36 / 35 %     |
+| host pool held by reads in flight, p50    | 23 %                 | 39 %                   | 3 %                   | 11 %                   |
 
 **Why the wc gain was small:**
 
@@ -215,23 +214,23 @@ oracle's reads.
 
 Each change is a server flag that defaults to the old behaviour:
 
-| change | flag | what it does |
-|---|---|---|
-| pin fetched spans | `--hicache-storage-prefetch-pin-fraction 0.3` | a span the SSD delivered is locked in host memory until its request is admitted (or aborts, or its plan expires; a 600-s guard frees leaks), within 30 % of the host pool (488K tokens); a span that does not fit stays unpinned |
-| memory at dispatch | `--hicache-storage-read-order deadline` | a lookup hit parks in a scheduler-side queue holding no host memory; pages are allocated when the read is handed to the I/O thread ("dispatch") |
-| deadline order | same flag, `--hicache-storage-read-window-pages 512` | parked reads are dispatched earliest deadline first, while fewer than 512 pages are in flight; a request's own lookup and the head of the queue are "now" and bypass the window; a staged read's deadline is its plan's predicted admission |
-| work-ahead | implied with the oracle on | the oracle issues a plan's lookup as soon as the span is missing and its predicted admission is within 120 s; the window and the memory budget, not a timer, limit how far the SSD runs ahead |
-| online load model | automatic | the I/O thread's measured ms per page (moving average) replaces the fixed estimate |
-| no paced retries | automatic with the oracle and deadline order | the old re-issue of missed lookups every 8 scheduler passes (up to 8 times) is off; the oracle's re-fetch of queued turns replaces it; the re-query at admission (#39283) stays |
-| next-use eviction | `--radix-eviction-policy next_use` | GPU and host eviction by hinted next arrival: ended sessions first, then sessions more than 60 s overdue, then sessions returning after 300 s (farthest first), then un-hinted entries (LRU), and last sessions returning within 300 s (farthest first) |
+| change             | flag                                                  | what it does                                                                                                                                                                                                                                            |
+| ------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| pin fetched spans  | `--hicache-storage-prefetch-pin-fraction 0.3`       | a span the SSD delivered is locked in host memory until its request is admitted (or aborts, or its plan expires; a 600-s guard frees leaks), within 30 % of the host pool (488K tokens); a span that does not fit stays unpinned                        |
+| memory at dispatch | `--hicache-storage-read-order deadline`             | a lookup hit parks in a scheduler-side queue holding no host memory; pages are allocated when the read is handed to the I/O thread ("dispatch")                                                                                                         |
+| deadline order     | same flag,`--hicache-storage-read-window-pages 512` | parked reads are dispatched earliest deadline first, while fewer than 512 pages are in flight; a request's own lookup and the head of the queue are "now" and bypass the window; a staged read's deadline is its plan's predicted admission             |
+| work-ahead         | implied with the oracle on                            | the oracle issues a plan's lookup as soon as the span is missing and its predicted admission is within 120 s; the window and the memory budget, not a timer, limit how far the SSD runs ahead                                                           |
+| online load model  | automatic                                             | the I/O thread's measured ms per page (moving average) replaces the fixed estimate                                                                                                                                                                      |
+| no paced retries   | automatic with the oracle and deadline order          | the old re-issue of missed lookups every 8 scheduler passes (up to 8 times) is off; the oracle's re-fetch of queued turns replaces it; the re-query at admission (#39283) stays                                                                         |
+| next-use eviction  | `--radix-eviction-policy next_use`                  | GPU and host eviction by hinted next arrival: ended sessions first, then sessions more than 60 s overdue, then sessions returning after 300 s (farthest first), then un-hinted entries (LRU), and last sessions returning within 300 s (farthest first) |
 
 The arms add these cumulatively on top of the campaign 14 wc configuration:
 
-| arm | adds | what it isolates |
-|---|---|---|
-| `three_tier_wc_dl` | pin + deadline order, oracle **off** | Without the oracle every read is "now", so reads are dispatched immediately and nothing is reordered: this arm measures the pin. It needs no hints. |
-| `three_tier_wc_oracle_v2` | + oracle on (deadlines, work-ahead, memory at dispatch now matters, load model; paced retries off) | whether the oracle's deadlines are worth more than FIFO |
-| `three_tier_wc_oracle_v2_nu` | + next-use eviction | whether hint-driven eviction raises host hits |
+| arm                            | adds                                                                                               | what it isolates                                                                                                                                    |
+| ------------------------------ | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `three_tier_wc_dl`           | pin + deadline order, oracle**off**                                                          | Without the oracle every read is "now", so reads are dispatched immediately and nothing is reordered: this arm measures the pin. It needs no hints. |
+| `three_tier_wc_oracle_v2`    | + oracle on (deadlines, work-ahead, memory at dispatch now matters, load model; paced retries off) | whether the oracle's deadlines are worth more than FIFO                                                                                             |
+| `three_tier_wc_oracle_v2_nu` | + next-use eviction                                                                                | whether hint-driven eviction raises host hits                                                                                                       |
 
 A fourth arm, write-back instead of write-through, was held back. In its smoke test the SSD was written but never
 read (0 hits in 1,281 lookups): the scheduler only looks up the SSD when the deepest cached match is backed by host
@@ -249,27 +248,27 @@ oracle v1 and v2 code.
 All three arms ran 2026-10-11 19:17Z to 2026-10-12 09:56Z with 0 client errors and 0 server tracebacks. The two oracle
 arms ran out of users before 5 h (at 4.90 h and 4.54 h).
 
-| | c14 wc | c15 wc + oracle v1 | `_dl` | `_oracle_v2` | `_oracle_v2_nu` |
-|---|---|---|---|---|---|
-| **shared turns (20,217)** | | | | | |
-| mean TTFT | 18.5 s | 17.3 s | 13.2 s | 11.6 s | **5.7 s** |
-| p50 / p90 / p99 TTFT | 1.9 / 35.5 / 169 s | 7.9 / 33.9 / 152 s | 11.2 / 31.2 / 46 s | 2.8 / 31.9 / 43 s | 1.9 / 16.0 / 28 s |
-| paired difference vs c14 wc | | -1.2 s [-2.6, +0.2] | -5.2 s [-6.4, -4.0] | -6.8 s [-8.0, -5.6] | -12.8 s [-14.1, -11.5] |
-| **throughput** | | | | | |
-| time until 600 / 750 users finished | 3.50 / 4.35 h | 3.27 / 4.09 h | 3.01 / 3.86 h | 2.81 / 3.62 h | 2.50 / 3.30 h |
-| all 768 users finished | no (3 live at 5 h) | no (2) | no (2) | 4.90 h | 4.54 h |
-| turns/s while congested (number of 5-min bins) | 1.34 (26) | 1.57 (27) | 1.80 (29) | 1.95 (23) | 2.43 (8) |
-| users waiting for admission, mean | 78 | 77 | 48 | 31 | 4 |
-| **where history came from** | | | | | |
-| returns from GPU / host / SSD / recompute | 21 / 16 / 50 / 13 % | 21 / 10 / 58 / 11 % | 23 / 10 / 60 / 7 % | 21 / 14 / 58 / 7 % | 11 / 41 / 41 / 7 % |
-| history tokens from GPU / host / SSD / recomputed | 46 / 16 / 33 / 4 % | 46 / 13 / 38 / 3 % | 48 / 13 / 39 / 0 % | 46 / 15 / 39 / 0 % | 43 / 29 / 28 / 0 % |
-| recomputed history per returning turn | 1,073 tokens | 684 | 113 | 43 | 48 |
-| **SSD and host memory** | | | | | |
-| SSD read / written | 15.6 / 3.4 TB | 18.0 / 2.7 TB | 17.1 / 1.6 TB | 16.6 / 1.5 TB | 13.4 / 1.5 TB |
-| SSD busy: mean; samples >= 99 % | 61 %; 14 % | 70 %; n/a | 63 %; 13 % | 61 %; 5 % | 51 %; 2 % |
-| host pool held by reads in flight, p50 | 23 % | 39 % | 28 % | 2 % | 2 % |
-| **window 2,700-16,800 s** | | | | | |
-| mean TTFT (the earlier campaigns' metric) | 22.2 s | 20.8 s | 15.8 s | 14.0 s | 6.6 s (window ends at 16,358 s) |
+|                                                   | c14 wc              | c15 wc + oracle v1  | `_dl`             | `_oracle_v2`      | `_oracle_v2_nu`               |
+| ------------------------------------------------- | ------------------- | ------------------- | ------------------- | ------------------- | ------------------------------- |
+| **shared turns (20,217)**                   |                     |                     |                     |                     |                                 |
+| mean TTFT                                         | 18.5 s              | 17.3 s              | 13.2 s              | 11.6 s              | **5.7 s**                 |
+| p50 / p90 / p99 TTFT                              | 1.9 / 35.5 / 169 s  | 7.9 / 33.9 / 152 s  | 11.2 / 31.2 / 46 s  | 2.8 / 31.9 / 43 s   | 1.9 / 16.0 / 28 s               |
+| paired difference vs c14 wc                       |                     | -1.2 s [-2.6, +0.2] | -5.2 s [-6.4, -4.0] | -6.8 s [-8.0, -5.6] | -12.8 s [-14.1, -11.5]          |
+| **throughput**                              |                     |                     |                     |                     |                                 |
+| time until 600 / 750 users finished               | 3.50 / 4.35 h       | 3.27 / 4.09 h       | 3.01 / 3.86 h       | 2.81 / 3.62 h       | 2.50 / 3.30 h                   |
+| all 768 users finished                            | no (3 live at 5 h)  | no (2)              | no (2)              | 4.90 h              | 4.54 h                          |
+| turns/s while congested (number of 5-min bins)    | 1.34 (26)           | 1.57 (27)           | 1.80 (29)           | 1.95 (23)           | 2.43 (8)                        |
+| users waiting for admission, mean                 | 78                  | 77                  | 48                  | 31                  | 4                               |
+| **where history came from**                 |                     |                     |                     |                     |                                 |
+| returns from GPU / host / SSD / recompute         | 21 / 16 / 50 / 13 % | 21 / 10 / 58 / 11 % | 23 / 10 / 60 / 7 %  | 21 / 14 / 58 / 7 %  | 11 / 41 / 41 / 7 %              |
+| history tokens from GPU / host / SSD / recomputed | 46 / 16 / 33 / 4 %  | 46 / 13 / 38 / 3 %  | 48 / 13 / 39 / 0 %  | 46 / 15 / 39 / 0 %  | 43 / 29 / 28 / 0 %              |
+| recomputed history per returning turn             | 1,073 tokens        | 684                 | 113                 | 43                  | 48                              |
+| **SSD and host memory**                     |                     |                     |                     |                     |                                 |
+| SSD read / written                                | 15.6 / 3.4 TB       | 18.0 / 2.7 TB       | 17.1 / 1.6 TB       | 16.6 / 1.5 TB       | 13.4 / 1.5 TB                   |
+| SSD busy: mean; samples >= 99 %                   | 61 %; 14 %          | 70 %; n/a           | 63 %; 13 %          | 61 %; 5 %           | 51 %; 2 %                       |
+| host pool held by reads in flight, p50            | 23 %                | 39 %                | 28 %                | 2 %                 | 2 %                             |
+| **window 2,700-16,800 s**                   |                     |                     |                     |                     |                                 |
+| mean TTFT (the earlier campaigns' metric)         | 22.2 s              | 20.8 s              | 15.8 s              | 14.0 s              | 6.6 s (window ends at 16,358 s) |
 
 Read the means and tails, not the medians. While the cap binds, it holds every run near the same backlog, so TTFT
 there is set by the backlog target (Little's law), about 15-20 s. A median then mostly says how many turns fell in
@@ -328,32 +327,32 @@ campaign 14 turned into its storm while `_dl` recovered within minutes.
 
 ### 7.6 Against the targets set before the campaign (`ORACLE_V2_PLAN.md` section 6)
 
-| target | measured | verdict |
-|---|---|---|
-| staged spans evicted again before admission (the oracle's count) < 50 per 5 h | 8 (`_oracle_v2`), 24 (`_oracle_v2_nu`) | met |
-| host pool held by queued reads < 10 % | 2 % | met (`_dl` 28 %, as expected without the oracle) |
-| host hits >= 30 % of returns | 41 % | met |
-| SSD read volume -20 % at the same turns | -19 % against `_oracle_v2` | about met |
-| turns/s while congested >= 1.8 | 2.43 | met, but only 8 bins were congested |
-| late reads < 25 % while the SSD is below 90 % busy | 69 % overall in `_oracle_v2`, 0.9 % in `_oracle_v2_nu` | not split by SSD load yet |
-| users finished in 5 h >= 820 | 768 of 768 in 4.5 h | unreachable as written: the workload has 768 users; time until 750 finished fell 24 % instead |
-| `_dl`: more pages parked than queued | not applicable | without the oracle every read is "now"; parking only happens in the oracle arms |
-| load estimate within 1 s | not measured | `oracle_eval.py` times a read from when it parks, so the intended wait is counted as error; it needs timing from dispatch |
-| no trigger bursts | none seen in the 2-min timeline of `_oracle_v2` | met on that sample |
+| target                                                                        | measured                                                  | verdict                                                                                                                     |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| staged spans evicted again before admission (the oracle's count) < 50 per 5 h | 8 (`_oracle_v2`), 24 (`_oracle_v2_nu`)                | met                                                                                                                         |
+| host pool held by queued reads < 10 %                                         | 2 %                                                       | met (`_dl` 28 %, as expected without the oracle)                                                                          |
+| host hits >= 30 % of returns                                                  | 41 %                                                      | met                                                                                                                         |
+| SSD read volume -20 % at the same turns                                       | -19 % against`_oracle_v2`                               | about met                                                                                                                   |
+| turns/s while congested >= 1.8                                                | 2.43                                                      | met, but only 8 bins were congested                                                                                         |
+| late reads < 25 % while the SSD is below 90 % busy                            | 69 % overall in`_oracle_v2`, 0.9 % in `_oracle_v2_nu` | not split by SSD load yet                                                                                                   |
+| users finished in 5 h >= 820                                                  | 768 of 768 in 4.5 h                                       | unreachable as written: the workload has 768 users; time until 750 finished fell 24 % instead                               |
+| `_dl`: more pages parked than queued                                        | not applicable                                            | without the oracle every read is "now"; parking only happens in the oracle arms                                             |
+| load estimate within 1 s                                                      | not measured                                              | `oracle_eval.py` times a read from when it parks, so the intended wait is counted as error; it needs timing from dispatch |
+| no trigger bursts                                                             | none seen in the 2-min timeline of`_oracle_v2`          | met on that sample                                                                                                          |
 
 The plan's no-go rules all pass: `_oracle_v2` beats `_dl` in congested bins, and `_oracle_v2_nu` beats `_oracle_v2` by
 a wide margin.
 
 ### 7.7 Run health
 
-| | `_dl` | `_oracle_v2` | `_oracle_v2_nu` |
-|---|---|---|---|
-| SSD reads parked / dispatched | 11,110 / 11,110 | 11,155 / 11,155 | 8,422 / 8,422 |
-| of which "now" | all | 142 | 549 |
-| dispatches whose host allocation failed (read dropped) | 31 | 0 | 3 |
-| pins taken / released at admission / budget full | 11,074 / 11,074 / 0 | 11,021 / 11,021 / 133 | 7,578 / 7,576 (+2 replaced) / 838 |
-| leaked pins (released by the 600-s guard) | 0 | 0 | 0 |
-| SSD cleanups (h after the client started) | 2.9, 3.7 | 2.7, 3.4 | 2.3, 3.1 |
+|                                                        | `_dl`             | `_oracle_v2`        | `_oracle_v2_nu`                 |
+| ------------------------------------------------------ | ------------------- | --------------------- | --------------------------------- |
+| SSD reads parked / dispatched                          | 11,110 / 11,110     | 11,155 / 11,155       | 8,422 / 8,422                     |
+| of which "now"                                         | all                 | 142                   | 549                               |
+| dispatches whose host allocation failed (read dropped) | 31                  | 0                     | 3                                 |
+| pins taken / released at admission / budget full       | 11,074 / 11,074 / 0 | 11,021 / 11,021 / 133 | 7,578 / 7,576 (+2 replaced) / 838 |
+| leaked pins (released by the 600-s guard)              | 0                   | 0                     | 0                                 |
+| SSD cleanups (h after the client started)              | 2.9, 3.7            | 2.7, 3.4              | 2.3, 3.1                          |
 
 The cleaner ran twice in every run, campaigns 14 and 15 included (at 3.4 / 4.2 h and 3.2 / 4.0 h), each time deleting
 about 230 GiB of the oldest files. Faster arms reach 70 % full earlier. In the 15 min after the first cleanup,
@@ -414,16 +413,16 @@ them.
 
 ## 10. Where things are
 
-| what | where |
-|---|---|
-| tables of section 7 (shared turns, time until N users finished, history sources, fairness, 30-min phases, lost after landing) | `results/campaign16/all/c16_summary.txt`, from `scripts/c16_summary.py` |
-| figure of section 7.2 | `results/campaign16/all/c16_overview.png`, from `scripts/c16_figure.py` (needs matplotlib) |
-| window metrics, congested bins, SSD totals | `results/campaign16/all/steady.csv`, `steady_bins.csv`, `steady_paired.csv` (`scripts/steady_state.py`) |
-| per arm: v2 event counts, oracle bookkeeping, SSD and host diagnosis, 2-min timeline, cleaner log | `results/campaign16/<arm>/srs_summary.txt`, `oracle_eval.csv`, `diagnosis.txt`, `oracle_timeline_7200_120.png`, `l3_cleanups.txt` |
-| campaign records | `results/campaign14/DECISIONS.md`, `results/campaign15/README.md`, `results/campaign16/DECISIONS.md`; each has `manifest.txt` (arm, run directory, client directory) |
-| raw data | the run directories in the manifests: `server.log` (all `HICACHE_EVT` events), `client_*/client.jsonl` (one line per turn) |
-| designs and procedure | `ORACLE_PLAN.md` (v1), `ORACLE_V2_PLAN.md` (v2, the targets), `ORACLE_V2_HANDOFF.md` (how campaign 16 was run) |
-| engine | v2 code in `python/sglang/srt/mem_cache/` (`storage_read_scheduler.py`, `next_turn_prefetch.py`, `next_use_eviction.py`, `unified_radix_cache.py`) and the flags in `python/sglang/srt/arg_groups/`; the runs used frozen copies under `agent_cache/frozen/` (not committed) |
+| what                                                                                                                          | where                                                                                                                                                                                                                                                                                     |
+| ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tables of section 7 (shared turns, time until N users finished, history sources, fairness, 30-min phases, lost after landing) | `results/campaign16/all/c16_summary.txt`, from `scripts/c16_summary.py`                                                                                                                                                                                                               |
+| figure of section 7.2                                                                                                         | `results/campaign16/all/c16_overview.png`, from `scripts/c16_figure.py` (needs matplotlib)                                                                                                                                                                                            |
+| window metrics, congested bins, SSD totals                                                                                    | `results/campaign16/all/steady.csv`, `steady_bins.csv`, `steady_paired.csv` (`scripts/steady_state.py`)                                                                                                                                                                           |
+| per arm: v2 event counts, oracle bookkeeping, SSD and host diagnosis, 2-min timeline, cleaner log                             | `results/campaign16/<arm>/srs_summary.txt`, `oracle_eval.csv`, `diagnosis.txt`, `oracle_timeline_7200_120.png`, `l3_cleanups.txt`                                                                                                                                               |
+| campaign records                                                                                                              | `results/campaign14/DECISIONS.md`, `results/campaign15/README.md`, `results/campaign16/DECISIONS.md`; each has `manifest.txt` (arm, run directory, client directory)                                                                                                              |
+| raw data                                                                                                                      | the run directories in the manifests:`server.log` (all `HICACHE_EVT` events), `client_*/client.jsonl` (one line per turn)                                                                                                                                                           |
+| designs and procedure                                                                                                         | `ORACLE_PLAN.md` (v1), `ORACLE_V2_PLAN.md` (v2, the targets), `ORACLE_V2_HANDOFF.md` (how campaign 16 was run)                                                                                                                                                                      |
+| engine                                                                                                                        | v2 code in`python/sglang/srt/mem_cache/` (`storage_read_scheduler.py`, `next_turn_prefetch.py`, `next_use_eviction.py`, `unified_radix_cache.py`) and the flags in `python/sglang/srt/arg_groups/`; the runs used frozen copies under `agent_cache/frozen/` (not committed) |
 
 Regenerate, from `agent_cache/`:
 
@@ -439,26 +438,26 @@ docker exec sglang_hicache bash /sgl-workspace/sglang/agent_cache/frozen/oracle_
 
 ## Glossary
 
-| term | meaning |
-|---|---|
-| L1 / L2 / L3 | GPU KV pool / host-memory pool / SSD store |
-| page | 64 tokens of KV, 6 MiB for this model |
-| write-through | every prefilled page is copied to host memory and the SSD as it is made |
-| `wait_complete` / `timeout` | prefetch policies: wait for the SSD read, or wait up to a deadline and recompute the rest |
-| returning turn | a request of a session after its first; its history may be anywhere in the tiers |
-| hint | per request: the next request's id and the gap the client will sleep before sending it |
-| plan | the server's prediction for a hinted next turn: arrival, admission, pages to load |
-| staging (case 1) | reading a session's history from the SSD before its next turn arrives |
-| re-fetch (case 2) | re-reading history a queued turn has lost |
-| park / dispatch | v2: a read waits in the scheduler without memory (parked), then is handed to the I/O thread with its pages allocated (dispatched) |
-| window | the maximum pages in flight at the I/O thread under deadline order (512) |
-| "now" read | a read whose request is waiting for it now; dispatched immediately, outside the window |
-| pin | v2: a lock that keeps a fetched span in host memory until its request is admitted |
-| lost after landing | a fetched span evicted before its request was admitted, so the history was recomputed |
-| late read | a read that ended within 50 ms of its request's admission: admission waited for it |
-| recompute storm | a self-reinforcing episode where lost spans cause recompute, recompute slows the queue, and the queue causes more losses |
-| backlog / cap | requests waiting for their first token / the client's limit on live users, steered to a backlog of 32 |
-| congested bin | a 5-min bin with median TTFT above 10 s |
-| shared turns | the (user, turn) pairs completed in every compared run |
-| cleaner | deletes the oldest SSD files when the disk passes 70 % full, down to 60 % |
-| `_dl`, `_oracle_v2`, `_oracle_v2_nu` | campaign 16's arms `three_tier_wc_dl`, `three_tier_wc_oracle_v2`, `three_tier_wc_oracle_v2_nu` (section 6) |
+| term                                       | meaning                                                                                                                           |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| L1 / L2 / L3                               | GPU KV pool / host-memory pool / SSD store                                                                                        |
+| page                                       | 64 tokens of KV, 6 MiB for this model                                                                                             |
+| write-through                              | every prefilled page is copied to host memory and the SSD as it is made                                                           |
+| `wait_complete` / `timeout`            | prefetch policies: wait for the SSD read, or wait up to a deadline and recompute the rest                                         |
+| returning turn                             | a request of a session after its first; its history may be anywhere in the tiers                                                  |
+| hint                                       | per request: the next request's id and the gap the client will sleep before sending it                                            |
+| plan                                       | the server's prediction for a hinted next turn: arrival, admission, pages to load                                                 |
+| staging (case 1)                           | reading a session's history from the SSD before its next turn arrives                                                             |
+| re-fetch (case 2)                          | re-reading history a queued turn has lost                                                                                         |
+| park / dispatch                            | v2: a read waits in the scheduler without memory (parked), then is handed to the I/O thread with its pages allocated (dispatched) |
+| window                                     | the maximum pages in flight at the I/O thread under deadline order (512)                                                          |
+| "now" read                                 | a read whose request is waiting for it now; dispatched immediately, outside the window                                            |
+| pin                                        | v2: a lock that keeps a fetched span in host memory until its request is admitted                                                 |
+| lost after landing                         | a fetched span evicted before its request was admitted, so the history was recomputed                                             |
+| late read                                  | a read that ended within 50 ms of its request's admission: admission waited for it                                                |
+| recompute storm                            | a self-reinforcing episode where lost spans cause recompute, recompute slows the queue, and the queue causes more losses          |
+| backlog / cap                              | requests waiting for their first token / the client's limit on live users, steered to a backlog of 32                             |
+| congested bin                              | a 5-min bin with median TTFT above 10 s                                                                                           |
+| shared turns                               | the (user, turn) pairs completed in every compared run                                                                            |
+| cleaner                                    | deletes the oldest SSD files when the disk passes 70 % full, down to 60 %                                                         |
+| `_dl`, `_oracle_v2`, `_oracle_v2_nu` | campaign 16's arms`three_tier_wc_dl`, `three_tier_wc_oracle_v2`, `three_tier_wc_oracle_v2_nu` (section 6)                   |

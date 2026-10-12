@@ -7,6 +7,9 @@ seconds since the client started (client `run.t_start` is epoch; server stamps a
   python3 timeline.py --manifest results/compare_<t>/manifest.txt        # every arm + a comparison figure
   python3 timeline.py --run results/<boot dir> [--client client_<...>]    # one arm
   --tier-rule private: classify by the private history (vs_baseline.tier_of, the rule of the READMEs since campaign 12)
+  --steady-state [SECONDS]: also compare_steady.png / compare_steady.csv over the turns sent once every arm's cached data
+  had outgrown device + host memory (the latest of the arms' first host evictions; the first device eviction on a server
+  without a host tier), or compare_steady_<SECONDS>s.* over the turns sent from SECONDS on (since the client started).
 
 Outputs next to the manifest (or in the run dir): timeline_<arm>.png, events_<arm>.csv, turns_<arm>.csv (its last
 column, mid_start, marks the first request of a user who started mid-session), compare.png, compare.csv. A user's first
@@ -47,7 +50,10 @@ ARM_COLOR = {"hbm_lru": GRAY, "hbm_host": ORANGE, "three_tier": AQUA,
              "three_tier_wc_ntpobs": "#eda100", "three_tier_wc_oracle": "#e87ba4",
              "three_tier_wc_ntpobs_norq": BLUE, "three_tier_wc_oracle_norq": "#e34948",
              # campaign 15: violet again, never in a figure with three_tier_wc_norq (campaign 11)
-             "three_tier_to_oracle": "#4a3aa7"}
+             "three_tier_to_oracle": "#4a3aa7",
+             # campaign 16: Okabe-Ito sky, Tol wine, violet again (never with three_tier_to_oracle); with GREEN,
+             # worst normal-vision dE 18.2 and worst CVD dE 11.4 (OKLab x100, Machado)
+             "three_tier_wc_dl": "#56b4e9", "three_tier_wc_oracle_v2": "#882255", "three_tier_wc_oracle_v2_nu": "#4a3aa7"}
 TS_RE = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d{3})?)\]\s*(.*)$")
 KV_RE = re.compile(r"(\w+)=(-?[\w./-]+)")
 
@@ -332,14 +338,85 @@ def arm_metrics(arm: str, cl: dict, sv: dict) -> dict:
                 peak_queue=max((b["queue"] for b in sv["batches"]), default=0))
 
 
-def draw_compare(results: list, out_png: str) -> None:
+def first_overflow(sv: dict):
+    """Seconds since the client started at which the cached data first outgrew device + host memory: the first host
+    eviction (the first device eviction on a server without a host tier, which writes nothing d2h); None if never."""
+    return next((e["t"] for e in (sv["evict_host"] if sv["d2h"] else sv["evict_device"]) if e["t"] >= 0), None)
+
+
+def steady_view(cl: dict, sv: dict, t_from: float) -> tuple:
+    """The client and server records cut to the turns sent, and the events stamped, from t_from on."""
+    turns = [t for t in cl["turns"] if t["t0"] >= t_from]
+    rids = {t["rid"] for t in turns}
+    since = lambda xs, key: [x for x in xs if x[key] >= t_from]
+    return dict(cl, turns=turns), dict(
+        sv, batches=since(sv["batches"], "t"), d2h=since(sv["d2h"], "t0"), h2d=since(sv["h2d"], "t0"),
+        h2s={op_id: op for op_id, op in sv["h2s"].items() if op.get("t_submit", -1.0) >= t_from},
+        s2h={rid: op for rid, op in sv["s2h"].items() if rid in rids},
+        evict_device=since(sv["evict_device"], "t"), evict_host=since(sv["evict_host"], "t"),
+        load_back_init=since(sv["load_back_init"], "t"))
+
+
+def write_steady(results: list, out_dir: str, start: float = None) -> None:
+    """compare_steady.png / .csv over the turns sent from the latest arm's first_overflow on, so every arm is compared
+    over the same span and only once its cached data had outgrown device + host memory; compare_steady_<start>s.* when
+    `start` is given."""
+    firsts = {arm: first_overflow(sv) for arm, _, sv, _ in results}
+    if start is None:
+        never = [arm for arm, t in firsts.items() if t is None]
+        if never:
+            print(f"warning: the cached data of {', '.join(never)} never outgrew device + host memory; "
+                  "left out of the steady-state comparison", file=sys.stderr)
+        kept = [r for r in results if firsts[r[0]] is not None]
+        if not kept:
+            print("warning: no arm outgrew device + host memory; compare_steady not written", file=sys.stderr)
+            return
+        t_from = max(firsts[r[0]] for r in kept)
+        why = "once every arm's cached data had outgrown device + host memory (its first host eviction)"
+    else:
+        kept, t_from, why = results, start, "the start set by --steady-state"
+    steady = []
+    for arm, cl, sv, _ in kept:
+        cl_s, sv_s = steady_view(cl, sv, t_from)
+        first = firsts[arm]
+        m = dict(arm_metrics(arm, cl_s, sv_s), first_overflow_s=round(first, 1) if first is not None else "",
+                 steady_from_s=round(t_from, 1), turns_skipped=len(cl["turns"]) - len(cl_s["turns"]))
+        steady.append((arm, cl_s, sv_s, m))
+        own = f"{first:.0f} s" if first is not None else "never"
+        print(f"{arm} steady state (from {t_from:.0f} s; its own first overflow {own}): {m['turns']} turns kept, "
+              f"{m['turns_skipped']} skipped; returning TTFT mean {m['ret_ttft_mean']} p50 {m['ret_ttft_p50']} "
+              f"p90 {m['ret_ttft_p90']} s; hits device/host/storage/cold "
+              f"{m['hits_device']}/{m['hits_host']}/{m['hits_storage']}/{m['cold_returns']}")
+    name = "compare_steady" if start is None else f"compare_steady_{start:g}s"
+    if len(steady) > 1:
+        draw_compare(steady, os.path.join(out_dir, f"{name}.png"), steady_from=t_from, steady_why=why)
+    with open(os.path.join(out_dir, f"{name}.csv"), "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(steady[0][3].keys()))
+        w.writeheader(); w.writerows([r[3] for r in steady])
+
+
+def arm_colors(arms: list) -> dict:
+    """ARM_COLOR per arm; an arm missing from it gets its own color from matplotlib's cycle and a warning."""
+    missing = [a for a in arms if a not in ARM_COLOR]
+    if missing:
+        print(f"warning: no ARM_COLOR entry for {', '.join(missing)}; add one to timeline.py", file=sys.stderr)
+    cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    return {a: ARM_COLOR[a] if a in ARM_COLOR else cycle[missing.index(a) % len(cycle)] for a in arms}
+
+
+def draw_compare(results: list, out_png: str, steady_from: float = None, steady_why: str = "") -> None:
+    """steady_from: the turns were cut to those sent from this time on (seconds since the client started), for steady_why."""
+    colors = arm_colors([r[0] for r in results])
     fig, axes = plt.subplots(2, 2, figsize=(16, 9))
     fig.patch.set_facecolor("#fcfcfb")
     a_done, a_cdf, a_cdf0, a_tier = axes.flatten()
     for arm, cl, sv, m in results:
         ends = sorted(t["t0"] + t["lat"] for t in cl["turns"])
-        a_done.plot(ends, range(1, len(ends) + 1), color=ARM_COLOR.get(arm, INK), linewidth=1.8, label=arm, drawstyle="steps-post")
-    style(a_done, "turns completed over time (all conversations)", "turns done")
+        a_done.plot(ends, range(1, len(ends) + 1), color=colors[arm], linewidth=1.8, label=arm, drawstyle="steps-post")
+    if steady_from is not None:
+        a_done.axvline(steady_from, color=MUTED, linestyle="--", linewidth=1)
+    style(a_done, "turns completed over time (all conversations)" if steady_from is None
+          else f"turns completed over time (turns sent from {steady_from:.0f} s on, dashed)", "turns done")
     a_done.set_xlabel("seconds since the client started", fontsize=8, color=MUTED)
     a_done.legend(fontsize=8, frameon=False, loc="lower right")
     # log x when the arms span more than ~2 decades (a collapsed arm's tail would squash the healthy ones against 0)
@@ -353,7 +430,7 @@ def draw_compare(results: list, out_png: str) -> None:
         hi = max(xs[min(len(xs) - 1, int(0.99 * len(xs)))] for xs in per_arm)
         return lo > 0 and hi / lo > 50
     for arm, cl, sv, m in results:
-        color = ARM_COLOR.get(arm, INK)
+        color = colors[arm]
         for ax, sel, in ((a_cdf, sel_ret), (a_cdf0, sel_first)):
             xs = sorted(max(0.01, t["ttft"]) for t in cl["turns"] if sel(t))
             if xs:
@@ -361,8 +438,8 @@ def draw_compare(results: list, out_png: str) -> None:
                         drawstyle="steps-post")
     for ax, sel in ((a_cdf, sel_ret), (a_cdf0, sel_first)):
         log = spans_decades(sel)
-        if log:
-            ax.set_xscale("log")
+        # if log:
+        #     ax.set_xscale("log")
         ax.set_xlabel("seconds (log)" if log else "seconds", fontsize=8, color=MUTED)
         ax.legend(fontsize=8, frameon=False, loc="lower right")
     style(a_cdf, "TTFT of returning turns (ECDF)", "fraction of turns")
@@ -394,6 +471,9 @@ def draw_compare(results: list, out_png: str) -> None:
     a_tier.legend(handles=[Patch(color=TIER_COLOR[k], label=(COLD_LABEL[results[0][1]["tier_rule"]] if k == "cold" else k))
                            for k in ("device", "host", "storage", "cold")],
                   fontsize=8, frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.04), ncol=4)  # below the bars: any arm count
+    if steady_from is not None:
+        fig.suptitle(f"Steady state only: turns sent from {steady_from:.0f} s on, {steady_why}", x=0.01, ha="left",
+                     fontsize=10, color=INK)
     fig.tight_layout()
     fig.savefig(out_png, dpi=130, bbox_inches="tight")
     plt.close(fig)
@@ -430,6 +510,14 @@ def write_csvs(arm: str, cl: dict, sv: dict, out_dir: str) -> None:
         w.writeheader(); w.writerows(rows)
 
 
+def steady_start(v: str):
+    """--steady-state value: "auto" or seconds since the client started."""
+    try:
+        return v if v == "auto" else float(v)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected seconds since the client started, got {v!r}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", help="compare_<t>/manifest.txt: lines '<arm> <run dir name> <client dir name>'")
@@ -440,6 +528,11 @@ def main() -> int:
     ap.add_argument("--tier-rule", choices=("prompt", "private"), default="prompt",
                     help="recompute when under half the prompt is cached (prompt), or when over half of the prompt beyond "
                          "the shared system prompt is uncached (private)")
+    ap.add_argument("--steady-state", nargs="?", const="auto", default=None, metavar="SECONDS",
+                    type=steady_start,
+                    help="also write compare_steady.png / compare_steady.csv over the turns sent once every arm's cached "
+                         "data had outgrown device + host memory (the latest first host eviction), or "
+                         "compare_steady_<SECONDS>s.png / .csv over the turns sent from SECONDS on (since the client started)")
     args = ap.parse_args()
 
     jobs = []
@@ -482,6 +575,8 @@ def main() -> int:
     with open(os.path.join(out_dir, "compare.csv"), "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(results[0][3].keys()))
         w.writeheader(); w.writerows([r[3] for r in results])
+    if args.steady_state is not None:
+        write_steady(results, out_dir, start=None if args.steady_state == "auto" else args.steady_state)
     print(f"wrote {out_dir}: " + ", ".join(sorted(x for x in os.listdir(out_dir) if x.endswith((".png", ".csv")))))
     return 0
 

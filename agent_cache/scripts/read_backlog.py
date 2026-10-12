@@ -22,7 +22,9 @@ ARM_COLOR = {"three_tier_to": "#1baf7a", "three_tier_wc": "#2a78d6",
              # the oracle arms (ORACLE_PLAN.md): the reference-palette slots after the two above
              "three_tier_wc_ntpobs": "#eda100", "three_tier_wc_oracle": "#e87ba4",
              "three_tier_wc_ntpobs_norq": "#4a3aa7", "three_tier_wc_oracle_norq": "#e34948",
-             "three_tier_to_oracle": "#4a3aa7"}   # campaign 15; the _norq arms never ran
+             "three_tier_to_oracle": "#4a3aa7",   # campaign 15; the _norq arms never ran
+             # campaign 16, as timeline.py
+             "three_tier_wc_dl": "#56b4e9", "three_tier_wc_oracle_v2": "#882255", "three_tier_wc_oracle_v2_nu": "#4a3aa7"}
 C_QUERY, C_WAIT, C_IO, C_ADMIT, C_PREFILL = "#9a9891", "#eb6834", "#1baf7a", "#d6b22a", "#2a78d6"
 EVT = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\.(\d{3})\] HICACHE_EVT (\w+) rid=(\S+)(.*)")
 BYTES_PER_TOKEN, PAGE = 98304, 64  # bf16 KV of Qwen3-30B-A3B; pages of 64 tokens

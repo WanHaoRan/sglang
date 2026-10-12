@@ -162,12 +162,19 @@ def draw(data: dict, windows: dict, all_bins: list, out_png: str) -> bool:
     except ImportError:
         return False
     colors = {"hbm_host": "#eb6834", "three_tier_to": "#1baf7a", "three_tier_wc": "#2a78d6", "hbm_lru": "#6b6a66",
-              "three_tier_wc_oracle": "#e87ba4", "three_tier_to_oracle": "#4a3aa7"}
+              "three_tier_wc_oracle": "#e87ba4", "three_tier_to_oracle": "#4a3aa7",
+              # campaign 16: the colors of timeline.py
+              "three_tier_wc_dl": "#56b4e9", "three_tier_wc_oracle_v2": "#882255", "three_tier_wc_oracle_v2_nu": "#4a3aa7"}
+    missing = [arm for arm in data if arm not in colors]
+    if missing:
+        print(f"warning: no color for {', '.join(missing)} in steady_state.draw; add one", file=sys.stderr)
+    cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    colors.update({arm: cycle[i % len(cycle)] for i, arm in enumerate(missing)})
     fig, axes = plt.subplots(3, 1, figsize=(12, 9.5), sharex=True, gridspec_kw=dict(hspace=0.16))
     for arm in data:
         b = [x for x in all_bins if x["arm"] == arm]
         xs = [x["t_min"] + 2.5 for x in b]
-        col = colors.get(arm, "#52514e")
+        col = colors[arm]
         axes[0].plot(xs, [x["live"] for x in b], color=col, linewidth=2, label=arm)
         axes[0].plot(xs, [x["waiting"] for x in b], color=col, linewidth=1, linestyle=":")
         axes[1].plot(xs, [x["turns_per_s"] for x in b], color=col, linewidth=2)

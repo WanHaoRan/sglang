@@ -15,10 +15,13 @@ ARM_COLOR = {"hbm_lru": "#9a9891", "hbm_host": "#eb6834", "three_tier_to": "#1ba
              # the oracle arms (ORACLE_PLAN.md); same colors as timeline.py
              "three_tier_wc_ntpobs": "#eda100", "three_tier_wc_oracle": "#e87ba4",
              "three_tier_wc_ntpobs_norq": "#2a78d6", "three_tier_wc_oracle_norq": "#e34948",
-             "three_tier_to_oracle": "#4a3aa7"}   # campaign 15: violet as wc_norq, never plotted together
+             "three_tier_to_oracle": "#4a3aa7",   # campaign 15: violet as wc_norq, never plotted together
+             # campaign 16: violet again, never plotted with three_tier_to_oracle
+             "three_tier_wc_dl": "#56b4e9", "three_tier_wc_oracle_v2": "#882255", "three_tier_wc_oracle_v2_nu": "#4a3aa7"}
 ARM_MARK = {"hbm_lru": "s", "hbm_host": "o", "three_tier_to": "^", "three_tier_wc": "v",
             "three_tier_wc_ntpobs": "D", "three_tier_wc_oracle": "P", "three_tier_wc_ntpobs_norq": "<",
-            "three_tier_wc_oracle_norq": "X", "three_tier_to_oracle": ">"}
+            "three_tier_wc_oracle_norq": "X", "three_tier_to_oracle": ">",
+            "three_tier_wc_dl": "h", "three_tier_wc_oracle_v2": "*", "three_tier_wc_oracle_v2_nu": "p"}
 def q(xs, f): xs = sorted(xs); return xs[min(len(xs) - 1, int(f * len(xs)))]
 
 def main():
