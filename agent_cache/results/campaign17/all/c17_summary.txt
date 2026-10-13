@@ -1,0 +1,30 @@
+paired: 20293 (conv, turn) pairs completed in all 2 runs (per run: 20293, 20293)
+  run                  mean    p50    p90    p99  TTFT (s) over the common turns
+  c17 wc x10          15.77   9.74  23.31 116.42
+  c17 _oracle_v2_nu x10  11.25  11.85  21.48  27.59
+  paired mean difference (s), 95 % interval resampling users:
+    c17 _oracle_v2_nu x10 - c17 wc x10           -4.52  [-5.51, -3.56]
+
+makespan: client seconds at which the N-th user finished
+  run                    384     600     700     750     760     765     766     768
+  c17 wc x10            6541    9239   10500   11096   11531   13792   14192   16715
+  c17 _oracle_v2_nu x10    5174    7583    8889    9467    9853   12069   12536   15008
+
+history tokens per returning turn (all turns with a previous turn)
+  run                 device    host     SSD  recomp   shares %         turns recomputing > 1 page
+  c17 wc x10            9489   12459    1086     787   40 / 52 / 5 / 3  4.9 %
+  c17 _oracle_v2_nu x10    9806   11668    2311      36   41 / 49 / 10 / 0 0.3 %
+
+fairness: per-user mean TTFT over the common turns (s), across users
+  run                   p50    p90    p99    max   TTFT by gap slept before the turn: <60 s / 60-300 s / >=300 s (mean, p90)
+  c17 wc x10           10.2   44.4   82.2  105.6   15.7, 23.3 (n=19828) / 15.3, 23.3 (n=339) / 20.4, 87.3 (n=126)
+  c17 _oracle_v2_nu x10   11.8   19.7   21.3   24.6   11.2, 21.5 (n=19828) / 11.5, 21.3 (n=339) / 11.3, 21.7 (n=126)
+
+phases: turns sent / mean TTFT per 30 min of client time
+  run                   0m         30m         60m         90m        120m        150m        180m        210m        240m        270m      
+  c17 wc x10          2258/   1s  4555/   4s  3263/  31s  1479/  66s  4561/  12s  3791/  12s   346/   0s    36/   1s     3/   0s     1/   0s
+  c17 _oracle_v2_nu x10  2257/   1s  4557/   4s  4538/  16s  4425/  18s  3868/  14s   603/   1s    41/   1s     3/   0s     1/   0s           -
+
+lost after landing: a completed SSD read whose span was gone by admission
+  c17 wc x10            45 turns,   0.8M of  15.4M recomputed history tokens (5 %)
+  c17 _oracle_v2_nu x10     3 turns,   0.0M of   0.7M recomputed history tokens (4 %)

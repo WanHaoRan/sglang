@@ -16,6 +16,7 @@
 # Knobs (env): ARMS="three_tier_wc three_tier_to"  ARRIVAL=0.1  C=128 (the starting cap)  RUN_SECONDS=18000  TURNS_RANGE=30:50
 #              TURNS_SEED=120  CAP_TARGET=32  CAP_INTERVAL=120  CAP_GAIN=0.5  CAP_STEP=8  CAP_MIN=16  CAP_MAX=512
 #              ADMIT_SPACING=5  ORDER_SEED=0  START_SEED=0  START_SERVICE=20
+#              GAP=70 (scale of the recorded gaps, capped at 1,200 s; campaign 17 ran 10)
 #              ENGINE_PYTHONPATH=<frozen python/ dir> (optional, passed to start_server.sh)
 set -uo pipefail
 CDIR=${1:?usage: run_campaign14.sh <campaign dir>}
@@ -23,7 +24,7 @@ mkdir -p "$CDIR"; CDIR=$(cd "$CDIR" && pwd)
 AC=/sgl-workspace/sglang/agent_cache
 cd "$AC/scripts" || { echo "STOP: $AC/scripts missing (run inside the container)"; exit 1; }
 ALL_ARMS=${ARMS:-"three_tier_wc three_tier_to"}
-RATE=${ARRIVAL:-0.1}; CAP=${C:-128}; RUN_S=${RUN_SECONDS:-18000}
+RATE=${ARRIVAL:-0.1}; CAP=${C:-128}; RUN_S=${RUN_SECONDS:-18000}; GAPX=${GAP:-70}
 TR=${TURNS_RANGE:-30:50}; TS=${TURNS_SEED:-120}
 RX='(^|/)bash ([^ ]*/)?(run_compare|start_client|start_server)\.sh( |$)|replay_agentic\.py'
 pgrep -f "$RX" >/dev/null && { echo "STOP: a driver, client or server boot is already running: $(pgrep -af "$RX" | head -3)"; exit 1; }
@@ -46,7 +47,7 @@ sync_manifest() {   # merge finished arms from this campaign's compare dirs into
 
 IOS=""
 trap '[ -n "$IOS" ] && kill "$IOS" 2>/dev/null' EXIT
-echo "LAUNCH $(date -u +%FT%TZ) commit $(git -c safe.directory="*" -C "$AC" rev-parse --short HEAD) arms: $ALL_ARMS arrival $RATE/s cap from $CAP by backlog (target ${CAP_TARGET:-32}) run ${RUN_S}s engine ${ENGINE_PYTHONPATH:-working tree}"
+echo "LAUNCH $(date -u +%FT%TZ) commit $(git -c safe.directory="*" -C "$AC" rev-parse --short HEAD) arms: $ALL_ARMS arrival $RATE/s gaps x$GAPX cap from $CAP by backlog (target ${CAP_TARGET:-32}) run ${RUN_S}s engine ${ENGINE_PYTHONPATH:-working tree}"
 git -c safe.directory="*" -C "$AC" status --short -- scripts > "$CDIR/scripts_at_launch_$(date -u +%m%d_%H%M%S).txt"
 sync_manifest
 TODO=""
@@ -58,7 +59,7 @@ LOG="$CDIR/driver_$(date -u +%m%d_%H%M%S).log"
 nohup iostat -dxt vdc 10 >> "$CDIR/iostat_vdc.log" 2>&1 < /dev/null & IOS=$!
 # Campaign 13's settings (results/campaign13/DECISIONS.md) on all 768 conversations, with a time stop and the client changes.
 ARMS="$TODO" LEVEL=NAT160 MODEL=Qwen/Qwen3-30B-A3B-Instruct-2507 CTX=131072 KV_DTYPE=auto TEMPLATE= \
-  TRACE=$AC/traces/lmcache_agentic_trace_262k.json L3_CLEANER_PCT=70,60 NCONV=768 C="$CAP" TURNS=50 GAP=70 \
+  TRACE=$AC/traces/lmcache_agentic_trace_262k.json L3_CLEANER_PCT=70,60 NCONV=768 C="$CAP" TURNS=50 GAP="$GAPX" \
   GAP_CAP=1200 OFFSET=0 SEED=0 K=0 CHECK_IDS=0 CLIENT_TIMEOUT="$RUN_S" SGLANG_TIMEOUT_KEEP_ALIVE=3600 \
   ARRIVAL="$RATE" ARRIVAL_UNTIL="$RUN_S" STOP_AFTER_USERS=0 TURNS_RANGE="$TR" TURNS_SEED="$TS" \
   CAP_MODE=backlog CAP_TARGET="${CAP_TARGET:-32}" CAP_INTERVAL="${CAP_INTERVAL:-120}" CAP_GAIN="${CAP_GAIN:-0.5}" \

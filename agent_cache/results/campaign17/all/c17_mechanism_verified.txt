@@ -1,0 +1,449 @@
+Campaign 17 mechanism analysis, 2026-10-13: four analyses, a synthesis, and two skeptics per claim (workflow
+wf_213a6ae7-aec). Paths below that start with /tmp/claude-1001/.../scratchpad/c17_wf/ or reconcile/ now live under
+agent_cache/frozen/oracle_scripts_staging/c17_wf/ (scripts and text outputs; the pickles were not kept).
+
+=== NARRATIVE
+Campaign 17 ran campaign 14's workload with gaps x10 on one frozen engine. The original HiCache baseline (write-through, wait_complete, paced retries of 8 attempts at an 8-pass interval, the #39283 re-query at admission, LRU eviction) ran against campaign 16's _oracle_v2_nu. On the 20,293 shared turns the oracle arm's mean TTFT is 11.25 s against 15.77 s: a paired -4.52 s [-5.51, -3.56], p99 27.6 vs 116.4 s, and recomputed history of 36 vs 787 tokens per returning turn (all/c17_summary.txt). That gain is a single storm that the baseline had and the oracle arm did not. Split by the baseline's send time (reconcile/out/checks2.txt, which reproduces key_stats/out_main.txt):
+- Before 76 min: -0.08 s per pair over 9,252 pairs. Both arms averaged 17.3 s at 70-75 min.
+- 76-115 min: the oracle arm is 70.1 s faster per pair over 1,758 pairs. That is -6.07 s of the overall mean, or 134 % of the gain.
+- After 115 min: the oracle arm is 3.46 s slower per pair (+1.58 s of the mean).
+
+All 1,569 baseline turns above 60 s were sent at 76.4-114.5 min; the oracle arm's slowest turn took 32.8 s (reconcile/out/misc.txt). The after-storm penalty comes from admission control, not slower service. The storm drove the baseline's user cap from 128 (82 min) down to 76 (116 min), with up to 228 users waiting. 287 of its users waited more than 60 s to start, and admission waits total 170.3 vs 28.1 user-hours. The baseline therefore served its late turns behind short queues, while the oracle arm had served the same turns a median 1,699 s earlier, during its own congested phase at 17-22 s TTFT. Measured from arrival to finish, users finished 852 s sooner on average in the oracle arm (key_stats/out_users.txt). Outside the storm both arms hit the same GPU limit: 2.35 vs 2.36 turns/s in congested bins (key_stats/out_checks.txt).
+
+The storm was campaign 11's failure, not campaign 14's. Of the baseline's 15.36M recomputed history tokens, 95.5 % are in turns sent at 76-115 min. 13.94M of them (90.7 %) belong to 839 turns whose history was on GPU or host memory when they arrived and was evicted while they waited in the queue, after their 8-attempt lookup budget was spent. Lost-after-landing accounts for only 45 turns and 0.78M tokens (5 %). The budget is used up by how the retry code works, not by data missing from the SSD:
+- A returning turn's arrival lookup covers only its new messages. Those were never prefilled, so they are never on the SSD.
+- If that span is 256 tokens or more, the frozen prefetch_from_storage issues the lookup, which misses, and the request re-polls every 8 scheduler passes until the cap. There were 63,221 paced lookups and none hit 256 or more tokens. There were 7,242 cap lines, 6,910 of them on returning turns.
+- After the cap, _prefetch_after_device_hit_loss refuses the re-query.
+- If the span is under 256 tokens, prefetch_from_storage returns before arming a retry, so the budget stays whole.
+
+The run contains its own control. Among turns sent at 4,500-7,200 s, at the same queue wait (p50 83.1 vs 82.5 s):
+- The 1,053 turns with a short tail lost their history while queued 792 times. All 792 were re-read from the SSD by the re-query.
+- The 1,329 turns with a long tail lost it 840 times and recomputed 839 of those (13.94M tokens).
+
+These counts are in reconcile/out/natural_exp.txt, and they reproduce recompute-attribution's T4. The re-query's reads landed a median 0.96 s before admission, and none was lost after landing.
+
+Timeline of the storm:
+- About 50 min: the GPU limit is reached. Half of the returning turns spend their budgets, harmlessly so far: 6 of 1,676 recomputed at 50-72 min (gpu-and-queue).
+- 71-72 min: host evictions jump 3-6x in both arms; the cause is not determined. Queued contexts start being evicted. In the baseline these were only the contexts of turns that issued no lookup (75 of 352 at 70-76 min), and all were restored.
+- From 76 min: the polling turns lose their history too (838 of 974 sent at 76-115 min). Recompute climbs from 1.2K to 6.7K tok/s within a minute. Decode falls to 125-152 tok/s in the 10-min bins at 80-110 min (gpu-and-queue/report.txt). Queue waits reach about 90 s, and 97 % of returning turns lose history while queued (reconcile/out/loss_bins.txt).
+- 115-116 min: the storm ends, after the cap has cut live users from 128 to about 90.
+
+At x70 the mix was the reverse: campaign 14's recompute was 59 % lost-after-landing and 32 % spent budgets.
+
+The oracle arm stayed out of the storm because every one of its queued losses had a way back, not because its hint-driven levers made service faster.
+- At the onset (70-75 min), with the same queue (p50 16-17 s) and the same TTFT (17.3 s), it lost queued contexts about as often as the baseline: 6.7 % vs 7.8 % of returning turns (loss_bins.txt).
+- But no request had spent its lookup budget, because poll interval 0 means no paced lookups.
+- Case-2 refetch re-read the lost spans. 246 of its 247 queue-time losses over the run were restored: 244 by refetch and 2 by the re-query.
+- Pins held landed reads: lost-after-landing 3 turns vs 45.
+
+DECISIONS.md expected the oracle to be mostly idle at x10; the hint-driven levers were busy instead.
+- Next-use eviction, together with staging allocations and pins holding 15-17 % of host memory, shifted evictions onto contexts between turns. At 70-75 min, 28.7 % of returning turns had history evicted before arrival, against 4.4 % in the baseline; over the run, 2,686 vs 433.
+- Case-1 staging read 2,636 of those back. Staged reads carried 89.4 % of the SSD-credited tokens, and none landed late (oracle_eval.csv late = 0).
+- SSD reads doubled: 47.8M vs 22.3M tokens, 4.70 vs 2.19 TB (checks2.txt).
+- The SSD ran at 97.5-98 % utilisation at 80-100 min. It was at least 90 % busy in 58 % of the 60-120 min samples, against 8 % for the baseline (reconcile/out/iostat.txt).
+- Host memory served less history than under LRU: 49 % vs 52 %. At x70, next-use had raised that share from 16 % to 29 %.
+
+The only window where the levers were active and the baseline was not storming is 70-76 min, and TTFT there is equal.
+
+How much of the -4.52 s the hint-free change (poll interval 0) explains can only be bounded by inference. It could be all of it. The gain is the storm, 90.7 % of the baseline's recompute went through budgets spent by paced polls, and every loss that kept its budget was restored at the same queue wait. But none of the four analyses reported that the polls also protected history while requests queued. In the baseline, turns with a long new tail almost never lost their history while queued outside the storm, while short-tail turns did:
+- 50-76 min: 0 of 2,126 long-tail turns vs 75 of 1,673 short-tail turns.
+- After 115 min: 2 of 4,992 vs 32 of 4,004.
+
+The two groups had the same gap (7.0-7.1 s), queue wait and prompt size. In the oracle arm, where nothing polls, both groups lost history at the same rate: 26 of 343 vs 19 of 259 at 70-76 min (reconcile/out/class_by_arm.txt). The mechanism is not established. Each poll re-matches the prefix, which refreshes the LRU stamps along its path. But the protection also held for turns admitted 10-30 s after their last poll: 0 of 531, against 75 of 912 (reconcile/out/untouched.txt).
+
+So a baseline with polls off would lose more queued contexts and would have to re-read each one at admission. The storm's 13.94M recomputed tokens alone come to about 1.37 TB. Those reads would run under LRU and without pins, where each read's host allocation evicts more queued contexts. Whether that loop stays bounded is exactly what DECISIONS.md's unrun third arm (three_tier_wc with poll interval 0) would show. The evidence from within the run favours a large share for the retry change, but it cannot rule out a different storm.
+
+Each arm ran once. The gain is a single 39-min episode shared by 145 users, so intervals from resampling users are optimistic, and two runs of identical code differed by 0.98 s in smoke C. Given that the baseline storms, the direction of the gain is well supported: the mechanism is measured turn by turn, and both earlier x10 baselines with paced retries (campaigns 11 and 12, with 2,162 and 1,541 cap lines) collapsed the same way. Its size is not supported, because it depends on when and for how long a storm runs. The oracle arm's clean run also sat close to its limits, with exact hints:
+- the SSD at 98 % for about 20 min;
+- the pin budget full 143 times;
+- the longest queue wait at 32.6 s, against the 60-s overdue threshold.
+
+Once definitions are aligned, the four analyses' counts agree. The one factual error is gpu-and-queue's claim that the storm turns that still had their budget had history only on the SSD at arrival. In fact 851 of the 852 re-queried turns had a short arrival span and no SSD query before the re-query. Their shrink line's lookup_match also equals their arrival match (reconcile/out/check_requery.txt).
+
+Not determined:
+- what raised host evictions at 71 min in both arms;
+- how the polls protect queued history;
+- how the oracle arm's eviction shift splits between next-use ordering, staging and pins;
+- run-to-run spread.
+
+Scripts and outputs are in /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/c17_wf/reconcile/ (out/*.txt).
+
+=== DISAGREEMENTS
+ - gpu-and-queue vs recompute-attribution, on the storm turns that still had their budget. gpu-and-queue says the 774 re-queried turns 'already had their history only on the SSD when they arrived' (arrival lookup hit 774 of 774, tokens_req p50 16,448). That is wrong. 851 of the 852 re-queried returning turns had an arrival span under 256 tokens and no SSD query before the re-query. In all 852, the shrink line's lookup_match equals the device+host match at arrival. Their first s2h_query came a median 88.9 s after entry, at the re-query itself (reconcile/out/check_requery.txt). For example, c354-t28 had arrival prefetch_start tokens=123; after 100 s its prefix shrank from 20,864 to 2,624, and then an 18,240-token read followed. gpu-and-queue took the re-query's lookup for the arrival lookup. recompute-attribution is right: both groups were resident at arrival and lost their history while queued, and only the budget differed.
+ - gpu-and-queue says the first discrete change, at 71-72 min, was common to both arms: short-gap returns began finding their history only on the SSD. The timing is common, but where history was lost is not. At 70-75 min, with equal queue and TTFT, the baseline's losses were mostly while queued (7.8 %, against 4.4 % before arrival). 54 of its 83 SSD-served turns at 72-76 min were re-queries (gpu-and-queue's own table D). The oracle arm's losses were before arrival (28.7 %, against 6.7 % while queued) (reconcile/out/loss_bins.txt). Likewise, recompute-attribution's 'ran identically until 75-76 min' holds for TTFT and throughput, not for the cache.
+ - oracle-activity vs recompute-attribution, on next-use eviction. oracle-activity says next-use 'kept queued requests' contexts' (evicted while queued 1,687 -> 187); recompute-attribution says the roughly 7x cannot be separated from the storm. recompute-attribution is right. At equal load (70-75 min), queued-loss rates were 7.8 % in the baseline and 6.7 % in the oracle arm. The gap opened only after the baseline's queue waits passed 30 s. The shift of losses to before arrival (4.4 % -> 28.7 %) is real.
+ - oracle-activity says turning paced retries off only hurt the baseline, and recompute-attribution says poll interval 0 'removes' 90.7 % of the recompute. The first is overstated and the second is an inference, not a measurement. The polls protected polling turns from eviction while queued: 0 of 2,126 lost against 75 of 1,673 at 50-76 min. In the oracle arm, which has no polls, the rates were 7.6 % vs 7.3 % (reconcile/out/class_by_arm.txt). Without polls the baseline would therefore have more SSD re-reads at admission, and the outcome of that third arm is unknown.
+ - The count variants are definitional, not conflicts. Budget-mechanism turns:
+- 839 causal (recompute-attribution; I reproduced it);
+- 883 flagged by the cap line and recomputing more than 1 page (oracle-activity; for 44 of them the loss predated arrival);
+- 841 admitted at 76-116 min (gpu-and-queue);
+- 891 cap-flagged storm-sent turns with any recompute (statistics).
+All four put the tokens at about 13.9M. Queue-time losses: 1,691 and 247 count any arrival-resident loss over 1 page (I reproduced both); 1,687 and 187 require the full history resident at arrival. Oracle-arm lost after landing: 2 under the per-read rule, 3 under the summed rule.
+ - The storm edges agree within a minute: 76-115 min by send time and recompute over 1,000 tokens per turn (statistics); 77-114 min by 1-min decode at or below 250 tok/s (gpu-and-queue); a divergence at 76-77 min (recompute-attribution). The brief's '60-120 min' comes from 30-min bins.
+ - statistics says the oracle arm 'started everyone on arrival'. That holds only until about 100 min: its cap then fell to 90 by 138 min, and 173 users waited more than 60 s to start (max 900 s), against 287 in the baseline (max 2,609 s) (reconcile/out/misc.txt). The admission-control explanation of the after-storm penalty still stands.
+ - DECISIONS.md's expectations vs the data. It expected the baseline to recompute once queue waits passed about 10 s; budget-spent turns waited about 10 s at 50-72 min and only 6 of 1,676 recomputed (gpu-and-queue). Recompute began at 76 min, once the polling turns also started losing their history. It expected the oracle to be mostly idle; instead it staged 2,636 spans and doubled SSD reads.
+
+=== CLAIM C1-storm-mechanism: The baseline's storm (turns sent at 76-115 min) was a retry-budget failure. 839 turns (13.94M tokens, 90.7 % of all 15.36M recomputed history tokens) had their history on GPU or host memory at arrival. Each spent its 8 lookup attempts polling a new tail of 256 tokens or more that was never stored, then lost its history while queued and was refused the #39283 re-query. Turns with tails under 256 tokens issued no lookup and kept their budget. At the same queue wait, every one of them that lost its history was restored from the SSD. Lost-after-landing, campaign 14's failure, was only 5 %.
+EVIDENCE: reconcile/out/natural_exp.txt, turns sent at 4,500-7,200 s: short tail: 1,053 turns, 792 losses while queued, all 792 restored by re-query, 0 recomputed. Long tail: 1,329 turns, 840 losses, 839 recomputed (13.94M tokens). Queue p50 83.1 vs 82.5 s. Paced lookups: 63,221 with 0 hits of 256 tokens or more (out/misc.txt). Frozen code: unified_radix_cache.py prefetch_from_storage returns before arming a retry when the span is under 256 tokens; scheduler.py _prefetch_after_device_hit_loss returns False once attempts reach the maximum. Example c407-t24: 9 lookups of a 319-token tail, cap 19 s after entry, admitted after 93 s with 7,808 tokens cached. Lost after landing: 45 turns / 0.78M (c17_summary.txt).
+REFUTE-CHECK: Rerun reconcile/natural_exp.py wc 4500 7200 (seconds of client time), or grep any re-queried rid such as c354-t28 in server.log. Comparable numbers of long-tail storm turns restored by a re-query, short-tail turns recomputing, or s2h_query lines before the 'shrank' line would refute it.
+  --> [recompute] HOLDS: The baseline's storm (turns sent at 76-116 min) was a retry-budget failure. 839 turns (13.94M tokens) caused it: 90.7 % of all 15.36M recomputed history tokens, or 94.4 % of the recompute larger than one page. 837 of them were sent within 76-115 min.
+
+Each of these turns had its history on GPU or host memory at arrival. Each made 9 L3 lookups (arrival plus 8 paced) of a new tail of 256 tokens or more that was never stored, with 0 hits. It reached the reissue cap a median 13 s after entering the queue, then lost its history while queued (median wait 93 s) and was refused the #39283 re-query.
+
+Turns with tails under 256 tokens issued no lookup and kept their budget. At the same queue wait (p50 83.1 vs 82.5 s), all 792 of them that lost their history at 75-120 min were restored from the SSD by the re-query.
+
+A load surge that both arms shared triggered the storm (queue p50 about 21 s at 72 min). The class's recompute began at 76 min, while the baseline's queue p50 was still 20 s. It made up 88 % of the tokens prefilled in 76-116 min and cut decode to 117-313 tok/s.
+
+Lost-after-landing, campaign 14's failure, was only 45 turns and 0.78M tokens (5.1 %).
+      reasoning: I recomputed every number in the claim from the raw server.log and client.jsonl of both arms with my own parser. Scripts and pickles are in /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/c17_wf/C1-storm-mechanism/ (p1_parse.py to p10_share.py). Every number in the claim reproduced, and each step of the mechanism held turn by turn. None of the suggested refutation patterns appeared.
+
+Totals (baseline):
+- 19,525 returning turns, with 15.3566M recomputed history tokens (786.5 per returning turn).
+- 7,242 'reissue cap reached' lines: one per request, all at attempts=8.
+- 853 'shrank ... reissuing' re-query lines.
+
+Natural experiment, turns sent 4,500-7,200 s (my code):
+- Short tails (under 256 tokens): 1,053 turns, queue p50 83.1 s. 792 lost history while queued, 0 were recomputed, all 792 were credited from storage. 0 cap lines, 792 re-queries.
+- Long tails (256 or more): 1,329 turns, queue p50 82.5 s. 840 lost history while queued and 839 were recomputed (13.936M tokens). 1,211 cap lines, 1 re-query.
+- Both rows are identical to natural_exp.txt.
+
+Per-turn checks of the 839:
+- History was resident at arrival. All 839 have arrival span minus delta_tokens of 116 tokens or less (p50 31), and the arrival lookup hit 0 tokens.
+- Each made exactly 9 s2h_query lookups (arrival plus 8 paced). All 9 requested the same tail of 256 or more tokens, and all returned 0 hits, not even partial.
+- There was no s2h_io or success line, and storage credit was 0.
+- All 839 hit the cap before admission: a median 13.0 s after entry (p10 7.2 s, max 31.2 s), then admission came a median 78 s later.
+- None has a re-query line.
+- The tail requested stayed the same through the 9th lookup. So the history was still resident when the cap was hit and was lost afterwards, while queued.
+
+Short tails:
+- 792 losses in the window, each with 0 lookups before the 'shrank' line and 0 cap lines.
+- Each made exactly one lookup after the re-query, it hit 256 tokens or more, the read succeeded, and storage was credited for the whole lost span.
+- Across the run, none of the 8,821 short-tail turns had a lookup before a re-query or a cap line.
+
+Exceptions, neither large:
+- c327-t26: a long-tail turn with no cap that lost its whole history. The re-query restored 72,000 tokens. It is a control within the long-tail class: with budget left, the history came back.
+- c372-t18: across the run, the one short-tail loss that was recomputed. It was at 73 min, before the storm, wit
+  --> [alternative] HOLDS: The baseline's storm was a recompute storm, and its recompute came from exhausted retry budgets.
+
+Of the turns sent at 75-120 min (837 of them within 76-115 min), 839 turns (13.94M tokens, 90.7 % of the run's 15.36M recomputed history tokens; 90.5 % within 76-115 min) followed the same path:
+- their full history was on GPU or host at arrival;
+- they issued the arrival lookup plus all 8 paced re-issues of their 256+-token new tail (9 lookups each, all 7,551 with 0 storage hits, with the tail unchanged at every poll, and the cap reached 7-20 s after entry);
+- they then lost their history to LRU eviction while still queued (admission came 52-103 s after the cap, p10-p90);
+- they were silently refused the #39283 re-query (attempts at least 8; no 'shrank' line).
+
+Turns with tails under 256 tokens issued no lookup and kept their budget. They were matched on queue-wait quantiles, timing, history size and gap. They lost their history at least as often, and all 792 such losses at 75-120 min were restored from the SSD by the re-query, with storage credit equal to the lost amount (850 of 851 over the whole run).
+
+That recompute was 88 % of the baseline's prefill tokens in 76-115 min, and it began in the same 30 s (76.5 min) as the collapse in admissions and decode. Lost-after-landing was 45 turns, 0.78M (5.1 %).
+
+The loss itself is LRU ageing of queued contexts; the budget only decided recompute versus SSD restore. That a retries-off LRU baseline would have avoided the storm is inferred, not measured.
+      reasoning: I rebuilt everything from raw server.log and client.jsonl with my own parser, written independently of reconcile/. Scripts are in /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/c17_wf/C1-storm-mechanism/refute_r1/: myparse.py, myturns.py, a1-a6. Every number in the claim reproduced exactly. None of the refutation tests found anything.
+
+What the data show:
+- **Natural experiment, 4,500-7,200 s.** Short tail: 1,053 turns, 792 lost, 0 recomputed, 792 re-queried. Long tail: 1,329 turns, 840 lost, 839 recomputed (13.9361M), 1,211 capped. Recomputed history over the run is 15.357M, so the share is 90.75 %. The supplied reconcile/natural_exp.py prints the same.
+- **The 839 recomputed turns, each one:**
+  - has the cap line and no 'shrank' line, and no SSD read (no s2h_io or success line, storage credit 0);
+  - made exactly 9 lookups before admission: the arrival lookup plus 8 paced re-issues, 7,551 lookups in all, every one with storage_hit 0;
+  - showed the arrival span unchanged at every poll, so the history was still resident at the 9th lookup;
+  - had an arrival span minus new-message tokens of at most 116, so its history was on GPU or host at arrival.
+  
+  Timing: the cap came 7.2 / 12.9 / 20.1 s after entry (p10/p50/p90), and admission came 51.9 / 78.4 / 103 s after the cap. Recomputed tokens equal the lost amount plus about 32 tokens.
+- **Code.** The frozen code confirms the gates:
+  - `prefetch_from_storage` returns before arming a retry when the page-aligned span is under 256 tokens.
+  - `_retry_storage_prefetch` logs the cap on the 8th re-issue and still issues it.
+  - `_prefetch_after_device_hit_loss` silently returns False once attempts reach 8.
+  
+  server_args shows cache mode (`buffer_pipeline` None), LRU, poll interval 8, max attempts 8, so no other branch can explain the missing re-query.
+- **Short tail.** Of the run's 8,740 short-tail returning turns, none issued a lookup before its re-query or admission, and none was capped. All 792 storm losses were re-queried and restored, with storage credit and bytes loaded both exactly equal to the lost amount.
+- **The two groups are comparable.**
+  - Queue p10/p25/p50/p75/p90: 12.1/21.5/83.1/100.2/112.7 s (short) vs 12.5/19.5/82.5/97.9/111.3 s (long).
+  - t_send p50: 98.3 vs 96.3 min. History p50: 24.5K vs 22.9K tokens. Gap p50: 7.0 vs 7.1 s.
+  - In every 20-s wait bin and every 5-min send bin, short-tail losses were 0 % recomputed and long-tail losses about 100 % reco
+
+=== CLAIM C2-gain-is-the-storm: More than all of the -4.52 s mean-TTFT gain comes from turns the baseline sent during its storm. Before the storm the arms are equal. The oracle arm is +3.46 s slower after the storm because of admission control, not slower service.
+EVIDENCE: reconcile/out/checks2.txt (reproduces key_stats/out_main.txt), split by baseline send time:
+- Before 76 min: -0.08 s per pair over 9,252 pairs (-0.04 s of the mean).
+- 76-115 min: -70.08 s per pair over 1,758 pairs (-6.07 s, 134 %).
+- After 115 min: +3.46 s per pair (+1.58 s).
+
+All 1,569 baseline turns over 60 s were sent at 76.4-114.5 min; the oracle arm's maximum is 32.8 s. The baseline's cap fell from 128 to 76 with up to 228 users waiting, and 287 users waited more than 60 s to start: 170.3 vs 28.1 user-hours of admission wait (out/misc.txt). Arrival-to-finish per user was 852 s shorter in the oracle arm, and congested turns/s outside the storm were 2.35 vs 2.36 (key_stats/out_users.txt, out_checks.txt).
+REFUTE-CHECK: Recompute the paired difference by baseline send-time phase from the two client.jsonl files (reconcile/checks2.py, about a minute). A pre-76-min difference beyond about 1 s, or an after-115-min penalty that persists among users who started without waiting, would refute it.
+  --> [recompute] WEAKENED: Split by the baseline's send time, turns it sent during its storm (76-115 min; its GPU decode rate collapsed in minutes 78-114) account for -6.07 s (134 %) of the -4.52 s mean-TTFT gain. Before 76 min the arms are equal (-0.08 s/pair; all 9,252 pairs were sent within 60 s of each other).
+
+The +3.46 s/pair penalty after 115 min does not mean the oracle arm was slower after the storm; it comes from pairing turns by the baseline's send time. The baseline sent those turns about 29 min later, mostly because its users waited for admission (1,450 of the 1,722 s lag) and partly because the storm slowed their sessions. 96 % of the penalty comes from 3,958 turns the oracle arm served during 76-115 min. At that time its server queue averaged about 45, against about 25 for the baseline when it served the same turns after its cap had fallen to 76-89; the oracle arm's cap of 128 did not drop below 128 until 102 min.
+
+At matched queue length the arms differ by +0.05 s [-0.10, +0.18], and turns both arms sent after 115 min differ by +0.26 s [-0.02, +0.52]. So the penalty is a difference in queue length, not slower processing of a request.
+
+The penalty is not confined to users who waited to start: users who started without waiting carry +6.2 to +6.5 s/pair.
+
+Throughput on matching congested 5-min bins outside the storm is 2.345 (B) vs 2.286 (O) turns/s, not 2.35 vs 2.36. On the 8 bins congested in both arms it is 2.48 vs 2.25, with the gap at 130-145 min while the oracle arm was running out of users.
+      reasoning: I recomputed everything with my own code from the two client.jsonl files and server.log files. Outputs are in /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/c17_wf/c2_refute_indep/out_*.txt.
+
+**Reproduced exactly (out_core.txt, out_users.txt)**
+- 20,293 shared pairs. Mean TTFT B 15.77 s, O 11.25 s, O-B -4.52 s (my user-bootstrap [-5.53, -3.51]).
+- Split by B's send time:
+  - before 76 min: 9,252 pairs, -0.078 s/pair [-0.116, -0.040], contribution -0.035 s.
+  - 76-115 min: 1,758 pairs, -70.08 s/pair, contribution -6.07 s (134.3 %).
+  - after 115 min: 9,283 pairs, +3.464 s/pair [+3.07, +3.89], contribution +1.585 s.
+- B turns over 60 s: 1,569, all sent at 76.40-114.49 min. O's maximum TTFT is 32.84 s.
+- B's cap minimum was 76. B's waiting users peaked at 228, at 124 min (after the storm).
+- 287 B users waited more than 60 s to start. Total admission wait was 170.3 vs 28.1 user-hours.
+- Arrival-to-finish per user was 852.3 s shorter in O.
+
+**Sentence 1 holds (out_decomp.txt, out_misc2.txt)**
+- From B's own Decode batch lines, the storm (usage >= 0.97 and decode <= 250 tok/s) covers 34 minutes, from minute 78 to 114. O has no such minute.
+- Every window that covers those minutes gives more than 100 %: [78,115) 128.9 %, [77,115) 132.1 %.
+- Only windows that cut out storm minutes fall below 100 %: [82,108) 94.7 %, [85,105) 74.3 %.
+- Splitting by O's send time instead gives 100.7 %.
+
+**Sentence 2 holds**
+- All 9,252 pre-76-min pairs were sent within 60 s of each other in the two arms.
+- p50/p90/p99 TTFT: B 3.68/14.82/23.31 s, O 3.50/14.93/22.82 s.
+- The difference is entirely in queue time (-0.078 s); the rest of TTFT differs by 0.000 s.
+- O-B per minute stays within about ±2 s up to minute 75 and drops to -15.1 s at minute 76.
+
+**Sentence 3: the number holds, but the stated mechanism fails the claim's own refutation test**
+- **The penalty persists among users who started without waiting, and is larger:**
+  - both arms' waits <= 1 s: 627 pairs, 49 users, +6.50 s/pair [+5.63, +7.29];
+  - B wait <= 5 s: 868 pairs, 65 users, +6.19 s/pair [+5.32, +6.97].
+  - Users who waited more than 5 s in B still carry 83 % of the penalty.
+- **"After the storm" is a pairing artifact.**
+  - None of the 9,283 after-phase pairs was sent within 60 s of each other in the two arms.
+  - 95.7 % of the penalty comes from 3,958 pairs that O served during 76-115 min (+7.78 s/pair [+7.42, +8.13]). B sent those turns on average 1,722 s later: 1,450 s of tha
+  --> [alternative] WEAKENED: All of the -4.52 s mean-TTFT gain comes from the baseline's storm and its aftermath.
+- Turns the baseline sent at 76-115 min contribute -6.07 s (134 %).
+- Before 76 min the arms are equal: -0.08 s per pair [-0.12, -0.04], every 5-min bin within 0.27 s, same backlog.
+
+The +3.46 s per pair (+1.58 s) on turns the baseline sent after 115 min is a timing offset of the storm, not the oracle arm being slower after it.
+- 96 % of it comes from 3,958 turns the oracle arm served a median 29 min earlier, inside the baseline's storm window. It served them with 47 requests waiting for a first token (19.4 s mean TTFT).
+- The baseline served the same turns after its storm with 27 waiting (11.7 s). By then its cap had been cut to about 93 and about 190 users were waiting to start.
+- Turns both arms sent after 115 min differ by +0.26 s [-0.03, +0.52].
+
+It is not slower service: at equal backlog the arms are equal, and the oracle arm's throughput in that window was not lower (2.45 vs 2.35 turns/s). But it is not users' admission wait moving into TTFT either: users who started without waiting in both arms show a larger penalty, +6.2 to +6.7 s per pair.
+      reasoning: I recomputed everything from the two raw client.jsonl files with my own parser, not reconcile's pickles. Sources: AC/results/20261012_192342_three_tier_wc_NAT160/client_192808_cmp_three_tier_wc/client.jsonl and AC/results/20261013_000711_three_tier_wc_oracle_v2_nu_NAT160/client_001035_cmp_three_tier_wc_oracle_v2_nu/client.jsonl. Scripts are in scratchpad/c17_wf/C2-gain-is-the-storm/.
+
+The split reproduces exactly: 20,293 pairs, O-B -4.522 s. By baseline send time: before 76 min, -0.08 s per pair over 9,252 pairs (contribution -0.035); 76-115 min, -70.08 over 1,758 (-6.071, 134 %); 115 min on, +3.46 over 9,283 (+1.585). Every evidence figure checks out:
+- 1,569 baseline turns over 60 s, all sent at 76.4-114.5 min; the oracle arm's maximum is 32.84 s.
+- Baseline cap minimum 76, maximum 228 waiting (at 124 min).
+- 287 vs 173 users waited over 60 s to start; 170.3 vs 28.1 user-hours.
+- Arrival-to-finish -852 s per user.
+
+**Part 1 (more than all of the gain is the storm) holds.**
+- Storm windows starting at 70-76 min and ending at 105-130 min give 108-135 %.
+- Ending the window at 140-175 min (the end of the baseline's recovery) gives 99-103 %.
+- Only a late start (80-85 min) brings it below 100 % (66-120 %).
+- The share above 100 % is the post-115 offset, which (see part 3) is itself a timing effect of the storm.
+
+**Part 2 (equal before the storm) holds.**
+- -0.078 s per pair, 95 % interval [-0.116, -0.040] from 2,000 user resamples.
+- Every 5-min bin before 75 min is within 0.27 s.
+- Both arms sent these turns at the same moments (median send-time shift +0.1 s) into the same backlog: 13.9 vs 13.7 requests waiting for a first token.
+
+**Part 3: the figure holds, the stated mechanism does not.**
+- **Not "slower after the storm".** Cross-tabulating both arms' send times: 3,958 of the 9,283 post-115 pairs were sent by the oracle arm inside 76-115 min (median 100.5 min), a median 1,746 s earlier than the baseline. They carry +7.78 s per pair, which is +1.517 of the +1.585 s contribution (96 %). The 5,325 pairs both arms sent after 115 min differ by only +0.26 s [-0.03, +0.52]. On the oracle arm's own clock, its post-115 turns are +0.26 s, and its 76-115 window gives 101 % of the gain.
+- **The claim's own refutation check fires.** The penalty persists, and is larger, among users who started without waiting in both arms. With queued_s = 0 in both it is +6.68 s per pair (47 users, 588 pairs); at ≤1 s, +6.50; at ≤5 s, +6.19 (868 pairs); at ≤10 s, +6.13. Users who waite
+
+=== CLAIM C3-what-carried-the-oracle-arm: The oracle arm avoided the storm because every queued loss had a way back: no lookup budget was spent, case-2 refetch re-read lost spans, and pins held landed reads. Its hint-driven levers did not make service faster. They were busy, contrary to the plan's expectation of a mostly idle oracle: next-use eviction shifted evictions onto contexts between turns, and staging read them back, doubling SSD reads and saturating the SSD.
+EVIDENCE: At 70-75 min both arms had the same queue (p50 16.0 / 17.1 s) and the same TTFT (17.3 s).
+- Queued losses: 7.8 % vs 6.7 %.
+- History evicted before arrival: 4.4 % vs 28.7 % (reconcile/out/loss_bins.txt).
+
+Over the run:
+- Queued losses: 1,691 vs 247; 246 of the 247 were restored (244 by refetch, 2 by re-query).
+- Evicted before arrival: 433 vs 2,686, of which 2,636 were staged. Staged reads carried 89.4 % of the SSD-credited tokens, with 0 late (oracle_eval.csv).
+- SSD reads: 22.27M vs 47.77M tokens, 2.19 vs 4.70 TB.
+- SSD utilisation at 80-100 min: 97.5-98 %. Samples at least 90 % busy in 60-120 min: 8 % vs 58 % (reconcile/out/iostat.txt).
+- History served from host memory: 52 % vs 49 % (c17_summary.txt).
+- Lost after landing: 45 vs 3 turns.
+REFUTE-CHECK: Run reconcile/loss_bins.py. It would refute the claim if the oracle arm's queued-loss rate at 70-75 min were well below the baseline's, which would mean next-use protection rather than recovery, or if its before-arrival rate were not higher. An x10 oracle arm with LRU eviction would test this directly.
+  --> [recompute] WEAKENED: The oracle arm avoided the storm because none of its losses while queued went unrecovered. With paced retries off it spent no lookup budget: 0 'reissue cap reached' lines and 0 paced re-issues, against 7,242 and 60,362 in the baseline. Case-2 refetch, itself a hint-driven lever, re-read all 188 of its queued losses, and 187 were not recomputed; the #39283 re-query restored none of them on its own. Pins held the re-read spans until admission: lost after landing 45 vs 2-3 turns. At 70-75 min both arms had the same queue (p50 16.0 / 17.1 s) and TTFT (17.3 s). The oracle arm was not better protected in the class that stormed (new tail >= 256 tokens: 25 of 288 lost while queued vs 0 of 410). All 839 of the baseline's recomputed queued losses came from that class after its lookup budget was used up. So recovery, not protection, separated the arms. Whether the hint-free re-query alone would have sufficed was not tested. Next-use eviction and staging did not make service faster (paired TTFT before 75 min: -0.04 s and -0.07 s [-0.17, +0.04]). They were busy, contrary to the plan's expectation of a mostly idle oracle. Evictions moved onto contexts between turns: 433 vs 2,694 lost before arrival, of which 2,636 were staged; 1,691 vs 188 lost while queued. Host evictions also roughly doubled at matched load (2.1M vs 4.1M tokens at 70-75 min), with the 488K-token pin budget full from 70 to 120 min. 1,630 staged turns were contexts the baseline kept resident. Staging read them back (staged turns hold 94.1 % of SSD-credited tokens, 0 late), doubling SSD reads (2.19 vs 4.70 TB from read pages; 2.14 vs 4.59 TB by iostat) and keeping the SSD 97.5-98 % busy at 80-100 min (samples at least 90 % busy in 60-120 min: 8 % vs 58 %). History from host memory fell from 52 % to 49 %.
+      reasoning: The core mechanism survived. Some of the supporting numbers do not reproduce, and the claim puts one hint-driven lever (case-2 refetch) on the wrong side of its split. All numbers are from my own parsers of server.log, client.jsonl and iostat_vdc.log, in scratchpad/c17_wf/C3-what-carried-the-oracle-arm/ (p_*.py, outputs *_out.txt). For a fair comparison I used one loss definition for both arms:
+- span = tokens of the arrival prefetch_start, logged 1-4 ms before the request entered the queue (found for all 19,525 returning turns in each arm).
+- M0 = input_len - 1 - span, the history already in GPU or host memory at arrival.
+- Lq = M0 - (device + host credited at admission), minus the storage credit when the last read landed before arrival.
+- A turn counts as a queued loss when Lq >= 64. This reproduces the baseline's figures exactly (433 lost before arrival, 1,691 lost while queued, the same counts in every 5-min bin).
+
+**What holds**
+- **Same state at 70-75 min.** Queue p50 was 16.0 / 17.1 s and mean TTFT 17.3 / 17.3 s. History evicted before arrival was 4.4 % vs 28.7 %.
+- **No lookup budget spent in the oracle arm.**
+  - Baseline: 7,242 'reissue cap reached' lines; 60,362 paced re-issues on 8,113 returning turns; 6,910 returning turns ran out of budget.
+  - Oracle arm: 0 of each.
+- **The baseline's storm recompute came from budget-exhausted turns.**
+  - Its queued losses: 851 restored by the #39283 re-query, 839 recomputed with the cap reached, 1 re-queried and still recomputed.
+  - Every recomputed loss in 75-115 min had a new tail of at least 256 tokens and had reached the cap (p50 9-14 s after entry). Every restored one had a tail under 256 tokens.
+  - At 70-75 min the baseline's 55 losses were 54 restored and 1 recomputed. Its recompute jumped from 50K tokens per 5 min to 1,747K at 75-80 min.
+- **The suggested refutation check fails.** The oracle arm's queued-loss rate at 70-75 min was not well below the baseline's: 6.0 % vs 7.8 % overall, and 8.1 % vs 7.8 % among turns that were not staged.
+- **A stricter check also supports recovery over protection.** In the class that drove the storm (tail >= 256 tokens, not staged), the oracle arm lost more while queued at 70-75 min: 25 of 288 vs 0 of 410, at the same queue p50 (16 s). Next-use eviction did protect the short-tail class (7.4 % vs 18.8 % at 70-75 min, 3.8 % at 75-115 min). The baseline restored that class by re-query anyway.
+- **Oracle arm restoration and pins.**
+  - All 188 queued losses got a case
+  --> [alternative] WEAKENED: The oracle arm recomputed almost nothing.
+- **Losses while queued.** On a definition applied the same way to both arms, 187 turns lost history while waiting. 186 were restored from SSD (184 by case-2 refetch, 2 by refetch plus the admission re-query). The lookup budget was never exhausted (0 'reissue cap reached' lines vs 7,242 in the baseline). Pins kept landed reads in host memory: 3 turns lost a read after it landed, vs 45 in the baseline.
+- **Baseline.** Of its 1,690 losses while queued, 839 were recomputed, all after hitting the lookup-budget cap. That recompute drove the 76-115 min storm.
+
+**Recovery may not be the whole reason the oracle arm escaped the storm.** Next-use eviction also kept evictions off queued contexts:
+- In 70-77.5 min, LRU sent 39-58 % of host-evicted tokens to queued contexts; next-use sent 7 %.
+- In 75-77.5 min, eviction volumes and queues were similar, and the shares were 40-73 % vs 2-3 %.
+- At 70-75 min both arms still lost 8.2 % of queued turns. The oracle arm's own staging doubled its host evictions in that window (4.11M vs 2.06M tokens), with pinned host memory rising to about 28 %.
+- After 75 min its queued-loss rate stayed around 4 %.
+
+**What can and cannot be said about speed.** Before the storm, paired TTFT did not differ (+0.05 s [-0.16, +0.28] at 70-75 min). How much each lever contributed to avoiding the storm cannot be separated with these two arms: the hint-free changes (no paced retries, pins) and the hint-driven ones (next-use eviction, refetch) moved together.
+
+**The oracle was busy.** Staging made up 88.7 % of SSD read volume (42.4M of 47.8M tokens). SSD reads were 2.6x the baseline's in the matched 70-75 min window and 2.14x over the run; about 14.7M tokens of the run-level excess replaced history the baseline recomputed. The SSD was 97.8 % busy at 80-100 min.
+      reasoning: I rebuilt per-turn tables from the raw server.log and client.jsonl files with my own parser, which matches all 19,525 returning turns per arm. Almost every number in the evidence reproduces exactly:
+- 70-75 min: queue p50 16.0 / 17.1 s, TTFT 17.3 s in both arms, queued losses 7.8 % vs 6.7 %, history evicted before arrival 4.4 % vs 28.7 %.
+- Whole run: queued losses 1,691 vs 247; before arrival 433 vs 2,686, of which 2,636 staged.
+- SSD reads 22.27M vs 47.77M tokens (2.19 vs 4.70 TB).
+- iostat: 8 % vs 58 % of samples at least 90 % busy in 60-120 min; oracle arm averaged 97.8 % at 80-100 min.
+- History served from host 52.3 % vs 49.0 %. Lost after landing 45 vs 3.
+- Lookup-budget lines: 0 'reissue cap reached' in the oracle arm vs 7,242 in the baseline.
+
+**The suggested refutation check fails, even with a stricter definition.** reconcile defines a queued loss differently for each arm, so I also used one test for both: the turn was not staged, its history was intact at arrival, and its device+host credit at admission was more than one page below its device+host match at arrival. At 70-75 min both arms lose 8.2 % (55/672 vs 41/500), and the oracle arm's before-arrival rate is higher.
+
+On that symmetric test:
+- The oracle arm had 187 queued losses over the run. 186 were restored from SSD (184 by refetch, 2 by refetch plus re-query) and 1 was recomputed.
+- The baseline had 1,690: 850 restored by re-query and 839 recomputed. Every one of the 839 had hit the lookup-budget cap.
+- So the recovery story holds as a description.
+- The reported 247 counts every refetched turn as a queued loss, which includes 59 staged turns and 1 turn whose history was missing at arrival.
+
+**The causal "because" does not survive: next-use eviction also protected queued contexts.** I measured where host evictions landed:
+- **70-77.5 min:** the baseline (LRU) sent 39-58 % of host-evicted tokens to queued contexts, depending on window alignment; next-use sent 7 %.
+- **75-77.5 min,** when the storm took off: host-eviction volume was nearly equal (2.68M vs 2.86M tokens) and the queues were similar (49-52 requests). Queued contexts took 40-73 % of evicted tokens in the baseline and 2-3 % in the oracle arm.
+- **At the same 20-25 s queue wait in that window,** 26 of 67 baseline turns lost history versus 2 of 56 in the oracle arm.
+
+**Why the rates were equal at 70-75 min.** The oracle arm's own staging doubled its host evictions (4.11M vs 2.06M tokens) by inserting 3.35M SSD-read tokens versus 1
+
+=== CLAIM C4-retry-change-share: Turning paced retries off could explain anything up to all of the gain, but nobody has measured it. The paced polls also had an unreported protective side effect: queued turns that polled kept their history. So turning polls off under LRU would trade recompute for more SSD reads at admission, and those reads could set off a different loop: each read's host allocation evicts more queued contexts.
+EVIDENCE: Upper bound: the storm is 134 % of the gain, 90.7 % of the baseline's recompute went through budgets spent by polls, and 792 of 792 losses that kept their budget were restored. Re-query reads landed a median 0.96 s before admission, with 0 lost after landing (out/misc.txt).
+
+Side effect, from reconcile/out/class_by_arm.txt. In the baseline, polling turns lost queued history in 0 of 2,126 at 50-76 min, against 75 of 1,673 non-polling turns; after 115 min, 2 of 4,992 against 32 of 4,004. The two groups had the same gap, wait and prompt size. In the oracle arm, which has no polls, the rates were equal: 26 of 343 vs 19 of 259 at 70-76 min. The protection also held 10-30 s after a turn's last poll: 0 of 531 vs 75 of 912 (out/untouched.txt), so the mechanism is not determined. Re-reading the storm's recompute instead would have cost 13.94M tokens x 96 KiB, about 1.37 TB.
+REFUTE-CHECK: Decisive: run DECISIONS.md's third arm (three_tier_wc with poll interval 0). No storm and TTFT within about 1 s of the oracle arm would mean the retries explain the gain; a storm or an SSD-bound collapse would mean they do not. Cheapest data check: rerun reconcile/class_by_arm.py. Equal queue-loss rates for polling and non-polling baseline turns would refute the side effect.
+  --> [recompute] WEAKENED: Turning paced retries off could account for anything from none to more than all of campaign 17's gain, and no run has measured it. No baseline arm with poll interval 0 exists, and inside the oracle arm the kept-budget #39283 re-query restored only 2 turns, while the oracle's refetch restored all 187 queued losses.
+
+The upper bound rests on four facts:
+- The baseline's storm window (76-115 min) carries 134 % of the paired gain (95 % CI 126-148 %).
+- 90.7 % of the baseline's recomputed history (13.94M of 15.36M tokens, 839 turns) came from turns whose 8-attempt budgets were spent entirely by paced polls.
+- Queued losses that kept their budget were restored from SSD (792/792 at 75-120 min; 850/851 over the run).
+- Those reads landed a median 0.96 s before admission and none was lost after landing.
+
+Turns that crossed the 256-token lookup threshold, and therefore polled, lost queued history less often under LRU. The step at exactly 256 tokens is sharp (at 70-76 min, 20/74 just below vs 0/60 just above). But the effect only delays when a queued history is lost:
+- At equal queue waits the loss rates are 0.2 % vs 0.3 % at 10-20 s, 2.7 % vs 23.1 % at 20-30 s, 56 % vs 74 % at 30-40 s, and 93-99 % vs 100 % beyond 60 s.
+- In the storm, polled turns lost their history in 837 of 891 cases.
+
+The mechanism is undetermined:
+- On one clock, the evidence that protection outlasted the last poll rests on 0/10 vs 48/100 turns (20-25 s untouched).
+- Plain LRU refresh by the polls is not excluded.
+- The oracle arm (26/349 vs 19/259) cannot isolate polls, because it also changes the eviction policy.
+
+With polls off under LRU, the storm's capped recompute would become about 1.37 TB of SSD re-reads (about 585 MB/s over the storm, well within the 1.4-1.9 GB/s the oracle arm sustained). Those re-reads would mostly replace host allocations the recompute already made through write-through. Extra host pressure, the speculated second loop, would come only from turns the polls had protected, which was a narrow wait band.
+      reasoning: I recomputed everything from server.log and client.jsonl with my own parser. Scripts and outputs are in /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/c17_wf/c4_refute_indep_q7/. Every number in the claim reproduces. The weaknesses are in how far the evidence reaches, not in the arithmetic.
+
+What holds:
+- **Paired TTFT.** 20,293 pairs; mean TTFT 15.770 s (baseline) vs 11.248 s (oracle arm), difference -4.522 s. Pairs the baseline sent at 76-115 min contribute -6.07 s, which is 134 % of the gain (bootstrap over users 95 % [126, 148] %). The share stays at 109-135 % if the window edges move. Pairs after 115 min contribute +1.58 s.
+- **Recompute through poll-spent budgets.** 839 turns recomputed 13,936,057 of 15,356,649 history tokens (90.7 %). Each had a cap line, 7-8 paced polls and no re-query before it. All 6,910 capped returning turns spent their budget on polls only; the cap came a median 4.4 s after entry. No capped turn had a span under 256.
+- **Losses with a kept budget.** At 75-120 min, 792 of 792 span<256 losses were re-queried and restored from SSD. Over the whole run it is 850 of 851; one turn recomputed 226 tokens.
+- **Re-query reads.** Read landing to admission: median 0.96 s (n = 851; the analysts had 852). None of the re-queried turns lost their read after landing. All 45 lost-after-landing turns were reads issued at arrival for span>=256 turns.
+- **Loss by class (baseline).** 0/2,126 vs 75/1,673 at 50-76 min, and 2/4,992 vs 32/4,004 after 115 min. Gap (7.0 vs 7.1 s), wait (10.5 vs 10.4 s) and prompt (22.9K vs 22.3K) match.
+- **"Untouched" table and volume.** Under the analysts' definition I get the same 0/531 vs 75/912. 13,936,057 tokens x 98,304 B = 1.370 TB.
+- **"Nobody has measured it."** No run anywhere in results/ has poll interval 0 with the oracle off and the #39283 re-query present. The September runs with poll interval 0 have 0 cap lines and 0 re-query lines.
+- **The side effect is real and tied to the 256-token lookup threshold.** At 70-76 min, spans of 192-255 tokens lost 20 of 74 turns (26-28 %), while 256-319 lost 0 of 60. In the oracle arm there is no step at 256. The write-ups do not report this effect.
+
+What is weakened:
+1. **The protection is a shift of a few seconds, not "kept their history".** Matched on queue wait over the whole baseline run:
+   - 10-20 s: 0.2 % vs 0.3 %
+   - 20-30 s: 2.7 % vs 23.1 %
+   - 30-40 s: 56 % vs 74 %
+   - 40-60 s: 80 % vs 100 %
+   - over 60 s: 93-99 % vs 100 
+  --> [alternative] WEAKENED: Turning paced retries off could plausibly account for up to all of the gain, but this has not been measured. The storm is 134 % of the gain. It began at minute 76 with the first recomputes by polling turns that had used up their budget. The 55 non-polling losses at 72-73 min were all restored by the #39283 re-query. Next-use eviction and the case-2 refetch could also have removed the storm, so the retry change's share is not identified.
+
+The polls did refresh LRU recency. Each poll's match_prefix stamps last_access_time; ORACLE_PLAN.md §3.6 documents this mechanism, though its effect was never reported. That gave polling turns about 4-5 s of extra recency, which fully explains the 0/2,126 vs 75/1,673 difference. No polling turn ever fell behind the eviction frontier in the loss window, and in the storm the few that did were lost (10 of 12). So the mechanism is determined, and the protection ends when the polling window ends.
+
+Misses hold no host memory, so polls only reorder LRU. They move queued-history losses onto non-polling turns rather than prevent them. Turning polls off therefore need not add SSD reads outside the storm.
+
+Inside the storm, re-reading the 13.94M recomputed tokens (about 1.37 TB) would have replaced a similar volume of write-through SSD writes (baseline 3.44 vs 2.00 TB by page count) at the same host allocation. The "different loop" via host allocation is not a new channel. The remaining, untested risks are unpinned landed spans and host memory held by reads queued in the FIFO under SSD saturation.
+      reasoning: I re-parsed both runs myself from server.log and client.jsonl (scripts are in scratchpad/c17_wf/C4-retry-change-share/). Every number in the claim reproduces exactly:
+- class_by_arm: 0/2,126 vs 75/1,673 at 50-76 min, 2/4,992 vs 32/4,004 after 115 min, and 26/343 vs 19/259 in the oracle arm.
+- The storm is 134 % of the gain (-6.07 s of -4.52 s).
+- The storm's recompute was 13.94M of 15.36M tokens (90.7 %), and all 839 of those turns had a cap line.
+- 792 of 792 restored.
+- Re-query reads landed 0.96 s (p50) before admission, and 0 of 852 were lost after landing. All 45 lost-after-landing turns were arrival reads.
+
+**Part 1 holds.** No measurement exists of LRU with polls off and the #39283 re-query on. The September x10 run with poll interval 0 had neither retries nor re-query (0 re-query lines). The minute-by-minute onset also supports the upper bound:
+- At 72-73 min, 55 non-polling losses were all restored by re-query and the system recovered (0 losses at 74-75 min).
+- The storm starts at minute 76 with the first recomputes by budget-exhausted polling turns (13 turns, 194K tokens). Queue-req then rose from 53 to 78 and admissions fell from about 130 to about 45 per minute.
+- Next-use eviction and the case-2 refetch could also remove the storm, so the share remains unidentified.
+
+**Part 2 (side effect) is real, but the claim gets it wrong in two ways.**
+- **The mechanism is determined.** Every paced poll calls _prefetch_kvcache → init_next_round_input → match_prefix, and _match_post_processor stamps last_access_time from the matched node up to the root. Host eviction is LRU on that stamp. ORACLE_PLAN.md §3.6 already documents this: calling match_prefix "makes the session MRU and changes eviction", and queued requests are re-matched "on a paced / #39283 re-issue".
+  - The polls end about 4.2-4.4 s after entry (9 lookups per turn).
+  - At 70-76 min, waits were equal (16.5 vs 17.4 s) but the median age since last touch was 11.7 vs 16.8 s.
+- **"0/531 vs 75/912" pools admission times.**
+  - All 75 losses happened between 72.2 and 76.2 min (by admission time). The 666 non-polling turns aged 10-30 s that were admitted outside that span lost 0.
+  - Inside it, no polling turn ever had a last touch older than the eviction frontier set by an earlier-lost turn: 0 cases in the envelope test, and 0 pairwise.
+  - In the storm, polling turns that fell behind the frontier were lost (10 of 12). Clean polling turns lost 837/891 (93.9 %) against 744/746. So the protection doe
+
+=== CLAIM C5-robustness: With one run per arm, the direction of the gain is robust given that the x10 baseline storms, but its size is not. The oracle arm's clean result also sat close to its SSD and pin limits, with exact hints.
+EVIDENCE: The gain is one 39-min episode shared by 145 users, and the user-resampling intervals treat those users as independent. Two runs of identical code differed by 0.98 s [+0.61, +1.32] in smoke C (results/compare_20261009_082335/README.md). The earlier x10 baselines, campaigns 11 and 12, collapsed by the same mechanism, with 2,162 and 1,541 cap lines and lost-after-landing at 2-4 % of recompute (DECISIONS.md). At x70 the c14 and c15 storms started at different times (ORACLE_FINDINGS section 4). Oracle-arm margins: SSD at 97.5-98 % for 80-100 min, srs_pin_skipped 143 times, and the longest ntp_admit wait 32,583 ms against the 60-s overdue threshold (out/misc.txt).
+REFUTE-CHECK: Run a second x10 seed of the baseline. No storm, or a much shorter one, would shrink the gain toward the pre-storm -0.08 s; a second oracle-arm seed that storms would refute its no-storm result.
+  --> [recompute] WEAKENED: With one run per arm, the direction of the gain is robust given that the x10 baseline storms. Before the storm the arms differ by -0.08 s per pair. The +3.46 s per pair after the storm is a timing artefact: the oracle arm served those turns during its own busy period. The baseline's 170 user-hours of waiting to be admitted (against 28) is not counted in TTFT at all.
+
+The size of the gain is unmeasured across runs, not shown to be fragile. It comes from one 39-min episode (76-115 min: 1,758 pairs, 145 users, 134 % of the gain), with each 10-min slice of the storm adding -1.0 to -1.9 s. The user-resampling interval [-5.5, -3.6] ignores that; resampling 10-min time blocks gives [-12.7, +0.8].
+
+The evidence cited for run-to-run variation is weak. Smoke C was a small x1 smoke, and its other identical-code pair differed by -0.10 s. Campaigns 14 and 15 ran different server configurations. The closest x10 near-replicates (campaigns 11 and 12, wc against to) reproduced their storm windows within about 1 min and their mean TTFT within about 1 s.
+
+The oracle arm ran with exact hints at or near its SSD bandwidth (98.0 % and 97.5 % busy, 1.83 GB/s, at 80-100 min) and its pin budget (full from 70 to 120 min, 143 skips). Even so, no read landed late (at least 13 s of slack for 90 % of reads during that period), only 2 returning turns lost a read after landing, and its longest queue wait was 32.6 s, 54 % of the 60-s overdue threshold.
+      reasoning: I recomputed every number in the claim from the raw logs with my own code (scripts in /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/c17_wf/c5_robustness/). All of them reproduce. Two parts of the reasoning hold up. The third, that the gain's size is not robust, is stated more firmly than the evidence allows.
+
+**Numbers that reproduce**
+- **Headline:** mean TTFT over the 20,293 shared turns is 15.770 s for the baseline and 11.248 s for the oracle arm. The paired difference is -4.522 s. My user bootstrap gives [-5.54, -3.52]; the summary reports [-5.51, -3.56], and the gap is bootstrap noise.
+- **The storm:** all 1,569 baseline turns with TTFT > 60 s were sent between 76.4 and 114.5 min, and they belong to 141 users. The window [76, 115) holds 1,758 pairs from 145 users, at -70.08 s per pair. That is 134 % of the total gain. Each 10-min slice of the storm adds -1.0 to -1.9 s to the overall mean.
+- **Before the storm:** -0.078 s per pair, within-run interval [-0.116, -0.039].
+- **Smoke C** (compare_20261009_082335/README.md): C4 - C is +0.98 s [+0.61, +1.32], as quoted. The claim leaves out the other identical-code pair, C3 - C2, at -0.10 s [-0.55, +0.37].
+- **Campaigns 11 and 12** (from their server.log files): 2,162 and 1,541 'reissue cap reached' lines.
+  - Lost-after-landing, by my own rule: 37 turns (2.3 % of recompute) and 21 turns (4.0 %).
+  - Requests that hit the retry cap carried 97.5 % and 94.9 % of all recompute. In campaign 17's baseline the figure is 92.1 %, so it is the same mechanism.
+  - Campaign 17's baseline: 7,242 cap lines; 45 lost-after-landing turns, 0.78M of 15.36M recomputed tokens (5.1 %).
+- **Campaigns 14 and 15:** storm bins at 130-170 min and 80-110 min, so they did start at different times.
+- **Oracle-arm margins** (iostat_vdc.log, aligned to the client clock):
+  - SSD busy 98.0 % at 80-90 min and 97.5 % at 90-100 min, reading 1.83 GB/s. The fastest 10-s sample in the log is 2.06 GB/s.
+  - 143 srs_pin_skipped lines. The pin budget was full (488,256 of 488,294 tokens) in every 10-min bin from 70 to 120 min.
+  - Longest ntp_admit wait: 32,583 ms.
+  - The 60-s comparison is the right one: the code resets a session's next use to its arrival time, so its context counts as overdue after 60 s in the queue.
+  - Hints were exact for all 19,525 of 19,525 turns.
+
+**Where the claim is weaker than stated**
+
+1. **The direction holds, and the TTFT gain understates the storm's cost.** The +3.46 s per pair af
+  --> [alternative] HOLDS: With one run per arm, the direction of the gain is robust given that the x10 baseline storms, but its size is not established:
+- The 39-min storm, 1,758 shared turns from 145 users at -70.1 s each, carries 134 % of the -4.52 s mean.
+- The other 18,535 shared turns favour the baseline by +1.70 s. This is a cap artefact: after the storm the baseline throttled its live users and moved delay into start waits, 170 vs 28 user-h, which TTFT does not count. Counting them, the gap is -29.7 s per turn.
+- Resampling 10-min time blocks instead of users gives [-13.0, +0.7].
+
+The storm's trigger is a workload event common to both arms (the host pool fills at about 72 min) followed by escalation through exhausted retry budgets and queue-time device eviction. The oracle arm showed none of that mechanism (0 cap lines; 6 vs 853 re-queries). Storm-size spread between repeated runs has never been measured: smoke C was a small x1 smoke, and c14 vs c15 differ in configuration.
+
+The oracle arm ran its SSD at 97-99 % busy from 80 to 105 min and its pins at 97 % (p90) of budget, with 143 spans that did not fit. Yet its reads still ended at least 13 s (10th percentile) before admission, and only 3 turns lost a span for lack of a pin. Its tightest margin was the 60-s overdue rule, with a longest queue wait of 32.6 s. The hints were exact.
+      reasoning: Every number in the evidence reproduces. The alternatives I tested either fit the claim or strengthen it. Some supporting evidence is weaker than presented, and the 'close to limits' point holds for occupancy but not for outcomes.
+
+THE GAIN IS ONE EPISODE: CONFIRMED, AND MORE THAN THE WHOLE GAIN (a1_paired.txt)
+- All 1,569 baseline turns with TTFT over 60 s were sent between 76.4 and 114.5 min, from 141 users.
+- 1,758 shared turns from 145 users were sent in [76,115) min. On those turns: wc 90.18 s vs nu 20.11 s, a difference of -70.08 s, which contributes -6.07 s of the -4.52 s headline (134 %).
+- Turns sent before the storm (n=9,252): -0.078 s [-0.12, -0.04].
+- Turns sent after the storm (n=9,283): +3.46 s [+3.06, +3.88].
+- All non-storm turns together: +1.70 s [+1.45, +1.93] in the baseline's favour.
+- The bootstrap in c16_summary.py resamples users as independent units (boot_ci). Resampling time blocks of baseline send time instead widens the interval:
+  - 10-min blocks: [-13.04, +0.68]
+  - 30-min blocks: [-17.59, +2.43]
+- So the claim that the size is not established is supported.
+
+METRIC ARTEFACT: THE SIZE ALSO DEPENDS ON THE METRIC (a7_poststorm.txt)
+- The post-storm penalty comes from the client cap. At the send time of post-storm turns, the baseline's cap was 93 vs 105 and live users were 88 vs 99.
+- The baseline's delay moved into start waits, which TTFT does not count: 170.3 vs 28.1 user-h; 287 vs 173 users waited more than 60 s to start.
+- Counting start waits, the difference is -29.74 s per shared turn instead of -4.52 s.
+- This makes the direction more secure and confirms that the size is not robust.
+
+MECHANISM: THE DIRECTION IS ROBUST GIVEN A STORM (a5_mechanism.txt, a3_series.txt)
+- The baseline logged 7,242 'reissue cap reached' lines, one per request: 2,228 before the storm, 913 during, 4,101 after.
+- Outside the storm, capped turns almost never recomputed (7 of 2,106 before; 37 of 3,913 after). Inside it, 839 of 891 did.
+- 95 % of the storm's 14.67M recomputed tokens came from capped turns (campaign 11 had 93 %); lost-after-landing was 5 %.
+- So the cap is necessary but not sufficient. The trigger is queued contexts being evicted from the GPU: re-query lines were 0 before 70 min and 55-121 per 5 min during the storm.
+- The oracle arm had none of these precursors: 0 cap lines, 6 re-queries (vs 853), and flat recompute even while it was evicting 6.4M host tokens per 5 min.
+- The code explains why: next-use eviction ranks a queued context l

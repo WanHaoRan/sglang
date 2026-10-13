@@ -1,8 +1,10 @@
-"""Campaign 16 comparisons for a finite workload, over campaign 14's three_tier_wc, campaign 15's three_tier_wc_oracle
-and the campaign 16 arms (ORACLE_FINDINGS.md). The workload is 768 users (~20,232 turns) that the better arms finish
-before the 5 h stop, so a fixed time window holds different parts of it per arm; these tables compare the same turns.
+"""Comparisons for a finite workload (ORACLE_FINDINGS.md): by default campaign 14's three_tier_wc, campaign 15's
+three_tier_wc_oracle and the campaign 16 arms; --arm and --pair pick other runs (campaign 17: the x10 arms). The workload
+is 768 users (~20,232 turns at x70) that the better arms finish before the 5 h stop, so a fixed time window holds
+different parts of it per arm; these tables compare the same turns.
 
   python3 scripts/c16_summary.py [--results agent_cache/results] [--boot 2000] [--seed 0] [--no-server]
+      [--arm LABEL CAMPAIGN ARM ...] [--pair LABEL_A LABEL_B ...]
 
   paired   TTFT over the (conv, turn) pairs every run completed: mean / p50 / p90 / p99 per run, and paired mean
            differences with a 95 % bootstrap interval that resamples users (turns of one user are correlated)
@@ -31,10 +33,10 @@ def pct(v, q):
     return v[min(len(v) - 1, int(q * len(v)))] if v else float("nan")
 
 
-def runs(results):
+def runs(results, arms=ARMS):
     """(label, run dir, client dir) per arm, from the campaign manifests (`<arm> <run dir> <client dir>`)."""
     out = []
-    for label, campaign, arm in ARMS:
+    for label, campaign, arm in arms:
         with open(os.path.join(results, campaign, "manifest.txt")) as f:
             run, client = next(l.split()[1:3] for l in f if l.split() and l.split()[0] == arm)
         out.append((label, os.path.join(results, run), client))
@@ -67,7 +69,7 @@ def boot_ci(by_user, n_boot, rng):
     return pct(means, 0.025), pct(means, 0.975)
 
 
-def paired(data, common, n_boot, rng):
+def paired(data, common, n_boot, rng, pairs):
     print(f"paired: {len(common)} (conv, turn) pairs completed in all {len(data)} runs "
           f"(per run: {', '.join(str(len(t)) for _, t, _ in data.values())})")
     print(f"  {'run':18s} {'mean':>6s} {'p50':>6s} {'p90':>6s} {'p99':>6s}  TTFT (s) over the common turns")
@@ -75,7 +77,7 @@ def paired(data, common, n_boot, rng):
         v = [t[k]["ttft"] for k in common]
         print(f"  {name:18s} {st.mean(v):6.2f} {pct(v, .5):6.2f} {pct(v, .9):6.2f} {pct(v, .99):6.2f}")
     print("  paired mean difference (s), 95 % interval resampling users:")
-    for x, y in PAIRS:
+    for x, y in pairs:
         by = collections.defaultdict(list)
         for k in common:
             by[k[0]].append(data[x][1][k]["ttft"] - data[y][1][k]["ttft"])
@@ -158,11 +160,16 @@ def main():
     ap.add_argument("--boot", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--no-server", action="store_true", help="skip the server-log pass (lost after landing)")
+    ap.add_argument("--arm", nargs=3, action="append", metavar=("LABEL", "CAMPAIGN", "ARM"),
+                    help="a run to compare, by campaign directory and arm name (repeatable; default: campaigns 14-16)")
+    ap.add_argument("--pair", nargs=2, action="append", metavar=("LABEL_A", "LABEL_B"),
+                    help="report A - B on the shared turns (repeatable; default: campaign 16's pairs)")
     a = ap.parse_args()
-    rs = runs(a.results)
+    arms = [tuple(x) for x in a.arm] if a.arm else ARMS
+    rs = runs(a.results, arms)
     data = {name: load(run, client) for name, run, client in rs}
     common = set.intersection(*(set(t) for _, t, _ in data.values()))
-    paired(data, common, a.boot, random.Random(a.seed))
+    paired(data, common, a.boot, random.Random(a.seed), [tuple(x) for x in a.pair] if a.pair else PAIRS)
     makespan(data)
     history(data)
     fairness(data, common)
