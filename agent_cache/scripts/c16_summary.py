@@ -6,7 +6,7 @@ different parts of it per arm; these tables compare the same turns.
   python3 scripts/c16_summary.py [--results agent_cache/results] [--boot 2000] [--seed 0] [--no-server]
       [--arm LABEL CAMPAIGN ARM ...] [--pair LABEL_A LABEL_B ...]
 
-  paired   TTFT over the (conv, turn) pairs every run completed: mean / p50 / p90 / p99 per run, and paired mean
+  paired   TTFT over the (conv, turn) pairs every run completed: mean / p50 / p90 / p95 / p99 per run, and paired mean
            differences with a 95 % bootstrap interval that resamples users (turns of one user are correlated)
   makespan time at which the N-th user finished
   history  history tokens per returning turn served by device / host / SSD and recomputed (the client's
@@ -72,10 +72,10 @@ def boot_ci(by_user, n_boot, rng):
 def paired(data, common, n_boot, rng, pairs):
     print(f"paired: {len(common)} (conv, turn) pairs completed in all {len(data)} runs "
           f"(per run: {', '.join(str(len(t)) for _, t, _ in data.values())})")
-    print(f"  {'run':18s} {'mean':>6s} {'p50':>6s} {'p90':>6s} {'p99':>6s}  TTFT (s) over the common turns")
+    print(f"  {'run':18s} {'mean':>6s} {'p50':>6s} {'p90':>6s} {'p95':>6s} {'p99':>6s}  TTFT (s) over the common turns")
     for name, (_, t, _) in data.items():
         v = [t[k]["ttft"] for k in common]
-        print(f"  {name:18s} {st.mean(v):6.2f} {pct(v, .5):6.2f} {pct(v, .9):6.2f} {pct(v, .99):6.2f}")
+        print(f"  {name:18s} {st.mean(v):6.2f} {pct(v, .5):6.2f} {pct(v, .9):6.2f} {pct(v, .95):6.2f} {pct(v, .99):6.2f}")
     print("  paired mean difference (s), 95 % interval resampling users:")
     for x, y in pairs:
         by = collections.defaultdict(list)

@@ -10,6 +10,11 @@ seconds since the client started (client `run.t_start` is epoch; server stamps a
   --steady-state [SECONDS]: also compare_steady.png / compare_steady.csv over the turns sent once every arm's cached data
   had outgrown device + host memory (the latest of the arms' first host evictions; the first device eviction on a server
   without a host tier), or compare_steady_<SECONDS>s.* over the turns sent from SECONDS on (since the client started).
+  --paired-cdf REF [--paired-max N]: also paired_cdf_<arm>.png for every other arm: REF's TTFT ECDF over the turns both
+  arms completed, with the arm's TTFT of each same (user, turn) at the same height, joined by a dashed line (N: draw at
+  most N pairs per panel, every k-th by rank; default all); with --steady-state also paired_cdf_<arm>_steady*.png.
+  --ttft-over-time [SECONDS]: also ttft_over_time_<SECONDS>s.png / .csv: every arm's mean TTFT of the turns sent in each
+  SECONDS of client time (default 60), with the turns sent per minute and the users waiting for admission.
 
 Outputs next to the manifest (or in the run dir): timeline_<arm>.png, events_<arm>.csv, turns_<arm>.csv (its last
 column, mid_start, marks the first request of a user who started mid-session), compare.png, compare.csv. A user's first
@@ -98,7 +103,8 @@ def parse_client(path: str, tier_rule: str = "prompt") -> dict:
                           gap=r.get("gap_slept", 0.0), rid=f"{run['args'].get('tag') or 'replay'}-c{r['conv']}-t{r['turn']}",
                           mid_start=bool(r.get("mid_start"))))   # a mid-session start's first request (is_first)
     summary = next((r for r in rows if r["kind"] == "summary"), None)
-    return dict(t_start=t_start, turns=turns, summary=summary, args=run["args"], tier_rule=tier_rule)
+    caps = [dict(t=r["t"], waiting=r["waiting"], live=r["live"], cap=r["cap"]) for r in rows if r["kind"] == "cap"]
+    return dict(t_start=t_start, turns=turns, summary=summary, args=run["args"], tier_rule=tier_rule, caps=caps)
 
 
 def parse_server(path: str, t_start: float, sends: dict = None) -> dict:
@@ -357,7 +363,7 @@ def steady_view(cl: dict, sv: dict, t_from: float) -> tuple:
         load_back_init=since(sv["load_back_init"], "t"))
 
 
-def write_steady(results: list, out_dir: str, start: float = None) -> None:
+def write_steady(results: list, out_dir: str, start: float = None, paired_ref: str = None, paired_max: int = 0) -> None:
     """compare_steady.png / .csv over the turns sent from the latest arm's first_overflow on, so every arm is compared
     over the same span and only once its cached data had outgrown device + host memory; compare_steady_<start>s.* when
     `start` is given."""
@@ -390,6 +396,11 @@ def write_steady(results: list, out_dir: str, start: float = None) -> None:
     name = "compare_steady" if start is None else f"compare_steady_{start:g}s"
     if len(steady) > 1:
         draw_compare(steady, os.path.join(out_dir, f"{name}.png"), steady_from=t_from, steady_why=why)
+    ref = next((r for r in steady if r[0] == paired_ref), None)
+    for r in steady if ref else ():
+        if r is not ref:
+            draw_paired_cdf(ref, r, os.path.join(out_dir, f"paired_cdf_{r[0]}_{name[len('compare_'):]}.png"),
+                            max_pairs=paired_max, steady_from=t_from, steady_why=why)
     with open(os.path.join(out_dir, f"{name}.csv"), "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(steady[0][3].keys()))
         w.writeheader(); w.writerows([r[3] for r in steady])
@@ -438,8 +449,8 @@ def draw_compare(results: list, out_png: str, steady_from: float = None, steady_
                         drawstyle="steps-post")
     for ax, sel in ((a_cdf, sel_ret), (a_cdf0, sel_first)):
         log = spans_decades(sel)
-        # if log:
-        #     ax.set_xscale("log")
+        if log:
+            ax.set_xscale("log")
         ax.set_xlabel("seconds (log)" if log else "seconds", fontsize=8, color=MUTED)
         ax.legend(fontsize=8, frameon=False, loc="lower right")
     style(a_cdf, "TTFT of returning turns (ECDF)", "fraction of turns")
@@ -477,6 +488,105 @@ def draw_compare(results: list, out_png: str, steady_from: float = None, steady_
     fig.tight_layout()
     fig.savefig(out_png, dpi=130, bbox_inches="tight")
     plt.close(fig)
+
+
+def draw_paired_cdf(ref: tuple, other: tuple, out_png: str, max_pairs: int = 0, log_x: bool = None,
+                    steady_from: float = None, steady_why: str = "") -> None:
+    """The reference arm's TTFT ECDF over the turns both arms completed, and at the height of each of its turns the other
+    arm's TTFT of the same (user, turn), joined to the curve by a light dashed line: left of the curve the other arm was
+    faster on that turn. ref, other: result tuples (arm, cl, sv, m) as main() builds them. max_pairs: draw at most this
+    many pairs per panel, every k-th by rank (0: all); the curve always uses every turn. log_x: None picks the scale
+    by draw_compare's rule."""
+    (ref_arm, ref_cl), (arm, cl) = ref[:2], other[:2]
+    colors = arm_colors([ref_arm, arm])
+    theirs = {(t["conv"], t["turn"]): t for t in cl["turns"]}
+    q = lambda xs, f: xs[min(len(xs) - 1, int(f * len(xs)))]
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6.4), gridspec_kw={"width_ratios": [5, 4, 4]})
+    fig.patch.set_facecolor("#fcfcfb")
+    for sel, panels in ((is_returning, ((axes[0], "returning turns", 0.0),
+                                        (axes[1], f"returning turns, the slowest 15 % in {ref_arm}", 0.85))),
+                        (is_first, ((axes[2], "first turns", 0.0),))):
+        pairs = sorted((max(0.01, t["ttft"]), max(0.01, theirs[(t["conv"], t["turn"])]["ttft"]))
+                       for t in ref_cl["turns"] if sel(t) and (t["conv"], t["turn"]) in theirs)
+        if not pairs:
+            for ax, _, _ in panels:
+                ax.set_visible(False)
+            continue
+        n = len(pairs)
+        ys = [(i + 1) / n for i in range(n)]
+        mine, others = [a for a, _ in pairs], sorted(b for _, b in pairs)
+        lo, hi = min(q(mine, .5), q(others, .5)), max(q(mine, .99), q(others, .99))
+        log = log_x if log_x is not None else lo > 0 and hi / lo > 50
+        for ax, what, y_lo in panels:
+            shown = [i for i in range(n) if ys[i] > y_lo]
+            k = max(1, -(-len(shown) // max_pairs)) if max_pairs else 1
+            drawn = shown[k - 1::k]
+            ax.add_collection(LineCollection([((pairs[i][0], ys[i]), (pairs[i][1], ys[i])) for i in drawn], colors=GRAY,
+                                             linewidths=0.6, linestyles=(0, (3, 2)), alpha=0.5, zorder=1))
+            ax.scatter([pairs[i][1] for i in drawn], [ys[i] for i in drawn], s=6 if k > 1 else 2, color=colors[arm],
+                       alpha=0.75 if k > 1 else 0.5, linewidths=0, zorder=2, label=f"{arm}, the same turn")
+            ax.plot(mine, ys, color=colors[ref_arm], linewidth=1.8, drawstyle="steps-post", zorder=3,
+                    label=f"{ref_arm} (ECDF)")
+            if log:
+                ax.set_xscale("log")
+            ax.set_xlabel("TTFT, seconds" + (" (log)" if log else ""), fontsize=8, color=MUTED)
+            ax.set_ylim(y_lo, 1.0 + (1.0 - y_lo) * 0.01)
+            diffs = sorted(pairs[i][1] - pairs[i][0] for i in shown)
+            m = len(diffs)
+            stats = (f"{m} turns" + (f", one in {k} drawn" if k > 1 else "") + f"\n{arm}\n"
+                     f"faster on {100 * sum(d < -0.5 for d in diffs) / m:.0f} %, slower on "
+                     f"{100 * sum(d > 0.5 for d in diffs) / m:.0f} % (by over 0.5 s)\n"
+                     f"paired difference: mean {sum(diffs) / m:+.2f} s, median {diffs[m // 2]:+.2f} s")
+            leg = ax.legend(handles=None if ax is axes[0] else [], title=stats, loc="best", fontsize=8,
+                            title_fontsize=7.5, frameon=False, alignment="left", markerscale=2)
+            leg.get_title().set_color(MUTED)
+            style(ax, f"TTFT of {what}", "fraction of turns" if y_lo == 0 else f"fraction of turns (from {y_lo:g})")
+    title = (f"{arm} against {ref_arm}, turn by turn: each dot is one (user, turn) of {arm}, at the height of the same "
+             f"turn on the {ref_arm} ECDF, joined to it by a dashed line; left of the curve, {arm} was faster")
+    if steady_from is not None:
+        title += f"\nsteady state only: turns both arms sent from {steady_from:.0f} s on, {steady_why}"
+    fig.suptitle(title, x=0.01, ha="left", fontsize=10, color=INK)
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+
+
+def draw_ttft_over_time(results: list, out_png: str, window_s: float) -> list:
+    """Mean TTFT of the turns sent in each window_s of client time, per arm, so the arms are compared at the same
+    moment rather than turn by turn; below it the turns sent per minute (how many turns each mean covers) and the users
+    waiting for admission under the client's cap (a wait TTFT leaves out). Returns the binned rows for the CSV."""
+    colors = arm_colors([r[0] for r in results])
+    fig, (a_ttft, a_n, a_wait) = plt.subplots(3, 1, figsize=(14, 9.5), sharex=True,
+                                              gridspec_kw={"height_ratios": [3, 1.2, 1.2]})
+    fig.patch.set_facecolor("#fcfcfb")
+    rows = []
+    for arm, cl, _, _ in results:
+        bins = collections.defaultdict(list)
+        for t in cl["turns"]:
+            bins[int(t["t0"] // window_s)].append(t["ttft"])
+        idx = range(max(bins) + 1) if bins else range(0)
+        mid = [(i + 0.5) * window_s / 60 for i in idx]
+        mean = [sum(bins[i]) / len(bins[i]) if bins[i] else float("nan") for i in idx]
+        a_ttft.plot(mid, mean, color=colors[arm], linewidth=1.3, label=arm)
+        a_n.plot(mid, [len(bins[i]) * 60 / window_s for i in idx], color=colors[arm], linewidth=1.1)
+        caps = cl.get("caps") or []
+        a_wait.plot([c["t"] / 60 for c in caps], [c["waiting"] for c in caps], color=colors[arm], linewidth=1.3,
+                    drawstyle="steps-post")
+        rows += [dict(arm=arm, t_from_s=round(i * window_s, 1), turns=len(bins[i]),
+                      ttft_mean_s=round(mean[k], 3) if bins[i] else "") for k, i in enumerate(idx)]
+    w = f"{window_s / 60:g}-min" if window_s % 60 == 0 else f"{window_s:g}-s"
+    style(a_ttft, f"mean TTFT of the turns sent in each {w} window (all turns)", "seconds")
+    a_ttft.legend(fontsize=8, frameon=False, loc="upper right")
+    style(a_n, "turns sent per minute", "turns")
+    style(a_wait, "users waiting for admission under the client's cap (not in TTFT)", "users")
+    a_wait.set_xlabel("minutes since the client started (send time)", fontsize=8, color=MUTED)
+    for ax in (a_ttft, a_n, a_wait):
+        ax.set_ylim(bottom=0)
+        ax.grid(True, axis="y", color="#e6e5e0", linewidth=0.8)
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return rows
 
 
 def write_csvs(arm: str, cl: dict, sv: dict, out_dir: str) -> None:
@@ -533,6 +643,14 @@ def main() -> int:
                     help="also write compare_steady.png / compare_steady.csv over the turns sent once every arm's cached "
                          "data had outgrown device + host memory (the latest first host eviction), or "
                          "compare_steady_<SECONDS>s.png / .csv over the turns sent from SECONDS on (since the client started)")
+    ap.add_argument("--paired-cdf", default=None, metavar="REF",
+                    help="also write paired_cdf_<arm>.png for every other arm: REF's TTFT ECDF over the turns both arms "
+                         "completed, and the arm's TTFT of each same (user, turn) at the same height, joined by a dashed line")
+    ap.add_argument("--paired-max", type=int, default=0, metavar="N",
+                    help="--paired-cdf: draw at most N pairs per panel, every k-th by rank (default 0: all)")
+    ap.add_argument("--ttft-over-time", nargs="?", const=60.0, default=None, type=float, metavar="SECONDS",
+                    help="also write ttft_over_time_<SECONDS>s.png / .csv: each arm's mean TTFT of the turns sent in "
+                         "each SECONDS of client time (default 60), with turns sent per minute and users waiting")
     args = ap.parse_args()
 
     jobs = []
@@ -555,6 +673,12 @@ def main() -> int:
         out_dir = args.out or run
     else:
         ap.error("--manifest or --run is required")
+    if args.paired_cdf is not None and args.paired_cdf not in [j[0] for j in jobs]:
+        ap.error(f"--paired-cdf {args.paired_cdf}: not one of the arms ({', '.join(j[0] for j in jobs)})")
+    if args.ttft_over_time is not None and args.ttft_over_time <= 0:
+        ap.error(f"--ttft-over-time {args.ttft_over_time:g}: the window must be positive (seconds)")
+    if args.paired_cdf is not None and len(jobs) < 2:
+        print("warning: --paired-cdf needs a second arm; no paired figure written", file=sys.stderr)
     os.makedirs(out_dir, exist_ok=True)
 
     results = []
@@ -572,11 +696,22 @@ def main() -> int:
               f"evicted dev/host {m['evict_device_tokens']}/{m['evict_host_tokens']} tokens; peak queue {m['peak_queue']}")
     if len(results) > 1:
         draw_compare(results, os.path.join(out_dir, "compare.png"))
+    ref = next((r for r in results if r[0] == args.paired_cdf), None)
+    for r in results if ref else ():
+        if r is not ref:
+            draw_paired_cdf(ref, r, os.path.join(out_dir, f"paired_cdf_{r[0]}.png"), max_pairs=args.paired_max)
+    if args.ttft_over_time is not None:
+        name = os.path.join(out_dir, f"ttft_over_time_{args.ttft_over_time:g}s")
+        rows = draw_ttft_over_time(results, name + ".png", args.ttft_over_time)
+        with open(name + ".csv", "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=["arm", "t_from_s", "turns", "ttft_mean_s"])
+            w.writeheader(); w.writerows(rows)
     with open(os.path.join(out_dir, "compare.csv"), "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(results[0][3].keys()))
         w.writeheader(); w.writerows([r[3] for r in results])
     if args.steady_state is not None:
-        write_steady(results, out_dir, start=None if args.steady_state == "auto" else args.steady_state)
+        write_steady(results, out_dir, start=None if args.steady_state == "auto" else args.steady_state,
+                     paired_ref=args.paired_cdf, paired_max=args.paired_max)
     print(f"wrote {out_dir}: " + ", ".join(sorted(x for x in os.listdir(out_dir) if x.endswith((".png", ".csv")))))
     return 0
 
