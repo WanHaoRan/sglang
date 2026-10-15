@@ -14,12 +14,19 @@ Each turn has three lines:
   plan     the oracle's decision at its trigger (tick): the read planned over [A - L-hat, A];
   read     each SSD read for the turn, waiting in the FIFO read queue (thin) then in I/O (thick); a read the
            `timeout` policy cut while it was still queued (the read thread then skips it: s2h_io ms=0) ends at the
-           cut with a cross and leaves the queue there.
+           cut with a cross and leaves the queue there. A star marks each #39283 re-check (admission found the
+           matched prefix shorter than at the lookup and reissued it), also when no read followed (a miss, or a
+           decline at the prefetch capacity cap); a hollow square marks the request's 8-lookup retry budget running
+           out ("reissue cap reached": no further SSD lookups).
 Rows run off the window's edges where a turn started earlier or ends later.
 Panels below: pages waiting in the SSD read queue (rebuilt from the completed reads; dots are the read backlog the
 oracle saw at each trigger in the window), the SSD read rate (s2h_io, 1-s bins), requests waiting for admission.
 Colors: blue = staged before arrival (case 1), orange = re-fetched while queued (case 2), aqua = the request's own
-lookup or the #39283 re-query; the first three slots of the dataviz reference palette, as timeline.py.
+lookup or a paced retry, violet = the #39283 re-query; the dataviz reference palette's first three slots and its violet,
+as timeline.py.
+A run without the oracle (no ntp_* events, e.g. campaign 14's baselines) gets the same lanes for every returning turn,
+timed by the server's ReqTimeStats lines (arrival = entry_time, admission = + queue_duration, end = + forward_duration;
+the tick is the previous turn's end), without the plan line and the predictions; all of its reads are aqua.
 """
 import argparse
 import bisect
@@ -39,15 +46,20 @@ from matplotlib.lines import Line2D  # noqa: E402
 from timeline import AQUA, BLUE, INK, MUTED, ORANGE, TS_RE, parse_ts, style  # noqa: E402
 
 SURF, BAND, THINK, RUN = "#fcfcfb", "#d9d8d2", "#b9b8b1", "#52514e"
-SOURCE_COLOR = {"staged": BLUE, "refetch": ORANGE, "own": AQUA}
+VIOLET = "#4a3aa7"   # the reference palette's violet, as timeline.py's three_tier_wc_norq
+SOURCE_COLOR = {"staged": BLUE, "refetch": ORANGE, "own": AQUA, "requery": VIOLET}
 SOURCE_LABEL = {"staged": "staged before arrival (case 1)", "refetch": "re-fetched while queued (case 2)",
-                "own": "own lookup or #39283 re-query"}
+                "own": "own lookup or paced retry", "requery": "#39283 re-query"}
 EVT_RE = re.compile(r"HICACHE_EVT (\w+) rid=(\S+)(.*)")
 KV_RE = re.compile(r"(\w+)=(-?[\w./-]+)")
 SUCCESS_RE = re.compile(r"HiCache prefetch (?:success|dropped) req=(\S+) completed=(\d+)")
 BATCH_RE = re.compile(r"(?:Prefill|Decode) batch.*#queue-req: (\d+)")
 H2D_RE = re.compile(r"HICACHE_EVT h2d_done .*tokens=(\d+) bytes=(\d+)")
 PAGE_RE = re.compile(r"'page_size': (\d+)")
+RTS_RE = re.compile(r"ReqTimeStats\(rid=([^,]+),.*?: queue_duration=([\d.]+)ms, forward_duration=([\d.]+)ms, "
+                    r"entry_time=([\d.]+)")
+RID_RE = re.compile(r"(.+-c\d+)-t(\d+)$")
+RETRY_RE = re.compile(r"HiCache (device prefix shrank before admission|storage prefetch reissue cap reached) req=(\S+)")
 KINDS = {"ntp_plan", "ntp_due", "ntp_stage", "ntp_refetch", "ntp_arrive", "ntp_admit", "ntp_expire", "s2h_query",
          "s2h_io", "prefetch_start"}
 ACTION_WINDOW_S = 2.0   # a lookup that hits within this long after an oracle action is that action's read
@@ -58,6 +70,7 @@ def load(run: str, client: str, w0: float, w1: float) -> dict:
     with open(os.path.join(run, client, "client.jsonl")) as f:
         t_start = next(json.loads(l) for l in f if '"kind": "run"' in l)["t_start"]
     ev = collections.defaultdict(lambda: collections.defaultdict(list))   # rid -> kind -> [(t, fields)]
+    rts = {}   # rid -> (arrival, admission, end), from the ReqTimeStats line the server logs when the request ends
     queue_len, page_size, bytes_per_token = [], 64, None
     with open(os.path.join(run, "server.log"), errors="replace") as f:
         for line in f:
@@ -75,17 +88,28 @@ def load(run: str, client: str, w0: float, w1: float) -> dict:
                 m = SUCCESS_RE.search(line)
                 if m:
                     ev[m[1]]["insert"].append((parse_ts(TS_RE.match(line)[1]) - t_start, {"completed": m[2]}))
+            elif "HiCache device prefix shrank" in line or "reissue cap reached" in line:
+                m = RETRY_RE.search(line)
+                if m:
+                    kind = "requery_check" if m[1].startswith("device") else "budget_spent"
+                    ev[m[2]][kind].append((parse_ts(TS_RE.match(line)[1]) - t_start, {}))
             elif "#queue-req" in line:
                 ts = TS_RE.match(line)
                 if ts:
                     t = parse_ts(ts[1]) - t_start
                     if w0 - 5 <= t <= w1 + 5:
                         queue_len.append((t, int(BATCH_RE.search(line)[1])))
+            elif "ReqTimeStats(" in line:
+                m = RTS_RE.search(line)
+                if m:
+                    arr = float(m[4]) - t_start
+                    adm = arr + float(m[2]) / 1000
+                    rts[m[1]] = (arr, adm, adm + float(m[3]) / 1000)
             elif "'page_size'" in line:
                 m = PAGE_RE.search(line)
                 page_size = int(m[1]) if m else page_size
     reads = {rid: reads_of(e) for rid, e in ev.items()}
-    return dict(t_start=t_start, ev=ev, reads=reads, queue_len=queue_len,
+    return dict(t_start=t_start, ev=ev, reads=reads, rts=rts, queue_len=queue_len,
                 page_bytes=page_size * (bytes_per_token or 98304))
 
 
@@ -95,7 +119,8 @@ def reads_of(e: dict) -> list:
     hits = sorted(t for t, f in e.get("s2h_query", ()) if int(f.get("storage_hit", 0)) > 0)
     starts = sorted(t for t, _ in e.get("prefetch_start", ()))
     actions = sorted([(t, "staged") for t, f in e.get("ntp_stage", ()) if f.get("inflight") == "1"]
-                     + [(t, "refetch") for t, f in e.get("ntp_refetch", ()) if f.get("issued") == "1"])
+                     + [(t, "refetch") for t, f in e.get("ntp_refetch", ()) if f.get("issued") == "1"]
+                     + [(t, "requery") for t, _ in e.get("requery_check", ())])
     cuts = sorted(t for t, f in e.get("insert", ()) if f["completed"] == "0")
     for t_end, f in e.get("s2h_io", ()):
         io_start = t_end - float(f.get("ms", 0)) / 1000
@@ -120,6 +145,11 @@ def first(e: dict, kind: str):
     return e[kind][0] if e.get(kind) else (None, {})
 
 
+def retry_marks(e: dict) -> dict:
+    """The turn's #39283 re-checks and the moment its retry budget ran out, for the read line's markers."""
+    return {k: [t for t, _ in e.get(k, ())] for k in ("requery_check", "budget_spent")}
+
+
 def plans_in_window(data: dict, w0: float, w1: float) -> list:
     rows = []
     for rid, e in data["ev"].items():
@@ -142,7 +172,7 @@ def plans_in_window(data: dict, w0: float, w1: float) -> list:
         r = dict(rid=rid, label=f"{sess.rsplit('-', 1)[-1]} t{turn}", conv=sess.rsplit("-", 1)[-1], turn=int(turn),
                  next_rid=f"{sess}-t{int(turn) + 1}", t_plan=t_plan, pred_arr=pred_arr,
                  t_arr=t_arr, t_adm=t_adm, t_exp=t_exp,
-                 t_due=t_due, case=int(due.get("case", 0)) if due else 0, reads=reads)
+                 t_due=t_due, case=int(due.get("case", 0)) if due else 0, reads=reads, **retry_marks(e))
         if t_due is not None:
             r["pred_adm"] = t_due + float(due["lead_ms"]) / 1000
             r["trigger"] = r["pred_adm"] - float(due["load_ms"]) / 1000
@@ -151,6 +181,25 @@ def plans_in_window(data: dict, w0: float, w1: float) -> list:
         r["read_before_adm"] = bool(ends)
         r["late"] = bool(ends) and t_adm - max(ends) <= LATE_S
         rows.append(r)
+    return rows
+
+
+def turns_in_window(data: dict, w0: float, w1: float) -> list:
+    """plans_in_window's rows for a run without the oracle: every turn that follows another turn of its conversation,
+    timed by ReqTimeStats; the tick is the previous turn's end, and there is no plan and no prediction."""
+    rows = []
+    for rid, (t_arr, t_adm, t_end) in data["rts"].items():
+        m = RID_RE.match(rid)
+        prev = data["rts"].get(f"{m[1]}-t{int(m[2]) - 1}") if m else None
+        reads = data["reads"].get(rid, [])
+        if prev is None or prev[2] > w1 or max([t_end] + [x["io_end"] for x in reads]) < w0:
+            continue
+        sess, turn = m[1], int(m[2])
+        ends = [x["io_end"] for x in reads if x["cut"] is None and x["io_end"] <= t_adm + 0.2]
+        rows.append(dict(rid=rid, label=f"{sess.rsplit('-', 1)[-1]} t{turn}", conv=sess.rsplit("-", 1)[-1], turn=turn,
+                         next_rid=f"{sess}-t{turn + 1}", t_plan=prev[2], pred_arr=None, t_arr=t_arr, t_adm=t_adm,
+                         t_exp=None, t_due=None, case=0, reads=reads, t_end=t_end, read_before_adm=bool(ends),
+                         late=bool(ends) and t_adm - max(ends) <= LATE_S, **retry_marks(data["ev"].get(rid, {}))))
     return rows
 
 
@@ -219,12 +268,13 @@ def read_rate(data: dict, w0: float, w1: float, bin_s: float = 1.0):
     return [w0 + (k + 0.5) * bin_s for k in range(n)], gb
 
 
-def legend_keys() -> list:
+def legend_keys(oracle: bool = True) -> list:
     key = [Line2D([], [], color=THINK, linewidth=1, label="think time: previous turn ended (tick) -> next request"),
            Line2D([], [], color=MUTED, marker="D", markerfacecolor="none", linestyle="", label="predicted arrival"),
            Line2D([], [], color=INK, marker="^", linestyle="", label="arrival"),
            Line2D([], [], color=BAND, linewidth=6, label="waiting in the scheduler queue"),
-           Line2D([], [], color=RUN, linewidth=2, label="running: admission -> turn ended (next plan registered)"),
+           Line2D([], [], color=RUN, linewidth=2,
+                  label="running: admission -> turn ended" + (" (next plan registered)" if oracle else "")),
            Line2D([], [], color=MUTED, marker="o", markerfacecolor="none", linestyle="",
                   label="predicted admission, at the trigger"),
            Line2D([], [], color=INK, marker="o", linestyle="", label="admission"),
@@ -232,9 +282,15 @@ def legend_keys() -> list:
                   label="oracle plan: trigger (tick), read planned to end at the predicted admission"),
            Line2D([], [], color=MUTED, linewidth=1.6, label="read waiting in the FIFO read queue (thin)"),
            Line2D([], [], color=MUTED, marker="x", linestyle="", markeredgewidth=1.6,
-                  label="read cut by the timeout while queued")]
+                  label="read cut by the timeout while queued"),
+           Line2D([], [], color=VIOLET, marker="*", markersize=9, linestyle="",
+                  label="#39283 re-check: prefix shorter at admission, lookup reissued"),
+           Line2D([], [], color=INK, marker="s", markerfacecolor="none", linestyle="",
+                  label="retry budget spent: no further SSD lookups")]
+    if not oracle:   # no plans, no predictions, only the requests' own reads
+        key = [k for k in key if not k.get_label().startswith(("predicted", "oracle plan"))]
     key += [Line2D([], [], color=SOURCE_COLOR[s], linewidth=6, label=f"read I/O: {SOURCE_LABEL[s]}")
-            for s in ("staged", "refetch", "own")]
+            for s in (("staged", "refetch", "own", "requery") if oracle else ("own", "requery"))]
     return key
 
 
@@ -269,15 +325,25 @@ def draw_turn(a_lane, r: dict, y: float, w0: float, w1: float, clip, inside) -> 
         elif inside(x["io_start"], x["io_end"]):
             a_lane.plot([clip(x["io_start"]), clip(x["io_end"])], [y_read] * 2, color=col, linewidth=5,
                         solid_capstyle="butt", zorder=4)
+    for t in r.get("requery_check", ()):
+        if w0 <= t <= w1:
+            a_lane.plot(t, y_read, marker="*", markersize=9, color=VIOLET, linestyle="", zorder=6)
+    for t in r.get("budget_spent", ()):
+        if w0 <= t <= w1:
+            a_lane.plot(t, y_read, marker="s", markersize=5, markerfacecolor="none", markeredgecolor=INK,
+                        markeredgewidth=1.2, linestyle="", zorder=6)
 
 
-def draw(shown: list, all_rows: list, data: dict, w0: float, w1: float, title: str, out_png: str) -> None:
+def draw(shown: list, all_rows: list, data: dict, w0: float, w1: float, title: str, out_png: str,
+         oracle: bool = True) -> None:
     n = len(shown)
     lane_h = max(3.0, 0.32 * n)
-    fig_h = lane_h + 7.4
+    keys = legend_keys(oracle)
+    head = 1.0 + 0.17 * max(0, (len(keys) + 4) // 5 - 3)   # inches above the lanes: the title and the legend rows
+    fig_h = lane_h + 6.4 + head
     fig, axes = plt.subplots(4, 1, figsize=(16, fig_h), sharex=True, facecolor=SURF,
                              gridspec_kw=dict(height_ratios=[lane_h, 1.7, 1.2, 1.1], hspace=0.3))
-    fig.subplots_adjust(top=1 - 1.0 / fig_h)
+    fig.subplots_adjust(top=1 - head / fig_h)
     a_lane, a_queue, a_rate, a_sched = axes
     clip = lambda t: min(max(t, w0), w1)
     inside = lambda a, b: b > w0 and a < w1
@@ -286,8 +352,9 @@ def draw(shown: list, all_rows: list, data: dict, w0: float, w1: float, title: s
         turns = c["turns"]
         for k, r in enumerate(turns):
             draw_turn(a_lane, r, y, w0, w1, clip, inside)
-            # the turn running (prefill + decode): its admission -> the next turn's plan tick, which is its end
-            nxt = turns[k + 1]["t_plan"] if k + 1 < len(turns) else first(data["ev"].get(r["next_rid"], {}), "ntp_plan")[0]
+            # the turn running (prefill + decode): its admission -> its end (the next turn's plan tick, or ReqTimeStats)
+            nxt = (r["t_end"] if "t_end" in r else turns[k + 1]["t_plan"] if k + 1 < len(turns)
+                   else first(data["ev"].get(r["next_rid"], {}), "ntp_plan")[0])
             if r["t_adm"] is not None and nxt is not None and inside(r["t_adm"], nxt):
                 a_lane.plot([clip(r["t_adm"]), clip(nxt)], [y + 0.27] * 2, color=RUN, linewidth=2, zorder=3)
             at = next((t for t in (r["t_adm"], r["t_arr"], r["t_due"], r["t_plan"]) if t is not None and w0 <= t <= w1), None)
@@ -299,7 +366,7 @@ def draw(shown: list, all_rows: list, data: dict, w0: float, w1: float, title: s
     style(a_lane)
     left = a_lane.get_position().x0
     fig.text(left, 1 - 0.12 / fig_h, title, ha="left", va="top", fontsize=10, color=INK)
-    fig.legend(handles=legend_keys(), loc="upper left", bbox_to_anchor=(left, 1 - 0.38 / fig_h), ncol=5,
+    fig.legend(handles=keys, loc="upper left", bbox_to_anchor=(left, 1 - 0.38 / fig_h), ncol=5,
                fontsize=7.5, frameon=False, borderaxespad=0)
 
     t_s, waiting = queue_series(data, w0, w1)
@@ -342,6 +409,9 @@ def write_csv(rows: list, path: str) -> None:
             for x in r["reads"]:
                 w.writerow([r["rid"], f"read_{x['src']}", f"{x['enq']:.3f}", f"{x['io_end']:.3f}",
                             f"io_start {x['io_start']:.3f}, {x['pages']} pages"])
+            for k in ("requery_check", "budget_spent"):
+                for t in r.get(k, ()):
+                    w.writerow([r["rid"], k, f"{t:.3f}", "", ""])
 
 
 def main() -> None:
@@ -357,19 +427,24 @@ def main() -> None:
     client = a.client or sorted(d for d in os.listdir(a.run) if d.startswith("client_"))[-1]
     w0, w1 = a.start, a.start + a.seconds
     data = load(a.run, client, w0, w1)
-    rows = plans_in_window(data, w0, w1)
+    oracle = any("ntp_plan" in e for e in data["ev"].values())
+    rows = plans_in_window(data, w0, w1) if oracle else turns_in_window(data, w0, w1)
     shown = select_lanes(rows, w0, w1, a.lanes)
     admitted = [r for r in rows if r["t_adm"] is not None and w0 <= r["t_adm"] <= w1]
     with_read = [r for r in admitted if r["read_before_adm"]]
     utc = lambda t: dt.datetime.fromtimestamp(data["t_start"] + t, tz=dt.timezone.utc).strftime("%H:%M:%S")
     title = (f"{os.path.basename(os.path.normpath(a.run))}: {w0:.0f}-{w1:.0f} s after the client started "
-             f"({utc(w0)}-{utc(w1)} UTC). {len(admitted)} hinted turns admitted in the window, {len(with_read)} after an "
+             f"({utc(w0)}-{utc(w1)} UTC{'' if oracle else ', no oracle'}). {len(admitted)} "
+             f"{'hinted' if oracle else 'returning'} turns admitted in the window, {len(with_read)} after an "
              f"SSD read, {sum(r['late'] for r in with_read)} of those within {LATE_S * 1000:.0f} ms of its end (late); "
              f"{len(shown)} conversations drawn ({sum(len(c['turns']) for c in shown)} turns)")
     out = a.out or os.path.join(a.run, f"oracle_timeline_{w0:.0f}_{a.seconds:.0f}.png")
-    draw(shown, rows, data, w0, w1, title, out)
+    draw(shown, rows, data, w0, w1, title, out, oracle)
     if a.csv:
         write_csv([r for c in shown for r in c["turns"]], a.csv)
+    marks = {k: sum(w0 <= t <= w1 for e in data["ev"].values() for t, _ in e.get(k, ()))
+             for k in ("requery_check", "budget_spent")}
+    print(f"{marks['requery_check']} #39283 re-checks and {marks['budget_spent']} spent retry budgets in the window")
     print(f"wrote {out}" + (f" and {a.csv}" if a.csv else "")
           + f"; {len(shown)} conversations, {sum(len(c['turns']) for c in shown)} of {len(rows)} turns drawn")
 
