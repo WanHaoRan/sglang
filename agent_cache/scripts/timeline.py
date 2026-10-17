@@ -103,7 +103,7 @@ def parse_client(path: str, tier_rule: str = "prompt") -> dict:
                           gap=r.get("gap_slept", 0.0), rid=f"{run['args'].get('tag') or 'replay'}-c{r['conv']}-t{r['turn']}",
                           mid_start=bool(r.get("mid_start"))))   # a mid-session start's first request (is_first)
     summary = next((r for r in rows if r["kind"] == "summary"), None)
-    caps = [dict(t=r["t"], waiting=r["waiting"], live=r["live"], cap=r["cap"]) for r in rows if r["kind"] == "cap"]
+    caps = [dict(t=r["t"], waiting=r["waiting"], live=r["live"], cap=r["cap"]) for r in rows if r["kind"] in ("cap", "users")]
     return dict(t_start=t_start, turns=turns, summary=summary, args=run["args"], tier_rule=tier_rule, caps=caps)
 
 
@@ -458,7 +458,7 @@ def draw_compare(results: list, out_png: str, steady_from: float = None, steady_
     args0 = results[0][1].get("args") or {}
     conc, rate = args0.get("concurrency"), float(args0.get("arrival_rate") or 0)
     live = (f"a cap from {conc} set by the server backlog" if args0.get("cap_mode") == "backlog"
-            else f"up to {conc} live sessions")
+            else f"up to {conc} live sessions" if conc else "uncapped sessions")
     start = (f"{live}, arriving at {rate:g}/s" if rate > 0
              else f"cold prefill under the {conc}-way start" if conc else "cold prefill")
     style(a_cdf0, f"TTFT of first turns (ECDF; {start})", "fraction of turns")

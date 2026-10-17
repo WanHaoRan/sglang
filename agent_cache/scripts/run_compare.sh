@@ -2,53 +2,47 @@
 # Run the same client workload against several arms back to back, each on a fresh boot with identical pools.
 #   container: bash /sgl-workspace/sglang/agent_cache/scripts/run_compare.sh
 #   host:      docker exec -d sglang_hicache bash -c 'cd /sgl-workspace/sglang/agent_cache/scripts && nohup bash run_compare.sh > ../results/compare_driver.log 2>&1'
-# Knobs (env): ARMS="hbm_lru hbm_host three_tier_to three_tier_wc"  LEVEL=NAT64  [L1_TOKENS= HOST_GB= only to override the level]
-#              MODEL=Qwen/Qwen3-32B  CTX=40960  L3_CLEANER_PCT=70,60  NCONV=48  C=48  TURNS=24  GAP=21  GAP_CAP=600  CHECK_IDS=0
-#              CAP_MODE ORDER START_PHASE and their knobs (start_client.sh; unset = the client's defaults, recorded as such)
-#              ORACLE_HINTS=0 (1: every arm's client sends the next-turn kv_hints, so an oracle campaign keeps the client
-#              bodies identical and only the server mode differs; agent_cache/ORACLE_PLAN.md)
-# C18 (2026-09-18, A100) was: ARMS="hbm_lru hbm_host three_tier" LEVEL=PL L1_TOKENS=65536 HOST_GB=12 NCONV=32 C=32 TURNS=12 GAP=10 GAP_CAP=600
+# Server knobs (env): ARMS="hbm_lru hbm_host three_tier_to three_tier_wc"  LEVEL=NAT64  [L1_TOKENS= HOST_GB= only to override the level]
+#              MODEL=Qwen/Qwen3-32B  CTX=40960  L3_CLEANER_PCT=70,60  [KV_DTYPE TEMPLATE ENGINE_PYTHONPATH: start_server.sh]
+# Client knobs (env, see start_client.sh): TRACE=<32K trace>  USERS=48  TURNS=24  ARRIVAL=0  GAP=21  ORACLE_HINTS=0  C=48
+#              SEED=0  CLIENT_TIMEOUT=0 (the client's TIMEOUT per arm). ORACLE_HINTS=1 makes every arm's client send the
+#              next-turn kv_hints, so an oracle campaign keeps the client bodies identical and only the server mode differs.
 # Writes results/compare_<UTC time>/manifest.txt: one line per arm  "<arm> <server run dir> <client dir>"  (input of timeline.py).
 # Progress: lines "STAGE START|DONE|FAILED <arm>" in the driver log; "ALL DONE" at the end. Stop cleanly: kill this script, then stop_server.sh.
 set -uo pipefail
 AC=/sgl-workspace/sglang/agent_cache
 cd "$AC/scripts" || { echo "STOP: $AC/scripts missing (run inside the container)"; exit 1; }
+# knobs of the client before its trim (2026-10-17): refuse them before any boot rather than run a different workload
+for v in NCONV OFFSET MAX_SECONDS GAP_CAP K THINKING CHECK_IDS TURNS_RANGE ARRIVAL_UNTIL STOP_AFTER_USERS SESSION_TASKS \
+         CONTEXT_POLICY CAP_MODE ORDER START_PHASE VALIDATE_ONLY; do
+  [ -z "${!v:-}" ] || { echo "STOP: $v is not a client knob any more (replay_agentic.py was trimmed; knobs: start_client.sh)"; exit 1; }
+done
 ARMS=${ARMS:-"hbm_lru hbm_host three_tier_to three_tier_wc"}; LEVEL=${LEVEL:-NAT64}
 # L1_TOKENS / HOST_GB are exported only when the caller set them: setting them unconditionally would turn every level into "custom"
 [ -n "${L1_TOKENS:-}" ] && export L1_TOKENS; [ -n "${HOST_GB:-}" ] && export HOST_GB
 export MODEL=${MODEL:-Qwen/Qwen3-32B} CTX=${CTX:-40960} L3_CLEANER_PCT=${L3_CLEANER_PCT-70,60}
-[ -n "${KV_DTYPE:-}" ] && export KV_DTYPE; [ -n "${TEMPLATE+x}" ] && export TEMPLATE; [ -n "${TRACE:-}" ] && export TRACE
-export NCONV=${NCONV:-48} C=${C:-48} TURNS=${TURNS:-24} GAP=${GAP:-21} GAP_CAP=${GAP_CAP:-600} CHECK_IDS=${CHECK_IDS:-0}
-# OFFSET rotates the conversation list; 29 is the 48-wide window with the most >=24-turn conversations (42/48), so c holds for the whole run
-export OFFSET=${OFFSET:-29} SEED=${SEED:-0} K=${K:-0}
-# CLIENT_TIMEOUT: wall cap per arm in seconds (0 = none), enforced inside the client (start_client.sh MAX_SECONDS ->
-# replay_agentic.py --max-seconds): conversations stop at their next turn boundary, in-flight requests complete, every
-# completed turn is kept and the summary line says "capped": true, which is what prints STAGE CAPPED below. (Campaign 7 used
-# `timeout --foreground` here, which only signals the bash wrapper and never reached the client: no arm was ever capped.)
-# A no-tiering arm recomputes every evicted session and can run 2-10x longer than the tiered ones; cap it and compare
-# over the common window (RUNBOOK 7.3).
+[ -n "${KV_DTYPE:-}" ] && export KV_DTYPE; [ -n "${TEMPLATE+x}" ] && export TEMPLATE
+export TRACE=${TRACE:-$AC/traces/lmcache_agentic_trace.json}
+export USERS=${USERS:-48} TURNS=${TURNS:-24} ARRIVAL=${ARRIVAL:-0} GAP=${GAP:-21} ORACLE_HINTS=${ORACLE_HINTS:-0}
+export C=${C:-48} SEED=${SEED:-0}
+# CLIENT_TIMEOUT: wall cap per arm in seconds (0 = none), enforced inside the client (start_client.sh TIMEOUT ->
+# replay_agentic.py --timeout): no user starts and no request is sent after it, in-flight requests complete, every
+# completed turn is kept and the summary line says "capped": true, which is what prints STAGE CAPPED below. (Campaign 7
+# used `timeout --foreground` here, which only signals the bash wrapper and never reached the client: no arm was ever
+# capped.) A no-tiering arm recomputes every evicted session and can run 2-10x longer than the tiered ones; cap it and
+# compare over the common window (RUNBOOK 7.3).
 export CLIENT_TIMEOUT=${CLIENT_TIMEOUT:-0}
-# ARRIVAL (conversations/s, Poisson; 0 = all start at once) and TURNS_RANGE/TURNS_SEED (varied lengths) go to start_client.sh
-export ARRIVAL=${ARRIVAL:-0} TURNS_RANGE=${TURNS_RANGE:-} TURNS_SEED=${TURNS_SEED:-0}
-# steady-state users and growing contexts (start_client.sh): ARRIVAL_UNTIL, SESSION_TASKS/SESSION_SEED/TASK_GAP, CONTEXT_POLICY,
-# MAX_CONTEXT, CONTEXT_TRIGGER, COMPACT_TOKENS, COMPACT_KEEP, COMPACT_MODE, TRUNCATE_TO
-export ARRIVAL_UNTIL=${ARRIVAL_UNTIL:-0} SESSION_TASKS=${SESSION_TASKS:-} SESSION_SEED=${SESSION_SEED:-0} TASK_GAP=${TASK_GAP:--1}
-export CONTEXT_POLICY=${CONTEXT_POLICY:-none} MAX_CONTEXT=${MAX_CONTEXT:-0} CONTEXT_TRIGGER=${CONTEXT_TRIGGER:-0.9}
-export COMPACT_TOKENS=${COMPACT_TOKENS:-4096} COMPACT_KEEP=${COMPACT_KEEP:-20000} COMPACT_MODE=${COMPACT_MODE:-cached}
-export TRUNCATE_TO=${TRUNCATE_TO:-0.5} STOP_AFTER_USERS=${STOP_AFTER_USERS:-0}
-# capacity-driven cap, replay order, stationary start (start_client.sh passes each only when set; empty = the client's default)
-export CAP_MODE=${CAP_MODE:-} CAP_TARGET=${CAP_TARGET:-} CAP_INTERVAL=${CAP_INTERVAL:-} CAP_GAIN=${CAP_GAIN:-} CAP_STEP=${CAP_STEP:-}
-export CAP_MIN=${CAP_MIN:-} CAP_MAX=${CAP_MAX:-} ADMIT_SPACING=${ADMIT_SPACING:-} ORDER=${ORDER:-} ORDER_SEED=${ORDER_SEED:-}
-export START_PHASE=${START_PHASE:-} START_USERS=${START_USERS:-} START_SEED=${START_SEED:-} START_SERVICE=${START_SERVICE:-}
-export ORACLE_HINTS=${ORACLE_HINTS:-0}
+# pre-flight before any boot: the trace loads and holds USERS different conversations (the client checks it again)
+python3 -c 'import json, sys
+n = sum(1 for c in json.load(open(sys.argv[1]))["conversations"] if c)
+sys.exit(0 if int(sys.argv[2]) <= n else f"STOP: USERS={sys.argv[2]}, but {sys.argv[1]} has {n} conversations")' \
+  "$TRACE" "$USERS" || exit 1
 CMP="$AC/results/compare_$(date -u +%Y%m%d_%H%M%S)"; mkdir -p "$CMP"; MANIFEST="$CMP/manifest.txt"
-printf 'arms=%s level=%s L1_TOKENS=%s HOST_GB=%s MODEL=%s CTX=%s KV_DTYPE=%s TRACE=%s L3_CLEANER_PCT=%s NCONV=%s C=%s TURNS=%s GAP=%s GAP_CAP=%s OFFSET=%s SEED=%s K=%s CLIENT_TIMEOUT=%s ARRIVAL=%s TURNS_RANGE=%s TURNS_SEED=%s ARRIVAL_UNTIL=%s SESSION_TASKS=%s SESSION_SEED=%s TASK_GAP=%s CONTEXT_POLICY=%s MAX_CONTEXT=%s CONTEXT_TRIGGER=%s COMPACT_TOKENS=%s COMPACT_KEEP=%s COMPACT_MODE=%s TRUNCATE_TO=%s STOP_AFTER_USERS=%s CAP_MODE=%s CAP_TARGET=%s CAP_INTERVAL=%s CAP_GAIN=%s CAP_STEP=%s CAP_MIN=%s CAP_MAX=%s ADMIT_SPACING=%s ORDER=%s ORDER_SEED=%s START_PHASE=%s START_USERS=%s START_SEED=%s START_SERVICE=%s ORACLE_HINTS=%s SGLANG_TIMEOUT_KEEP_ALIVE=%s started_utc=%s\n' \
-  "$ARMS" "$LEVEL" "${L1_TOKENS:-natural}" "${HOST_GB:-level}" "$MODEL" "$CTX" "${KV_DTYPE:-fp8_e5m2}" "${TRACE:-default}" "$L3_CLEANER_PCT" "$NCONV" "$C" "$TURNS" "$GAP" "$GAP_CAP" "$OFFSET" "$SEED" "$K" "$CLIENT_TIMEOUT" "$ARRIVAL" "${TURNS_RANGE:-fixed}" "$TURNS_SEED" "$ARRIVAL_UNTIL" "${SESSION_TASKS:-1:1}" "$SESSION_SEED" "$TASK_GAP" "$CONTEXT_POLICY" "$MAX_CONTEXT" "$CONTEXT_TRIGGER" "$COMPACT_TOKENS" "$COMPACT_KEEP" "$COMPACT_MODE" "$TRUNCATE_TO" "$STOP_AFTER_USERS" \
-  "${CAP_MODE:-fixed}" "${CAP_TARGET:-default}" "${CAP_INTERVAL:-default}" "${CAP_GAIN:-default}" "${CAP_STEP:-default}" "${CAP_MIN:-default}" "${CAP_MAX:-default}" "${ADMIT_SPACING:-default}" "${ORDER:-cycle}" "${ORDER_SEED:-default}" "${START_PHASE:-zero}" "${START_USERS:-default}" "${START_SEED:-default}" "${START_SERVICE:-default}" "$ORACLE_HINTS" \
+printf 'arms=%s level=%s L1_TOKENS=%s HOST_GB=%s MODEL=%s CTX=%s KV_DTYPE=%s L3_CLEANER_PCT=%s TRACE=%s USERS=%s TURNS=%s ARRIVAL=%s GAP=%s ORACLE_HINTS=%s C=%s SEED=%s CLIENT_TIMEOUT=%s SGLANG_TIMEOUT_KEEP_ALIVE=%s started_utc=%s\n' \
+  "$ARMS" "$LEVEL" "${L1_TOKENS:-natural}" "${HOST_GB:-level}" "$MODEL" "$CTX" "${KV_DTYPE:-fp8_e5m2}" "$L3_CLEANER_PCT" \
+  "$TRACE" "$USERS" "$TURNS" "$ARRIVAL" "$GAP" "$ORACLE_HINTS" "$C" "$SEED" "$CLIENT_TIMEOUT" \
   "${SGLANG_TIMEOUT_KEEP_ALIVE:-default}" "$(date -u +%FT%TZ)" > "$CMP/config.txt"
 echo "compare dir: $CMP"; cat "$CMP/config.txt"
-# pre-flight: the client's flags checked and every session planned before any boot, so a bad knob fails here once
-VALIDATE_ONLY=1 bash start_client.sh || { echo "STOP: the client configuration is invalid (see above)"; exit 1; }
 
 for ARM in $ARMS; do
   echo "STAGE START $ARM $(date -u +%T)"
@@ -60,14 +54,12 @@ for ARM in $ARMS; do
   if ! bash start_server.sh "$ARM" "$LEVEL"; then echo "STAGE FAILED $ARM (boot)"; bash stop_server.sh; continue; fi
   RUN=$(cat "$AC/results/.current_run")
   T0=$(date +%s)
-  TAG="cmp_${ARM}" MAX_SECONDS="${CLIENT_TIMEOUT}" bash start_client.sh; rc=$?
+  TAG="cmp_${ARM}" TIMEOUT="${CLIENT_TIMEOUT}" bash start_client.sh; rc=$?
   CLIENT=$(ls -d "$AC/results/$RUN"/client_*_cmp_"$ARM" 2>/dev/null | tail -1)
   # the run counts when the client wrote its summary line; a non-zero rc after that is start_client.sh's per-turn view, not the run
   if [ -n "$CLIENT" ] && grep -q '"kind": "summary"' "$CLIENT/client.jsonl" 2>/dev/null; then
-    if grep -q '"capped": true' "$CLIENT/client.jsonl"; then
-      if [ "$ARRIVAL_UNTIL" != 0 ]; then echo "note: $ARM ran to the ${CLIENT_TIMEOUT}s wall cap with users still live (open loop)"
-      else echo "STAGE CAPPED $ARM at ${CLIENT_TIMEOUT}s (completed turns kept)"; fi
-    fi
+    grep -q '"capped": true' "$CLIENT/client.jsonl" && \
+      echo "STAGE CAPPED $ARM: the ${CLIENT_TIMEOUT}s timeout cut sessions or skipped users (completed turns kept)"
     [ "$rc" -eq 0 ] || echo "note: start_client.sh exited $rc after the client finished (post-processing); run kept"
     echo "$ARM $RUN $(basename "$CLIENT")" >> "$MANIFEST"
     echo "STAGE DONE $ARM $(date -u +%T) client wall $(( $(date +%s) - T0 )) s -> $CLIENT"

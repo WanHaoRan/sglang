@@ -30,7 +30,7 @@ def series(run, client):
                 done[int((d["t_send"] + d["latency"]) // BIN)].append(1)
                 if "reply_reprefilled" in d:
                     recomp[int(d["t_send"] // BIN)].append(max(d["reply_reprefilled"], 0))
-            elif k == "cap":
+            elif k in ("cap", "users"):   # the backlog cap's updates, or the per-minute population record
                 waiting[int(d["t"] // BIN)].append(d["waiting"])
     xs = range(18000 // BIN)
     mid = [(i + 0.5) * BIN / 60 for i in xs]

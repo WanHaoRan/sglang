@@ -52,7 +52,7 @@ def default_warmup(d: dict, arm: str) -> int:
     """The run's --concurrency (its run record): users who finish in one turnover of a population held at it."""
     c = d["args"].get("concurrency")
     if not c:
-        sys.exit(f"{arm}: the run record has no --concurrency; pass --warmup-users or --window-start")
+        sys.exit(f"{arm}: the run record has no user cap (--concurrency missing or 0); pass --warmup-users or --window-start")
     return int(c)
 
 
