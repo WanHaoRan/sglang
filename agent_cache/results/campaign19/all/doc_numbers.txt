@@ -1,0 +1,26 @@
+c18 wc: client 00:30:43Z +18036 s; SSD read 11.72 TB, written 2.14 TB, busy mean 30 %, samples >= 99 % 2 %
+   waiting for a slot: first > 0 at 1560 s, peak 352 at 7620 s, last > 0 at 15000 s; 5-min mean TTFT max 6.7 s at 210-215 min; last user to finish u685 at 17946 s
+   5-min bins with mean TTFT > 2 s: [(45, 3.1), (50, 5.2), (55, 3.1), (210, 6.7), (215, 2.4), (240, 2.1), (245, 2.0)]
+c18 nu: client 05:35:12Z +18007 s; SSD read 13.66 TB, written 2.14 TB, busy mean 38 %, samples >= 99 % 0 %
+   waiting for a slot: first > 0 at 1560 s, peak 351 at 7620 s, last > 0 at 14880 s; 5-min mean TTFT max 1.8 s at 250-255 min; last user to finish u718 at 18006 s
+   5-min bins with mean TTFT > 2 s: []
+c19 wc: client 10:38:54Z +18221 s; SSD read 8.28 TB, written 10.39 TB, busy mean 38 %, samples >= 99 % 1 %
+   waiting for a slot: first > 0 at 2760 s, peak 422 at 7620 s, last > 0 at 18000 s; 5-min mean TTFT max 193.5 s at 170-175 min; last user to finish u365 at 18196 s
+   2280-18000 s, 5-min bins: mean TTFT 96.5-193.5 s, turns/s 0.48-0.84, overall 0.62
+c19 nu: client 15:46:10Z +16907 s; SSD read 16.64 TB, written 2.16 TB, busy mean 53 %, samples >= 99 % 1 %
+   waiting for a slot: first > 0 at 3060 s, peak 165 at 7620 s, last > 0 at 10020 s; 5-min mean TTFT max 50.6 s at 165-170 min; last user to finish u722 at 16907 s
+   2100-9000 s, 5-min bins: mean TTFT 15.4-35.0 s, turns/s 2.03-2.49, overall 2.27
+c19 wc min 10-26: token usage mean 0.69 (p10 0.49), running mean 24.5, queue mean 0.1, decode tokens/s mean 476
+c19 wc min 26-38: token usage mean 0.98 (p10 0.96), running mean 34.8, queue mean 22.0, decode tokens/s mean 536
+c19 wc min 38-300: token usage mean 0.98 (p10 0.95), running mean 29.6, queue mean 88.2, decode tokens/s mean 198
+c19 wc storm turns that spent their budget: 5109, new tail >= 256 tokens 93.0 %, median 536
+c19 wc storm turns that kept it: 4573, new tail >= 256 tokens 3.0 %, median 85
+c19 nu SSD cleanups at client s: [8673, 10031]
+  admissions -600..+0 s around the cleanup at 8673 s: 1388, wait mean 27.1 s, max 39.2 s, >= 60 s 0
+  admissions +0..+300 s around the cleanup at 8673 s: 609, wait mean 31.2 s, max 46.8 s, >= 60 s 0
+  admissions +300..+900 s around the cleanup at 8673 s: 1176, wait mean 35.9 s, max 51.9 s, >= 60 s 0
+  admissions -600..+0 s around the cleanup at 10031 s: 1128, wait mean 36.3 s, max 46.8 s, >= 60 s 0
+  admissions +0..+300 s around the cleanup at 10031 s: 448, wait mean 50.8 s, max 71.8 s, >= 60 s 67
+  admissions +300..+900 s around the cleanup at 10031 s: 1162, wait mean 21.4 s, max 49.3 s, >= 60 s 0
+  recomputed per returning turn, 5-min bins from the bin before the cleanup at 8673 s: [36, 48, 96, 42, 34]
+  recomputed per returning turn, 5-min bins from the bin before the cleanup at 10031 s: [43, 281, 134, 32, 34]

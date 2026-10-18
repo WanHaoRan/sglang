@@ -1,10 +1,11 @@
-# Next-turn KV staging for agentic serving: findings from campaigns 14-17
+# Next-turn KV staging for agentic serving: findings from campaigns 14-19
 
-Written 2026-10-12 after campaign 16; campaign 17 (the same workload at x10 gaps) added 2026-10-13. This document is
-self-contained: it explains the setup, the terms and every result, so a reader needs nothing else to follow what was
-done and what it showed. The design documents (`ORACLE_PLAN.md` for v1, `ORACLE_V2_PLAN.md` for v2) and the
-step-by-step procedure (`ORACLE_V2_HANDOFF.md`) hold more depth but are not needed here. Where each number comes from
-is in section 11. A glossary is at the end.
+Written 2026-10-12 after campaign 16; campaign 17 (the same workload at x10 gaps) added 2026-10-13; campaigns 18 and 19
+(x70 and x10 gaps on a redesigned replay client) added 2026-10-18. This document is self-contained: it explains the
+setup, the terms and every result, so a reader needs nothing else to follow what was done and what it showed. The
+design documents (`ORACLE_PLAN.md` for v1, `ORACLE_V2_PLAN.md` for v2, `REPLAY_REDESIGN.md` for the client of
+campaigns 18-19) and the step-by-step procedure (`ORACLE_V2_HANDOFF.md`) hold more depth but are not needed here.
+Where each number comes from is in section 12. A glossary is at the end.
 
 ---
 
@@ -51,14 +52,32 @@ is in section 11. A glossary is at the end.
     arms lost queued history equally often. The oracle was busy, not idle: it doubled SSD reads.
   - How much of the gain the hint-free changes (paced retries off, and the pins) would give on their own is not
     measured; section 8.7 names the arms that would decide it.
+- **On a redesigned client (campaigns 18-19), the same two arms.** The replay client was rebuilt so that a run
+  depends only on the arrival rate, the gap scale and a fixed number of users in session (128, idle users included).
+  Every user now replays its whole session from the first turn (24,879 turns), so these runs do not pair with
+  campaigns 14-17.
+  - **At x70 (campaign 18) the server was lightly loaded** (mean TTFT about 1 s) and neither arm stormed. The users'
+    own sleeps set the pace: throughput and the queue of users waiting to start were the same in both arms. The oracle
+    arm cut mean TTFT from 1.09 s to 0.58 s and p99 from 12.1 s to 5.2 s on the same 24,734 turns. That difference is
+    within the run-to-run spread seen so far.
+  - **At x10 (campaign 19) the baseline stormed 38 min in and never recovered**, because with 128 users always in
+    session nothing sheds load (campaign 17's client cut its users in session during the storm). In 5 h it served
+    15,033 turns and finished 413 of the 768 users; 232 never started. On those 15,033 turns its mean TTFT was 95.8 s
+    against 20.3 s in the oracle arm, which finished all 768 users in 4.7 h. The cause is campaign 17's: 95 % of the
+    recompute came from turns whose lookup budget the paced retries had spent.
+  - The x10 oracle arm broke one rule set before the run: no planned turn may wait 60 s or more to be admitted,
+    because after 60 s in the queue next-use eviction ranks a session overdue and evicts it early. 67 turns (0.3 %)
+    waited 60-72 s, all in the 5 min after an SSD cleanup; 3 of them recomputed more than a page (section 9.6).
 - **What it means.** The pin fixes a failure of the current engine and needs no prediction, so it is the first
   candidate to upstream. Next-use eviction carries the large gain at x70, and how much of it survives depends on how
   good real next-turn predictions are: that is the next thing to measure. Deadline ordering helps only a little while
-  the SSD is saturated. At x10 the first thing to fix in the baseline is how paced retries spend the lookup budget;
-  whether hints add much beyond that at x10 is open.
+  the SSD is saturated. At x10 the first thing to fix in the baseline is how paced retries spend the lookup budget:
+  under steady load the resulting storm does not end on its own (campaign 19). Whether hints add much beyond that fix
+  at x10 is open.
 - **Not yet established:** each arm ran once; the hints were exact; nobody has checked that restored KV is correct;
-  the share of the x10 gain that needs hints; one model, one GPU, one SSD. Section 9 lists what each caveat affects,
-  section 10 the next steps.
+  the share of the x10 gain that needs hints; how the design does at x70 under a load that tests the server on the
+  redesigned client; one model, one GPU, one SSD. Section 10 lists what each caveat affects, section 11 the next
+  steps.
 
 ---
 
@@ -90,7 +109,7 @@ A returning turn's history is served from one of four places, at very different 
 | SSD         | ~22 s TTFT under load, almost all of it queueing behind other reads (a typical restore is ~250 pages, ~1.5 GB) |
 | recompute   | prefill of the lost tokens on the GPU, which delays every other request                                        |
 
-### 2.2 Workload (campaigns 14-16; campaign 17 changes only the gap scale, section 8.1)
+### 2.2 Workload (campaigns 14-16; campaign 17 changes only the gap scale, section 8.1; campaigns 18-19 use a redesigned client, section 9.1)
 
 - **Sessions.** The LMCache agentic trace: 768 real agent sessions (665 SWE-bench via OpenHands, 94 GAIA, 9 WildClaw;
   12 system prompts). Each simulated user replays one session once, with real message contents; the server generates
@@ -113,11 +132,12 @@ A returning turn's history is served from one of four places, at very different 
 
 - **TTFT** (time to first token) of each turn, measured by the client.
 - **Shared turns.** The 20,217 (user, turn) pairs that all five compared runs completed (campaign 17: all 20,293 of
-  its two arms). Because every run serves the same finite workload, the mean TTFT over these turns compares like with
-  like. Paired differences take the same turn in two runs; their 95 % intervals resample users (a user's turns are
-  correlated), and they cover variation within a run, not between repeated runs.
+  its two arms; campaign 18: 24,734; campaign 19: the 15,033 its baseline completed). Because every run serves the
+  same finite workload, the mean TTFT over these turns compares like with like. Paired differences take the same turn
+  in two runs; their 95 % intervals resample users (a user's turns are correlated), and they cover variation within a
+  run, not between repeated runs.
 - **Wait to be admitted.** The time a user waits for a place under the cap before its session starts, in user-hours.
-  TTFT does not include it.
+  TTFT does not include it. In campaigns 18-19 a user who never started counts from its arrival to the 5 h stop.
 - **Window 2,700-16,800 s.** The measurement window of the earlier campaigns (after warm-up, before the end), kept for
   continuity. Late in the window the faster arms are already draining, so it holds different parts of the workload per
   run. Campaign 17 uses 2,700-15,000 s, because its oracle arm's client ends at 15,008 s.
@@ -190,7 +210,7 @@ between those two runs, 18.7M tokens x 96 KiB, is 1.8 TB: recomputed history is 
 time.
 
 At x10 gaps the same baseline fails in a different way: history lost while queued after the retry budget is spent
-(section 8.5).
+(section 8.5). Campaign 19 repeats that failure on the redesigned client, and there it never ends (section 9.4).
 
 ---
 
@@ -243,7 +263,7 @@ Each change is a server flag that defaults to the old behaviour:
 | deadline order     | same flag,`--hicache-storage-read-window-pages 512` | parked reads are dispatched earliest deadline first, while fewer than 512 pages are in flight; a request's own lookup and the head of the queue are "now" and bypass the window; a staged read's deadline is its plan's predicted admission             |
 | work-ahead         | implied with the oracle on                            | the oracle issues a plan's lookup as soon as the span is missing and its predicted admission is within 120 s; the window and the memory budget, not a timer, limit how far the SSD runs ahead                                                           |
 | online load model  | automatic                                             | the I/O thread's measured ms per page (moving average) replaces the fixed estimate                                                                                                                                                                      |
-| no paced retries   | automatic with the oracle and deadline order          | the old re-issue of missed lookups every 8 scheduler passes (up to 8 times) is off; the oracle's re-fetch of queued turns replaces it; the re-query at admission (#39283) stays. At x10 this mattered (section 8.7)                                                                         |
+| no paced retries   | automatic with the oracle and deadline order          | the old re-issue of missed lookups every 8 scheduler passes (up to 8 times) is off; the oracle's re-fetch of queued turns replaces it; the re-query at admission (#39283) stays. At x10 this mattered (sections 8.7, 9.4)                                                                         |
 | next-use eviction  | `--radix-eviction-policy next_use`                  | GPU and host eviction by hinted next arrival: ended sessions first, then sessions more than 60 s overdue, then sessions returning after 300 s (farthest first), then un-hinted entries (LRU), and last sessions returning within 300 s (farthest first) |
 
 The arms add these cumulatively on top of the campaign 14 wc configuration:
@@ -256,7 +276,7 @@ The arms add these cumulatively on top of the campaign 14 wc configuration:
 
 A fourth arm, write-back instead of write-through, was held back. In its smoke test the SSD was written but never
 read (0 hits in 1,281 lookups): the scheduler only looks up the SSD when the deepest cached match is backed by host
-memory, which under write-back it usually is not. See section 10.
+memory, which under write-back it usually is not. See section 11.
 
 All three ran on a frozen engine copy of commit `5df71c4bf0`; its difference from campaign 14's engine is only the
 oracle v1 and v2 code.
@@ -602,7 +622,197 @@ per arm.
 
 ---
 
-## 9. How much to trust this
+## 9. Campaigns 18-19: both gap scales on a redesigned client
+
+Run 2026-10-18: campaign 18 (x70) from 00:27Z to 10:35Z, campaign 19 (x10) from 10:35Z to 20:28Z. The replay client
+was rebuilt before them (`REPLAY_REDESIGN.md`). The old client's own mechanisms (the mid-session start, the 30-50 turn
+draw, the backlog-driven cap of section 2.2) shaped the results, and a run should depend only on the arrival rate, the
+gap scale and the concurrency. Both campaigns rerun earlier comparisons on the new client, x70 as in campaigns 14 and
+16 and x10 as in campaign 17, each with campaign 17's two arms. Their analysis scripts and outputs are listed in
+section 12.
+
+### 9.1 What changed: the client
+
+| | campaigns 14-17 | campaigns 18-19 |
+|---|---|---|
+| users, arrivals | 768 users, each replaying a different session, arriving as a Poisson process at 0.1/s | the same users at the same times |
+| turns per user | min(recorded, uniform 30-50): 20,232 at x70 | every recorded turn, at most 50: 24,879 |
+| start | the first 128 users start in the middle of their session | every user starts at its first turn |
+| users in session | a cap moved every 120 s toward 32 requests waiting for their first token (16-512 users) | at most 128 (`C`); a user keeps its place through every sleep until its session ends, so idle users count |
+| users beyond the cap | wait to start | wait to start, in arrival order |
+| the 5 h stop | the run stops | after 18,000 s no user starts and no request is sent; requests in flight complete; a session still running is cut, and a user still waiting never starts |
+| gaps, hints | recorded gap x 70 or x 10, at most 1,200 s; exact hints | the same |
+
+The server arms are campaign 17's (section 8.1): the original HiCache baseline (`three_tier_wc`) and oracle v2 +
+next-use (`three_tier_wc_oracle_v2_nu`), on the frozen engine of campaigns 16-17, both sending hints, with the SSD
+wiped before each arm. With different turns and a different population control, these runs do not pair with
+campaigns 14-17: each campaign compares its own two arms.
+
+### 9.2 Headline
+
+All four arms ran with 0 client errors, 0 aborted sessions and 0 server tracebacks, on the same pools (668,160-token
+GPU pool, 160 GB host pool).
+
+| | x70 baseline | x70 oracle v2 + next-use | x10 baseline | x10 oracle v2 + next-use |
+|---|---|---|---|---|
+| **shared turns** | 24,734 | | 15,033 | |
+| mean TTFT | 1.09 s | **0.58 s** | 95.8 s | **20.3 s** |
+| p50 / p90 / p95 / p99 TTFT | 0.33 / 2.4 / 4.9 / 12.1 s | 0.29 / 1.1 / 2.2 / 5.2 s | 126 / 172 / 185 / 199 s | 24.2 / 36.0 / 38.4 / 43.0 s |
+| paired difference | | -0.51 s: [-0.54, -0.47] resampling users, [-0.89, -0.21] resampling 10-min blocks of the baseline's send time | | -75.6 s: [-80.5, -70.6] resampling users, [-105, -50] resampling 10-min blocks |
+| per-user mean TTFT, 99th percentile across users | 3.6 s | 2.0 s | 169 s | 34 s |
+| **users and turns in 5 h** | | | | |
+| users started / finished / cut / never started | 768 / 746 / 22 / 0 | 768 / 747 / 21 / 0 | 536 / 413 / 123 / 232 | 768 / 768 / 0 / 0 |
+| turns served (of 24,879) | 24,734 | 24,742 | 15,033 | 24,879 |
+| time until 384 / 700 users finished | 2.63 / 4.56 h | 2.62 / 4.52 h | 4.58 h / never | 1.77 / 3.07 h |
+| all 768 users finished | no | no | no | 4.70 h |
+| wait to be admitted (not in TTFT): mean per user; total | 50 min; 644 user-hours | 50 min; 636 user-hours | 96 min; 1,226 user-hours | 12 min; 156 user-hours |
+| **where history came from** | | | | |
+| history tokens from GPU / host / SSD / recomputed | 46 / 34 / 20 / 0 % | 58 / 25 / 17 / 0 % | 37 / 13 / 23 / 27 % | 35 / 37 / 28 / 0 % |
+| recomputed history per returning turn | 39 tokens | 42 tokens | 6,545 tokens | 45 tokens |
+| returning turns that recomputed more than a page | 0.7 % | 0.8 % | 36.5 % | 0.7 % |
+| **SSD over the whole run** | | | | |
+| read / written | 11.7 / 2.1 TB | 13.7 / 2.1 TB | 8.3 / 10.4 TB | 16.6 / 2.2 TB |
+
+At x10 the shared turns are the 15,033 that the baseline completed, all from the 536 users it started; the 232 users
+it never started appear only in the wait to be admitted.
+
+### 9.3 Over time
+
+![campaign 19 overview](results/campaign19/all/c19_overview.png)
+
+`results/campaign19/all/c19_overview.png` (x10), 5-min bins: mean TTFT, turns completed per second, history tokens
+recomputed per returning turn, users waiting to be admitted. The arms are the same until 38 min (on the 5,031 shared
+turns the baseline sent before then, the oracle arm differs by +0.07 s per turn), and in both TTFT rises from 0.3 s
+to about 10 s as the server reaches about 2.5 turns/s. Then the baseline storms and stays in the storm until the
+stop: in every 5-min bin from 40 min on it completed 0.48-0.84 turns/s at a mean TTFT of 97-194 s and recomputed
+about 10,000 history tokens per returning turn. Its queue of users waiting to start peaked at 422 at 127 min, when
+the last users arrive, and 232 were still waiting at the stop. The oracle arm held 2.0-2.5 turns/s at a mean TTFT of
+15-35 s from 35 to 150 min, with one spike to 51 s at 165-170 min (section 9.6). Its queue of waiting users peaked at
+165 at 127 min and was empty from 167 min, its TTFT was under 1 s from 195 min, and its last user, whose session has
+five sleeps at the 1,200-s cap, finished at 4.70 h.
+
+![campaign 18 overview](results/campaign18/all/c18_overview.png)
+
+`results/campaign18/all/c18_overview.png` (x70), the same panels. Throughput (1.3-1.7 turns/s from 30 to 240 min) and
+the queue of waiting users (peaking at 352 and 351 at 127 min) coincide in the two arms. They differ only in TTFT,
+where the baseline has spikes that the oracle arm does not (section 9.7).
+
+### 9.4 x10: the baseline's storm, and why it never ended
+
+The storm follows the path of campaign 17's (section 8.5), in a run where nothing sheds load:
+
+1. From 26 min the GPU's KV pool was full (token usage 0.98 in the scheduler's decode lines, against 0.69 at
+   10-26 min) and requests queued (22 waiting on average at 26-38 min). The running batch was 30-35 requests, bounded
+   by the KV pool rather than by the 64-request limit.
+2. Queued turns whose new tail was 256 tokens or more polled the SSD for it and spent their 8-attempt lookup budget;
+   the first "reissue cap reached" came at 27 min (1,644 s). Among the turns sent from 38 min on, 93 % of those that
+   spent their budget had such a tail (median 536 tokens), against 3 % of those that kept it (median 85).
+3. From 36 min (2,184 s, the first #39283 re-query) queued requests lost history, and from 38 min recompute rose from
+   about 30 to about 10,000 history tokens per returning turn within three minutes.
+4. From 38 min to the stop, 9,682 returning turns recomputed 94.7M history tokens. The 5,109 that had spent their
+   budget recomputed 90.0M of them (a mean 17,617 tokens each): 95 % of the run's 94.9M, the share of campaign 17's
+   storm (13.9M of 14.7M). 4,293 turns lost history while queued with their budget intact; the re-query re-read it,
+   and they recomputed 0.19M tokens in all. Lost-after-landing, the x70 failure, explains 238 turns and 5 % of the
+   recompute.
+5. Recompute displaced decode: the server generated about 200 tokens/s instead of about 500 and completed 0.6 turns/s
+   instead of 2.5, so every turn waited longer, more budgets ran out and more history was lost.
+
+Campaign 17's storm ended after 39 min, once the old client's cap had cut the users in session from 128 to about 90
+(section 8.5). Here 128 users stay in session as long as anyone is waiting to start, and someone was waiting until the
+stop, so the load never fell and the storm lasted the remaining 4.4 h. The whole -75.6 s is the storm: on the 10,002
+shared turns the baseline sent from 38 min on, the arms differ by -113.6 s per turn.
+
+The baseline wrote 10.4 TB to the SSD (the oracle arm 2.2 TB) without ever filling it to the cleaner's 70 %, so at
+least 8.8 TB of those writes replaced pages already stored: the recomputed history (94.9M tokens, about 9.3 TB at
+96 KiB per token) is written through a second time, as at x70 (section 4).
+
+### 9.5 x10: what the oracle arm did
+
+- **No budget was spent:** 0 "reissue cap reached" (the baseline 6,109), and 8 admission re-queries.
+- **It ran at the GPU's limit without a storm:** 2.0-2.5 turns/s from 35 to 150 min. Planned turns waited a median
+  26 s between arriving and being admitted (p90 37 s, p99 50 s), and that wait is most of their TTFT.
+- **It was busy, as in campaign 17 (section 8.6):** it staged 8,521 turns' history before they arrived (case 1) and
+  re-fetched history that queued turns had lost 641 times (case 2: 616 reads, 11.3M tokens, 10.4M of them credited to
+  the SSD at admission). Staged reads ended a median 12 s before admission; 16 of 9,075 were late. It read 16.6 TB from
+  the SSD, twice the baseline's 8.3 TB, and the SSD was 53 % busy on average.
+- **The pins held:** 9,236 landed spans pinned and all released at admission, 98 that did not fit the budget, none
+  leaked; 6 turns lost a read after landing.
+- History came 35 / 37 / 28 % from GPU / host / SSD, and 45 tokens per returning turn were recomputed.
+
+### 9.6 x10: the oracle arm broke one rule set before the run
+
+Each oracle arm was to keep every planned turn's wait between arrival and admission under 60 s. Next-use eviction
+registers a queued session's next use at its arrival, so after 60 s in the queue it ranks the session overdue and
+evicts it right after the ended sessions (open issue 6, section 11). The longest waits so far had been 37.5 s
+(campaign 16), 32.6 s (campaign 17) and 16.6 s (campaign 18). Here 67 of 24,111 planned turns (0.3 %) waited
+60.0-71.8 s:
+
+- all 67 were admitted in the 5 min after the SSD cleaner's second run (at 2.79 h). Waits in those 5 min averaged
+  50.8 s, against 36.3 s in the 10 min before and 21.4 s in the 10 min after. The first cleanup (2.41 h) raised them
+  only from 27.1 s to 31.2 s;
+- their history came more from the SSD and less from host memory than for turns that waited 45-60 s (13.8K against
+  12.7K tokens per turn from the SSD, 2.2K against 6.8K from host memory), consistent with next-use eviction dropping
+  their host copies once they were overdue;
+- 3 recomputed more than a page, one of them 15,801 tokens after two re-fetches that were evicted again. Recompute
+  over all returning turns rose to 281 and then 134 tokens per turn in the 5-min bins holding and following the
+  cleanup, against about 40 before and 33 after. Section 7.7 saw smaller rises (90-170) after the first cleanup of
+  every x70 run;
+- their TTFT was their wait, 60-72 s; the 5-min mean TTFT peaked at 51 s at 165-170 min.
+
+By that rule the arm fails acceptance; the tables above include it as measured. The episode is small (0.3 % of turns,
+one recompute of note) and tied to one cleanup at full load.
+
+### 9.7 x70: a lightly loaded server
+
+- **The users' sleeps set the pace.** A user spent 44 min in session on average, so arrivals at 0.1/s would keep
+  about 260 users in session without a cap. With `C` = 128, users queued to start from 26 min, the queue peaked at
+  351-352 at 127 min, and a user waited 50 min on average. Both arms show the same queue, the same throughput
+  (1.3-1.7 turns/s from 30 to 240 min) and the same time until N users finished (within 1 %).
+- **The server had little to do.** 17-18 requests were in flight on average (the old client steered toward 32 waiting
+  for their first token alone), mean TTFT was about 1 s, and neither arm stormed: 39-42 history tokens recomputed per
+  returning turn, 3 "reissue cap reached" in the baseline, and 0 turns that lost a read after landing (the oracle arm
+  6). Campaign 14's x70 storm (section 4) did not recur; its client kept 171-231 users in session at x70 (section 7.5),
+  against 128 here.
+- **The oracle arm's gain is in the spikes.** The baseline's 5-min mean TTFT exceeded 2 s at 45-60 min (up to 5.2 s),
+  at 210-220 min (up to 6.7 s) and briefly at 240-250 min; the oracle arm's never exceeded 1.8 s. It served more
+  history from the GPU (58 % of history tokens against 46 %) and less from host memory (25 % against 34 %).
+- **It read more from the SSD, not less:** 13.7 TB against 11.7 TB (+17 %), with 5,523 turns staged before they
+  arrived, their reads ending a median 77 s before admission. In campaign 16 the same arm read less than the baseline
+  (13.4 against 15.6 TB). Why that reversed is not analysed.
+- **The pin budget was nearly always full:** pinned tokens at a read's dispatch were a median 442K of the 488K budget
+  (p90 484K), and 1,961 of 7,236 landed spans (27 %) did not fit (campaign 16's `_oracle_v2_nu`: 10 %).
+- The size of the gain is not established by one run per arm: the spread between repeated runs at this scale is not
+  measured, and two identical smoke runs differed by 1.0 s, twice this -0.51 s (section 10).
+
+### 9.8 What the expectations before the run got wrong
+
+- x70: the plan (`results/campaign18/DECISIONS.md`) expected 60-150 users cut or never started at campaign 14's
+  per-turn latency. With TTFT about 1 s, 21-22 were cut and every user started. The queue of users waiting to start
+  came as predicted (128 in session from 26 min, up to 352 waiting).
+- x10: congestion was expected from about 1 h, and a baseline storm if queue waits reached tens of seconds. Both came
+  sooner (the KV pool full and requests queueing from 26 min, the storm at 38 min), and nobody expected the storm to
+  last until the stop.
+- x10: no arm was expected to end before about 3.9 h, because one user's session has five sleeps at the 1,200-s cap.
+  The oracle arm's last user was that one, at 4.70 h.
+
+### 9.9 Run health
+
+| | x70 baseline | x70 oracle v2 + next-use | x10 baseline | x10 oracle v2 + next-use |
+|---|---|---|---|---|
+| client errors / aborted sessions / server tracebacks | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
+| oracle plans = arrivals = admissions; expired | | 23,974; 0 | | 24,111; 0 |
+| longest wait of a planned turn (rule: under 60 s) | | 16.6 s | | 71.8 s (section 9.6) |
+| SSD reads parked / dispatched; host allocation failed | | 7,236 / 7,236; 0 | | 9,338 / 9,338; 0 |
+| pins taken / released at admission / budget full / leaked | | 5,275 / 5,275 / 1,961 / 0 | | 9,236 / 9,236 / 98 / 0 |
+| SSD lookups that found something / found nothing | 6,237 / 10,191 | 7,299 / 12,630 | 4,770 / 57,761 | 9,387 / 9,225 |
+| "reissue cap reached" | 3 | 0 | 6,109 | 0 |
+| SSD cleanups (h after the client started) | 3.6, 4.1 | 3.6, 4.1 | none | 2.4, 2.8 |
+
+Most of the x10 baseline's 57,761 empty lookups are its paced polls of never-stored tails, as in campaign 17.
+
+---
+
+## 10. How much to trust this
 
 - **One run per arm.** The intervals in section 7.1 cover variation between users within a run, not between repeated
   runs. Two runs of identical code differed by 1.0 s mean TTFT in a small smoke test; the spread at this scale is not
@@ -615,8 +825,14 @@ per arm.
   - Campaign 17's gain is also one storm in one baseline run. Given that the x10 baseline storms, the direction is
     solid: the mechanism is traced turn by turn, and campaigns 11 and 12 stormed the same way at x10. The size is not:
     resampling 10-min blocks of time instead of users widens its interval from [-5.5, -3.6] to about [-12.7, +0.8] s.
-- **Which lever carried campaign 17 is not separated.** The oracle arm changed two hint-free levers (paced retries
-  off, pins) together with the hint-driven ones, and the two runs cannot split the gain between them (section 8.7).
+  - Campaign 19's -75.6 s is far outside the smoke-test spread, also when resampling 10-min blocks ([-105, -50] s),
+    and its storm repeats campaign 17's mechanism. When a repeat run would start storming is not known. On this client
+    the load does not fall while users wait to start, and in this run the storm lasted until the stop (section 9.4).
+  - Campaign 18's -0.51 s is within the smoke-test spread.
+- **Which lever carried campaigns 17 and 19 is not separated.** The oracle arm changed two hint-free levers (paced
+  retries off, pins) together with the hint-driven ones, and the runs cannot split the gain between them (section 8.7).
+- **Campaign 19's oracle arm failed one acceptance rule set before the run**: 0.3 % of its planned turns waited over
+  60 s for admission, all after one SSD cleanup (section 9.6). Its numbers are reported as measured.
 - **The hints were exact.** Real hints would come from predicting tool latency and user think time. Next-use eviction
   depends on them most: a wrong hint evicts exactly the context needed next. `_dl` needs no hints.
 - **Correctness of restored KV is unchecked.** The campaigns measure timing only. Replies are generated live and fed
@@ -624,33 +840,41 @@ per arm.
   this path (staging, trimming a read to its allocation, pins).
 - **Finite workload.** The better arms run out of users early, so averages over a fixed time window mix busy and
   draining periods differently per arm. Section 7.1 therefore leads with the shared turns and the time until N users
-  finished.
+  finished. In campaign 19 the shared turns are only the baseline's 15,033, from the 536 users it started; the 232
+  users it never started show up only in the wait to be admitted, which TTFT leaves out.
 - **One configuration.** One MoE model with small KV per token, one GPU, one SSD of ~2 GB/s, TP 1, gaps scaled x70 and
-  x10. A dense model with 4-8x the KV per token makes SSD restores relatively more expensive than recompute, and the
-  balance between the tiers could shift.
+  x10, two replay clients. A dense model with 4-8x the KV per token makes SSD restores relatively more expensive than
+  recompute, and the balance between the tiers could shift. On the redesigned client at x70 the server was lightly
+  loaded (section 9.7), so campaign 18 says little about the design under load at x70.
 - **Not measured:** decode speed (time per output token), end-to-end session time, and behaviour under adversarial or
   wrong hints (a client claiming "next turn in 1 s" for all its sessions would keep them all cached).
 
 ---
 
-## 10. Open issues and next steps
+## 11. Open issues and next steps
 
 1. **Check restored KV for correctness**: compare a turn served from the SSD with the same turn prefilled from scratch,
    at temperature 0 with output logprobs, with the v2 flags on. GPU, about 1-2 h. Every result above assumes it passes.
 2. **Separate the retry change at x10**: run the baseline with only paced retries off
-   (`--hicache-storage-prefetch-retry-poll-interval 0`, which needs a new arm in `start_server.sh`) on campaign 17's
-   workload. About 4.5 h. It measures the retry change alone; if that arm storms, `_dl` with poll interval 0 (pins, no
-   hints) is needed too before the gain can be split between hint-free and hint-driven levers (section 8.7).
+   (`--hicache-storage-prefetch-retry-poll-interval 0`, which needs a new arm in `start_server.sh`) on campaign 19's
+   workload (campaign 17's needs the retired client). About 5 h. It measures the retry change alone; if that arm
+   storms, `_dl` with poll interval 0 (pins, no hints) is needed too before the gain can be split between hint-free
+   and hint-driven levers (section 8.7). Campaign 19 makes this more pressing: under steady load the baseline's storm
+   never ended, and 95 % of its recompute went through spent budgets (section 9.4).
 3. **Imperfect hints**: rerun `_oracle_v2_nu` with gaps x 0.75 and x 1.25, or with noise. 5 h per run.
-4. **Repeat runs**: a second seed of `_dl` and of the campaign 14 baseline, and of campaign 17's baseline, to measure
-   run-to-run spread and see whether the storms repeat. 5 h each.
+4. **Repeat runs**: a second seed of `_dl` and of the campaign 14 baseline, and of campaign 17's baseline (these need
+   the retired client), to measure run-to-run spread and see whether the storms repeat; on the redesigned client,
+   campaign 18's two arms (their -0.51 s is within the smoke-test spread) and campaign 19's baseline (when its storm
+   starts). 5 h each.
 5. **Pin budget**: 10 % of `_oracle_v2_nu`'s landed spans found the budget full at x70. At x10 it filled again and
-   again from 72 to 117 min, and the arm's few traced losses were all reads that found it full; try 0.4-0.5 of the
-   host pool.
+   again from 72 to 117 min, and the arm's few traced losses were all reads that found it full. On the redesigned
+   client at x70 (campaign 18) it was nearly always full (a median 442K of its 488K tokens pinned at each dispatch),
+   and 27 % of landed spans did not fit. Try 0.4-0.5 of the host pool.
 6. **Next-use eviction and long queue waits**: a queued session's next use is set to its arrival time, so after 60 s in
-   the queue next-use eviction ranks it overdue and evicts it early. It has not fired yet (longest waits 37.5 s at x70,
-   32.6 s at x10), but a more congested server would hit it. Registering a queued session at its predicted admission
-   would fix it.
+   the queue next-use eviction ranks it overdue and evicts it early. It fired for the first time in campaign 19: 67
+   turns waited 60-72 s in the 5 min after an SSD cleanup at full load, their history came more from the SSD and less
+   from host memory than at shorter waits, and 3 recomputed more than a page (section 9.6). Registering a queued
+   session at its predicted admission would fix it.
 7. **Write-back with the SSD**: `Scheduler._prefetch_kvcache` looks up the SSD only when the deepest cached match is
    host-backed or the root. Under write-back that match is usually GPU-only, so the lookup is skipped (70 of 133
    recomputed turns in the smoke issued no lookup, the other 63 only for a short tail). This is upstream code: the
@@ -659,17 +883,22 @@ per arm.
    during the read, much as buffer mode already re-anchors. Worth an upstream issue.
 8. **Analysis gaps**: a load-model check timed from dispatch, and the late-read share split by SSD load; what first
    pushed returning sessions' history out of GPU and host memory at about 71 min in both campaign 17 arms (the jump in
-   host evictions that followed is mostly SSD reads needing host space).
+   host evictions that followed is mostly SSD reads needing host space); why the oracle arm read 17 % more from the
+   SSD than the baseline at x70 on the redesigned client, when in campaign 16 it read less (section 9.7); and how the
+   SSD cleanup lengthened campaign 19's queue waits (section 9.6).
 9. **The cleaner ignores the hints**: it deletes by file age. A session idle for 20 min that will return is as likely
    to lose its SSD copy as a finished one.
 10. **Box hygiene**: since the host reboot of 2026-10-11 the container's PID 1 does not reap exited processes, so
     stopped servers stay as zombies. The start/stop scripts now treat a zombie as stopped; recreating the container
-    with `--init` would fix the cause. The host rebooted again on 2026-10-12 at 18:40Z, and the container has to be
-    restarted by hand (`docker start sglang_hicache`) after every reboot.
+    with `--init` would fix the cause. The host rebooted again on 2026-10-12 at 18:40Z and on 2026-10-17 at about
+    23:05Z, and the container has to be restarted by hand (`docker start sglang_hicache`) after every reboot.
+11. **x70 under load on the redesigned client**: with 128 users in session the x70 server was lightly loaded and the
+    users' own sleeps set the pace (section 9.7). A larger `C` (the old client kept 171-231 users in session at x70) or
+    a higher arrival rate would test the design at x70 where the server matters. 5 h per arm.
 
 ---
 
-## 11. Where things are
+## 12. Where things are
 
 | what                                                                                                                          | where                                                                                                                                                                                                                                                                                     |
 | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -681,9 +910,13 @@ per arm.
 | campaign 17 tables and figure | `results/campaign17/all/c17_summary.txt` (shared turns, time until N users finished, history sources, fairness, 30-min phases, lost after landing), `c17_overview.png`, `steady.csv` / `steady_bins.csv` / `steady_paired.csv` (window 2,700-15,000 s) |
 | campaign 17 mechanism analysis (sections 8.4-8.7), each claim checked by two reviewers | `results/campaign17/all/c17_mechanism_verified.txt`; its scripts and text outputs in `frozen/oracle_scripts_staging/c17_wf/` (not committed) |
 | campaign 17 per arm | `results/campaign17/<arm>/srs_summary.txt`, `oracle_eval.csv` (oracle arm only), `l3_cleanups.txt` |
+| campaigns 18-19 (section 9): plan, expectations and acceptance rules; the redesigned client | `results/campaign18/DECISIONS.md`, `results/campaign19/DECISIONS.md`; `REPLAY_REDESIGN.md` |
+| campaigns 18-19 tables and figures | `results/campaign18/all/c18_summary.txt` and `results/campaign19/all/c19_summary.txt` (shared turns, time until N users finished, history sources, fairness, 30-min phases, lost after landing; `scripts/c16_summary.py` leaves sessions cut at the stop out of the time until N users finished), `c18_overview.png`, `c19_overview.png`. In both `all/`: `acceptance.txt` (the acceptance checks), `users.txt` (users and waits to be admitted), `block_boot.txt` (10-min-block intervals). In `results/campaign19/all/`: `c19_mechanism.txt` (budget-spent turns and their recompute), `split.txt` (requests in flight, turns/s, the paired difference before and after the storm), `doc_numbers.txt` (SSD volumes, queues, KV-pool use, new tails, waits around the cleanups) |
+| campaigns 18-19 per arm | `results/campaign1[89]/<arm>/srs_summary.txt`, `l3_cleanups.txt`; for the oracle arms also `oracle_eval.csv` and `long_waits.txt` (planned turns by their wait to be admitted) |
+| campaigns 18-19 scripts | `frozen/oracle_scripts_staging/c18_c19_wf/` (not committed): `accept.py`, `users.py`, `block_boot.py`, `split.py`, `doc_numbers.py`, `long_waits.py`, `per_arm.sh`, and `key_stats/` (campaign 17's mechanism scripts with the campaign 18-19 arms added); the launcher `frozen/oracle_scripts_staging/c18_c19.sh` (copy: `results/campaign18/launcher.sh`) |
 | campaign records                                                                                                              | `results/campaign14/DECISIONS.md`, `results/campaign15/README.md`, `results/campaign16/DECISIONS.md`; each has `manifest.txt` (arm, run directory, client directory)                                                                                                              |
 | raw data                                                                                                                      | the run directories in the manifests:`server.log` (all `HICACHE_EVT` events), `client_*/client.jsonl` (one line per turn)                                                                                                                                                           |
-| designs and procedure                                                                                                         | `ORACLE_PLAN.md` (v1), `ORACLE_V2_PLAN.md` (v2, the targets), `ORACLE_V2_HANDOFF.md` (how campaign 16 was run)                                                                                                                                                                      |
+| designs and procedure                                                                                                         | `ORACLE_PLAN.md` (v1), `ORACLE_V2_PLAN.md` (v2, the targets), `ORACLE_V2_HANDOFF.md` (how campaign 16 was run), `REPLAY_REDESIGN.md` (the client of campaigns 18-19)                                                                                                                  |
 | engine                                                                                                                        | v2 code in`python/sglang/srt/mem_cache/` (`storage_read_scheduler.py`, `next_turn_prefetch.py`, `next_use_eviction.py`, `unified_radix_cache.py`) and the flags in `python/sglang/srt/arg_groups/`; the runs used frozen copies under `agent_cache/frozen/` (not committed) |
 
 Regenerate, from `agent_cache/`:
@@ -703,6 +936,16 @@ docker exec -w /sgl-workspace/sglang/agent_cache sglang_hicache python3 scripts/
   --out results/campaign17/all/c17_overview.png
 python3 scripts/steady_state.py --manifest results/campaign17/manifest.txt --window-start 2700 --window-end 15000 \
   --iostat results/campaign17/iostat_vdc.log --out results/campaign17/all   # the three steady*.csv and steady.png
+# campaigns 18-19: the same summary per campaign, then the per-arm files and both figures (container), then the checks
+python3 scripts/c16_summary.py --arm "c18 wc x70" campaign18 three_tier_wc \
+  --arm "c18 _oracle_v2_nu x70" campaign18 three_tier_wc_oracle_v2_nu --pair "c18 _oracle_v2_nu x70" "c18 wc x70"
+python3 scripts/c16_summary.py --arm "c19 wc x10" campaign19 three_tier_wc \
+  --arm "c19 _oracle_v2_nu x10" campaign19 three_tier_wc_oracle_v2_nu --pair "c19 _oracle_v2_nu x10" "c19 wc x10"
+docker exec sglang_hicache bash /sgl-workspace/sglang/agent_cache/frozen/oracle_scripts_staging/c18_c19_wf/per_arm.sh
+W=frozen/oracle_scripts_staging/c18_c19_wf
+python3 $W/accept.py; python3 $W/users.py; python3 $W/block_boot.py; python3 $W/split.py; python3 $W/doc_numbers.py
+(cd results && python3 ../$W/long_waits.py <run dir> <client dir>)          # per oracle arm, from its manifest line
+(cd $W/key_stats && python3 ks_serverlog.py c19_wc srv_c19_wc.json && python3 ks_mechanism.py c19_wc srv_c19_wc.json --storm 2280 18300)
 ```
 
 ---
@@ -727,7 +970,7 @@ python3 scripts/steady_state.py --manifest results/campaign17/manifest.txt --win
 | lost after landing                         | a fetched span evicted before its request was admitted, so the history was recomputed                                             |
 | late read                                  | a read that ended within 50 ms of its request's admission: admission waited for it                                                |
 | recompute storm                            | a self-reinforcing episode where lost spans cause recompute, recompute slows the queue, and the queue causes more losses          |
-| backlog / cap                              | requests waiting for their first token / the client's limit on live users, steered to a backlog of 32                             |
+| backlog / cap                              | requests waiting for their first token / the limit on live users of campaigns 14-17's client, steered to a backlog of 32          |
 | congested bin                              | a 5-min bin with median TTFT above 10 s                                                                                           |
 | shared turns                               | the (user, turn) pairs completed in every compared run                                                                            |
 | cleaner                                    | deletes the oldest SSD files when the disk passes 70 % full, down to 60 %                                                         |
@@ -738,3 +981,8 @@ python3 scripts/steady_state.py --manifest results/campaign17/manifest.txt --win
 | wait to be admitted | the time a user waits for a place under the cap before its session starts; not part of TTFT |
 | `_dl`, `_oracle_v2`, `_oracle_v2_nu` | campaign 16's arms`three_tier_wc_dl`, `three_tier_wc_oracle_v2`, `three_tier_wc_oracle_v2_nu` (section 6)                   |
 | campaign 17's arms | `three_tier_wc` (the original HiCache baseline) and `three_tier_wc_oracle_v2_nu`, at x10 gaps (section 8) |
+| redesigned client | the replay client of campaigns 18-19 (`REPLAY_REDESIGN.md`): every user replays its whole session from the first turn, under a fixed limit `C` on users in session (section 9.1) |
+| `C`, users in session | the redesigned client's limit (128) on users in session; a user keeps its place through every sleep until its session ends |
+| cut / never started | at the redesigned client's 5 h stop, a session still running is cut and a user still waiting never starts |
+| overdue | next-use eviction's rank for a session whose predicted next use passed more than 60 s ago; such sessions are evicted right after ended ones |
+| campaigns 18-19's arms | campaign 17's two arms, at x70 (campaign 18) and x10 (campaign 19), on the redesigned client (section 9) |

@@ -53,7 +53,7 @@ def load(run, client):
                 tag = d["tag"]
             elif k == "turn" and d.get("ttft") is not None:
                 turns[(d["conv"], d["turn"])] = d
-            elif k == "conv_end" and not d.get("aborted"):
+            elif k == "conv_end" and not d.get("aborted") and not d.get("capped"):   # capped: cut by the timeout
                 ends.append(d["end_s"])
     return tag, turns, sorted(ends)
 

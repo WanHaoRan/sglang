@@ -1,0 +1,28 @@
+# Campaign 19 baseline storm: retry-budget lines linked to turns (ks_mechanism.py from c17_wf/key_stats, copied to frozen/oracle_scripts_staging/c18_c19_wf/key_stats with the c18-19 arms)
+# storm window = from the first minute of > 1,000 recomputed tokens per returning turn (min 38 = 2,280 s) to the end
+c19_wc: returning turns 14497, recomputed history 94.88M tokens; turns with 'reissue cap reached' 6109, with 'reissuing storage lookup' 4306
+  phase    returning  rec M rec/turn capR turns capR rec M capR&shrank shrank turns shrank rec M rec>1 page of which capR
+  before        4815   0.16       34        705       0.03           0           12         0.00         12             8
+  storm         9682  94.72     9783       5109      90.00           2         4293         0.19       5275          5025
+  after            0   0.00        0          0       0.00           0            0         0.00          0             0
+  storm window: capR turns 5109 recompute mean 17617, TTFT mean 142.4 s;  other turns 4573 recompute mean 1032, TTFT mean 142.4 s
+  outside the storm: capR turns 705 recompute mean 44 (p99 160), TTFT mean 11.4 s
+  first 'reissue cap reached' at 1644 s; first 'reissuing storage lookup' at 2184 s
+c19_nu: returning turns 24111, recomputed history 1.09M tokens; turns with 'reissue cap reached' 0, with 'reissuing storage lookup' 8
+  phase    returning  rec M rec/turn capR turns capR rec M capR&shrank shrank turns shrank rec M rec>1 page of which capR
+  before        4800   0.18       37          0       0.00           0            0         0.00         15             0
+  storm        19311   0.92       48          0       0.00           0            3         0.00        157             0
+  after            0   0.00        0          0       0.00           0            0         0.00          0             0
+  storm window: capR turns 0 recompute mean nan, TTFT mean nan s;  other turns 19311 recompute mean 48, TTFT mean 28.7 s
+  outside the storm: capR turns 0 recompute mean nan (p99 nan), TTFT mean nan s
+  first 'reissue cap reached' at None s; first 'reissuing storage lookup' at 2604 s
+
+# campaign 18 baseline (x70), whole run
+c18_wc: returning turns 23966, recomputed history 0.94M tokens; turns with 'reissue cap reached' 3, with 'reissuing storage lookup' 0
+  phase    returning  rec M rec/turn capR turns capR rec M capR&shrank shrank turns shrank rec M rec>1 page of which capR
+  before           0   0.00        0          0       0.00           0            0         0.00          0             0
+  storm        23966   0.94       39          3       0.00           0            0         0.00        170             1
+  after            0   0.00        0          0       0.00           0            0         0.00          0             0
+  storm window: capR turns 3 recompute mean 93, TTFT mean 7.4 s;  other turns 23963 recompute mean 39, TTFT mean 1.1 s
+  outside the storm: capR turns 0 recompute mean nan (p99 nan), TTFT mean nan s
+  first 'reissue cap reached' at 13806 s; first 'reissuing storage lookup' at None s
