@@ -61,6 +61,7 @@ ARM_COLOR = {"hbm_lru": GRAY, "hbm_host": ORANGE, "three_tier": AQUA,
              "three_tier_wc_dl": "#56b4e9", "three_tier_wc_oracle_v2": "#882255", "three_tier_wc_oracle_v2_nu": "#4a3aa7"}
 TS_RE = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d{3})?)\]\s*(.*)$")
 KV_RE = re.compile(r"(\w+)=(-?[\w./-]+)")
+HOST_POOL_RE = re.compile(r"Allocating kv hierarchical KV host pool: (\d+) tokens, ([\d.]+) GB")
 
 
 def parse_ts(s: str) -> float:
@@ -119,6 +120,7 @@ def parse_server(path: str, t_start: float, sends: dict = None) -> dict:
     s2h_staged = collections.defaultdict(dict)
     ntp = []
     posts = []
+    host_pool, host_moves = None, []   # host KV pool size; (t, tokens) written or loaded to host (+), evicted (-)
     sends = sends or {}
     planned = set()   # rids the oracle planned for: one never sent had all its reads staged
     def s2h_of(rid, t):
@@ -142,6 +144,7 @@ def parse_server(path: str, t_start: float, sends: dict = None) -> dict:
             toks = int(kv.get("tokens", 0))
             if ev == "d2h_submit":
                 d2h_sub.append((t, toks))
+                host_moves.append((t, toks))   # the host slots are taken at submit, not when the copy is done
             elif ev == "d2h_done":
                 ts, _ = d2h_sub.popleft() if d2h_sub else (t, toks)
                 d2h.append(dict(t0=ts, t1=t, tokens=toks, ms=float(kv.get("ms", -1))))
@@ -170,6 +173,7 @@ def parse_server(path: str, t_start: float, sends: dict = None) -> dict:
                 evd.append(dict(t=t, tokens=toks, requested=int(kv.get("requested", 0))))
             elif ev == "evict_host":
                 evh.append(dict(t=t, tokens=toks))
+                host_moves.append((t, -toks))
             elif ev == "load_back_init":
                 lbi.append(dict(t=t, rid=kv.get("rid"), tokens=toks, host_hit=int(kv.get("host_hit", 0))))
         elif "HiCache prefetch" in msg:
@@ -177,10 +181,15 @@ def parse_server(path: str, t_start: float, sends: dict = None) -> dict:
             if "req" in kv:
                 s2h_of(kv["req"], t).update(t_end=t, completed=int(kv.get("completed", 0)),
                                             loaded=int(kv.get("loaded", 0)), dropped="dropped" in msg)
+                host_moves.append((t, int(kv.get("loaded", 0))))   # only loaded tokens stay; the read's other slots are freed
         elif '"POST /v1/chat/completions' in msg:
             posts.append(t)
+        elif msg.startswith("Allocating kv hierarchical KV host pool"):
+            tokens, gb = HOST_POOL_RE.match(msg).groups()
+            host_pool = dict(tokens=int(tokens), gb=float(gb))
     return dict(batches=batches, d2h=d2h, h2d=h2d, h2s=dict(h2s), s2h=dict(s2h), evict_device=evd, evict_host=evh,
-                load_back_init=lbi, posts=posts, s2h_staged=dict(s2h_staged), ntp=ntp)
+                load_back_init=lbi, posts=posts, s2h_staged=dict(s2h_staged), ntp=ntp, host_pool=host_pool,
+                host_moves=host_moves)
 
 
 # ----------------------------------------------------------------------------- figures
@@ -204,10 +213,12 @@ def draw_timeline(arm: str, cl: dict, sv: dict, out_png: str) -> None:
     convs = sorted({t["conv"] for t in turns})
     # the layout was drawn for 128 rows; more rows (users of a held-population run) get up to twice the lane panel
     lane = 4.2 * min(2.0, max(1.0, len(convs) / 128))
-    fig, axes = plt.subplots(5, 1, figsize=(16, 14 + (lane - 4.2) * 14 / 10.4), sharex=True,
-                             gridspec_kw=dict(height_ratios=[lane, 1.2, 1.2, 2.2, 1.6], hspace=0.28))
+    ratios = [lane, 1.2, 1.2, 1.2, 2.2, 1.6]
+    # 14 / 10.4 inches per ratio unit: the scale the panel heights were tuned at
+    fig, axes = plt.subplots(len(ratios), 1, figsize=(16, sum(ratios) * 14 / 10.4), sharex=True,
+                             gridspec_kw=dict(height_ratios=ratios, hspace=0.28))
     fig.patch.set_facecolor("#fcfcfb")
-    a_req, a_pool, a_queue, a_evt, a_cum = axes
+    a_req, a_pool, a_host, a_queue, a_evt, a_cum = axes
 
     # A. request lanes: one row per conversation; prefill/queue segment thick, decode segment thin
     row = {c: i for i, c in enumerate(convs)}
@@ -228,7 +239,7 @@ def draw_timeline(arm: str, cl: dict, sv: dict, out_png: str) -> None:
     n_conv = int((cl.get("args") or {}).get("num_conversations") or len(convs))
     who = "conversation" if len(convs) <= n_conv else f"user ({len(convs)} users replay {n_conv} conversations)"
     style(a_req, f"{arm}: requests per {who} (thick = send to first token, thin = decode); color = where the prefix was found",
-          "user" if len(convs) > n_conv else "conversation")
+          "users")
     a_req.legend(handles=[Patch(color=TIER_COLOR[k], label=(COLD_LABEL[cl["tier_rule"]] if k == "cold" else k))
                           for k in ("cold", "device", "host", "storage")],
                  loc="upper right", fontsize=8, frameon=False, ncol=4)
@@ -239,14 +250,28 @@ def draw_timeline(arm: str, cl: dict, sv: dict, out_png: str) -> None:
     a_pool.set_ylim(0, 1.05)
     style(a_pool, "device KV pool usage (fraction of --max-total-tokens)", "usage")
 
-    # C. queue depth and running requests
+    # C. host pool usage, summed from the host events: the server logs no host usage line
+    if sv["host_pool"]:
+        pool, used, ts, fills = sv["host_pool"], 0, [], []
+        for t, tokens in sv["host_moves"]:
+            used += tokens
+            ts.append(t)
+            fills.append(used / pool["tokens"])
+        a_host.plot(ts, fills, color=ORANGE, linewidth=1.5, drawstyle="steps-post")
+        style(a_host, f"host KV pool usage (fraction of the {pool['gb']:g} GB pool, {pool['tokens']:,} tokens; cached KV = "
+                      "d2h writes + storage loads - host evictions; storage reads in flight not counted)", "usage")
+    else:
+        style(a_host, "host KV pool usage: no host pool in this run", "usage")
+    a_host.set_ylim(0, 1.05)
+
+    # D. queue depth and running requests
     a_queue.plot(bt, [b["queue"] for b in sv["batches"]], color=ORANGE, linewidth=1.5, label="queued (#queue-req)")
     a_queue.plot(bt, [b["running"] for b in sv["batches"]], color=BLUE, linewidth=1.5, label="running (#running-req)")
     style(a_queue, "scheduler queue and running requests", "requests")
     a_queue.set_ylim(0, 1.3 * max([b["queue"] for b in sv["batches"]] + [b["running"] for b in sv["batches"]] + [1]))
     a_queue.legend(loc="upper right", fontsize=8, frameon=False, ncol=2)
 
-    # D. tier events: one lane per type; bars where a duration is known, ticks otherwise (size ~ tokens)
+    # E. tier events: one lane per type; bars where a duration is known, ticks otherwise (size ~ tokens)
     lanes = ["d2h", "h2s", "s2h", "h2d", "evict_device", "evict_host"]
     oracle = bool(sv["ntp"] or sv["s2h_staged"])   # runs with --hicache-storage-next-turn-prefetch observe | on
     if oracle:
@@ -290,7 +315,7 @@ def draw_timeline(arm: str, cl: dict, sv: dict, out_png: str) -> None:
     a_evt.invert_yaxis()
     style(a_evt, title)
 
-    # E. cumulative tokens moved per event type
+    # F. cumulative tokens moved per event type
     def cum(xs, ys, label, color, ls="-"):
         if not xs:
             return
