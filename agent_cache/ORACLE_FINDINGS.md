@@ -1,8 +1,10 @@
 # Next-turn KV staging for agentic serving: findings from campaigns 14-19
 
 Written 2026-10-12 after campaign 16; campaign 17 (the same workload at x10 gaps) added 2026-10-13; campaigns 18 and 19
-(x70 and x10 gaps on a redesigned replay client) added 2026-10-18. This document is self-contained: it explains the
-setup, the terms and every result, so a reader needs nothing else to follow what was done and what it showed. The
+(x70 and x10 gaps on a redesigned replay client) added 2026-10-18; an analysis of the oracle arms' SSD reads, which found
+an engine bug, and one of campaign 19's long queue waits added 2026-10-28 (sections 9.10 and 9.11). This document is
+self-contained: it explains the setup, the terms and every result, so a reader needs nothing else to follow what was
+done and what it showed. The
 design documents (`ORACLE_PLAN.md` for v1, `ORACLE_V2_PLAN.md` for v2, `REPLAY_REDESIGN.md` for the client of
 campaigns 18-19) and the step-by-step procedure (`ORACLE_V2_HANDOFF.md`) hold more depth but are not needed here.
 Where each number comes from is in section 12. A glossary is at the end.
@@ -68,6 +70,14 @@ Where each number comes from is in section 12. A glossary is at the end.
   - The x10 oracle arm broke one rule set before the run: no planned turn may wait 60 s or more to be admitted,
     because after 60 s in the queue next-use eviction ranks a session overdue and evicts it early. 67 turns (0.3 %)
     waited 60-72 s, all in the 5 min after an SSD cleanup; 3 of them recomputed more than a page (section 9.6).
+- **An engine bug cost the next-use arms SSD reads** (found 2026-10-28, section 9.10). A staged span that found the pin
+  budget full was almost always evicted before its turn arrived, because next-use eviction never registers a staged
+  span, and the turn read it again. In campaign 18 that was 27 % of the oracle arm's SSD reads and the reason it read
+  17 % more than the baseline: without the re-reads it would have read 15 % less. In campaign 16 it was 10.7 %.
+- **Campaign 19's waits over 60 s did not come from the overdue rank** (section 9.11), which cost 4 of 695 losses. In
+  the 5 min after an SSD cleanup 7 turns recomputed 166K history tokens, mostly whole histories: their re-fetched spans
+  missed the pin budget (the bug above), or the cleaner had deleted shared prefix pages the sessions still used, because
+  a page that is only read keeps its first write time.
 - **What it means.** The pin fixes a failure of the current engine and needs no prediction, so it is the first
   candidate to upstream. Next-use eviction carries the large gain at x70, and how much of it survives depends on how
   good real next-turn predictions are: that is the next thing to measure. Deadline ordering helps only a little while
@@ -760,7 +770,8 @@ evicts it right after the ended sessions (open issue 6, section 11). The longest
 - their TTFT was their wait, 60-72 s; the 5-min mean TTFT peaked at 51 s at 165-170 min.
 
 By that rule the arm fails acceptance; the tables above include it as measured. The episode is small (0.3 % of turns,
-one recompute of note) and tied to one cleanup at full load.
+one recompute of note) and tied to one cleanup at full load. Section 9.11 traces it: the overdue rank played almost no
+part.
 
 ### 9.7 x70: a lightly loaded server
 
@@ -778,7 +789,8 @@ one recompute of note) and tied to one cleanup at full load.
   history from the GPU (58 % of history tokens against 46 %) and less from host memory (25 % against 34 %).
 - **It read more from the SSD, not less:** 13.7 TB against 11.7 TB (+17 %), with 5,523 turns staged before they
   arrived, their reads ending a median 77 s before admission. In campaign 16 the same arm read less than the baseline
-  (13.4 against 15.6 TB). Why that reversed is not analysed.
+  (13.4 against 15.6 TB). Section 9.10 explains the reversal: 1,553 staged spans that did not fit the pin budget were
+  evicted before their turns arrived and read again.
 - **The pin budget was nearly always full:** pinned tokens at a read's dispatch were a median 442K of the 488K budget
   (p90 484K), and 1,961 of 7,236 landed spans (27 %) did not fit (campaign 16's `_oracle_v2_nu`: 10 %).
 - The size of the gain is not established by one run per arm: the spread between repeated runs at this scale is not
@@ -810,6 +822,89 @@ one recompute of note) and tied to one cleanup at full load.
 
 Most of the x10 baseline's 57,761 empty lookups are its paced polls of never-stored tails, as in campaign 17.
 
+### 9.10 Why the x70 oracle arm read more from the SSD: staged spans evicted before use
+
+Analysis of 2026-10-28, from the server and client logs of both arms (scripts in section 12). Every SSD read was
+matched to the turn it served. In the oracle arm a read is "staged" if it was issued before its turn arrived, and a
+turn was "read again" if it made another read after arriving (its own lookup or a re-fetch). Volumes here are pages x
+6 MiB; they differ by about 2 % from the `iostat` volumes of section 9.2.
+
+| | x70 baseline | x70 oracle v2 + next-use |
+|---|---|---|
+| SSD reads; volume | 6,176; 12.0 TB | 7,236; 14.0 TB |
+| staged reads: landed and pinned / left unpinned (pin budget full) | | 5,520: 3,962 / 1,558 |
+| turns whose staged span was gone at arrival and was read again | | 1,553, all of them unpinned; 3.78 TB, 27 % of the arm's reads |
+| volume without those re-reads | 12.0 TB | 10.2 TB (-15 %) |
+| mean TTFT of the 1,553 turns read twice | 2.48 s | 2.43 s |
+| mean TTFT of the 3,966 turns staged once | 2.13 s | 0.55 s |
+
+- **Unpinned staged spans were lost; pinned ones never.** 1,553 of the 1,558 staged spans that found the pin budget
+  full (99.7 %) were gone when their turn arrived, and the turn read the same span again (in the median the second read
+  was as large as the first). None of the 3,962 pinned staged spans was read again. Without these re-reads the arm
+  would have read 15 % less than the baseline, as campaign 16's did.
+- **The pin budget was full because staged reads landed long before their turns.** At this light load a read issued at
+  the 120-s lead horizon is dispatched at once, so staged reads landed a median 77 s before their turn arrived (p10
+  35 s, p90 119 s) and held their pins that long. In campaign 16, under heavier load, they waited parked (a median 42 s)
+  and landed a median 12 s ahead.
+- **An unpinned staged span is lost because next-use eviction never registers it.** Evicting a span from host memory
+  deletes its node from the cache tree, so a staged read re-inserts the span as new nodes with new ids
+  (`mem_cache/unified_cache/unified_tree_core.py`: `_evict_host_leaf`, `UnifiedTreeNode`). The prefetcher writes a
+  session's next use only when a turn commits, when the next turn arrives and when a session ends, and at arrival it
+  re-registers the session's old, deleted node (`mem_cache/next_turn_prefetch.py`: `_on_arrival`). In every oracle arm
+  the node registered at arrival was never the staged span's: 0 of 3,962 pinned staged spans here, 0 of 6,983 in
+  campaign 16, 0 of 8,448 in campaign 19. An unregistered span ranks with the un-hinted entries, so next-use eviction
+  takes it before every session due back within 300 s, although its own turn is due sooner than most.
+- **Under LRU the same spans mostly survived short waits.** In campaign 16's `_oracle_v2` (no next-use eviction),
+  unpinned staged spans whose turn arrived 10-30 s after they landed were read again 19 % of the time, and 97-100 %
+  beyond 30 s. Under next-use eviction it was 97-100 % at every wait, even under 10 s, and even for spans that landed
+  after their turn had already arrived.
+- **Staging bought the re-read turns nothing** (the table's last two rows). Had the 1,553 done as well as the turns
+  staged once, the arm's mean TTFT would have been about 0.12 s lower (estimate: 1,553 x 1.88 s over 24,734 turns; the
+  two groups of turns differ).
+- **The other next-use arms had the same bug**, smaller where fewer spans missed the pin budget: campaign 16's
+  `_oracle_v2_nu` read 643 turns twice (1.53 TB, 10.7 % of its reads; it read about 13 % less than campaign 14 and
+  would have read about 23 % less), campaign 19's oracle arm 66 (0.18 TB, 1 %).
+- **Next-use eviction's own choices still saved reads.** Of the 24,734 shared turns, 1,757 were read from the SSD only
+  by the baseline and 1,178 only by the oracle arm (the baseline had found 1,037 of those in host memory).
+- **Checked two ways.** Page totals from a plain count over the `s2h_io` lines equal the per-turn sums, and all 1,553
+  turns read twice carry the engine's own warning for a second SSD hit on one request ("Replacing unresolved
+  storage-hit accounting").
+
+### 9.11 Campaign 19's long waits after the second cleanup, and what queued turns lose
+
+Analysis of 2026-10-28, from the oracle arm's server and client logs and the SSD samples (scripts in section 12).
+Section 9.6 assumed that the 60-s rule guards against next-use eviction ranking a queued session overdue. That rank
+played almost no part.
+
+- **The overdue rank cost 4 losses.** 695 planned turns lost history while queued, and 4 of those losses came 60 s or
+  more after the turn arrived, when its session turns overdue. Among the 67 turns that waited over 60 s, 26 lost
+  history, 22 of them before 60 s.
+- **The cleanups did not slow the SSD.** Reads took 3.0-3.2 ms per page and the disk was 94-99 % busy in every minute
+  around both cleanups. Staged lookups found 98-99.6 % of the tokens they asked for, before and after each.
+- **Seven large recomputes made the long waits.** In the 5 min after the second cleanup 7 turns hit the re-fetch cap
+  (two re-fetches, history still missing) and recomputed 166K history tokens: 6 their whole history (15-52K tokens
+  each), 1 a 3.5K-token part. On a GPU already
+  at its limit, with waits already near 40 s and the pin budget at its ceiling, admissions fell from about 110 to 59 per
+  minute and 67 turns waited 60-72 s; the queue recovered within about 6 min. The turns failed in one of two ways:
+  - **The re-fetched span landed unpinned and was evicted within milliseconds**, the bug of section 9.10 (2 turns in
+    this window, 5 over the run).
+  - **The cleaner had deleted the start of the history** (4 turns after the second cleanup, 2 after the first). Each
+    of these sessions found pages beyond the system prompt already on the SSD at its first turn: pages first written
+    by an earlier session with the same task preamble (for example the same SWE-bench task run with another model). A
+    page that is only read is never rewritten, so its file keeps its first write time, and the cleaner deletes the
+    oldest files first. A lookup matches from the start of the history, so one missing shared page left the whole
+    history unreachable: the lookups found 0 of 18-38K tokens. One lookup found all 9,856 tokens 17 s before the
+    first cleanup; the read, 11 s after it, loaded nothing.
+
+  After the first cleanup waits were near 27 s, so its two such turns pushed no turn past 60 s.
+- **Whole sessions are evicted right after their turn.** 8,521 planned turns (35 %) had their entire history evicted
+  between turns, a median 2.1 s after the previous turn committed, and staged back before arriving. Among sessions due
+  within 300 s, next-use eviction takes the one due last, and a just-finished session's predicted admission (its gap
+  plus about 45 s of queue wait) is the latest. Only a session's newest node is registered, so once it is evicted its
+  parents rank as un-hinted and go before any other session (`mem_cache/unified_cache/components/full.py`:
+  `drive_host_eviction`). This is the "busy oracle" of section 8.6, and why the oracle arm read twice the baseline's SSD
+  volume at x10.
+
 ---
 
 ## 10. How much to trust this
@@ -835,6 +930,9 @@ Most of the x10 baseline's 57,761 empty lookups are its paced polls of never-sto
   60 s for admission, all after one SSD cleanup (section 9.6). Its numbers are reported as measured.
 - **The hints were exact.** Real hints would come from predicting tool latency and user think time. Next-use eviction
   depends on them most: a wrong hint evicts exactly the context needed next. `_dl` needs no hints.
+- **An engine bug affected every next-use arm** (section 9.10): a staged span that missed the pin budget was evicted
+  before use and read again. The `_oracle_v2_nu` results include that cost (27 % of the campaign 18 arm's SSD reads,
+  10.7 % of campaign 16's), so they slightly understate the design.
 - **Correctness of restored KV is unchecked.** The campaigns measure timing only. Replies are generated live and fed
   back into the conversation, so a restore that put wrong pages in place would go unnoticed. v1 and v2 change exactly
   this path (staging, trimming a read to its allocation, pins).
@@ -853,6 +951,9 @@ Most of the x10 baseline's 57,761 empty lookups are its paced polls of never-sto
 
 ## 11. Open issues and next steps
 
+Issues 12 and 13 and the additions to 6 and 9 come from the analyses of 2026-10-28 (sections 9.10 and 9.11). On
+2026-10-29 the user decided to record them now and fix them later.
+
 1. **Check restored KV for correctness**: compare a turn served from the SSD with the same turn prefilled from scratch,
    at temperature 0 with output logprobs, with the v2 flags on. GPU, about 1-2 h. Every result above assumes it passes.
 2. **Separate the retry change at x10**: run the baseline with only paced retries off
@@ -869,12 +970,15 @@ Most of the x10 baseline's 57,761 empty lookups are its paced polls of never-sto
 5. **Pin budget**: 10 % of `_oracle_v2_nu`'s landed spans found the budget full at x70. At x10 it filled again and
    again from 72 to 117 min, and the arm's few traced losses were all reads that found it full. On the redesigned
    client at x70 (campaign 18) it was nearly always full (a median 442K of its 488K tokens pinned at each dispatch),
-   and 27 % of landed spans did not fit. Try 0.4-0.5 of the host pool.
+   and 27 % of landed spans did not fit. Try 0.4-0.5 of the host pool. Section 9.10 shows what the overflow costs:
+   almost every unpinned staged span is evicted before use and read again. Issue 12 removes that cost at the source; a
+   larger budget only makes it rarer.
 6. **Next-use eviction and long queue waits**: a queued session's next use is set to its arrival time, so after 60 s in
    the queue next-use eviction ranks it overdue and evicts it early. It fired for the first time in campaign 19: 67
    turns waited 60-72 s in the 5 min after an SSD cleanup at full load, their history came more from the SSD and less
    from host memory than at shorter waits, and 3 recomputed more than a page (section 9.6). Registering a queued
-   session at its predicted admission would fix it.
+   session at its predicted admission would fix it. Section 9.11 shows the rank cost only 4 losses in that run; the long
+   waits came from issues 9 and 12.
 7. **Write-back with the SSD**: `Scheduler._prefetch_kvcache` looks up the SSD only when the deepest cached match is
    host-backed or the root. Under write-back that match is usually GPU-only, so the lookup is skipped (70 of 133
    recomputed turns in the smoke issued no lookup, the other 63 only for a short tail). This is upstream code: the
@@ -883,11 +987,14 @@ Most of the x10 baseline's 57,761 empty lookups are its paced polls of never-sto
    during the read, much as buffer mode already re-anchors. Worth an upstream issue.
 8. **Analysis gaps**: a load-model check timed from dispatch, and the late-read share split by SSD load; what first
    pushed returning sessions' history out of GPU and host memory at about 71 min in both campaign 17 arms (the jump in
-   host evictions that followed is mostly SSD reads needing host space); why the oracle arm read 17 % more from the
-   SSD than the baseline at x70 on the redesigned client, when in campaign 16 it read less (section 9.7); and how the
-   SSD cleanup lengthened campaign 19's queue waits (section 9.6).
+   host evictions that followed is mostly SSD reads needing host space); and how the SSD cleanup lengthened campaign
+   19's queue waits (section 9.6). Why the x70 oracle arm read 17 % more from the SSD on the redesigned client is
+   answered in section 9.10.
 9. **The cleaner ignores the hints**: it deletes by file age. A session idle for 20 min that will return is as likely
-   to lose its SSD copy as a finished one.
+   to lose its SSD copy as a finished one. Worse, a file's age is its first write: pages that sessions only read are
+   never rewritten, so shared prefix pages get deleted while active sessions use them, and the lookup, which matches
+   from the start, then finds none of their history (section 9.11). Refreshing a file's time on a lookup or read hit,
+   or deleting by last use, would fix that part.
 10. **Box hygiene**: since the host reboot of 2026-10-11 the container's PID 1 does not reap exited processes, so
     stopped servers stay as zombies. The start/stop scripts now treat a zombie as stopped; recreating the container
     with `--init` would fix the cause. The host rebooted again on 2026-10-12 at 18:40Z and on 2026-10-17 at about
@@ -895,6 +1002,18 @@ Most of the x10 baseline's 57,761 empty lookups are its paced polls of never-sto
 11. **x70 under load on the redesigned client**: with 128 users in session the x70 server was lightly loaded and the
     users' own sleeps set the pace (section 9.7). A larger `C` (the old client kept 171-231 users in session at x70) or
     a higher arrival rate would test the design at x70 where the server matters. 5 h per arm.
+12. **Register staged spans with next-use eviction** (section 9.10). Three changes, each removing part of the cost:
+    register a staged span when it lands, with its plan's predicted admission, and make it the session's newest node;
+    start a staged read only when it is needed (its deadline minus the expected read time and a margin) rather than as
+    soon as the window has room, so pins are held for seconds rather than a minute; and keep a read parked while the
+    pin budget is full rather than landing it unpinned. A re-fetched span of a queued turn is re-inserted the same way
+    and is lost the same way when it misses the pin budget: 5 turns of campaign 19 recomputed their whole history after
+    two such re-fetches (section 9.11).
+13. **Whole-session eviction right after a turn** (section 9.11): at x10, next-use eviction evicts a just-finished
+    session's whole history about 2 s after its turn and stages it back, which doubles SSD reads. It follows from ranking
+    by predicted admission and from registering only a session's newest node. Whether to keep it (it does evict the
+    session needed last) or to register the whole path and weigh the read it causes is a design question for the
+    engine that takes distribution hints.
 
 ---
 
@@ -914,6 +1033,8 @@ Most of the x10 baseline's 57,761 empty lookups are its paced polls of never-sto
 | campaigns 18-19 tables and figures | `results/campaign18/all/c18_summary.txt` and `results/campaign19/all/c19_summary.txt` (shared turns, time until N users finished, history sources, fairness, 30-min phases, lost after landing; `scripts/c16_summary.py` leaves sessions cut at the stop out of the time until N users finished), `c18_overview.png`, `c19_overview.png`. In both `all/`: `acceptance.txt` (the acceptance checks), `users.txt` (users and waits to be admitted), `block_boot.txt` (10-min-block intervals). In `results/campaign19/all/`: `c19_mechanism.txt` (budget-spent turns and their recompute), `split.txt` (requests in flight, turns/s, the paired difference before and after the storm), `doc_numbers.txt` (SSD volumes, queues, KV-pool use, new tails, waits around the cleanups) |
 | campaigns 18-19 per arm | `results/campaign1[89]/<arm>/srs_summary.txt`, `l3_cleanups.txt`; for the oracle arms also `oracle_eval.csv` and `long_waits.txt` (planned turns by their wait to be admitted) |
 | campaigns 18-19 scripts | `frozen/oracle_scripts_staging/c18_c19_wf/` (not committed): `accept.py`, `users.py`, `block_boot.py`, `split.py`, `doc_numbers.py`, `long_waits.py`, `per_arm.sh`, and `key_stats/` (campaign 17's mechanism scripts with the campaign 18-19 arms added); the launcher `frozen/oracle_scripts_staging/c18_c19.sh` (copy: `results/campaign18/launcher.sh`) |
+| campaign 19's long waits and what queued turns lose (section 9.11) | `frozen/oracle_scripts_staging/c19_cleanup_waits/` (not committed): `c19_waits.py` (losses while queued by wait and by state at arrival; minute by minute around both cleanups), `evict_timing.py`, `cleanup_hits.py`, `capped_refetch.py`, `trace_turns.py`, `timeline5s.py`, their outputs and a README |
+| the oracle arms' SSD reads, turn by turn (section 9.10) | `frozen/oracle_scripts_staging/c18_ssd_reads/` (not committed): `c18_reads.py` (every SSD read of a baseline run and an oracle run matched to its turn and classed; outputs for campaigns 16, 18 and 19), `exposure.py` (unpinned and pinned staged spans read again, by time in host memory), `ttft_cost.py` (TTFT by read pattern), and a README with every number |
 | campaign records                                                                                                              | `results/campaign14/DECISIONS.md`, `results/campaign15/README.md`, `results/campaign16/DECISIONS.md`; each has `manifest.txt` (arm, run directory, client directory)                                                                                                              |
 | raw data                                                                                                                      | the run directories in the manifests:`server.log` (all `HICACHE_EVT` events), `client_*/client.jsonl` (one line per turn)                                                                                                                                                           |
 | designs and procedure                                                                                                         | `ORACLE_PLAN.md` (v1), `ORACLE_V2_PLAN.md` (v2, the targets), `ORACLE_V2_HANDOFF.md` (how campaign 16 was run), `REPLAY_REDESIGN.md` (the client of campaigns 18-19)                                                                                                                  |
@@ -946,6 +1067,12 @@ W=frozen/oracle_scripts_staging/c18_c19_wf
 python3 $W/accept.py; python3 $W/users.py; python3 $W/block_boot.py; python3 $W/split.py; python3 $W/doc_numbers.py
 (cd results && python3 ../$W/long_waits.py <run dir> <client dir>)          # per oracle arm, from its manifest line
 (cd $W/key_stats && python3 ks_serverlog.py c19_wc srv_c19_wc.json && python3 ks_mechanism.py c19_wc srv_c19_wc.json --storm 2280 18300)
+# section 9.10, host, ~6 s per pair of runs (the README there lists the campaign 16 and 19 pairs)
+(cd frozen/oracle_scripts_staging/c18_ssd_reads && python3 -I c18_reads.py ../../../results/20261018_002727_three_tier_wc_NAT160 \
+  ../../../results/20261018_053145_three_tier_wc_oracle_v2_nu_NAT160 > c18_reads.out)
+# section 9.11, host, seconds (the README there lists the other scripts)
+(cd frozen/oracle_scripts_staging/c19_cleanup_waits && python3 -I c19_waits.py \
+  ../../../results/20261018_154254_three_tier_wc_oracle_v2_nu_NAT160 ../../../results/campaign19/iostat_vdc.log > c19_waits.out)
 ```
 
 ---
@@ -985,4 +1112,6 @@ python3 $W/accept.py; python3 $W/users.py; python3 $W/block_boot.py; python3 $W/
 | `C`, users in session | the redesigned client's limit (128) on users in session; a user keeps its place through every sleep until its session ends |
 | cut / never started | at the redesigned client's 5 h stop, a session still running is cut and a user still waiting never starts |
 | overdue | next-use eviction's rank for a session whose predicted next use passed more than 60 s ago; such sessions are evicted right after ended ones |
+| re-fetch cap | at most two re-fetches per planned turn; history still missing after that is recomputed |
+| next-use registry | next-use eviction's record of each session's newest cache node and its predicted next use; written when a turn commits, when the next turn arrives and when a session ends, never when a staged span lands (section 9.10) |
 | campaigns 18-19's arms | campaign 17's two arms, at x70 (campaign 18) and x10 (campaign 19), on the redesigned client (section 9) |

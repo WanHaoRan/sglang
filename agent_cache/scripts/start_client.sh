@@ -11,6 +11,17 @@
 #   ARRIVAL       0      --arrival-rate  users per second, Poisson (0 = all at once)
 #   GAP           1.0    --gap-scale     sleep = recorded gap x GAP, at most 1,200 s
 #   ORACLE_HINTS  0      --oracle-hints  1 = each turn sends the next turn's rid and gap as kv_hints
+#   HINTS         -      --hints         none | oracle | dist; unset = oracle when ORACLE_HINTS=1, else none. dist = each
+#                                        turn sends a list of gap distributions the engine picks from (gap_hints.py);
+#                                        it needs <TRACE>.reply_keys.json (reply_keys.py) unless the source or key is none
+#   with HINTS=dist only (any other HINT_* name stops the script):
+#   HINT_SOURCE       online     --hint-source       online | precalc | session | none: measured during the run, other tasks'
+#                                                    sessions, the session's own gaps, or no estimates (link and end only)
+#   HINT_KEY          command    --hint-key          command | tool | none: tool + first word, tool, or one default entry
+#   HINT_MIN_SAMPLES  2          --hint-min-samples  source session: past gaps needed for an entry
+#   HINT_SIGMA_FLOOR  0.5        --hint-sigma-floor  source session: smallest spread of an entry (ln units)
+#   HINT_POINT        p50        --hint-point        p50 | none: the v1 point today's engine reads
+#   HINT_END          explicit   --hint-end          explicit | natural | none: say so where the recorded session ends
 #   C             4      --concurrency   most users in session at once, idle ones included (0 = no cap)
 #   TIMEOUT       0      --timeout       seconds; then no user starts and no request is sent (0 = none)
 #   SEED          0      --seed          the arrival times and which user replays which conversation
@@ -27,9 +38,40 @@ for v in NCONV OFFSET MAX_SECONDS GAP_CAP K THINKING CHECK_IDS TURNS_RANGE ARRIV
          CONTEXT_POLICY CAP_MODE ORDER START_PHASE VALIDATE_ONLY; do
   [ -z "${!v:-}" ] || { echo "STOP: $v is not a client knob any more (replay_agentic.py was trimmed; knobs: $0)"; exit 1; }
 done
+# hint knob -> flag; a misspelled HINT_* (or HINTS_*) name would otherwise run the default estimator unnoticed
+DIST_KNOBS="HINT_SOURCE:--hint-source HINT_KEY:--hint-key HINT_MIN_SAMPLES:--hint-min-samples HINT_SIGMA_FLOOR:--hint-sigma-floor HINT_POINT:--hint-point HINT_END:--hint-end"
+for v in ${!HINT_@} ${!HINTS_@}; do
+  case " $DIST_KNOBS " in *" $v:"*) ;; *) echo "STOP: $v is not a hint knob (knobs: $0)"; exit 1 ;; esac
+done
 TRACE=${TRACE:-$AC/traces/lmcache_agentic_trace.json}
 USERS=${USERS:-4}; TURNS=${TURNS:-10}; ARRIVAL=${ARRIVAL:-0}; GAP=${GAP:-1.0}; ORACLE_HINTS=${ORACLE_HINTS:-0}
 C=${C:-4}; TIMEOUT=${TIMEOUT:-0}; SEED=${SEED:-0}; TAG=${TAG:-smoke}
+FLAGS=(--trace "$TRACE" --num-users "$USERS" --turns "$TURNS" --arrival-rate "$ARRIVAL" --gap-scale "$GAP"
+  --concurrency "$C" --timeout "$TIMEOUT" --seed "$SEED")
+if [ -z "${HINTS:-}" ]; then
+  if [ "$ORACLE_HINTS" = 1 ]; then HINTS=oracle; else HINTS=none; fi
+fi
+[ "$ORACLE_HINTS" = 1 ] && [ "$HINTS" != oracle ] && { echo "STOP: ORACLE_HINTS=1 and HINTS=$HINTS disagree"; exit 1; }
+case "$HINTS" in
+  none) ;;
+  oracle) FLAGS+=(--oracle-hints) ;;   # the flag of campaigns 15-19, so their command line is unchanged
+  dist) FLAGS+=(--hints dist) ;;
+  *) echo "STOP: HINTS=$HINTS (none, oracle or dist)"; exit 1 ;;
+esac
+for kv in $DIST_KNOBS; do
+  v=${kv%%:*}
+  [ -z "${!v:-}" ] && continue
+  [ "$HINTS" = dist ] || { echo "STOP: $v is set but HINTS=$HINTS (the HINT_* knobs need HINTS=dist)"; exit 1; }
+  FLAGS+=("${kv#*:}" "${!v}")
+done
+# what replay_agentic.py would refuse, checked before the server checks and the output directory
+[ "$HINTS" != dist ] || python3 -c 'import os, sys
+sys.path.insert(0, sys.argv[1])
+from gap_hints import check_knobs
+try:
+    check_knobs(os.environ, trace=sys.argv[2])
+except ValueError as e:
+    sys.exit(f"STOP: {e}")' "$AC/scripts" "$TRACE"
 
 RESULTS="$AC/results"
 [ -s "$RESULTS/.current_run" ] || { echo "STOP: $RESULTS/.current_run missing: no server booted by start_server.sh yet"; exit 1; }
@@ -41,9 +83,6 @@ alive() { local s; s=$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' '); [ -n "$s" ]
 OUT="$RUN/client_$(date -u +%H%M%S)_$TAG"; mkdir -p "$OUT"
 curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$PORT/health" || { echo "STOP: no server on port $PORT (start_server.sh first)"; exit 1; }
 
-FLAGS=(--trace "$TRACE" --num-users "$USERS" --turns "$TURNS" --arrival-rate "$ARRIVAL" --gap-scale "$GAP"
-  --concurrency "$C" --timeout "$TIMEOUT" --seed "$SEED")
-[ "$ORACLE_HINTS" = 1 ] && FLAGS+=(--oracle-hints)
 echo "client: ${FLAGS[*]} -> $OUT"
 cd "$AC/scripts"
 python3 replay_agentic.py --url "http://127.0.0.1:$PORT" "${FLAGS[@]}" \

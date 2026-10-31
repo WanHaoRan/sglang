@@ -66,7 +66,7 @@ Sizes measured 2026-10-17 with `wc -l` and `grep -c ap.add_argument` on `c20643b
 | `--max-turns` (`TURNS`) | turns per user, at most | `--turns` (`TURNS`), same meaning |
 | `--max-seconds` (`MAX_SECONDS`) | wall cap | `--timeout` (`TIMEOUT`); `run_compare.sh` still takes `CLIENT_TIMEOUT` |
 | `--offset`, `--order`, `--order-seed` (`OFFSET`, `ORDER`, `ORDER_SEED`) | which conversation each user replays: rotation, cycle, shuffle or fresh | always the old `--order fresh`, seeded by `--seed` (§3.1) |
-| `--gap-cap` (`GAP_CAP`) | cap on every sleep, 0 = none | fixed at 1,200 s (`scripts/replay_agentic.py:43`) |
+| `--gap-cap` (`GAP_CAP`) | cap on every sleep, 0 = none | fixed at 1,200 s (`scripts/gap_hints.py:52`) |
 | `--gap-sample` | sleeps drawn from a list | removed |
 | `--thinking` (`THINKING`) | `enable_thinking` in the request | always false (§3.8) |
 | `--model` (`MODEL`, in `start_client.sh` only) | model name sent | the first model of `/v1/models` |
@@ -84,7 +84,7 @@ Sizes measured 2026-10-17 with `wc -l` and `grep -c ap.add_argument` on `c20643b
 
 ## 2. Flags and knobs
 
-The client takes twelve flags. The wrappers set them from environment variables: `start_client.sh` defaults to a
+The client takes nineteen flags. The wrappers set them from environment variables: `start_client.sh` defaults to a
 4-user smoke run, and `run_compare.sh` exports a 48-user default before calling it.
 
 | flag | client default | `start_client.sh` knob, default | `run_compare.sh` default | meaning |
@@ -95,6 +95,13 @@ The client takes twelve flags. The wrappers set them from environment variables:
 | `--arrival-rate` | 0 = all at once | `ARRIVAL`, 0 | 0 | users per second, Poisson, the first at 0 s |
 | `--gap-scale` | 1.0 | `GAP`, 1.0 | 21 | sleep before a returning turn = recorded `pre_gap` × this, at most 1,200 s |
 | `--oracle-hints` | off | `ORACLE_HINTS`, 0 (1 = on) | 0 | every turn but a user's last sends the next turn's request id and sleep as `kv_hints` |
+| `--hints` | none; oracle with `--oracle-hints` | `HINTS`, unset: oracle when `ORACLE_HINTS=1`, else none | same | none, oracle (§3.7) or dist (§3.10) |
+| `--hint-source` | online | `HINT_SOURCE`, unset | unset | dist: the list is measured during the run across one harness and model's sessions (online), comes from other tasks' recorded sessions (precalc) or the session's own past gaps (session); none = only the link to the next turn and the end |
+| `--hint-key` | command | `HINT_KEY`, unset | unset | dist: list entries by tool and first word of its command (command), by tool (tool), or one default entry, as a client that does not know its tool types (none) |
+| `--hint-min-samples` | 2 | `HINT_MIN_SAMPLES`, unset | unset | dist, source session: past gaps needed for an entry, at least 2 |
+| `--hint-sigma-floor` | 0.5 | `HINT_SIGMA_FLOOR`, unset | unset | dist, source session: smallest spread of an entry, in ln units; > 0 and <= 10 |
+| `--hint-point` | p50 | `HINT_POINT`, unset | unset | dist: also send the picked entry's median as a v1 action (p50), or not (none) |
+| `--hint-end` | explicit | `HINT_END`, unset | unset | dist: say so where the recorded agent's session ends (explicit), only below the 50-call cap (natural), or never (none) |
 | `--concurrency` | 0 = no cap | `C`, 4 | 48 | most users in session at once, idle ones included |
 | `--timeout` | 0 = none | `TIMEOUT`, 0 | `CLIENT_TIMEOUT`, 0 | seconds after the start; after it no user starts and no request is sent |
 | `--seed` | 0 | `SEED`, 0 | 0 | the arrival times and which user replays which conversation |
@@ -102,9 +109,11 @@ The client takes twelve flags. The wrappers set them from environment variables:
 | `--tag` | `replay` | `TAG`, `smoke` | `cmp_<arm>` | request ids are `<tag>-c<user>-t<turn>` |
 | `--output` | required | `<server run dir>/client_<UTC HHMMSS>_<TAG>/client.jsonl` | same | JSONL, appended |
 
-A negative value for any numeric flag but `--seed` exits with `no flag takes a negative value`
-(`scripts/replay_agentic.py:78-79`); `--seed` takes any integer.
-`--num-users` above the trace's conversation count exits before the server is contacted (`:101-102`).
+A negative value for any numeric flag but `--seed`, `--hint-min-samples` and `--hint-sigma-floor` exits with `no flag
+takes a negative value` (`scripts/replay_agentic.py:120-121`); `--seed` takes any integer.
+`--num-users` above the trace's conversation count exits before the server is contacted (`:154-155`). Hint settings
+that cannot work (`--hint-min-samples` below 2, a `--hint-sigma-floor` outside (0, 10]) exit with `bad hint
+settings`, and `--oracle-hints` with `--hints none` or `dist` with `... disagree` (`:122-130`). `--hints dist` without the reply keys it needs exits before any request.
 
 The traces (measured 2026-10-17 by counting each trace's `conversations`):
 
@@ -122,36 +131,36 @@ These are the rules needed to read a run; each cites the lines that implement it
 
 User i (its id is its arrival rank, the `c<i>` of its request ids) replays conversation `pool[perm[i]]`, where `pool`
 lists the trace's non-empty conversations and `perm = random.Random(f"{seed}:0").sample(range(P), P)` for
-P = len(pool) (`:99-106`). This is the old `--order fresh --order-seed S`, and the arrivals use the old
+P = len(pool) (`:152-167`). This is the old `--order fresh --order-seed S`, and the arrivals use the old
 `random.Random(S)` stream, so at the same seed users get the conversations and arrival times of campaigns 14-17, which
 ran S = 0 (§7.1).
 
 ### 3.2 Turns
 
-A user replays the first min(`--turns`, recorded) turns of its conversation, from turn 0 (`:106`). Turn t's prompt is
+A user replays the first min(`--turns`, recorded) turns of its conversation, from turn 0 (`:160-167`). Turn t's prompt is
 the whole history: the earlier turns' messages, the earlier replies exactly as the server streamed them, then turn t's
-new messages (`:296`, `:310`). `max_tokens` is the recorded `output_length` and `ignore_eos` is on, so a reply has the
+new messages (`:394`, `:409`). `max_tokens` is the recorded `output_length` and `ignore_eos` is on, so a reply has the
 recorded length. The server does not cut a reply at the context window (`start_server.sh` passes no
 `--allow-auto-truncate`): a prompt plus `max_tokens` over the context length is refused with HTTP 400, which ends the
 user (§3.9). The largest such sum is 32,255 tokens in the 32K trace and 109,430 in the 262K traces (measured
-2026-10-17), inside `CTX=131072`. `short_reply` (`:264-265`) marks a reply the server shortened anyway: the scheduler
+2026-10-17), inside `CTX=131072`. `short_reply` (`:361-362`) marks a reply the server shortened anyway: the scheduler
 clips `max_tokens` when the prompt plus the reply would come within 2 tokens of the window, or would not fit a KV pool
 smaller than the window.
 
 ### 3.3 Arrivals
 
 With `--arrival-rate R > 0`, user i arrives at the i-th point of a Poisson process of rate R, the first at 0 s
-(`:83-91`). With R = 0 every user arrives at 0 s, all in the same event-loop step and in user order (`:351-353`); they
+(`:134-142`). With R = 0 every user arrives at 0 s, all in the same event-loop step and in user order (`:450-452`); they
 all start then unless the cap holds them: with `C` below the number of users, the first C start at 0 s and the others
 wait for slots (§3.5).
 
 ### 3.4 Gaps and the 1,200 s cap
 
 Before turn t > 0 the user sleeps min(1,200, `pre_gap` × `--gap-scale`) seconds, counted from the end of turn t-1's reply
-stream (`:136-137`, `:289-291`). Turn 0's `pre_gap` is not slept: the arrival places a user's first turn.
+stream (`:212-213`, `:387-389`; the formula is `scripts/gap_hints.py:158-160`). Turn 0's `pre_gap` is not slept: the arrival places a user's first turn.
 `--gap-scale 0` removes every sleep.
 
-The cap is the constant `GAP_CAP_S = 1200.0` (`:43`), the value campaigns 13-17 passed as `GAP_CAP=1200`. The run
+The cap is the constant `GAP_CAP_S = 1200.0` (`scripts/gap_hints.py:52`), the value campaigns 13-17 passed as `GAP_CAP=1200`. The run
 record repeats it as `args.gap_cap`, which `gap_distribution.py:93` reads. At ×70, 57 of the 262K trace's 768
 conversations hold a sleep over 5 h, the length of a campaign arm. How much idle time the cap removes depends on the
 scale:
@@ -168,7 +177,7 @@ Derived 2026-10-17 over every returning turn of every conversation: idle removed
 ### 3.5 The concurrency cap
 
 `--concurrency C` caps the users in session. A user takes a slot just before it sends turn 0 and holds it, through every
-sleep, until it ends (`:116`, `:235-246`). While C users hold slots, arriving users wait, and they are admitted in
+sleep, until it ends (`:191`, `:332-343`). While C users hold slots, arriving users wait, and they are admitted in
 arrival order as slots free. A returning turn never waits for the cap: the cap limits the population, not the requests
 in flight. The wait is `conv_start.queued_s` and is outside every TTFT. `C=0` means no cap.
 
@@ -190,18 +199,18 @@ Admission in arrival order relies on `asyncio.Semaphore` handing a freed slot to
 With `--timeout T` (seconds after the client started):
 
 - No user starts after T. Users waiting for a slot at T, and users arriving after T, get a `conv_skipped` record with
-  `reason: "timeout"` (`:236-239`, `:348-350`).
+  `reason: "timeout"` (`:333-336`, `:447-449`).
 - No request is sent after T. A sleep that would pass T ends at T, and the user ends with `conv_end` `capped: true`
-  (`:289-295`). The one connection retry is not made after T (`:221`).
+  (`:387-393`). The one connection retry is not made after T (`:318`).
 - A request in flight at T completes and is recorded.
-- The summary's `capped` is true when a user was cut or skipped (`:335`), and `run_compare.sh` then prints
+- The summary's `capped` is true when a user was cut or skipped (`:434`), and `run_compare.sh` then prints
   `STAGE CAPPED <arm>`.
 
 `t_send` is taken just before the connection opens, so "no request after T" holds to about a millisecond.
 
 ### 3.7 Oracle hints
 
-With `--oracle-hints`, every turn but a user's last carries this `kv_hints` envelope (`:139-145`), the one campaigns
+With `--oracle-hints`, every turn but a user's last carries this `kv_hints` envelope (`:215-221`), the one campaigns
 15-17 sent:
 
 ```json
@@ -211,15 +220,15 @@ With `--oracle-hints`, every turn but a user's last carries this `kv_hints` enve
 ```
 
 `next_gap_s` is the sleep the client will take, after the scale and the cap. The envelope is left out when the timeout
-will certainly cut the next turn (now + gap ≥ T, `:153`). Every turn record that could carry a hint has
-`oracle_hint: {next_rid, next_gap_s, suppressed}` (`:154-155`).
+will certainly cut the next turn (now + gap ≥ T, `:229`). Every turn record that could carry a hint has
+`oracle_hint: {next_rid, next_gap_s, suppressed}` (`:230-231`).
 
 ### 3.8 The request
 
 Every request is a streamed `/v1/chat/completions` call with `temperature 0`, `ignore_eos`, `max_tokens` = the recorded
 `output_length`, `skip_special_tokens false`, `chat_template_kwargs.enable_thinking false`,
 `return_cached_tokens_details true`, `stream_options.include_usage`, `rid` = the request id, and `model` = the first
-model listed by `/v1/models` (`:161-175`, `:359-365`). Thinking off matches `start_server.sh`'s default template
+model listed by `/v1/models` (`:258-272`, `:458-464`). Thinking off matches `start_server.sh`'s default template
 (`templates/qwen3_replay_nothink.jinja`) and the stock template of a model without a think block (Qwen3-30B-A3B-Instruct-2507
 with `TEMPLATE=`, campaigns 14-17). With no server, the client exits with
 `STOP: no model at <url>/v1/models (...); is the server up?`.
@@ -227,14 +236,66 @@ with `TEMPLATE=`, campaigns 14-17). With no server, the client exits with
 ### 3.9 Connections and errors
 
 One aiohttp session serves every user, with no total timeout, a 3,600 s read timeout (a queued request sends nothing
-until its first token) and no connection limit (`:372-373`). A connection error (any `aiohttp.ClientConnectionError`:
+until its first token) and no connection limit (`:471-472`). A connection error (any `aiohttp.ClientConnectionError`:
 a keep-alive connection the server has closed, a refused connection, or 3,600 s without a byte, which aiohttp raises as
 `SocketTimeoutError`) is retried once on a fresh connection with the same request id, and the turn record gets
-`retried` (`:217-224`). When a retry completes, `t_send`, `ttft` and `latency` time the retry alone. While the server
+`retried` (`:314-321`). When a retry completes, `t_send`, `ttft` and `latency` time the retry alone. While the server
 still holds the first attempt (after a read timeout), it refuses the retry as a duplicate request id
 (`python/sglang/srt/managers/tokenizer_manager.py:3613-3614`). Any other error (an HTTP status other than 200, an error
 inside the stream, a connection dropped mid-reply) ends the user: the turn record gets `error`, and the `conv_end`
-record has `aborted: true` (`:303-308`).
+record has `aborted: true` (`:402-407`).
+
+### 3.10 Distribution hints
+
+With `--hints dist`, every turn carries a list of gap distributions that the engine picks from once its reply exists
+(`scripts/gap_hints.py`, built by `:234-253`; the design is `DIST_HINT_DESIGN.md`). An envelope, its list shortened:
+
+```json
+{"protocol_version": "1", "message_id": "<tag>-c<user>-t<t>",
+ "actions": [{"action_id": "next_turn", "action_type": "sglang.next_turn", "action_version": "2",
+              "payload": {"session": "<tag>-c<user>", "next_rid": "<tag>-c<user>-t<t+1>",
+                          "gaps": [{"key": "*", "p10": 4.186, "p50": 49.567, "p90": 119.25, "n": 18042},
+                                   {"key": "execute_bash", "p10": 5.649, "p50": 50.365, "p90": 121.836, "n": 14644},
+                                   {"key": "execute_bash/pip", "p10": 5.62791, "p50": 125.237, "p90": 405.538, "n": 1448},
+                                   {"key": "_end", "ended": true}],
+                          "replay_reply_key": "execute_bash/pip"}},
+             {"action_id": "next_turn_point", "action_type": "sglang.next_turn", "action_version": "1",
+              "payload": {"session": "<tag>-c<user>", "next_rid": "<tag>-c<user>-t<t+1>", "next_gap_s": 125.237}}]}
+```
+
+- **The list.** One entry per kind of tool call, keyed by the tool and the first word of its command (after any leading
+  `cd` and `VAR=value`; `python -m pytest` is `python-m-pytest`), in seconds at this run's gap scale. `--hint-source
+  online`, the default, starts empty: each gap joins its agent system's table once it has been slept (one harness and
+  model is one agent system), and each request carries that table as it stands, so the list depends on the run's timing.
+  `precalc` holds empirical quantiles of the recorded gaps of every other task's sessions by the same harness and model:
+  a session's own task is left out, a coarser pool fills the tools and the default entry `*` that a model lacks, and the
+  list is fixed per user and built before the clock starts. An entry needs at least 5 gaps. On the 262K trace a
+  pre-calculated list holds at most 38 entries (3.7 KB with its envelope). `session` fits a Gaussian of ln(gap) to the session's own past gaps, with
+  at least `--hint-min-samples` of them and a spread of at least `--hint-sigma-floor`. `none` sends no estimates: only
+  the link to the next turn and the end. `--hint-key tool` drops the first word, and `none` keeps only `*`.
+- **The pick.** The engine reads the reply's key and takes that entry, else its tool's, else `*`. With nothing to pick,
+  it has only the link to the next turn.
+- **`replay_reply_key`** is a workaround for the replay only. Its replies are not the recorded ones, so the engine cannot
+  read a key from them; this field carries the recorded reply's key instead, for the engine to read at commit. The keys
+  come from `<trace>.reply_keys.json`, built by `scripts/reply_keys.py` from the parquet, because the converted trace
+  dropped the replies; the trace itself is unchanged. The builder refuses a trace whose gaps differ from the parquet's
+  (`_ge45_tl_s1`). A call the harness rejected (1,779 gaps of the 262K trace, whose
+  replies the harness dropped) keeps its tool and takes the first word of a random accepted call of that tool, source and
+  model, so that the key cannot reveal the rejection.
+- **The end.** Where the recorded agent's session ends, the last turn's key is `_end`, whose entry says `ended`, under
+  `--hint-end explicit`. `natural` does so only for sessions shorter than the 50-call cap that 228 of the 262K trace's
+  768 conversations reach, reading the cap as the dataset's window; `none` never does. Otherwise the key is null, and the
+  engine picks `*`. Wherever the replay stops early (`--turns`, `--timeout`) the key is the recorded one, and where the
+  converter cut the conversation for context length (the trace's `sessions[].n_turns_total` above its turn count: 417 of
+  the 32K trace's 731, none of the 262K trace's) it is null: an agent cannot know about either. Nothing is suppressed
+  near `--timeout`.
+- **Today's engine** reads only the v1 action, the median of the entry it would have picked; the client does the pick for
+  it. A turn without one (nothing to pick, `--hint-point none`, or `_end`) reads as no hint, which it registers ENDED.
+- **The record.** Every turn record carries `dist_hint`: `next_rid`, `reply_key`, `list_len`, `matched` (the picked
+  entry's key), `point_s` (the v1 value sent, or null), `true_gap_s` (the recorded gap that follows, scaled and capped as
+  the sleep; null after the recorded end; never sent), then the entry's `p10`, `p50`, `p90`, `n`, or `ended: true`.
+- `scripts/hint_eval.py` scores the same picks offline against the trace and replays the engine's rules on them
+  (`results/analysis_dist_hints/hint_eval.txt`).
 
 ## 4. Output records
 
@@ -245,7 +306,7 @@ The client appends one JSON object per line to `--output`. Times are seconds sin
 |---|---|---|
 | `run` | once, first | `tag`, `t_start`, `model`, `args` (every flag, plus `gap_cap: 1200.0`), `users`, `turns` (planned) |
 | `conv_start` | a user starts | `conv`, `task_conv` (index in the trace), `session_id`, `source`, `turns` (planned), `arrival_s` (scheduled), `start_s`, `queued_s` |
-| `turn` | each request | `conv`, `turn`, `task_conv`, `source`, `gap_slept`, `pre_gap`, `output_length`, `replay_prompt_tokens`, maybe `oracle_hint` and `retried`; when it completed: `t_send`, `ttft`, `latency`, `prompt_tokens`, `completion_tokens`, `cached_tokens`, `cached_details` (the server's `cached_tokens_details` as sent: `device` and `host`, plus `storage` and the string `storage_backend` with an L3 backend; null when the server sends none), maybe `short_reply`, and on a returning turn `delta_tokens` and `reply_reprefilled`; when it failed: `error` |
+| `turn` | each request | `conv`, `turn`, `task_conv`, `source`, `gap_slept`, `pre_gap`, `output_length`, `replay_prompt_tokens`, maybe `oracle_hint` (§3.7) or `dist_hint` (§3.10), and `retried`; when it completed: `t_send`, `ttft`, `latency`, `prompt_tokens`, `completion_tokens`, `cached_tokens`, `cached_details` (the server's `cached_tokens_details` as sent: `device` and `host`, plus `storage` and the string `storage_backend` with an L3 backend; null when the server sends none), maybe `short_reply`, and on a returning turn `delta_tokens` and `reply_reprefilled`; when it failed: `error` |
 | `conv_end` | a user ends | `conv`, `turns_done`, `aborted`, `capped` (only when true), `end_s` |
 | `conv_skipped` | a user never starts | `conv`, `reason` (`timeout`), `arrival_s` |
 | `users` | every 60 s | `t`, `cap` (C, or null), `live`, `waiting`, `in_flight` (requests), `admitted` and `finished` (users since the previous record) |
@@ -253,8 +314,8 @@ The client appends one JSON object per line to `--output`. Times are seconds sin
 
 `reply_reprefilled` = `prompt_tokens` − `cached_tokens` − `delta_tokens`, where `delta_tokens` = `prompt_tokens` −
 (the previous turn's `prompt_tokens` + `completion_tokens`): the history tokens the server recomputed. It is about 0
-(within a 64-token page) when the previous turn's KV was reused (`:266-269`). `finished_users` counts the users who
-ended on their own, aborted ones included (`:254`).
+(within a 64-token page) when the previous turn's KV was reused (`:363-366`). `finished_users` counts the users who
+ended on their own, aborted ones included (`:351`).
 
 Changes from the old format, for scripts that read both:
 
@@ -301,17 +362,22 @@ What each script that reads client output does with a run of the new client:
 ### 6.1 `start_client.sh`
 
 It runs inside the container against port 30000 and stops before starting the client when `results/.current_run` is
-missing, when the server it names is not running, or when `/health` fails. The output goes to
+missing, when the server it names is not running, or when `/health` fails. Before those checks it stops on a hint knob
+that does not fit: `HINTS` other than none, oracle or dist, `ORACLE_HINTS=1` with another `HINTS`, a `HINT_*` knob
+without `HINTS=dist`, a `HINT_*` or `HINTS_*` name it does not know, a value the client would refuse, or a missing
+`<TRACE>.reply_keys.json` (`scripts/start_client.sh:41-74`). The output goes to
 `<server run dir>/client_<UTC HHMMSS>_<TAG>/` (`client.jsonl`, `client.log`), next to the boot it measured. After the
 client exits, it prints one line per turn (`conv turn t_send gap ttft prompt cached reprefill`) and the summary.
 
 ### 6.2 `run_compare.sh`
 
 The server knobs are unchanged (`ARMS LEVEL L1_TOKENS HOST_GB MODEL CTX KV_DTYPE TEMPLATE L3_CLEANER_PCT
-ENGINE_PYTHONPATH`). The client knobs are exported with the defaults of §2 (`:25-34`). Before any boot it checks only
-that `TRACE` loads and holds at least `USERS` conversations (`:35-39`; §8.4). `config.txt` records `TRACE USERS TURNS
-ARRIVAL GAP ORACLE_HINTS C SEED CLIENT_TIMEOUT` with the server fields. Each arm runs
-`TAG=cmp_<arm> TIMEOUT=$CLIENT_TIMEOUT bash start_client.sh` (`:57`).
+ENGINE_PYTHONPATH`). The client knobs are exported with the defaults of §2 (`:27-29`, `:63`). Before any boot it checks
+the hint knobs with `start_client.sh`'s rules and, under `HINTS=dist`, their values and the reply keys (`:30-56`), and
+that `TRACE` loads and holds at least `USERS` conversations (`:64-68`; §8.4). `config.txt` records `TRACE USERS TURNS ARRIVAL GAP
+ORACLE_HINTS C SEED CLIENT_TIMEOUT` with the server fields, then the resolved `HINTS` and every `HINT_*` knob set;
+`ORACLE_HINTS` is 1 whenever the hints are the oracle's, however they were asked for. Each arm runs
+`TAG=cmp_<arm> TIMEOUT=$CLIENT_TIMEOUT bash start_client.sh` (`:86`).
 
 The default client workload changed. The old default replayed conversations 29-76 of the 32K trace (`OFFSET=29`, chosen
 because 42 of those 48 have at least 24 turns) with `GAP_CAP=600`. The new default replays the first 48 users of the
@@ -323,7 +389,7 @@ so the population shrinks during a default run (measured 2026-10-17 from the tra
 Both wrappers stop before any work when any of `NCONV OFFSET MAX_SECONDS GAP_CAP K THINKING CHECK_IDS TURNS_RANGE
 ARRIVAL_UNTIL STOP_AFTER_USERS SESSION_TASKS CONTEXT_POLICY CAP_MODE ORDER START_PHASE VALIDATE_ONLY` is set and
 non-empty, and print `STOP: <knob> is not a client knob any more (replay_agentic.py was trimmed; knobs: ...)`
-(`scripts/start_client.sh:26-29`, `scripts/run_compare.sh:16-19`). The other old knobs (`TURNS_SEED`, `CAP_TARGET`,
+(`scripts/start_client.sh:37-40`, `scripts/run_compare.sh:18-21`). The other old knobs (`TURNS_SEED`, `CAP_TARGET`,
 `START_SEED`, `MAX_CONTEXT`, ...) acted only together with one of these, so they are not checked. `MODEL` acted alone
 (the old client's `--model`), but it is still the model knob of `start_server.sh` and `run_compare.sh`, and the client
 now sends the served model, so it is not checked either. `VALIDATE_ONLY` is checked because without the guard
@@ -391,13 +457,14 @@ STOP) rather than run a different workload. Lines that describe past runs are hi
 
 ### 8.3 Thinking is always off
 
-`enable_thinking` is false in every request (`:171`), so a run with thinking on (`templates/qwen3_replay_think.jinja`,
+`enable_thinking` is false in every request (`:268`), so a run with thinking on (`templates/qwen3_replay_think.jinja`,
 the old `THINKING=on`) cannot be made. Every campaign so far ran with thinking off or with a model that has no think
 block. A think run would need the flag back.
 
 ### 8.4 No offline check of the knobs
 
-`--dry-run` and `--validate` are gone, and `run_compare.sh` checks only the trace and `USERS` before its first boot. The
+`--dry-run` and `--validate` are gone, and `run_compare.sh` checks only the trace, `USERS` and the hint knobs before
+its first boot. The
 client checks the rest when it starts, after the boot: a bad value such as `C=-1` makes every arm boot, then print
 `STAGE FAILED <arm> (client, rc=..., no summary line)`. Try new knob values with a short `start_client.sh` run first
 (§9.1).
@@ -464,7 +531,7 @@ bash start_client.sh
 ```
 
 -> prints `client: --trace ... -> <client dir>`, then
-`4 users, 39 turns, each user a different conversation of /sgl-workspace/sglang/agent_cache/traces/lmcache_agentic_trace.json; arrivals all at once; concurrency 4; gaps x1, at most 1200 s; oracle hints off; timeout none`,
+`4 users, 39 turns, each user a different conversation of /sgl-workspace/sglang/agent_cache/traces/lmcache_agentic_trace.json; arrivals all at once; concurrency 4; gaps x1, at most 1200 s; hints none; timeout none`,
 four `conv <i> done` lines (with a `[60 s] users arrived 4/4, ...` progress line among them if the client runs past a
 minute), `summary: {...}`, the per-turn table, and the summary again. Pass: `"users_started": 4`,
 `"finished_users": 4`, `"skipped_users": 0`, `"errors": 0`, `"capped": false`, and `reprefill` within ±64 on the
@@ -618,11 +685,12 @@ client records.
 ```bash
 # container: sglang_hicache: does the new client give campaign 14's users the same conversations and arrival times?
 cd /sgl-workspace/sglang/agent_cache && python3 - <<'EOF'
-import argparse, importlib.util, json
+import argparse, importlib.util, json, sys
+sys.path.insert(0, "scripts")   # replay_agentic.py imports its sibling gap_hints.py
 spec = importlib.util.spec_from_file_location("ra", "scripts/replay_agentic.py")
 ra = importlib.util.module_from_spec(spec); spec.loader.exec_module(ra)
 users = ra.load_users(argparse.Namespace(trace="traces/lmcache_agentic_trace_262k.json", num_users=768, turns=50,
-                                         arrival_rate=0.1, seed=0))
+                                         arrival_rate=0.1, seed=0, hints="none"))
 c14 = "results/20261008_204128_three_tier_wc_NAT160/client_204548_cmp_three_tier_wc/client.jsonl"
 starts = {d["conv"]: d for d in map(json.loads, open(c14)) if d["kind"] == "conv_start"}
 same = sum(starts[u.conv]["tasks"] == [u.task_conv] for u in users)

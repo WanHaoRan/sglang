@@ -1,7 +1,8 @@
 """Gap-faithful multi-turn replay client for SGLang. Stdlib + aiohttp, nothing under python/.
 
   python3 replay_agentic.py --trace TRACE --output client.jsonl [--num-users N] [--turns N] [--arrival-rate R]
-      [--gap-scale S] [--oracle-hints] [--concurrency C] [--timeout SECONDS] [--seed S] [--url URL] [--tag TAG]
+      [--gap-scale S] [--oracle-hints | --hints none|oracle|dist [--hint-* ...]] [--concurrency C]
+      [--timeout SECONDS] [--seed S] [--url URL] [--tag TAG]
 
 A user replays one recorded conversation of the trace (convert_lmcache.py's JSON) as a closed loop: send turn 0, stream
 the reply, append the reply text verbatim to the history (the RUNBOOK 4.5 replay template makes its KV a prefix hit),
@@ -14,9 +15,20 @@ formulas of campaigns 14-17, so at the same seed and rate user i replays the sam
 time as there. --concurrency caps the users in session, each counted from its first turn to its last with the idle gaps
 included: later arrivals wait in arrival order (conv_start.queued_s, outside every TTFT) and a returning turn never waits.
 
---oracle-hints: every turn but a user's last carries a kv_hints envelope with one sglang.next_turn v1 action, payload
-{session, next_rid, next_gap_s}: the user, the next turn's request id and the exact sleep before it. The hint is
-suppressed when --timeout certainly cuts the next turn; the turn record carries it either way (oracle_hint).
+--oracle-hints (= --hints oracle): every turn but a user's last carries a kv_hints envelope with one sglang.next_turn
+v1 action, payload {session, next_rid, next_gap_s}: the user, the next turn's request id and the exact sleep before it.
+The hint is suppressed when --timeout certainly cuts the next turn; the turn record carries it either way (oracle_hint).
+
+--hints dist: every turn sends a sglang.next_turn v2 action {session, next_rid, gaps, replay_reply_key} (gap_hints.py).
+gaps is a list of distributions, one per kind of tool call, {key, p10, p50, p90, n} or {key, ended: true}, from which the
+engine picks once its reply exists. replay_reply_key stands in for the engine reading its own reply: it is the recorded
+reply's key (<trace>.reply_keys.json), because the replay's replies are not the recorded ones. By default the list is
+refined during the run: each gap, once slept, joins the table of the user's agent system (one harness and model), and each
+request carries that table as it stands (--hint-source). Unless --hint-point none,
+a v1 action adds the picked entry's median, which is what today's engine reads. Where the recorded agent's session ends
+the key says so (--hint-end); where the replay stops early (--turns, --timeout) or the trace's converter cut the
+conversation, the turn goes on as usual, as an agent cannot know about either. The turn record carries the pick and the
+recorded gap that follows (dist_hint).
 
 --timeout T: after T seconds no user starts and no request is sent. A sleeping user wakes at T and ends (conv_end
 capped), a request in flight completes, waiting and later users are skipped (conv_skipped).
@@ -39,8 +51,10 @@ from typing import NamedTuple
 
 import aiohttp
 
-# Longest single sleep, as in campaigns 13-17: at x70, 57 of the 262K trace's 768 conversations hold a sleep over 5 h.
-GAP_CAP_S = 1200.0
+from gap_hints import (DEFAULTS, ENDS, GAP_CAP_S, KEYS, POINTS, SOURCES, GapHistory, GapTable, OnlineGapTable,
+                       SessionHinter, check_settings, hint_record, load_reply_keys, needs_reply_keys,
+                       next_turn_envelope, recorded_sessions, scaled_gap)
+
 MONITOR_S = 60.0   # seconds between two users records (and progress lines)
 
 
@@ -50,6 +64,11 @@ class User(NamedTuple):
     session_id: str | None
     turns: list               # the recorded turns it replays
     arrival_s: float          # seconds after the start
+    recorded: list            # the whole recorded conversation; turns is its first --turns
+    calls: int                # calls the recorded agent made: len(recorded), more where the trace's converter cut it
+    reply_keys: list | None = None   # --hints dist: the key of each recorded reply
+    gap_list: list | None = None     # --hints dist: the pre-calculated list this user sends
+    system: tuple | None = None      # --hint-source online: the agent system it belongs to, (harness, model)
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,7 +83,30 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--gap-scale", type=float, default=1.0,
                     help=f"sleep the recorded pre_gap x this before each turn, at most {GAP_CAP_S:.0f} s; 0 = no idle")
     ap.add_argument("--oracle-hints", action="store_true",
-                    help="send each turn's next request id and next gap as a kv_hints envelope (sglang.next_turn v1)")
+                    help="send each turn's next request id and next gap as a kv_hints envelope (sglang.next_turn v1); "
+                         "the same as --hints oracle")
+    ap.add_argument("--hints", choices=("none", "oracle", "dist"), default=None,
+                    help="kv_hints each turn sends: none; oracle = the next turn's exact gap; dist = a list of "
+                         "distributions the engine picks from (module docstring). Default: none, or oracle with "
+                         "--oracle-hints")
+    ap.add_argument("--hint-source", choices=SOURCES, default=DEFAULTS["source"],
+                    help="dist: the list is measured during the run across one harness and model's sessions (online), "
+                         "comes from other tasks' recorded sessions (precalc) or the session's own past gaps (session); "
+                         "none = no estimates, only the link to the next turn and the end")
+    ap.add_argument("--hint-key", choices=KEYS, default=DEFAULTS["key"],
+                    help="dist: list entries by tool and first word of its command (command), by tool (tool), or one "
+                         "default entry, as a client that does not know its tool types (none)")
+    ap.add_argument("--hint-min-samples", type=int, default=DEFAULTS["min_samples"],
+                    help="dist, source session: past gaps needed for an entry (>= 2)")
+    ap.add_argument("--hint-sigma-floor", type=float, default=DEFAULTS["sigma_floor"],
+                    help="dist, source session: smallest spread of an entry, in ln units")
+    ap.add_argument("--hint-point", choices=POINTS, default="p50",
+                    help="dist: also send the picked entry's median as a v1 action, the one today's engine reads (p50); "
+                         "none = the v2 action only")
+    ap.add_argument("--hint-end", choices=ENDS, default="explicit",
+                    help="dist: where the recorded agent's session ends, say so through the reply's key (explicit), do "
+                         "so only below the 50-call cap, reading the cap as the dataset's window (natural), or never "
+                         "(none)")
     ap.add_argument("--concurrency", type=int, default=0,
                     help="most users in session at once, idle ones included; later arrivals wait to start; 0 = no cap")
     ap.add_argument("--timeout", type=float, default=0.0,
@@ -77,6 +119,15 @@ def parse_args() -> argparse.Namespace:
     args = ap.parse_args()
     if min(args.num_users, args.turns, args.concurrency) < 0 or min(args.arrival_rate, args.gap_scale, args.timeout) < 0:
         ap.error("no flag takes a negative value")
+    if args.oracle_hints and args.hints not in (None, "oracle"):
+        ap.error(f"--oracle-hints and --hints {args.hints} disagree")
+    args.hints = "oracle" if args.oracle_hints else (args.hints or "none")
+    args.oracle_hints = args.hints == "oracle"   # oracle_hint() reads this
+    try:
+        check_settings(source=args.hint_source, key=args.hint_key, min_samples=args.hint_min_samples,
+                       sigma_floor=args.hint_sigma_floor)
+    except ValueError as e:
+        ap.error(str(e))
     return args
 
 
@@ -96,6 +147,8 @@ def load_users(args: argparse.Namespace) -> list:
         data = json.load(f)
     convs = data["conversations"]
     ids = data.get("session_ids") or [None] * len(convs)
+    sessions = data.get("sessions") or [None] * len(convs)
+    calls = [(m or {}).get("n_turns_total") or len(c) for m, c in zip(sessions, convs)]
     pool = [k for k, c in enumerate(convs) if c]
     n = args.num_users or len(pool)
     if n > len(pool):
@@ -103,8 +156,30 @@ def load_users(args: argparse.Namespace) -> list:
     # The streams of campaigns 14-17 (--order fresh --order-seed S, --seed S): the same users at the same times.
     perm = random.Random(f"{args.seed}:0").sample(range(len(pool)), len(pool))
     times = arrival_times(args.arrival_rate, n, random.Random(args.seed))
-    return [User(i, pool[perm[i]], ids[pool[perm[i]]], convs[pool[perm[i]]][: args.turns or None], t)
+    keys, recorded, table = dist_inputs(args, data)
+    return [User(conv=i, task_conv=pool[perm[i]], session_id=ids[pool[perm[i]]],
+                 turns=convs[pool[perm[i]]][: args.turns or None], arrival_s=t, recorded=convs[pool[perm[i]]],
+                 calls=calls[pool[perm[i]]], reply_keys=None if keys is None else keys[pool[perm[i]]],
+                 gap_list=None if table is None else table.entries(source=recorded[pool[perm[i]]].source,
+                                                                   model=recorded[pool[perm[i]]].model,
+                                                                   task=recorded[pool[perm[i]]].task),
+                 system=((sessions[pool[perm[i]]] or {}).get("source"), (sessions[pool[perm[i]]] or {}).get("orig_model")))
             for i, t in enumerate(times)]
+
+
+def dist_inputs(args: argparse.Namespace, data: dict) -> tuple:
+    """(reply keys per conversation or None, recorded sessions or None, pre-calculated table or None)."""
+    if args.hints != "dist":
+        return None, None, None
+    try:
+        keys = load_reply_keys(args.trace, data["conversations"]) \
+            if needs_reply_keys(source=args.hint_source, key=args.hint_key) else None
+    except ValueError as e:
+        sys.exit(f"STOP: {e}")
+    if args.hint_source != "precalc":
+        return keys, None, None
+    recorded = recorded_sessions(data, keys=keys, gap_of=lambda turn: scaled_gap(turn, scale=args.gap_scale))
+    return keys, recorded, GapTable(recorded, key_mode=args.hint_key)
 
 
 class Replayer:
@@ -120,6 +195,7 @@ class Replayer:
         self.in_flight = 0                         # requests sent and not yet completed
         self.stats = {"turns": 0, "errors": 0, "retries": 0, "capped_convs": 0, "ttft_sum": 0.0, "reprefill_sum": 0,
                       "reprefill_n": 0}
+        self.online_tables: dict = {}              # --hint-source online: agent system -> its table
         self.t_start = time.time()
         self.t0 = time.perf_counter()
 
@@ -134,7 +210,7 @@ class Replayer:
         return f"{self.args.tag}-c{conv}-t{turn}"
 
     def gap_of(self, turn: dict) -> float:
-        return min(GAP_CAP_S, max(0.0, float(turn.get("pre_gap") or 0.0) * self.args.gap_scale))
+        return scaled_gap(turn, scale=self.args.gap_scale)
 
     def next_turn_hints(self, conv: int, turn: int, next_gap_s: float) -> dict:
         """kv_hints envelope sent with turn `turn`: when the user's next turn will be sent, and its rid."""
@@ -154,6 +230,27 @@ class Replayer:
         rec["oracle_hint"] = {"next_rid": self.rid(user.conv, turn + 1), "next_gap_s": round(gap, 3),
                               "suppressed": suppressed}
         return None if suppressed else self.next_turn_hints(user.conv, turn, gap)
+
+    def new_hinter(self, user: User) -> SessionHinter | None:
+        """The user's list and the recorded replies' keys under --hints dist; None otherwise."""
+        a = self.args
+        if a.hints != "dist":
+            return None
+        history = None
+        if a.hint_source == "session":
+            history = GapHistory(key_mode=a.hint_key, min_samples=a.hint_min_samples, sigma_floor=a.hint_sigma_floor)
+        elif a.hint_source == "online":
+            history = self.online_tables.setdefault(user.system, OnlineGapTable(key_mode=a.hint_key))
+        return SessionHinter(user.recorded, keys=user.reply_keys, gap_of=self.gap_of, entries=user.gap_list,
+                             history=history, end=a.hint_end, calls=user.calls)
+
+    def dist_hint(self, user: User, *, turn: int, rec: dict, hinter: SessionHinter) -> dict:
+        """The kv_hints to send with this turn under --hints dist; notes the engine's pick in rec."""
+        h = hinter.step(turn)
+        next_rid = self.rid(user.conv, turn + 1)
+        rec["dist_hint"] = hint_record(h, next_rid=next_rid, v1_point=self.args.hint_point)
+        return next_turn_envelope(message_id=self.rid(user.conv, turn), session=f"{self.args.tag}-c{user.conv}",
+                                  next_rid=next_rid, hint=h, v1_point=self.args.hint_point)
 
     async def chat_turn(self, http: aiohttp.ClientSession, messages: list, max_tokens: int, rid: str,
                         kv_hints: dict | None) -> dict:
@@ -283,6 +380,7 @@ class Replayer:
                     "arrival_s": round(user.arrival_s, 3), "start_s": round(t_start, 3),
                     "queued_s": round(t_start - user.arrival_s, 3)})
         history, prev = [], None
+        hinter = self.new_hinter(user)
         for t, turn in enumerate(user.turns):
             gap = 0.0
             if t > 0:
@@ -297,7 +395,8 @@ class Replayer:
             rec = {"kind": "turn", "conv": conv, "turn": t, "task_conv": user.task_conv, "source": turn.get("source"),
                    "gap_slept": round(gap, 3), "pre_gap": turn.get("pre_gap"), "output_length": turn.get("output_length"),
                    "replay_prompt_tokens": turn.get("replay_prompt_tokens")}
-            hints = self.oracle_hint(user, t, rec)
+            hints = self.oracle_hint(user, t, rec) if hinter is None else \
+                self.dist_hint(user, turn=t, rec=rec, hinter=hinter)
             out_len = max(1, int(turn.get("output_length") or 1))
             r, err = await self.chat_with_retry(http, history, out_len, self.rid(conv, t), rec, hints)
             if r is None:
@@ -381,10 +480,12 @@ def main() -> int:
     users = load_users(args)
     arrivals = f"{args.arrival_rate:g}/s, the last at {users[-1].arrival_s:.0f} s" if args.arrival_rate > 0 \
         else "all at once"
+    hints = args.hints if args.hints != "dist" else (
+        f"dist (list from {args.hint_source}, key {args.hint_key}, v1 point {args.hint_point}, end {args.hint_end})")
     print(f"{len(users)} users, {sum(len(u.turns) for u in users)} turns, each user a different conversation of "
           f"{args.trace}; arrivals {arrivals}; concurrency {args.concurrency or 'uncapped'}; gaps x{args.gap_scale:g}, "
-          f"at most {GAP_CAP_S:.0f} s; oracle hints {'on' if args.oracle_hints else 'off'}; timeout "
-          f"{f'{args.timeout:g} s' if args.timeout else 'none'}", flush=True)
+          f"at most {GAP_CAP_S:.0f} s; hints {hints}; timeout {f'{args.timeout:g} s' if args.timeout else 'none'}",
+          flush=True)
     asyncio.run(replay(args, users))
     return 0
 

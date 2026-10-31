@@ -77,7 +77,7 @@ GPU total: ~110-170 GPU-h with one workload in §8.8; each further workload adds
 - `next_gap_s` is exactly the sleep the client then takes: the recorded gap × 70 (c18) or × 10 (c19), capped at
   1,200 s.
 - No hint is sent on a session's last turn. None is sent either when the client's 18,000-s timeout will certainly cut
-  the next turn: that happened on 21 turns of c18's oracle arm (`agent_cache/scripts/replay_agentic.py:136-156`)
+  the next turn: that happened on 21 turns of c18's oracle arm (`agent_cache/scripts/replay_agentic.py:212-232`)
   [replay §0, §1.2].
 
 **When the engine reads it.** Once, when turn k commits (`mem_cache/unified_radix_cache.py:1168-1176` →

@@ -7,6 +7,8 @@
 # Client knobs (env, see start_client.sh): TRACE=<32K trace>  USERS=48  TURNS=24  ARRIVAL=0  GAP=21  ORACLE_HINTS=0  C=48
 #              SEED=0  CLIENT_TIMEOUT=0 (the client's TIMEOUT per arm). ORACLE_HINTS=1 makes every arm's client send the
 #              next-turn kv_hints, so an oracle campaign keeps the client bodies identical and only the server mode differs.
+#              HINTS=dist (and its HINT_* knobs, start_client.sh) makes every arm's client send a list of gap distributions;
+#              both are checked before any boot, and config.txt records the resolved HINTS.
 # Writes results/compare_<UTC time>/manifest.txt: one line per arm  "<arm> <server run dir> <client dir>"  (input of timeline.py).
 # Progress: lines "STAGE START|DONE|FAILED <arm>" in the driver log; "ALL DONE" at the end. Stop cleanly: kill this script, then stop_server.sh.
 set -uo pipefail
@@ -25,6 +27,33 @@ export MODEL=${MODEL:-Qwen/Qwen3-32B} CTX=${CTX:-40960} L3_CLEANER_PCT=${L3_CLEA
 export TRACE=${TRACE:-$AC/traces/lmcache_agentic_trace.json}
 export USERS=${USERS:-48} TURNS=${TURNS:-24} ARRIVAL=${ARRIVAL:-0} GAP=${GAP:-21} ORACLE_HINTS=${ORACLE_HINTS:-0}
 export C=${C:-48} SEED=${SEED:-0}
+# The hint mode, resolved and checked here with start_client.sh's rules: a bad combination would otherwise fail every
+# arm after its boot. A misspelled HINT_* (or HINTS_*) name would run the default estimator unnoticed.
+DIST_KNOBS="HINT_SOURCE HINT_KEY HINT_MIN_SAMPLES HINT_SIGMA_FLOOR HINT_POINT HINT_END"
+for v in ${!HINT_@} ${!HINTS_@}; do
+  case " $DIST_KNOBS " in *" $v "*) ;; *) echo "STOP: $v is not a hint knob (knobs: start_client.sh)"; exit 1 ;; esac
+done
+if [ -z "${HINTS:-}" ]; then
+  if [ "$ORACLE_HINTS" = 1 ]; then HINTS=oracle; else HINTS=none; fi
+fi
+case "$HINTS" in none|oracle|dist) ;; *) echo "STOP: HINTS=$HINTS (none, oracle or dist)"; exit 1 ;; esac
+[ "$ORACLE_HINTS" = 1 ] && [ "$HINTS" != oracle ] && { echo "STOP: ORACLE_HINTS=1 and HINTS=$HINTS disagree"; exit 1; }
+[ "$HINTS" = oracle ] && ORACLE_HINTS=1   # config.txt says ORACLE_HINTS=1 for every oracle campaign, however spelled
+export HINTS
+CFG_HINTS=" HINTS=$HINTS"
+for v in $DIST_KNOBS; do
+  [ -n "${!v:-}" ] || continue
+  [ "$HINTS" = dist ] || { echo "STOP: $v is set but HINTS=$HINTS (the HINT_* knobs need HINTS=dist)"; exit 1; }
+  export "$v"; CFG_HINTS+=" $v=${!v}"
+done
+# what replay_agentic.py would refuse; empty or unset knobs take its defaults
+[ "$HINTS" != dist ] || python3 -c 'import os, sys
+sys.path.insert(0, sys.argv[1])
+from gap_hints import check_knobs
+try:
+    check_knobs(os.environ, trace=sys.argv[2])
+except ValueError as e:
+    sys.exit(f"STOP: {e}")' "$AC/scripts" "$TRACE" || exit 1
 # CLIENT_TIMEOUT: wall cap per arm in seconds (0 = none), enforced inside the client (start_client.sh TIMEOUT ->
 # replay_agentic.py --timeout): no user starts and no request is sent after it, in-flight requests complete, every
 # completed turn is kept and the summary line says "capped": true, which is what prints STAGE CAPPED below. (Campaign 7
@@ -38,10 +67,10 @@ n = sum(1 for c in json.load(open(sys.argv[1]))["conversations"] if c)
 sys.exit(0 if int(sys.argv[2]) <= n else f"STOP: USERS={sys.argv[2]}, but {sys.argv[1]} has {n} conversations")' \
   "$TRACE" "$USERS" || exit 1
 CMP="$AC/results/compare_$(date -u +%Y%m%d_%H%M%S)"; mkdir -p "$CMP"; MANIFEST="$CMP/manifest.txt"
-printf 'arms=%s level=%s L1_TOKENS=%s HOST_GB=%s MODEL=%s CTX=%s KV_DTYPE=%s L3_CLEANER_PCT=%s TRACE=%s USERS=%s TURNS=%s ARRIVAL=%s GAP=%s ORACLE_HINTS=%s C=%s SEED=%s CLIENT_TIMEOUT=%s SGLANG_TIMEOUT_KEEP_ALIVE=%s started_utc=%s\n' \
+printf 'arms=%s level=%s L1_TOKENS=%s HOST_GB=%s MODEL=%s CTX=%s KV_DTYPE=%s L3_CLEANER_PCT=%s TRACE=%s USERS=%s TURNS=%s ARRIVAL=%s GAP=%s ORACLE_HINTS=%s C=%s SEED=%s CLIENT_TIMEOUT=%s SGLANG_TIMEOUT_KEEP_ALIVE=%s started_utc=%s%s\n' \
   "$ARMS" "$LEVEL" "${L1_TOKENS:-natural}" "${HOST_GB:-level}" "$MODEL" "$CTX" "${KV_DTYPE:-fp8_e5m2}" "$L3_CLEANER_PCT" \
   "$TRACE" "$USERS" "$TURNS" "$ARRIVAL" "$GAP" "$ORACLE_HINTS" "$C" "$SEED" "$CLIENT_TIMEOUT" \
-  "${SGLANG_TIMEOUT_KEEP_ALIVE:-default}" "$(date -u +%FT%TZ)" > "$CMP/config.txt"
+  "${SGLANG_TIMEOUT_KEEP_ALIVE:-default}" "$(date -u +%FT%TZ)" "$CFG_HINTS" > "$CMP/config.txt"
 echo "compare dir: $CMP"; cat "$CMP/config.txt"
 
 for ARM in $ARMS; do

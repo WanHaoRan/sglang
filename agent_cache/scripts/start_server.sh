@@ -10,7 +10,7 @@
 #          three_tier_wc_norq (three_tier_wc with the admission-time SSD re-query of upstream #39283 disabled:
 #          --hicache-storage-prefetch-retry-max-attempts 0; isolates #39283 on the same engine, campaign 11)
 #          three_tier_wc_ntpobs / three_tier_wc_oracle (three_tier_wc + --hicache-storage-next-turn-prefetch observe / on,
-#          the oracle of agent_cache/ORACLE_PLAN.md; retry flags pinned to 8 / 8; the client needs ORACLE_HINTS=1) and their
+#          the oracle of agent_cache/ORACLE_PLAN.md; retry flags pinned to 8 / 8; the client needs hints, ORACLE_HINTS=1 or HINTS=dist) and their
 #          _norq variants (re-query off, as three_tier_wc_norq). They need an engine with the prefetcher (step 5 on).
 #          three_tier_to_ntpobs / three_tier_to_oracle (+ _norq): the same on three_tier_to (`timeout` policy; plan decision 3:
 #          a staged or re-fetched read's timeout budget runs from the read's start, so admission can cut it).
@@ -19,7 +19,7 @@
 #          next-turn prefetcher on; oracle_v2_nu: + next-use eviction; wb: write_back instead of write_through, v2 levers off).
 #          Retry flags pinned to 8 / 8 on dl and wb; the two oracle_v2 arms pass poll interval 0 (paced miss retries off, the
 #          value the engine resolves for the deadline order with the prefetcher on, ORACLE_V2_PLAN.md 3.1) and keep 8 attempts
-#          for the admission re-query. The client needs ORACLE_HINTS=1 on every arm; the engine needs storage_read_scheduler.py.
+#          for the admission re-query. The client needs ORACLE_HINTS=1 (or HINTS=dist) on every arm; the engine needs storage_read_scheduler.py.
 #   LEVEL  P0 (default: L1 262144 tok, host 64 GB) | PH (131072 / 48) | PL (131072 / 18)          (RUNBOOK 5.3)
 #          NAT64 / NAT160: NO --max-total-tokens (the profiled device pool), host 64 / 160 GB   (campaigns 6-7, "natural")
 #   Overrides (env): L1_TOKENS=<tokens> and/or HOST_GB=<GB> replace the level's pools; the run dir is then named custom_L1<tokens>_H<GB>.
