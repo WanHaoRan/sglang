@@ -16,6 +16,16 @@ is missing and the predicted admission is within NTP_LEAD_HORIZON_S, labels the
 parked read with its predicted admission through read_deadline(), and the cache's
 read scheduler decides the dispatch order. With --radix-eviction-policy next_use it
 also registers each committed turn's tail node with the predicted next admission.
+Read timing just_in_time delays that lookup until the load estimate says it must start.
+
+Two more switches make the prefetcher the one owner of reads (agent_cache/DIST_HINT_DESIGN.md).
+The arrival gate is consulted by every read trigger: a planned turn whose match covers its
+key gets no SSD lookup, and a turn's reads are capped. The arrival hold keeps a parked read
+of a queued turn until its queue position says the read must start, at the head at once.
+
+A request may instead carry a table of gaps per reply key (action v2,
+agent_cache/DIST_HINT_DESIGN.md). The reply is not known when the request is sent, so
+the commit resolves it: the reply's key picks an entry, and that entry's p50 is the gap.
 
 The decisions use this rank's wall clock, so create() refuses multi-rank setups.
 """
@@ -26,7 +36,8 @@ import heapq
 import itertools
 import logging
 import math
-from typing import TYPE_CHECKING, Annotated, Optional
+import re
+from typing import TYPE_CHECKING, Annotated, Optional, TypeVar
 
 import msgspec
 import msgspec.structs
@@ -48,17 +59,21 @@ from sglang.srt.mem_cache.next_turn_estimators import (
 )
 from sglang.srt.mem_cache.next_use_eviction import NextUseStrategy
 from sglang.srt.mem_cache.radix_cache import RadixKey
+from sglang.srt.mem_cache.reply_key import KEY_SEP, reply_key
 
 if TYPE_CHECKING:
     from sglang.srt.disaggregation.utils import DisaggregationMode
     from sglang.srt.managers.kv_hints import KvHintsEnvelope
     from sglang.srt.managers.schedule_batch import Req
+    from sglang.srt.mem_cache.storage_read_scheduler import ParkedRead
     from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 
 logger = logging.getLogger(__name__)
 
 NEXT_TURN_ACTION_TYPE = "sglang.next_turn"
 NEXT_TURN_ACTION_VERSION = "1"
+NEXT_TURN_TABLE_VERSION = "2"
+ANY_GAP_KEY = "*"
 
 # Ticks run once per scheduler pass (well under 1 ms when idle); a plan's
 # residency is probed at most this often.
@@ -77,6 +92,12 @@ MAX_REFETCHES = 2
 # in campaign 15); 256 is arbitrary, it bounds the anchor locks parked lookups hold.
 NTP_LEAD_HORIZON_S = 120.0
 NTP_MAX_PARKED = 256
+# Just-in-time reads start this much before the load estimate requires. Arbitrary, but
+# well above the arrival error of exact hints (p90 0.2 s, campaign 19).
+NTP_JIT_MARGIN_S = 1.0
+# Held reads of queued turns start this much before the load estimate requires. Arbitrary;
+# a late read costs only its own turn, which admission passes over until it lands.
+NTP_HOLD_MARGIN_S = 2.0
 
 
 class NextTurnHint(msgspec.Struct, frozen=True):
@@ -85,26 +106,80 @@ class NextTurnHint(msgspec.Struct, frozen=True):
     session: str
     next_rid: str
     next_gap_s: Annotated[float, msgspec.Meta(ge=0)]
+    # How much sooner than next_gap_s the turn may plausibly come.
+    early_s: Annotated[float, msgspec.Meta(ge=0)] = 0.0
 
 
-def read_next_turn_hint(
-    kv_hints: Optional[KvHintsEnvelope],
-) -> Optional[NextTurnHint]:
-    """The request's next-turn hint; other action types are not ours to read."""
+class GapEntry(msgspec.Struct, frozen=True):
+    """One row of a v2 table; its p90 and n are not read yet."""
+
+    key: str
+    p10: Optional[Annotated[float, msgspec.Meta(ge=0)]] = None
+    p50: Optional[Annotated[float, msgspec.Meta(ge=0)]] = None
+    ended: bool = False
+
+
+class NextTurnTable(msgspec.Struct, frozen=True):
+    """Payload of the sglang.next_turn v2 action."""
+
+    session: str
+    next_rid: str
+    gaps: list[GapEntry]
+    # A replay's generated reply is not the recorded one, so the replay names the
+    # recorded reply's key; read only under reply_key_source "hint".
+    replay_reply_key: Optional[str] = None
+
+
+_Payload = TypeVar("_Payload", NextTurnHint, NextTurnTable)
+
+
+def _read_action(
+    kv_hints: Optional[KvHintsEnvelope], version: str, payload_type: type[_Payload]
+) -> Optional[_Payload]:
+    """The action of this version; other action types are not ours to read."""
     if kv_hints is None:
         return None
     for action in kv_hints.actions:
         if (
             action.action_type != NEXT_TURN_ACTION_TYPE
-            or action.action_version != NEXT_TURN_ACTION_VERSION
+            or action.action_version != version
         ):
             continue
         try:
-            return msgspec.convert(action.payload, NextTurnHint)
+            return msgspec.convert(action.payload, payload_type)
         except msgspec.ValidationError as e:
             logger.warning("Ignoring a malformed %s hint: %s", NEXT_TURN_ACTION_TYPE, e)
             return None
     return None
+
+
+def read_next_turn_hint(
+    kv_hints: Optional[KvHintsEnvelope],
+) -> Optional[NextTurnHint]:
+    return _read_action(kv_hints, NEXT_TURN_ACTION_VERSION, NextTurnHint)
+
+
+def read_next_turn_table(
+    kv_hints: Optional[KvHintsEnvelope],
+) -> Optional[NextTurnTable]:
+    return _read_action(kv_hints, NEXT_TURN_TABLE_VERSION, NextTurnTable)
+
+
+def pick_gap_entry(table: NextTurnTable, key: Optional[str]) -> Optional[GapEntry]:
+    """The entry of the reply's key, else of its tool, else the default."""
+    by_key = {entry.key: entry for entry in table.gaps}
+    if key is not None:
+        for candidate in (key, key.split(KEY_SEP, 1)[0]):
+            if candidate in by_key:
+                return by_key[candidate]
+    return by_key.get(ANY_GAP_KEY)
+
+
+def _event_value(key: Optional[str]) -> str:
+    """A key as a HICACHE_EVT value; a key can come from model output."""
+    if key is None:
+        return "none"
+    return re.sub(r"[^\w./-]", "_", key.replace(ANY_GAP_KEY, "any"))
 
 
 class RefetchDecision(msgspec.Struct, frozen=True):
@@ -127,6 +202,7 @@ class TurnPlan(msgspec.Struct):
     predicted_arrival: float
     expires_at: float
     next_check: float
+    early_s: float = 0.0
     # Queue entry time; None while the next turn has not reached the scheduler.
     arrival_t: Optional[float] = None
     pred_wait_ql: Optional[float] = None
@@ -144,6 +220,8 @@ class TurnPlan(msgspec.Struct):
     refetches: int = 0
     last_refetch_t: float = -math.inf
     refetch_capped: bool = False
+    # Arrival gate: SSD lookups let through for this turn, by any trigger.
+    lookups: int = 0
     # Handed to the Scheduler this tick; reported back by on_refetch_result.
     pending_refetch: Optional[RefetchDecision] = None
 
@@ -170,10 +248,22 @@ def _log_event(kind: str, rid: str, **fields) -> None:
 class NextTurnPrefetcher:
     """Plans an SSD read per hinted next turn; the Scheduler ticks it every pass."""
 
-    def __init__(self, *, mode: str, tree_cache: UnifiedRadixCache, page_size: int):
+    def __init__(
+        self,
+        *,
+        mode: str,
+        tree_cache: UnifiedRadixCache,
+        page_size: int,
+        reply_key_source: str = "reply",
+        read_timing: str = "horizon",
+        arrival_gate: str = "off",
+        arrival_hold: str = "off",
+    ):
         self._mode = mode
         self._tree_cache = tree_cache
         self._page_size = page_size
+        self._reply_key_source = reply_key_source
+        self._just_in_time = read_timing == "just_in_time"
         self._offset = ArrivalOffset()
         self._admissions = AdmissionRate()
         self._load = L3LoadModel()
@@ -193,6 +283,15 @@ class NextTurnPrefetcher:
         self._positions: dict[str, int] = {}
         if self._deadline_mode:
             tree_cache.read_deadline_fn = self.read_deadline
+        if mode == "on" and arrival_gate == "on":
+            tree_cache.prefetch_gate_fn = self.prefetch_gate
+        self._hold_arrived = (
+            mode == "on" and arrival_hold == "on" and self._deadline_mode
+        )
+        if self._hold_arrived:
+            tree_cache.read_not_before_fn = self.read_not_before
+        # Requests with an ntp_hold event logged: one per request, not one per pass.
+        self._hold_logged: set[str] = set()
         # Next-use eviction: the strategy's registry, when that policy is on.
         strategy = tree_cache.tree_core.eviction_strategy
         self._next_use = strategy.registry if isinstance(strategy, NextUseStrategy) else None
@@ -211,6 +310,10 @@ class NextTurnPrefetcher:
         pp_size: int,
         enable_dp_attention: bool,
         disaggregation_mode: DisaggregationMode,
+        reply_key_source: str = "reply",
+        read_timing: str = "horizon",
+        arrival_gate: str = "off",
+        arrival_hold: str = "off",
     ) -> NextTurnPrefetcher:
         from sglang.srt.disaggregation.utils import DisaggregationMode
         from sglang.srt.mem_cache.unified_cache.unified_tree_core import (
@@ -240,7 +343,15 @@ class NextTurnPrefetcher:
                 f"--hicache-storage-next-turn-prefetch {mode} needs " + ", ".join(unmet)
             )
         logger.info("HiCache next-turn prefetch: mode=%s", mode)
-        return cls(mode=mode, tree_cache=tree_cache, page_size=page_size)
+        return cls(
+            mode=mode,
+            tree_cache=tree_cache,
+            page_size=page_size,
+            reply_key_source=reply_key_source,
+            read_timing=read_timing,
+            arrival_gate=arrival_gate,
+            arrival_hold=arrival_hold,
+        )
 
     def on_turn_committed(
         self,
@@ -262,7 +373,7 @@ class NextTurnPrefetcher:
         if len(key) == 0 or isinstance(req.finished_reason, FINISH_ABORT):
             self._end_session(rid=req.rid, session=session, now=now)
             return
-        hint = read_next_turn_hint(req.kv_hints)
+        hint = self._resolve_hint(req)
         if hint is None:
             # The session ended (or the client sends no hints): evict it first.
             self._register_next_use(
@@ -296,6 +407,7 @@ class NextTurnPrefetcher:
             predicted_arrival=predicted,
             expires_at=predicted + max(MIN_EXPIRY_S, hint.next_gap_s),
             next_check=now,
+            early_s=hint.early_s,
         )
         self._plans[plan.next_rid] = plan
         heapq.heappush(self._pending, (now, next(self._seq), plan.next_rid))
@@ -306,6 +418,34 @@ class NextTurnPrefetcher:
             gap_ms=_ms(plan.gap_s),
             chain=len(key),
             pred_arr_ms=_ms(predicted - now),
+        )
+
+    def _resolve_hint(self, req: Req) -> Optional[NextTurnHint]:
+        """The finished turn's hint. A v2 table wins: its v1 companion, if any, only
+        serves engines that cannot read tables."""
+        table = read_next_turn_table(req.kv_hints)
+        if table is None:
+            return read_next_turn_hint(req.kv_hints)
+        if self._reply_key_source == "hint":
+            key = table.replay_reply_key
+        elif req.tokenizer is None:
+            key = None
+        else:
+            key = reply_key(req.tokenizer.decode(req.output_ids))
+        entry = pick_gap_entry(table, key)
+        _log_event(
+            "ntp_pick",
+            table.next_rid,
+            key=_event_value(key),
+            entry=_event_value(None if entry is None else entry.key),
+        )
+        if entry is None or entry.ended or entry.p50 is None:
+            return None
+        return NextTurnHint(
+            session=table.session,
+            next_rid=table.next_rid,
+            next_gap_s=entry.p50,
+            early_s=0.0 if entry.p10 is None else max(0.0, entry.p50 - entry.p10),
         )
 
     def tick(self, *, waiting_queue: list[Req], now: float) -> list[Req]:
@@ -320,7 +460,8 @@ class NextTurnPrefetcher:
         self._positions = {req.rid: position for position, req in enumerate(waiting_queue)}
         if self._deadline_mode:
             self._refresh_load_model()
-        if not self._plans:
+        # The hold times reads of turns with no plan, so it needs a fresh rate regardless.
+        if not self._plans and not self._hold_arrived:
             return []
 
         rate = self._admissions.rate(now)
@@ -377,6 +518,7 @@ class NextTurnPrefetcher:
         )
 
     def _on_departure(self, req: Req, *, now: float) -> None:
+        self._hold_logged.discard(req.rid)
         plan = self._plans.pop(req.rid, None)
         stats = req.time_stats
         if stats.forward_entry_time <= 0:
@@ -680,13 +822,21 @@ class NextTurnPrefetcher:
         recheck: float,
     ) -> float:
         """Case 1 under the deadline order: issue the lookup within the lead
-        horizon; the cache's read scheduler orders the dispatch."""
+        horizon, or just in time; the cache's read scheduler orders the dispatch."""
         if admission_at - now > NTP_LEAD_HORIZON_S:
             return min(admission_at - NTP_LEAD_HORIZON_S, recheck)
         if now - plan.last_probe_t >= PROBE_INTERVAL_S:
             plan.missing_tokens = len(plan.key) - self._resident_tokens(plan, now=now)
         enough = plan.missing_tokens >= self._tree_cache.prefetch_threshold
         load_s = self._load_seconds(plan.missing_tokens, backlog_pages)
+        if self._just_in_time:
+            start_at = trigger_time(
+                admission_at=admission_at,
+                load_s=load_s,
+                margin_s=plan.early_s + NTP_JIT_MARGIN_S,
+            )
+            if now < start_at:
+                return min(start_at, recheck)
         if plan.due_case == 0 and enough:
             self._mark_due(
                 plan,
@@ -715,10 +865,11 @@ class NextTurnPrefetcher:
     def read_deadline(self, handle: CacheRequestHandle) -> Optional[float]:
         """Dispatch deadline of a parked read, for the cache; None = needed now."""
         plan = self._plans.get(handle.rid)
-        if plan is None:
+        # Under the hold a turn with no plan is timed from its queue position too.
+        if plan is None and not self._hold_arrived:
             return None
         now = self._last_now
-        if plan.arrival_t is None:
+        if plan is not None and plan.arrival_t is None:
             wait, _ = self._wait_after_arrival(
                 queue_len=len(self._queued), rate=self._last_rate
             )
@@ -729,6 +880,71 @@ class NextTurnPrefetcher:
             return None
         wait = residual_wait(position=position, rate=self._last_rate)
         return None if wait is None else now + wait
+
+    def prefetch_gate(self, handle: CacheRequestHandle, matched_tokens: int) -> bool:
+        """May this prefetch look up the SSD? Every read trigger ends here. A read
+        already under way has been joined by now, so a new one means history is missing."""
+        plan = self._plans.get(handle.rid)
+        # A first turn, a client without hints, a plan gone: only a lookup can tell.
+        if plan is None:
+            return True
+        chain = len(plan.key)
+        if chain - matched_tokens < self._tree_cache.prefetch_threshold:
+            # The history is resident and the rest is new. It is on the SSD only if
+            # another session shares this prefix, which is not worth a lookup per turn.
+            decision = "covered"
+        elif plan.lookups > MAX_REFETCHES:
+            # A re-read beats a recompute, but not without limit: reads that keep being
+            # evicted before admission only evict others.
+            plan.refetch_capped = True
+            decision = "capped"
+        else:
+            decision = "read" if plan.lookups == 0 else "reread"
+            plan.lookups += 1
+        _log_event(
+            "ntp_gate",
+            handle.rid,
+            decision=decision,
+            matched=matched_tokens,
+            chain=chain,
+            lookups=plan.lookups,
+        )
+        return decision in ("read", "reread")
+
+    def read_not_before(
+        self, handle: CacheRequestHandle, read: ParkedRead, ahead_pages: int
+    ) -> Optional[float]:
+        """When a parked read of a queued turn may start; None = no hold. `ahead_pages`
+        counts the pages the read thread serves first."""
+        position = self._positions.get(handle.rid)
+        if position is None:
+            # Parked since the last tick, so the queue position is not known yet: wait
+            # one pass. Still unknown after a tick means not queued, which includes a
+            # staged read before its turn arrives: the prefetcher already timed that.
+            return math.inf if read.parked_at > self._last_now else None
+        if position <= 1:
+            return None
+        wait = residual_wait(position=position, rate=self._last_rate)
+        if wait is None:
+            return None
+        load_s = self._load.seconds(own_pages=read.pages, backlog_pages=ahead_pages)
+        not_before = trigger_time(
+            admission_at=self._last_now + wait,
+            load_s=load_s,
+            margin_s=NTP_HOLD_MARGIN_S,
+        )
+        if not_before > self._last_now and handle.rid not in self._hold_logged:
+            self._hold_logged.add(handle.rid)
+            _log_event(
+                "ntp_hold",
+                handle.rid,
+                pos=position,
+                pages=read.pages,
+                wait_ms=_ms(wait),
+                load_ms=_ms(load_s),
+                hold_ms=_ms(not_before - self._last_now),
+            )
+        return not_before
 
     def _refresh_load_model(self) -> None:
         """Replace the load model's per-page seeds with the read thread's EWMA."""

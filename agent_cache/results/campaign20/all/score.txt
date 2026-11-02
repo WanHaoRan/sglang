@@ -1,0 +1,53 @@
+events        c19 oracle   c20 p50
+  ntp_plan         24111     24082
+  ntp_arrive       24111     23706
+  ntp_admit        24111     23706
+  ntp_expire           0       376
+  ntp_due           9162      8940
+  ntp_stage         8521      8400
+  ntp_refetch        616       478
+  ntp_reevict         31        15
+
+24111 returning turns in both arms with a hint and a true gap
+
+by true gap (seconds):
+  0-5 s                                7369 TTFT oracle  23.53 p50  23.19 diff  -0.35 | recomputed     54     45 | >1 page   58   48 | SSD   1253   1353 | host  14765  14742
+  5-15 s                              13611 TTFT oracle  23.64 p50  23.86 diff  +0.21 | recomputed     35     38 | >1 page   58   59 | SSD   8571   8457 | host   8026   8390
+  15-60 s                              2568 TTFT oracle  24.56 p50  25.05 diff  +0.50 | recomputed     68     47 | >1 page   26   26 | SSD  14325  12842 | host   2913   4365
+  60-120 s                              324 TTFT oracle  24.86 p50  24.15 diff  -0.71 | recomputed     44     50 | >1 page   23   40 | SSD  13393  13412 | host   3420   3428
+  120-300 s                              80 TTFT oracle  23.53 p50  23.70 diff  +0.17 | recomputed     38     51 | >1 page    2    9 | SSD  11554  12824 | host   3518   2239
+  300-1e+09 s                           159 TTFT oracle  24.42 p50  22.91 diff  -1.51 | recomputed    190    195 | >1 page    5    9 | SSD  19005  19066 | host   2455   2511
+
+by true gap / sent p50 (24082 turns with a point):
+  ratio 0-0.25                         1709 TTFT oracle  23.48 p50  23.22 diff  -0.26 | recomputed     32     53 | >1 page    7    8 | SSD   1127   2205 | host  15374  14445
+  ratio 0.25-0.5                        310 TTFT oracle  25.21 p50  25.67 diff  +0.46 | recomputed     42    116 | >1 page    7    3 | SSD   3996   7158 | host   9523   6784
+  ratio 0.5-1                          8802 TTFT oracle  24.47 p50  24.54 diff  +0.07 | recomputed     45     42 | >1 page   44   51 | SSD   4682   5255 | host   7663   7266
+  ratio 1-2                           11266 TTFT oracle  23.32 p50  23.42 diff  +0.11 | recomputed     44     39 | >1 page   77   66 | SSD   8925   8204 | host  10798  11723
+  ratio 2-4                            1109 TTFT oracle  23.85 p50  23.99 diff  +0.14 | recomputed     36     34 | >1 page   27   29 | SSD  13598  10971 | host   4433   6915
+  ratio 4-10                            538 TTFT oracle  21.59 p50  21.19 diff  -0.40 | recomputed    105     36 | >1 page    6   13 | SSD  10532   8833 | host   5460   6872
+  ratio 10-1e+09                        348 TTFT oracle  23.05 p50  22.14 diff  -0.91 | recomputed    104    110 | >1 page    4   21 | SSD  15223  14008 | host   3246   4428
+|true - p50|: median 0.2 s, mean 9.2 s; under 5 s 75.9 %, under 30 s 96.3 %, over 60 s 1.6 %
+
+expired plans 376, staged 246; their turn came later and is in both arms: 376
+  turns after an expired plan           376 TTFT oracle  23.49 p50  22.79 diff  -0.71 | recomputed    101    111 | >1 page   10   38 | SSD  15969  16495 | host   3460   3000
+  true gap median 205 s, min 66 s, max 1200 s; sent p50 median 7.6 s
+  gaps of 60 s or more: 563, of which the plan expired 376
+  gaps of 300 s or more: 159, of which the plan expired 159
+  expired, staged                       246 TTFT oracle  29.84 p50  28.72 diff  -1.12 | recomputed    132    131 | >1 page    2    1 | SSD  20524  20729 | host    282     97
+  expired, not staged                   130 TTFT oracle  11.49 p50  11.57 diff  +0.08 | recomputed     42     72 | >1 page    8   37 | SSD   7351   8482 | host   9474   8494
+
+admission wait of planned turns (ms):
+  c19 oracle   n 24111 p50 26034 p90 37480 p99 50020 max 71827; 60 s or more: 67
+  c20 p50      n 23706 p50 26073 p90 37502 p99 52149 max 66363; 60 s or more: 51
+
+staging lead, staged turns admitted in both arms:
+  c19 oracle   staged 8521, due 9162, staged and arrived 8521
+  c20 p50      staged 8400, due 8940, staged and arrived 8154
+  same turns staged in both 5844; c19 only 2677; c20 only 2556
+
+TTFT of the planned turns by phase of the run (client send time, s):
+  0-2280: 5014 turns, oracle 3.63, p50 3.68, paired +0.05
+  2280-10800: 18631 turns, oracle 29.93, p50 29.99, paired +0.06
+  10800-1e+09: 1234 turns, oracle 10.88, p50 10.72, paired -0.15
+
+all 24879 turns both arms ran: oracle 23.687, p50 23.732, paired +0.045

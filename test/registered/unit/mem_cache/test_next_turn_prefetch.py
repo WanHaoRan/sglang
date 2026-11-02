@@ -28,13 +28,20 @@ from sglang.srt.mem_cache.next_turn_estimators import (
     residual_wait,
 )
 from sglang.srt.mem_cache.next_turn_prefetch import (
+    MAX_REFETCHES,
+    NTP_HOLD_MARGIN_S,
+    NTP_JIT_MARGIN_S,
     NTP_LEAD_HORIZON_S,
     NTP_MAX_PARKED,
     NextTurnPrefetcher,
 )
 from sglang.srt.mem_cache.next_use_eviction import NextUseStrategy
 from sglang.srt.mem_cache.radix_cache import RadixKey
-from sglang.srt.mem_cache.storage_read_scheduler import StorageReadScheduler
+from sglang.srt.mem_cache.reply_key import NO_CALL_KEY, reply_key
+from sglang.srt.mem_cache.storage_read_scheduler import (
+    ParkedRead,
+    StorageReadScheduler,
+)
 from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 
 LOGGER = "sglang.srt.mem_cache.next_turn_prefetch"
@@ -57,11 +64,20 @@ def hints(
 
 
 def make_req(
-    rid, *, kv_hints=None, finished=True, reason=None, entered=0.0, last_match=None
+    rid,
+    *,
+    kv_hints=None,
+    finished=True,
+    reason=None,
+    entered=0.0,
+    last_match=None,
+    tokenizer=None,
 ):
     return SimpleNamespace(
         rid=rid,
         kv_hints=kv_hints,
+        tokenizer=tokenizer,
+        output_ids=array("q"),
         finished=lambda: finished,
         finished_reason=FINISH_LENGTH(length=8) if reason is None else reason,
         time_stats=SimpleNamespace(
@@ -84,6 +100,9 @@ class ReadOnlyCache:
     # v1 wiring: no read scheduler (fifo order) and an eviction strategy without a next-use registry
     read_scheduler = None
     tree_core = SimpleNamespace(eviction_strategy=None)
+    # The default: every trigger looks up, and parked reads are not held.
+    prefetch_gate_fn = None
+    read_not_before_fn = None
 
     def __init__(self):
         self.resident = 0
@@ -318,6 +337,138 @@ class TestPlanRegistration(PrefetcherTestCase):
                     self.assertEqual(plans[0]["chain"], str(KEY_TOKENS))
                 else:
                     self.assertEqual(plans, [])
+
+
+class TestGapTable(PrefetcherTestCase):
+    """Action v2: a table of gaps per reply key, resolved when the turn commits."""
+
+    GAPS = [
+        {"key": "execute_bash/pytest", "p10": 5.0, "p50": 80.0, "p90": 300.0, "n": 20},
+        {"key": "execute_bash", "p10": 1.0, "p50": 7.0, "p90": 30.0, "n": 200},
+        {"key": "*", "p10": 0.5, "p50": 6.0, "p90": 20.0, "n": 900},
+        {"key": "_end", "ended": True},
+    ]
+
+    def setUp(self):
+        super().setUp()
+        self.ntp = NextTurnPrefetcher(
+            mode=self.mode,
+            tree_cache=self.cache,
+            page_size=PAGE,
+            reply_key_source="hint",
+        )
+
+    def table(self, reply_key_=None, gaps=None):
+        return {
+            "session": "s",
+            "next_rid": "next",
+            "gaps": self.GAPS if gaps is None else gaps,
+            "replay_reply_key": reply_key_,
+        }
+
+    def plan_gap_ms(self, req, ntp=None):
+        ntp = self.ntp if ntp is None else ntp
+        found = self.events(
+            lambda: ntp.on_turn_committed(
+                req=req,
+                key=key_of(KEY_TOKENS),
+                rotation_tail_declined=False,
+                now=0.0,
+            )
+        )
+        plans = [fields["gap_ms"] for kind, fields in found if kind == "ntp_plan"]
+        return plans[0] if plans else None
+
+    def test_the_reply_key_picks_its_entry_then_its_tool_then_the_default(self):
+        """Mirrors the client's pick_entry: the v1 point it sends to older engines
+        must equal what this engine plans. No usable entry means no plan."""
+        cases = {
+            "execute_bash/pytest": "80000",
+            "execute_bash/ls": "7000",
+            "execute_bash": "7000",
+            "think": "6000",
+            None: "6000",
+            "_end": None,
+        }
+        for key, gap_ms in cases.items():
+            with self.subTest(key):
+                req = make_req(
+                    "a",
+                    kv_hints=hints("next", version="2", payload=self.table(key)),
+                )
+                self.assertEqual(self.plan_gap_ms(req), gap_ms)
+        without_default = self.table("think", gaps=self.GAPS[:2])
+        req = make_req(
+            "a", kv_hints=hints("next", version="2", payload=without_default)
+        )
+        self.assertIsNone(self.plan_gap_ms(req))
+
+    def test_a_table_wins_over_its_v1_companion_and_a_malformed_one_does_not(self):
+        """The client sends both while older engines exist; a malformed table must
+        not cost the turn its plan when a valid v1 action came with it."""
+
+        def both(table_payload):
+            table = hints("next", version="2", payload=table_payload).actions[0]
+            point = hints("next", gap_s=2.0).actions[0]
+            return KvHintsEnvelope(
+                protocol_version="1", message_id="m", actions=[table, point]
+            )
+
+        req = make_req("a", kv_hints=both(self.table("execute_bash")))
+        self.assertEqual(self.plan_gap_ms(req), "7000")
+        req = make_req("a", kv_hints=both({"session": "s", "next_rid": "next"}))
+        self.assertEqual(self.plan_gap_ms(req), "2000")
+
+    def test_reply_mode_reads_the_generated_reply_not_the_replay_key(self):
+        """Hint mode must not touch the reply, and reply mode must not trust the
+        replay key: only one source may decide. No tokenizer means the default."""
+        replying = NextTurnPrefetcher(
+            mode=self.mode, tree_cache=self.cache, page_size=PAGE
+        )
+        tokenizer = SimpleNamespace(
+            decode=lambda ids: (
+                "<function=execute_bash><parameter=command>pytest -x</parameter>"
+                "</function>"
+            )
+        )
+        envelope = hints("next", version="2", payload=self.table("execute_bash"))
+        req = make_req("a", kv_hints=envelope, tokenizer=tokenizer)
+        self.assertEqual(self.plan_gap_ms(req, ntp=replying), "80000")
+        self.assertEqual(self.plan_gap_ms(req), "7000")
+        self.assertEqual(
+            self.plan_gap_ms(make_req("a", kv_hints=envelope), ntp=replying), "6000"
+        )
+
+
+class TestReplyKey(CustomTestCase):
+    def test_same_rule_as_the_client_table(self):
+        """The keys must equal agent_cache/scripts/gap_hints.py's, or the engine's lookups
+        miss the client's entries and silently fall back to the tool's gap."""
+        bash = "<function=execute_bash><parameter=command>%s</parameter></function>"
+        cases = {
+            bash % "pytest -x tests/": "execute_bash/pytest",
+            bash % "cd /repo && FOO=1 BAR=2 git status": "execute_bash/git",
+            bash % "/usr/bin/ls -la": "execute_bash/ls",
+            bash % "python -m pytest x": "execute_bash/python-m-pytest",
+            bash % "python3 -c 'print(1)'": "execute_bash/python-c",
+            bash % "python run.py": "execute_bash/python",
+            bash % "   ": "execute_bash",
+            bash % "!!!": "execute_bash",
+            "<function=think><parameter=thought>x</parameter></function>": "think",
+            "<think><function=a></function></think>no call here": NO_CALL_KEY,
+            "<think>hm</think><function=b></function>": "b",
+            "Just an answer.": NO_CALL_KEY,
+            '<tool_call>\n{"name": "bash", "arguments": {"command": "make -j8"}}'
+            "\n</tool_call>": "bash/make",
+            '<tool_call>{"name": "bash", "arguments": "{\\"cmd\\": \\"ls\\"}"}'
+            "</tool_call>": "bash/ls",
+            '<tool_call>{"name": "search"}</tool_call>': "search",
+            "<tool_call>{not json}</tool_call>": NO_CALL_KEY,
+            '<tool_call>{"name": 3}</tool_call>': NO_CALL_KEY,
+        }
+        for text, key in cases.items():
+            with self.subTest(text):
+                self.assertEqual(reply_key(text), key)
 
 
 class TestQueueTracking(PrefetcherTestCase):
@@ -732,6 +883,75 @@ class TestDeadlineMode(PrefetcherTestCase):
         self.tick(0.6)
         self.assertEqual(len(self.cache.prefetches), 1)
 
+    def test_just_in_time_read_waits_for_the_load_estimate(self):
+        """The read must land by admission, so it starts one load estimate plus the
+        margin before it, and a backlog ahead of it moves that earlier."""
+        jit = NextTurnPrefetcher(
+            mode=self.mode,
+            tree_cache=self.cache,
+            page_size=PAGE,
+            read_timing="just_in_time",
+        )
+        self.ntp = jit
+        gap = 50.0
+        arrival = ArrivalOffset().predict_arrival(t_commit=0.0, gap_s=gap)
+        missing_pages = (KEY_TOKENS - self.matched) // PAGE
+        load = L3LoadModel().seconds(own_pages=missing_pages, backlog_pages=0)
+        start_at = arrival - load - NTP_JIT_MARGIN_S
+        self.commit("s-t0", "s-t1", now=0.0, gap_s=gap)
+        self.tick(0.01)
+        self.tick(start_at - 0.01)
+        self.assertEqual(self.cache.prefetches, [])
+        self.tick(start_at + 0.01)
+        self.assertEqual([h for h, *_ in self.cache.prefetches], [self.handle])
+
+        self.ntp = jit = NextTurnPrefetcher(
+            mode=self.mode,
+            tree_cache=self.cache,
+            page_size=PAGE,
+            read_timing="just_in_time",
+        )
+        self.cache.prefetches.clear()
+        self.cache.ongoing.clear()
+        self.cache.backlog_pages = 8000
+        backlog_s = L3LoadModel().backlog_s_per_page * 8000
+        self.commit("s-t0", "s-t1", now=100.0, gap_s=gap)
+        self.tick(100.0 + start_at - backlog_s - 0.5)
+        self.assertEqual(self.cache.prefetches, [])
+        self.tick(100.0 + start_at - backlog_s + 0.5)
+        self.assertEqual(len(self.cache.prefetches), 1)
+
+    def test_just_in_time_starts_early_enough_for_the_tables_p10(self):
+        """A table's gap is a distribution: the read must land by the early end of it,
+        while eviction and the deadline keep using the p50."""
+        self.ntp = NextTurnPrefetcher(
+            mode=self.mode,
+            tree_cache=self.cache,
+            page_size=PAGE,
+            read_timing="just_in_time",
+            reply_key_source="hint",
+        )
+        table = {
+            "session": "s",
+            "next_rid": "s-t1",
+            "gaps": [{"key": "*", "p10": 20.0, "p50": 50.0, "p90": 90.0, "n": 9}],
+        }
+        self.ntp.on_turn_committed(
+            req=make_req("s-t0", kv_hints=hints("s-t1", version="2", payload=table)),
+            key=key_of(KEY_TOKENS),
+            rotation_tail_declined=False,
+            now=0.0,
+        )
+        arrival = ArrivalOffset().predict_arrival(t_commit=0.0, gap_s=50.0)
+        missing_pages = (KEY_TOKENS - self.matched) // PAGE
+        load = L3LoadModel().seconds(own_pages=missing_pages, backlog_pages=0)
+        start_at = arrival - load - NTP_JIT_MARGIN_S - 30.0
+        self.tick(start_at - 0.01)
+        self.assertEqual(self.cache.prefetches, [])
+        self.tick(start_at + 0.01)
+        self.assertEqual(len(self.cache.prefetches), 1)
+        self.assertEqual(self.ntp.read_deadline(self.handle), arrival)
+
     def test_deadline_after_arrival_follows_the_queue_position(self):
         """Queued behind others with a measured rate: now plus the residual wait
         at its position; at the head: needed now."""
@@ -803,6 +1023,243 @@ class TestDeadlineMode(PrefetcherTestCase):
         req = make_req("s-t1", entered=self.arrival + 1.0)
         self.tick(self.arrival + 1.0, queue=[req])
         self.assertEqual(self.registry().lookup(7), (True, self.arrival + 1.0))
+
+
+class TestOwnerSwitches(CustomTestCase):
+    def test_gate_and_hold_bind_only_when_on_and_only_in_mode_on(self):
+        """Off, the baseline and oracle arms keep the arrival fetch; observe must never
+        change what the engine reads, whatever the switches say."""
+        for mode, switch, bound in (
+            ("on", "off", False),
+            ("observe", "on", False),
+            ("on", "on", True),
+        ):
+            with self.subTest(mode=mode, switch=switch):
+                cache = DeadlineCache()
+                NextTurnPrefetcher(
+                    mode=mode,
+                    tree_cache=cache,
+                    page_size=PAGE,
+                    arrival_gate=switch,
+                    arrival_hold=switch,
+                )
+                self.assertEqual(cache.prefetch_gate_fn is not None, bound)
+                self.assertEqual(cache.read_not_before_fn is not None, bound)
+        # The hold times parked reads, which only the deadline order has.
+        fifo = ActingCache()
+        NextTurnPrefetcher(mode="on", tree_cache=fifo, page_size=PAGE, arrival_hold="on")
+        self.assertIsNone(fifo.read_not_before_fn)
+
+
+class TestArrivalGate(PrefetcherTestCase):
+    mode = "on"
+
+    def make_cache(self):
+        return DeadlineCache()
+
+    def setUp(self):
+        super().setUp()
+        self.ntp = NextTurnPrefetcher(
+            mode=self.mode, tree_cache=self.cache, page_size=PAGE, arrival_gate="on"
+        )
+        self.handle = CacheRequestHandle(rid="s-t1", attempt_id=0)
+        self.threshold = self.cache.prefetch_threshold
+        self.commit("s-t0", "s-t1", now=0.0)
+
+    def test_no_lookup_once_the_match_covers_the_key_to_within_the_threshold(self):
+        """What is left past the committed key is new; a missing span below the threshold
+        is not worth a read, the same rule prefetch_from_storage applies to any lookup."""
+        for matched, allowed in (
+            (KEY_TOKENS + 500, False),
+            (KEY_TOKENS, False),
+            (KEY_TOKENS - self.threshold + 1, False),
+            (KEY_TOKENS - self.threshold, True),
+            (0, True),
+        ):
+            with self.subTest(matched=matched):
+                self.assertEqual(self.ntp.prefetch_gate(self.handle, matched), allowed)
+
+    def test_a_turn_with_no_plan_still_looks_up(self):
+        """Only a lookup can find a first turn's shared prefix or a late turn's history.
+        The match length says nothing without a plan's key to compare it with."""
+        for rid in ("first-turn", "plan-expired"):
+            self.assertTrue(
+                self.ntp.prefetch_gate(CacheRequestHandle(rid, 0), KEY_TOKENS)
+            )
+
+    def test_a_turns_reads_are_capped_and_the_queued_refetch_stops_asking(self):
+        """Covered calls spend nothing. Past the cap the turn recomputes, and the plan
+        must stop asking, or it would be re-issued every probe interval until admission."""
+        decisions = self.events(
+            lambda: [
+                self.ntp.prefetch_gate(self.handle, matched)
+                for matched in (0, KEY_TOKENS, 0, 0, 0)
+            ]
+        )
+        self.assertEqual(
+            [f["decision"] for kind, f in decisions if kind == "ntp_gate"],
+            ["read", "covered", "reread", "reread", "capped"],
+        )
+        self.assertEqual(MAX_REFETCHES, 2)
+        req = make_req("s-t1", entered=5.0, last_match=0)
+        self.assertEqual(self.ntp.tick(waiting_queue=[req], now=5.0), [])
+
+
+class TestGateOnTheRealCache(CustomTestCase):
+    def test_a_declined_lookup_survives_the_real_cache(self):
+        """A declined lookup killed the scheduler at the first planned arrival: the real
+        counters are a plain dict with fixed keys, which fixtures with a defaultdict hide."""
+        cache = cpu_unified_cache()
+        cache.enable_storage = True
+        cache.prefetch_threshold = 2
+        cache.cache_controller = SimpleNamespace(
+            get_prefetch_submission=lambda rid: None,
+            prefetch_rate_limited=lambda: False,
+        )
+        ntp = NextTurnPrefetcher(
+            mode="on", tree_cache=cache, page_size=2, arrival_gate="on"
+        )
+        ntp.on_turn_committed(
+            req=make_req("s-t0", kv_hints=hints("s-t1")),
+            key=key_of(8),
+            rotation_tail_declined=False,
+            now=0.0,
+        )
+        handle = CacheRequestHandle("s-t1", 0)
+        cache.prefetch_from_storage(
+            handle,
+            cache.root_node_handle(),
+            array("q", range(8, 16)),
+            matched_prefix_tokens=list(range(8)),
+        )
+        self.assertEqual(cache._prefetch_outcome_stats["declined_gate"], 1)
+        self.assertFalse(cache.has_ongoing_prefetch(handle))
+
+
+class TestArrivalHold(PrefetcherTestCase):
+    mode = "on"
+
+    def make_cache(self):
+        return DeadlineCache()
+
+    def setUp(self):
+        super().setUp()
+        self.ntp = NextTurnPrefetcher(
+            mode=self.mode, tree_cache=self.cache, page_size=PAGE, arrival_hold="on"
+        )
+        self.handle = CacheRequestHandle(rid="s-t1", attempt_id=0)
+        self.parked = ParkedRead(handle=self.handle, operation=None, pages=10, parked_at=0.0)
+        self.req = make_req("s-t1", entered=2.0)
+        self.others = [make_req(f"y{i}", entered=2.0) for i in range(5)]
+        # 30 admissions give the queue a measured drain rate.
+        self.admit_through_queue([f"x{i}" for i in range(30)], now=1.0)
+
+    def test_a_queued_read_waits_for_admission_minus_load_minus_margin(self):
+        """Pages ahead move the start earlier. Near the head the read goes at once, even
+        if the rate says otherwise: admission is already passing over this turn."""
+        found = self.events(
+            lambda: self.ntp.tick(waiting_queue=self.others + [self.req], now=2.0)
+        )
+        self.assertEqual([k for k, _ in found if k == "ntp_hold"], [])
+        wait = residual_wait(position=5, rate=self.ntp._last_rate)
+        load = L3LoadModel().seconds(own_pages=10, backlog_pages=40)
+        self.assertAlmostEqual(
+            self.ntp.read_not_before(self.handle, self.parked, 40),
+            2.0 + wait - load - NTP_HOLD_MARGIN_S,
+        )
+        self.assertLess(
+            self.ntp.read_not_before(self.handle, self.parked, 4000),
+            self.ntp.read_not_before(self.handle, self.parked, 40),
+        )
+        self.ntp.tick(waiting_queue=[self.others[0], self.req], now=3.0)
+        self.assertIsNone(self.ntp.read_not_before(self.handle, self.parked, 0))
+
+    def test_a_read_is_logged_held_once_not_once_per_pass(self):
+        """Dispatch asks for every parked read on every pass: 100 parked reads at 50
+        passes a second would otherwise write 5,000 lines a second."""
+        self.ntp.tick(waiting_queue=self.others + [self.req], now=2.0)
+        found = self.events(
+            lambda: [self.ntp.read_not_before(self.handle, self.parked, 0) for _ in range(3)]
+        )
+        self.assertEqual([k for k, _ in found], ["ntp_hold"])
+
+    def test_without_a_measured_rate_a_queued_read_goes(self):
+        """Nothing says how long the wait is, and a parked read blocks its turn."""
+        ntp = NextTurnPrefetcher(
+            mode=self.mode, tree_cache=self.cache, page_size=PAGE, arrival_hold="on"
+        )
+        ntp.tick(waiting_queue=self.others + [self.req], now=2.0)
+        self.assertIsNone(ntp.read_not_before(self.handle, self.parked, 0))
+
+    def test_a_staged_read_goes_until_its_turn_arrives_then_follows_the_queue(self):
+        """Before arrival the prefetcher already chose the time. A read still parked when
+        the turn queues behind others has become an arrived read."""
+        self.commit("s-t0", "s-t1", now=2.0)
+        self.ntp.tick(waiting_queue=[], now=2.01)
+        self.assertTrue(self.ntp._plans["s-t1"].staged)
+        self.assertIsNone(self.ntp.read_not_before(self.handle, self.parked, 0))
+        self.ntp.tick(waiting_queue=self.others + [self.req], now=7.0)
+        self.assertGreater(self.ntp.read_not_before(self.handle, self.parked, 0), 7.0)
+
+    def test_an_unknown_position_waits_one_pass_and_never_more(self):
+        """The hit can be drained before the tick that first sees the queued turn: holding
+        it one pass avoids reading it early. A rid that is still unknown is not queued,
+        and holding it for ever would block admission of the turn it belongs to."""
+        self.ntp.tick(waiting_queue=[], now=2.0)
+        fresh = ParkedRead(handle=self.handle, operation=None, pages=10, parked_at=2.5)
+        self.assertEqual(self.ntp.read_not_before(self.handle, fresh, 0), float("inf"))
+        self.ntp.tick(waiting_queue=[], now=3.0)
+        self.assertIsNone(self.ntp.read_not_before(self.handle, fresh, 0))
+
+    def test_a_turn_with_no_plan_is_timed_from_its_queue_position(self):
+        """First turns and expired plans get the same treatment, and the drain rate must
+        stay fresh with no plan left to refresh it. With the hold off they stay "now"."""
+        self.assertEqual(self.ntp._plans, {})
+        self.ntp.tick(waiting_queue=self.others + [self.req], now=2.0)
+        rate = self.ntp._last_rate
+        self.assertIsNotNone(rate)
+        self.assertAlmostEqual(
+            self.ntp.read_deadline(self.handle),
+            2.0 + residual_wait(position=5, rate=rate),
+        )
+        self.assertGreater(self.ntp.read_not_before(self.handle, self.parked, 0), 2.0)
+        unheld = NextTurnPrefetcher(mode=self.mode, tree_cache=self.cache, page_size=PAGE)
+        unheld.tick(waiting_queue=self.others + [self.req], now=2.0)
+        self.assertIsNone(unheld.read_deadline(self.handle))
+
+    def test_a_queue_of_held_reads_drains_and_each_starts_near_its_admission(self):
+        """The two properties the hold rests on, through the real dispatcher. No stall: a
+        parked read blocks its turn, so every held read must eventually go. No early
+        start: without the hold all twelve would start at once, 20 s before the last."""
+        srs = self.cache.read_scheduler
+        queue = [make_req(f"q{i}", entered=2.0) for i in range(12)]
+        for req in queue:
+            srs.park(handle=req.cache_request_handle, operation=None, pages=10, now=2.0)
+        started, landed, admitted = {}, {}, {}
+        now = 2.0
+        while queue and now < 200.0:
+            self.ntp.tick(waiting_queue=queue, now=now)
+            for d in srs.dispatch(
+                now=now,
+                deadline_of=self.ntp.read_deadline,
+                in_flight_pages=0,
+                held_tokens=0,
+                not_before_of=self.ntp.read_not_before,
+            ):
+                started[d.read.handle.rid] = now
+                landed[d.read.handle.rid] = now + 1.0
+            now += 0.5
+            # One admission per pass at most, and only once its read has landed.
+            ready = [r for r in queue if landed.get(r.rid, float("inf")) <= now]
+            if ready:
+                ready[0].time_stats.forward_entry_time = now
+                admitted[ready[0].rid] = now
+                queue = [r for r in queue if r is not ready[0]]
+        self.assertEqual(queue, [])
+        self.assertEqual(srs.parked_count(), 0)
+        leads = [admitted[rid] - started[rid] for rid in admitted]
+        self.assertLessEqual(max(leads), 6.0)
+        self.assertGreater(started["q11"] - started["q0"], 3.0)
 
 
 if __name__ == "__main__":

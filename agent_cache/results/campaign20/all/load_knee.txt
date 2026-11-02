@@ -1,0 +1,35 @@
+
+x70, campaign 18 oracle: by request rate (5-min bins)
+    turns/s bins users live queued TTFT mean median SSD GB/s SSD busy SSD tok/turn
+   0.0-0.5     5         32    0.0      0.42   0.33     0.03       3%         1124
+   0.5-1.0     5         68    0.1      0.45   0.30     0.22      12%         2449
+   1.0-1.3     2         86    0.1      0.44   0.26     0.42      23%         3696
+   1.3-1.5    12        124    0.3      0.65   0.30     0.84      41%         4460
+   1.5-1.7    33        128    0.3      0.60   0.30     0.97      48%         4634
+   1.7-1.9     3        119    0.2      0.42   0.24     0.46      27%         2109
+
+x70, campaign 18 baseline: by request rate (5-min bins)
+    turns/s bins users live queued TTFT mean median SSD GB/s SSD busy SSD tok/turn
+   0.0-0.5     5         34    0.0      0.45   0.34     0.03       3%         1075
+   0.5-1.0     5         71    0.1      0.53   0.33     0.26      12%         3285
+   1.0-1.3     2         87    0.2      0.52   0.31     0.40      19%         3593
+   1.3-1.5    11        124    0.7      0.88   0.39     0.66      30%         4890
+   1.5-1.7    34        128    1.4      1.30   0.54     0.84      39%         5571
+   1.7-1.9     3        119    0.3      0.46   0.27     0.30      18%         1813
+
+x10, campaign 20 p50: by request rate (5-min bins)
+    turns/s bins users live queued TTFT mean median SSD GB/s SSD busy SSD tok/turn
+   0.0-0.5    12          7    0.0      0.51   0.46     0.00       0%          387
+   0.5-1.0     1         33    1.5      2.51   1.13     0.08       6%         1177
+   1.0-1.3     2         36    7.4      6.78   6.66     0.02       5%          212
+   1.5-1.7     2        103   51.1     32.44  32.93     1.63      83%        10081
+   1.7-1.9     2         73   29.2     17.40  17.94     0.95      53%         5166
+   1.9-2.1     7        128   69.2     35.02  34.34     1.86      97%         9241
+   2.1-2.3     9        125   65.2     30.71  31.07     1.88      98%         8732
+   2.3-2.5    16        104   41.1     17.85  17.63     1.25      70%         5261
+
+mean gap x70 73.6 s, reply about 11 s: request rate is C / 84.6 s; live context C x 25.5K tokens against 2.3M of GPU + host memory
+  C 128: 1.51 turns/s = 66 % of 2.3; live context 3.3M tokens = 1.4 x memory; users finished per second 0.047
+  C 160: 1.89 turns/s = 82 % of 2.3; live context 4.1M tokens = 1.8 x memory; users finished per second 0.058
+  C 192: 2.27 turns/s = 99 % of 2.3; live context 4.9M tokens = 2.1 x memory; users finished per second 0.070
+  C 256: 3.03 turns/s = 132 % of 2.3; live context 6.5M tokens = 2.8 x memory; users finished per second 0.093

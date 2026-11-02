@@ -1,8 +1,8 @@
 # Next-turn hints from gap distributions
 
 How an agent system gives the LLM system next-turn timing using only what a real system knows. This covers the first step;
-later steps are listed at the end. Written 2026-10-31. The client is built, the engine is unchanged, and nothing has run on
-a GPU yet.
+later steps are listed at the end. Written 2026-10-31. The client is built and the engine is unchanged. The x10 evaluation is
+done (campaign 20, under "How we evaluate it"); x70 is left out for now.
 
 ## Why
 
@@ -75,35 +75,39 @@ The design assumes a real agent system. These are the points a replay cannot do,
 
 ## What gets built in the first step
 
-**Client: done, not committed, never yet run against a real server.** `scripts/gap_hints.py` (`OnlineGapTable`),
+**Client: done, and evaluated at x10 against the frozen engine.** `scripts/gap_hints.py` (`OnlineGapTable`),
 `scripts/replay_agentic.py --hints dist` (`HINT_SOURCE=online` is the default), `scripts/reply_keys.py` (the recorded
 categories) and 60 tests in `scripts/test_gap_hints.py`. Two other sources stay for comparison: `precalc` (the table from the
 whole trace, known in advance) and `session` (each session's own gaps alone).
 
-**Engine: not started, about 100 lines plus tests (an estimate).** No edit to `Scheduler`, `TokenizerManager` or
-`ModelRunner`. Under `python/sglang/srt/mem_cache/`:
-- `next_turn_prefetch.py`: a version 2 reader beside `read_next_turn_hint`. In `on_turn_committed`, pick the entry, take its
-  p50 and continue down today's path. Version 1 stays, so the oracle arms keep working.
-- New `reply_key.py`: reads the tool and first word from the reply's text, with the same rule as `gap_hints.reply_key`. Text
-  form only for now, which is 83 % of the calls in this trace.
-- A server setting `reply_key_source`: `reply` (the default) reads the real reply, and `hint` reads `replay_reply_key`.
-- A test that runs every recorded text reply through the new reader and compares it with `reply_keys.json`.
+**Engine: built 2026-11-01, not committed, unit-tested, not yet run on a GPU.** Under `python/sglang/srt/mem_cache/`:
+- `next_turn_prefetch.py`: reads the version 2 table beside version 1. At commit it picks the entry and takes its p50 down today's path (event `ntp_pick`). A table wins over a version 1 action in the same request, and version 1 alone works as before, so the oracle arms keep working.
+- `reply_key.py`: reads the tool and first word from the reply, with the same rule as `gap_hints.reply_key`. It reads the text form (83 % of this trace's calls) and `<tool_call>` JSON, the form Qwen3 replies take. On all 25,617 recorded replies its keys equal the client's (`frozen/oracle_scripts_staging/c23_engine/check_reply_key.py`).
+- `--hicache-storage-next-turn-reply-key-source`: `reply` (the default) reads the real reply, and `hint` reads `replay_reply_key`.
 
-**The first measurement does not need the engine work.** The client also sends the entry's p50 as a version 1 action, and
-today's engine acts on it exactly as the new engine would: the same number at the same moment. So the first runs need only
-the client. The engine work is what makes this usable in a real system, and it does not change the replay's result.
+**The first measurement did not need the engine work.** The client also sends the entry's p50 as a version 1 action, and
+today's engine acts on it exactly as the new engine would: the same number at the same moment. So campaign 20 needed only the
+client. The engine work is what makes this usable in a real system, and it does not change the replay's result.
 
 ## How we evaluate it
 
 **The question:** how much of the oracle's gain survives when the exact gap is replaced by the p50?
 
-**The runs.** The `three_tier_wc_oracle_v2_nu` server on the same frozen engine (`frozen/engine_5df71c4bf0_v2`) with
-`HINTS=dist`: a short smoke, then one 5 h run at x70 and one at x10, about 12 GPU-hours (an estimate). Each is compared on
-the same turns with the baseline and oracle arms of campaign 18 (x70) and campaign 19 (x10), which used the same users and
-seed. x10 gives the clearer answer because its gain is large (75 s). The x70 gain is 0.51 s and the spread between full runs
-has never been measured, so x70 needs repeats if the result lands close.
+**The run.** Campaign 20: the `three_tier_wc_oracle_v2_nu` server on the same frozen engine (`frozen/engine_5df71c4bf0_v2`)
+with `HINTS=dist`, one 5 h run at x10, compared on the same turns with campaign 19's baseline and oracle arms (same users and
+seed).
 
-**How good the numbers are, before any run.** Scored offline on campaign 18's real send times, x70, after the first 45 min:
+**Result at x10: the whole gain survives.** Mean TTFT is 20.4 s against the oracle's 20.3 s and the baseline's 95.8 s, and all
+768 users finished at the oracle's pace. 376 plans (1.6 %) expired because the p50 was far too short, including every gap of
+300 s or more, and those turns' TTFT did not suffer. Details are in `results/campaign20/DECISIONS.md`.
+
+x10 is a forgiving test. Turns wait about 30 s in the queue, far longer than the forecast's usual error, and for gaps under 60 s
+reads come due about 2 s after the previous turn whether the gap is exact or not. So it shows the p50 is enough when the GPU and SSD
+are at their limits, not that it is enough in general. It also cannot rank better methods, and it does not show how much of the gain needs
+hints at all: this server also turns off paced retries and pins reads, and the hint-free arm has never been run
+(`ORACLE_FINDINGS.md` section 11, "Separate the retry change at x10").
+
+**How good the numbers are, offline.** Scored on campaign 18's real send times, x70, after the first 45 min:
 
 | Table | Gaps below p10 / p50 / p90 (ideal 10 / 50 / 90 %) | Quantile loss (lower is better) | Gaps of 300 s or more above p90 | AUC for gaps of 300 s or more |
 |---|---|---|---|---|
@@ -114,11 +118,12 @@ The online table costs little once warm. In the first 15 min it is weak (AUC 0.6
 sits a little low because a long gap only joins once it has finished. Scripts and output are in
 `frozen/dist_hint_design/online_table/`.
 
-**What we expect (not measured).**
-- **Gaps under 60 s** (78 % at x70, 98 % at x10): the p50 is about right, so these should behave like the oracle.
-- **Gaps of 300 s or more** (4.2 % of gaps but 35 % of idle time at x70): the p50 is far too short. The routine treats such a
-  session as overdue, then expires its plan and marks it ended; on the known-in-advance table's p50, 98.6 % of these gaps go
-  overdue and 90.8 % expire. This is where the gain should shrink, and it is the first thing to fix after the first step.
+**What we expect at x70 (not measured).** The queue is nearly empty there, so nothing covers a late read.
+- **Gaps under 60 s** (78 % of gaps): the p50 is about right, so these should behave like the oracle.
+- **Gaps of 300 s or more** (4.2 % of gaps but 35 % of idle time): the p50 is far too short. The routine treats such a session
+  as overdue, then expires its plan and marks it ended; on the known-in-advance table's p50, 98.6 % of these gaps go overdue and
+  90.8 % expire. This is where the gain should shrink. At x10 they expired too and cost nothing, but only because of the queue:
+  the 15 that came back with an empty queue went from a mean TTFT of 0.45 s to 0.66 s.
 
 ## Later steps
 
@@ -126,9 +131,13 @@ The fuller engine design for these is in `frozen/dist_hint_design/DIST_HINT_DESI
 
 1. **Better than one p50.** Use the whole distribution: move the deadline as idle time passes, and never let a forecast end
    a session.
-2. **One owner of reads.** Arrival stops starting a blind fetch and the scheduler decides when to read, aiming at one read
-   per turn. Today's arrival fetch stays until then, because the first step reuses the oracle routine as it is.
-3. **Read timing.** Which quantile to stage at, how early to start, and just-in-time reads for arrived turns.
+2. **One owner of reads: built 2026-11-01, in trial in campaign 23.** With `--hicache-storage-next-turn-arrival-gate on`,
+   `prefetch_from_storage` asks the prefetcher before any SSD lookup. A planned turn whose match covers its committed key to
+   within 256 tokens gets none, a planned turn gets at most 3, and a turn with no plan looks up as before. The prefix match at
+   arrival stays: it costs no I/O and admission's re-query needs it. Off by default, so other arms keep today's arrival fetch.
+3. **Read timing.** Which quantile to stage at and how early to start. Just-in-time staging and, with
+   `--hicache-storage-next-turn-arrival-hold on`, just-in-time reads for arrived turns are built and in trial in campaign 23:
+   a parked read of a queued turn waits until predicted admission minus read time minus 2 s, counting the pages ahead of it.
 4. **The campaign 18 and 19 engine issues:** landed spans that next-use eviction never registers, pins, and whole-session
    eviction at x10 (`ORACLE_FINDINGS.md`, section 11).
 
@@ -152,8 +161,7 @@ Not evaluated and not blocking the first step. Full review texts and scripts are
 - The online table depends on run timing, so two arms get slightly different tables.
 - A leading `# comment`, `export X=y &&` or `timeout N` hides the real command word.
 - Rejected calls borrow a key, and a rejected first call can be told from its key on MiniMax sessions.
-- The client's table has a `_no_call` category that the planned engine reader does not produce yet.
-- Native tool-call formats need per-parser work (about 40 parsers).
+- Other native tool-call formats than `<tool_call>` JSON need per-parser work (about 40 parsers), or a hook after the HTTP layer's existing parser.
 
 **Client housekeeping**
 - The `precalc` comparison source only: `task_of` misses `__run2` ids, so a session's own run can enter its list, and leaving
@@ -172,3 +180,7 @@ Not evaluated and not blocking the first step. Full review texts and scripts are
   eviction order.
 - Parked lookups hold a lock nobody budgets for.
 - Exact and forecast plans follow different rules, so comparing them is not only comparing gaps.
+- A read can go out for a turn already past its forecast arrival, because the routine still assumes the turn arrived on time
+  and is queueing. At 128 users this causes the double reads and most of the extra pins under p50 hints (campaign 23,
+  `jit_p50_c128`). Rule to try: read before arrival only if the queue wait could not cover the read.
+- Exact one-fetch needs room as well: at 70 GB, reads cut for host room split turns into several reads even with exact hints.

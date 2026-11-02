@@ -241,6 +241,57 @@ class Memory(msgspec.Struct):
             choices=["off", "observe", "on"],
         ),
     ] = "off"
+    hicache_storage_next_turn_reply_key_source: A[
+        str,
+        Arg(
+            help=(
+                "Where the next-turn prefetcher finds a reply's tool call when the "
+                "request carries a sglang.next_turn v2 gap table. 'reply' reads the "
+                "generated reply. 'hint' reads the table's replay_reply_key, for a "
+                "trace replay whose generated replies are not the recorded ones."
+            ),
+            choices=["reply", "hint"],
+        ),
+    ] = "reply"
+    hicache_storage_next_turn_read_timing: A[
+        str,
+        Arg(
+            help=(
+                "When the next-turn prefetcher issues a read under "
+                "--hicache-storage-read-order deadline. 'horizon': as soon as the span "
+                "is missing and the predicted admission is near. 'just_in_time': only "
+                "when the load estimate says the read must start, which holds pinned "
+                "memory for less time but depends more on the forecast."
+            ),
+            choices=["horizon", "just_in_time"],
+        ),
+    ] = "horizon"
+    hicache_storage_next_turn_arrival_gate: A[
+        str,
+        Arg(
+            help=(
+                "Make the next-turn prefetcher the one owner of SSD reads. 'on': a "
+                "planned turn whose prefix match covers its committed history gets no "
+                "SSD lookup when it arrives, and a planned turn's lookups are capped. "
+                "A turn with no plan looks up as usual. Needs "
+                "--hicache-storage-next-turn-prefetch on."
+            ),
+            choices=["off", "on"],
+        ),
+    ] = "off"
+    hicache_storage_next_turn_arrival_hold: A[
+        str,
+        Arg(
+            help=(
+                "'on': a parked read of a queued turn waits until the turn's predicted "
+                "admission minus the load estimate minus a margin, so it does not hold "
+                "pinned memory through the queue wait; near the head it goes at once. "
+                "Needs --hicache-storage-next-turn-prefetch on and "
+                "--hicache-storage-read-order deadline."
+            ),
+            choices=["off", "on"],
+        ),
+    ] = "off"
     hicache_storage_read_order: A[
         str,
         Arg(

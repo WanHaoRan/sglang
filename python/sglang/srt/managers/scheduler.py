@@ -1429,6 +1429,10 @@ class Scheduler(
             pp_size=get_parallel().pp_size,
             enable_dp_attention=self.enable_dp_attention,
             disaggregation_mode=DisaggregationMode(get_disagg().disaggregation_mode),
+            reply_key_source=get_memory().hicache_storage_next_turn_reply_key_source,
+            read_timing=get_memory().hicache_storage_next_turn_read_timing,
+            arrival_gate=get_memory().hicache_storage_next_turn_arrival_gate,
+            arrival_hold=get_memory().hicache_storage_next_turn_arrival_hold,
         )
         self.tree_cache.next_turn_prefetch = self.next_turn_prefetch
 

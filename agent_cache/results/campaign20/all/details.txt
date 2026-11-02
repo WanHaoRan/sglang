@@ -1,0 +1,18 @@
+prompt_tokens: differs on 4779 of 24879 turns; mean over all -0.64, |diff| max 655; total 635101746 vs 635085937
+replay_prompt_tokens: differs on 0 of 24879 turns; mean over all +0.00, |diff| max 0; total 635111017 vs 635111017
+turn numbers of the differing prompt_tokens, first 12: [3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4] ; replay_prompt_tokens set in c19 24879 c20 24879
+
+expired after staging 246: staged tokens mean 19393, total 4.77M = 0.47 TB at 96 KiB per token
+all staged tokens: {'c19 oracle': '160.4M = 15.77 TB', 'c20 p50': '155.8M = 15.31 TB'}
+c19 oracle: admissions after waiting 60 s or more: 67, first 10115 s, last 10243 s
+c20 p50: admissions after waiting 60 s or more: 51, first 9851 s, last 10103 s
+
+case 1 read due, seconds after the previous turn committed, by true gap:
+  0-5 s:  oracle n   107 lag p50    0.7  p50 n   156 lag p50    0.6
+  5-15 s:  oracle n  5911 lag p50    2.1  p50 n  6004 lag p50    2.1
+  15-60 s:  oracle n  2062 lag p50    2.1  p50 n  1860 lag p50    2.1
+  60-300 s:  oracle n   294 lag p50    3.9  p50 n   270 lag p50    2.1
+  300-1e+09 s:  oracle n   147 lag p50  594.6  p50 n   110 lag p50    2.2
+
+staged turn sets:
+  turns staged in both arms 5844, oracle only 2677, p50 only 2556

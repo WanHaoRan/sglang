@@ -39,6 +39,7 @@ _REQ = CacheRequestHandle("r", 0)
 
 def _staged_fixture(full_match=2):
     cache = UnifiedRadixCache.__new__(UnifiedRadixCache)
+    cache.prefetch_gate_fn = None
     cache.tree_core = SimpleNamespace(
         page_size=2,
         is_eagle=False,

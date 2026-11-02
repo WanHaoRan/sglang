@@ -9,7 +9,7 @@ deadline; a timed deadline is the predicted admission of a next-turn prefetch.
 The I/O thread holds at most `window_pages` of dispatched work and dispatched
 plus landed-and-pinned pages stay within `budget_tokens`. A "now" read ignores
 both limits, as the FIFO path allocates it unconditionally and an admission may
-be waiting on it.
+be waiting on it. An optional hold passes a read over until its start time.
 
 Pure policy: no clock, no tree, no controller; every time is passed in.
 """
@@ -40,6 +40,7 @@ class ReadSchedulerStats(msgspec.Struct):
     dispatched_now: int = 0
     window_holds: int = 0
     budget_holds: int = 0
+    hold_skips: int = 0
     max_wait_s: float = 0.0
 
 
@@ -92,25 +93,38 @@ class StorageReadScheduler:
         deadline_of: Callable[[Hashable], Optional[float]],
         in_flight_pages: int,
         held_tokens: int,
+        not_before_of: Optional[
+            Callable[[Hashable, ParkedRead, int], Optional[float]]
+        ] = None,
     ) -> list[DispatchDecision]:
         """Pop the reads to launch now, earliest deadline first.
 
         `in_flight_pages` is what the I/O thread already holds; `held_tokens`
         is the host memory charged to prefetching (the in-flight reads plus
         the pinned spans), so a read is charged once, here on top of it.
+        `not_before_of(handle, read, ahead_pages)` gives a read's start time. A held
+        read is passed over, unlike the window and budget holds that stop the loop,
+        so it never blocks a due read, but its pages still count as ahead of the next.
         """
         decisions: list[DispatchDecision] = []
         if not self._parked:
             return decisions
         deadlines = {handle: deadline_of(handle) for handle in self._parked}
+        order = sorted(
+            self._parked,
+            key=lambda h: (deadlines[h] is not None, deadlines[h] or 0.0),
+        )
         held = held_tokens
-        while self._parked:
-            handle = min(
-                self._parked,
-                key=lambda h: (deadlines[h] is not None, deadlines[h] or 0.0),
-            )
+        ahead_pages = in_flight_pages
+        for handle in order:
             read = self._parked[handle]
             deadline = deadlines[handle]
+            if not_before_of is not None:
+                not_before = not_before_of(handle, read, ahead_pages)
+                ahead_pages += read.pages
+                if not_before is not None and now < not_before:
+                    self.stats.hold_skips += 1
+                    continue
             if deadline is not None:
                 if in_flight_pages >= self.window_pages:
                     self.stats.window_holds += 1

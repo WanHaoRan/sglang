@@ -1,0 +1,48 @@
+campaign 18, x70: 23966 returning turns in both arms; paired mean -0.523 s
+by the gap slept:
+  gap 0-15 s               7013 (29.3 %) baseline   0.42 oracle   0.46 diff  +0.03 share of the gain  -1.9 % | median  0.29  0.29 | SSD/turn      0      0 | host/turn   3331   1336
+  gap 15-60 s             11789 (49.2 %) baseline   1.18 oracle   0.51 diff  -0.67 share of the gain  63.1 % | median  0.29  0.28 | SSD/turn   3118   2536 | host/turn  14075   9992
+  gap 60-120 s             2312 ( 9.6 %) baseline   1.73 oracle   0.82 diff  -0.91 share of the gain  16.7 % | median  1.01  0.33 | SSD/turn  15256  12352 | host/turn   5196   7687
+  gap 120-300 s            1870 ( 7.8 %) baseline   1.96 oracle   0.92 diff  -1.04 share of the gain  15.6 % | median  1.15  0.35 | SSD/turn  17436  15516 | host/turn   1549   3284
+  gap 300-600 s             635 ( 2.6 %) baseline   1.71 oracle   0.97 diff  -0.74 share of the gain   3.7 % | median  1.14  0.41 | SSD/turn  16311  16000 | host/turn   1259   1425
+  gap 600-1e+09 s           347 ( 1.4 %) baseline   2.20 oracle   1.20 diff  -1.00 share of the gain   2.8 % | median  1.32  0.43 | SSD/turn  19744  19694 | host/turn    252    274
+by requests queued when sent (most in the previous 30 s, either arm):
+  queue 0-0                 401 ( 1.7 %) baseline   0.32 oracle   0.30 diff  -0.02 share of the gain   0.1 % | median  0.25  0.25 | SSD/turn    568    568 | host/turn   8757   3979
+  queue 1-4               18719 (78.1 %) baseline   0.61 oracle   0.49 diff  -0.12 share of the gain  18.6 % | median  0.31  0.29 | SSD/turn   4114   3996 | host/turn   9270   6240
+  queue 5-19               4739 (19.8 %) baseline   2.80 oracle   0.93 diff  -1.87 share of the gain  70.6 % | median  0.73  0.33 | SSD/turn   9128   6057 | host/turn   5810   6898
+  queue 20-up               107 ( 0.4 %) baseline  14.50 oracle   1.92 diff -12.58 share of the gain  10.7 % | median 15.83  1.77 | SSD/turn  12617   6833 | host/turn   4774   9113
+calm turns only (queue under 5 in both), by the gap slept:
+  gap 0-60 s              14931 (62.3 %) baseline   0.43 oracle   0.41 diff  -0.02 share of the gain   2.8 % | median  0.27  0.27 | SSD/turn    708   1184 | host/turn  10805   6346
+  gap 60-120 s             1888 ( 7.9 %) baseline   1.12 oracle   0.70 diff  -0.43 share of the gain   6.4 % | median  0.88  0.33 | SSD/turn  14134  11141 | host/turn   6331   8819
+  gap 120-300 s            1518 ( 6.3 %) baseline   1.30 oracle   0.74 diff  -0.56 share of the gain   6.7 % | median  1.07  0.33 | SSD/turn  17407  15132 | host/turn   1899   3973
+  gap 300-1e+09 s           783 ( 3.3 %) baseline   1.33 oracle   0.91 diff  -0.42 share of the gain   2.6 % | median  1.07  0.40 | SSD/turn  17305  17042 | host/turn   1111   1249
+by the baseline's send time, 30-min bins:
+  0-30 min                 2110 ( 8.8 %) baseline   0.27 oracle   0.26 diff  -0.01 share of the gain   0.1 % | median  0.20  0.20 | SSD/turn    192     46 | host/turn   5163   1988
+  30-60 min                2853 (11.9 %) baseline   2.13 oracle   0.62 diff  -1.51 share of the gain  34.4 % | median  0.37  0.29 | SSD/turn   6401   4707 | host/turn   7020   6415
+  60-90 min                2635 (11.0 %) baseline   0.82 oracle   0.57 diff  -0.25 share of the gain   5.3 % | median  0.32  0.29 | SSD/turn   4771   4561 | host/turn   9109   6749
+  90-120 min               2676 (11.2 %) baseline   0.99 oracle   0.52 diff  -0.47 share of the gain  10.0 % | median  0.34  0.29 | SSD/turn   5181   4071 | host/turn   8488   6731
+  120-150 min              2833 (11.8 %) baseline   0.64 oracle   0.53 diff  -0.11 share of the gain   2.5 % | median  0.32  0.29 | SSD/turn   4301   4289 | host/turn   8986   6081
+  150-180 min              2692 (11.2 %) baseline   0.84 oracle   0.52 diff  -0.31 share of the gain   6.7 % | median  0.33  0.29 | SSD/turn   5423   4929 | host/turn   8725   6327
+  180-210 min              2577 (10.8 %) baseline   0.66 oracle   0.57 diff  -0.09 share of the gain   1.9 % | median  0.33  0.30 | SSD/turn   4604   4730 | host/turn   9199   6212
+  210-240 min              2703 (11.3 %) baseline   2.15 oracle   0.80 diff  -1.35 share of the gain  29.2 % | median  0.43  0.32 | SSD/turn   7166   5499 | host/turn   7326   7016
+  240-270 min              2131 ( 8.9 %) baseline   1.42 oracle   0.86 diff  -0.56 share of the gain   9.5 % | median  0.52  0.35 | SSD/turn   8237   6855 | host/turn   9984   8408
+  270-300 min               756 ( 3.2 %) baseline   0.47 oracle   0.42 diff  -0.05 share of the gain   0.3 % | median  0.36  0.33 | SSD/turn   1546   1246 | host/turn  18143   8778
+oracle arm: reply latency on calm turns mean 11.0 s, p50 5.6 s; first-turn-excluded TTFT by SSD use on calm turns:
+  no SSD tokens   15153 oracle TTFT mean  0.37 p90  0.61; the same turns in the baseline  0.44
+  under 5K          518 oracle TTFT mean  0.39 p90  0.62; the same turns in the baseline  0.83
+  5K-20K           1712 oracle TTFT mean  0.74 p90  1.86; the same turns in the baseline  1.01
+  20K or more      1737 oracle TTFT mean  1.22 p90  3.18; the same turns in the baseline  1.60
+  baseline turns reading 5K+ from the SSD on arrival: 3520, TTFT mean 1.61 s, median 1.26 s, SSD 21721 tokens
+
+by calculation, per gap scale: 24082 turns with a point; reply latency 11.0 s from the calm x70 turns; GPU limit taken as 2.3 turns/s; C = 128; wait 0
+scale p50 gap   mean at cap turns/s   GPU session users done 5h | gap>120 p50>120 expire read not issued err>5s err>30s
+   10     7.1   14.6   0.3%    5.00  218%     14m           768 |    1.0%    0.0%   1.6%            0.0%  24.1%    3.7%
+   20    14.2   25.5   0.3%    3.51  153%     20m           768 |    2.3%    0.0%   3.7%            0.0%  29.3%    6.8%
+   30    21.2   35.9   0.4%    2.73  119%     25m           768 |    4.7%    0.2%   4.7%            0.0%  30.0%   10.1%
+   40    28.3   45.9   0.7%    2.25   98%     31m           768 |    5.8%    1.4%   5.3%            0.0%  30.4%   11.6%
+   50    35.4   55.3   0.7%    1.93   84%     36m           768 |    7.1%    2.9%   5.6%            0.1%  30.7%   18.1%
+   70    49.6   73.6   0.9%    1.51   66%     46m           768 |   12.0%    9.5%   6.9%            0.7%  31.6%   28.0%
+  100    70.8  100.3   1.0%    1.15   50%     60m           639 |   20.6%   14.0%   7.3%            1.3%  33.2%   29.0%
+  140    99.1  134.6   1.5%    0.88   38%     79m           488 |   21.7%   14.9%   7.5%            2.9%  37.2%   29.6%
+  200   141.6  183.3   2.3%    0.66   29%    105m           366 |   69.2%   75.4%   7.6%            9.1%  46.1%   30.2%
+  300   212.4  254.3   4.7%    0.48   21%    143m           268 |   69.8%   75.9%   6.6%           12.5%  59.0%   30.7%

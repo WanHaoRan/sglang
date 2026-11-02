@@ -48,7 +48,10 @@ from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
 from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool
 from sglang.srt.mem_cache.radix_cache import RadixKey
 from sglang.srt.mem_cache.storage_prefetch import StoragePrefetchRetries
-from sglang.srt.mem_cache.storage_read_scheduler import StorageReadScheduler
+from sglang.srt.mem_cache.storage_read_scheduler import (
+    ParkedRead,
+    StorageReadScheduler,
+)
 from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
 from sglang.srt.mem_cache.unified_cache.cache_action import (
     BackupKV,
@@ -296,6 +299,11 @@ class UnifiedRadixCache(BasePrefixCache):
         self.read_deadline_fn: Optional[
             Callable[[CacheRequestHandle], Optional[float]]
         ] = None
+        # Bound by the next-turn prefetcher when it owns reads; None keeps today's paths.
+        self.prefetch_gate_fn: Optional[Callable[[CacheRequestHandle, int], bool]] = None
+        self.read_not_before_fn: Optional[
+            Callable[[CacheRequestHandle, ParkedRead, int], Optional[float]]
+        ] = None
         self.prefetch_pin_budget_tokens = 0
         self.pinned_prefetch: dict[CacheRequestHandle, _PinnedPrefetch] = {}
         self.pinned_prefetch_tokens = 0
@@ -310,6 +318,7 @@ class UnifiedRadixCache(BasePrefixCache):
             "issued_assumed_stored": 0,
             "declined_too_short": 0,
             "declined_rate_limited": 0,
+            "declined_gate": 0,
             "declined_anchor_lost": 0,
             "declined_device_covered": 0,
             "revoked_insufficient": 0,
@@ -2126,6 +2135,11 @@ class UnifiedRadixCache(BasePrefixCache):
             # Paced: the limiter clears as transfers finish, not on the next pass.
             self.storage_prefetch_retries.poll_miss(req_id, storage_hit_end)
             return
+        if self.prefetch_gate_fn is not None and not self.prefetch_gate_fn(
+            request, storage_start
+        ):
+            stats["declined_gate"] += 1
+            return
 
         # Buffer mode holds no tree state during the fetch: buffers are
         # operation-owned, so the anchor needs no pin.
@@ -3068,6 +3082,7 @@ class UnifiedRadixCache(BasePrefixCache):
             deadline_of=self._read_deadline,
             in_flight_pages=self.storage_read_backlog_pages(),
             held_tokens=cc.prefetch_tokens_occupied + self.pinned_prefetch_tokens,
+            not_before_of=self.read_not_before_fn,
         )
         for decision in decisions:
             operation = decision.read.operation

@@ -218,11 +218,25 @@ def resolve_storage_read_order(server_args: Any):
             "--hicache-storage-read-window-pages must be at least 1, got "
             f"{cfg.hicache_storage_read_window_pages}."
         )
+    arrival_hold = cfg.hicache_storage_next_turn_arrival_hold == "on"
+    if (
+        cfg.hicache_storage_next_turn_arrival_gate == "on" or arrival_hold
+    ) and cfg.hicache_storage_next_turn_prefetch != "on":
+        raise ValueError(
+            "--hicache-storage-next-turn-arrival-gate and "
+            "--hicache-storage-next-turn-arrival-hold act on the next-turn prefetcher's "
+            "plans and need --hicache-storage-next-turn-prefetch on."
+        )
     if cfg.hicache_storage_read_order == "fifo":
         if pin > 0:
             raise ValueError(
                 "--hicache-storage-prefetch-pin-fraction > 0 needs "
                 "--hicache-storage-read-order deadline."
+            )
+        if arrival_hold:
+            raise ValueError(
+                "--hicache-storage-next-turn-arrival-hold holds parked reads, which "
+                "needs --hicache-storage-read-order deadline."
             )
         return
     if cfg.hicache_storage_backend is None:

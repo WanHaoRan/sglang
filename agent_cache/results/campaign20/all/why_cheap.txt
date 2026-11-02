@@ -1,0 +1,39 @@
+24111 returning turns. Queue = most requests the scheduler showed waiting in the 30 s before the send, in that run.
+
+by queue in BOTH runs at the send, paired:
+  queue 0-0                                       197 | TTFT mean oracle   0.51 p50   0.51 diff  +0.01, median TTFT   0.42   0.43, p90   0.84   0.86 | SSD    427    427 | host   1616   1453 | recomputed    34    40
+  queue 1-9                                      3021 | TTFT mean oracle   0.47 p50   0.48 diff  +0.01, median TTFT   0.27   0.28, p90   0.81   0.76 | SSD     63     64 | host   4354   5633 | recomputed    32    33
+  queue 10-39                                    1788 | TTFT mean oracle  11.59 p50  11.69 diff  +0.11, median TTFT  11.31  11.67, p90  19.25  18.97 | SSD   3123   2586 | host  18339  18872 | recomputed    38    39
+  queue 40-up                                   18171 | TTFT mean oracle  29.85 p50  29.91 diff  +0.06, median TTFT  29.51  29.92, p90  39.16  39.18 | SSD   8933   8729 | host   9402   9607 | recomputed    48    45
+
+queue 0 in both runs, by true gap:
+  gap 0-15 s                                      166 | TTFT mean oracle   0.50 p50   0.50 diff  -0.00, median TTFT   0.41   0.43, p90   0.80   0.80 | SSD      0      0 | host     13      0 | recomputed    33    36
+  gap 15-60 s                                      14 | TTFT mean oracle   0.58 p50   0.47 diff  -0.12, median TTFT   0.35   0.37, p90   1.47   0.87 | SSD      0      0 | host   4777   2633 | recomputed    33    33
+  gap 60-300 s                                      2 | TTFT mean oracle   0.63 p50   0.59 diff  -0.03, median TTFT   0.63   0.59, p90   0.83   0.86 | SSD      0      0 | host      0      0 | recomputed    21    21
+  gap 300-1e+09 s                                  15 | TTFT mean oracle   0.45 p50   0.66 diff  +0.21, median TTFT   0.43   0.49, p90   0.74   1.30 | SSD   5602   5606 | host  16623  16619 | recomputed    53    99
+
+queue 0 in both runs, plan expired in the p50 run or not:
+  expired                                          15 | TTFT mean oracle   0.45 p50   0.66 diff  +0.21, median TTFT   0.43   0.49, p90   0.74   1.30 | SSD   5602   5606 | host  16623  16619 | recomputed    53    99
+  not expired                                     182 | TTFT mean oracle   0.51 p50   0.50 diff  -0.01, median TTFT   0.41   0.42, p90   0.84   0.81 | SSD      0      0 | host    379    203 | recomputed    33    36
+
+queue 0, after eviction began (sent from 2,100 s on; before that history stays in memory):
+  all                                             175 | TTFT mean oracle   0.51 p50   0.52 diff  +0.01, median TTFT   0.43   0.46, p90   0.83   0.86 | SSD    480    481 | host   1819   1635 | recomputed    35    41
+  expired                                          15 | TTFT mean oracle   0.45 p50   0.66 diff  +0.21, median TTFT   0.43   0.49, p90   0.74   1.30 | SSD   5602   5606 | host  16623  16619 | recomputed    53    99
+  not expired, gap under 60 s                     158 | TTFT mean oracle   0.51 p50   0.50 diff  -0.01, median TTFT   0.43   0.45, p90   0.84   0.80 | SSD      0      0 | host    437    233 | recomputed    33    36
+  not expired, gap 60 s or more                     2 | TTFT mean oracle   0.63 p50   0.59 diff  -0.03, median TTFT   0.63   0.59, p90   0.83   0.86 | SSD      0      0 | host      0      0 | recomputed    21    21
+
+queue 40 or more in both runs, plan expired or not:
+  expired                                         274 | TTFT mean oracle  30.64 p50  29.74 diff  -0.90, median TTFT  29.76  29.09, p90  40.02  40.41 | SSD  19439  19624 | host    268     97 | recomputed   124   124
+  not expired                                   17897 | TTFT mean oracle  29.84 p50  29.91 diff  +0.07, median TTFT  29.51  29.93, p90  39.15  39.16 | SSD   8772   8563 | host   9542   9752 | recomputed    47    44
+
+expired plans: when the turn finally came, did its read land before admission? (p50 run)
+  queue 40 or more      274 turns, 268 read after arriving: read took p50   2.96 s p90   4.36 s, TTFT p50  29.09 s; read ended before first token on 268
+  queue 1-39             86 turns, 36 read after arriving: read took p50   1.02 s p90   1.89 s, TTFT p50   8.01 s; read ended before first token on 36
+  queue 0                16 turns, 13 read after arriving: read took p50   0.20 s p90   1.77 s, TTFT p50   0.54 s; read ended before first token on 13
+
+forecast vs the 120 s read horizon: how many true gaps sit beyond what a wait of 30 s leaves (90 s)?
+  gaps over 90 s: 349 of 24111 (1.4 %); sent p50 over 90 s: 1; largest sent p50 92.8 s
+
+spread of the wait and of the forecast error, congested part (2,280-10,800 s), seconds:
+  admission wait: mean 29.6, stdev 8.1, p10 19.1, p90 38.7
+  true gap - sent p50: mean 1.00, stdev 7.9, p10 -5.29, p50 0.02, p90 5.19; turn's TTFT - wait: mean 0.44

@@ -1,0 +1,29 @@
+fields of a turn record: ['cached_details', 'cached_tokens', 'completion_tokens', 'conv', 'dist_hint', 'gap_slept', 'kind', 'latency', 'output_length', 'pre_gap', 'prompt_tokens', 'replay_prompt_tokens', 'source', 't_send', 'task_conv', 'ttft', 'turn']
+dist_hint fields: ['list_len', 'matched', 'next_rid', 'point_s', 'reply_key', 'true_gap_s']
+(conv, turn) in both 24879; same recorded gap field 24879
+same prompt tokens 20100, same completion tokens 24879
+
+24082 turns with a point. true gap p10/p25/p50/p75/p90/p99 0.6/1.0/7.1/7.5/17.7/119.2, mean 14.6
+sent p50  p10/p25/p50/p75/p90/p99 0.7/6.9/7.1/7.3/12.6/30.4, mean 7.5
+distinct true gaps 6308; true == sent within 1 ms: 58
+  the sent p50                                       |err| median  0.22 mean  9.24 p90  10.01; under 5 s  75.9 %, under 30 s  96.3 %
+  one constant (7.1 s, median of all true gaps)      |err| median  4.86 mean 11.39 p90  10.58; under 5 s  50.9 %, under 30 s  95.0 %
+|true - sent p50| by the tool of the picked entry, largest groups:
+  execute_bash              17087 |err| median   0.24 mean   9.61
+  str_replace_editor         4484 |err| median   0.15 mean   5.10
+  think                       643 |err| median   0.10 mean   1.99
+  web_browser_go              592 |err| median  10.52 mean  23.74
+  bash                        293 |err| median   4.56 mean  29.97
+  task_tracker                208 |err| median   0.12 mean   0.14
+  python                      200 |err| median   1.48 mean  24.90
+  execute_ipython_cell        175 |err| median   0.64 mean   4.46
+  *                           122 |err| median   6.31 mean  14.99
+  web_browser_scroll          117 |err| median   3.97 mean   7.17
+
+read timing, planned turns (seconds after the previous turn committed = ntp_plan):
+  c19 oracle: due {'1': 8521, '2': 641}; case 1 lag after commit p10/p50/p90 0.7/2.1/5.4; under 1 s 11.4 %, under 2 s 43.8 %; estimated queue wait p50 29.5 s; plan gap p50 7.6 s, lead p50 38.9 s
+  c20 p50: due {'1': 8400, '2': 540}; case 1 lag after commit p10/p50/p90 0.7/2.1/5.0; under 1 s 12.2 %, under 2 s 46.5 %; estimated queue wait p50 29.8 s; plan gap p50 7.3 s, lead p50 37.6 s
+
+the congested part, turns sent 2,280-10,800 s:
+  c19 oracle: admission wait mean 29.5 p50 29.1 s; arrival forecast |err| mean 0.11 p50 0.06 p90 0.24 p99 1.02 s
+  c20 p50: admission wait mean 29.6 p50 29.5 s; arrival forecast |err| mean 3.39 p50 0.50 p90 8.72 p99 40.44 s

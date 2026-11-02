@@ -20,6 +20,11 @@
 #          Retry flags pinned to 8 / 8 on dl and wb; the two oracle_v2 arms pass poll interval 0 (paced miss retries off, the
 #          value the engine resolves for the deadline order with the prefetcher on, ORACLE_V2_PLAN.md 3.1) and keep 8 attempts
 #          for the admission re-query. The client needs ORACLE_HINTS=1 (or HINTS=dist) on every arm; the engine needs storage_read_scheduler.py.
+#          three_tier_wc_poll0 | three_tier_wc_dl_poll0: the hint-free steps between three_tier_wc and the oracle arms (campaign 22): three_tier_wc and
+#          three_tier_wc_dl with paced miss retries off (poll interval 0) and 8 attempts for the admission re-query. Hints the client sends are ignored.
+#          three_tier_wc_oracle_v2_nu_table: three_tier_wc_oracle_v2_nu reading the v2 gap table's replay_reply_key at commit (needs HINTS=dist; DIST_HINT_DESIGN.md).
+#          three_tier_wc_oracle_v2_nu_jit: the same with just-in-time reads. Exact hints (version 1) work on it too. The last two need an engine with those flags.
+#          three_tier_wc_oracle_v2_nu_owned: the jit arm with the prefetcher as the one owner of reads: arrival gate and arrival hold on (DIST_HINT_DESIGN.md; needs engine_owned_20261101 or newer).
 #   LEVEL  P0 (default: L1 262144 tok, host 64 GB) | PH (131072 / 48) | PL (131072 / 18)          (RUNBOOK 5.3)
 #          NAT64 / NAT160: NO --max-total-tokens (the profiled device pool), host 64 / 160 GB   (campaigns 6-7, "natural")
 #   Overrides (env): L1_TOKENS=<tokens> and/or HOST_GB=<GB> replace the level's pools; the run dir is then named custom_L1<tokens>_H<GB>.
@@ -138,6 +143,8 @@ case "$ARM" in
   hbm_host)      ARGS=("${COMMON[@]}" "${HOST[@]}"); ENVV=() ;;
   three_tier_to) l3_prep; POLICY=timeout;       ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_TO[@]}"); ENVV=("${L3ENV[@]}") ;;
   three_tier_wc) l3_prep; POLICY=wait_complete; ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_WC[@]}"); ENVV=("${L3ENV[@]}") ;;
+  three_tier_wc_poll0) l3_prep; POLICY=wait_complete
+    ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_WC[@]}" --hicache-storage-prefetch-retry-poll-interval 0 --hicache-storage-prefetch-retry-max-attempts 8); ENVV=("${L3ENV[@]}") ;;
   three_tier_wc_norq) l3_prep; POLICY=wait_complete
     ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_WC[@]}" --hicache-storage-prefetch-retry-max-attempts 0); ENVV=("${L3ENV[@]}") ;;
   three_tier_wc_ntpobs|three_tier_wc_oracle|three_tier_wc_ntpobs_norq|three_tier_wc_oracle_norq|\
@@ -150,25 +157,31 @@ case "$ARM" in
       *)      RQ=(--hicache-storage-prefetch-retry-poll-interval 8 --hicache-storage-prefetch-retry-max-attempts 8) ;;
     esac
     ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3[@]}" "${RQ[@]}" --hicache-storage-next-turn-prefetch "$NTP"); ENVV=("${L3ENV[@]}") ;;
-  three_tier_wc_dl|three_tier_wc_oracle_v2|three_tier_wc_oracle_v2_nu|three_tier_wc_wb)
+  three_tier_wc_dl|three_tier_wc_dl_poll0|three_tier_wc_oracle_v2|three_tier_wc_oracle_v2_nu|three_tier_wc_oracle_v2_nu_table|three_tier_wc_oracle_v2_nu_jit|three_tier_wc_oracle_v2_nu_owned|three_tier_wc_wb)
     l3_prep; POLICY=wait_complete
     case "$ARM" in
       # deadline order + prefetcher on: paced miss retries off, the prefetcher's refetch re-issues for queued turns
-      three_tier_wc_oracle_v2*) RQ=(--hicache-storage-prefetch-retry-poll-interval 0 --hicache-storage-prefetch-retry-max-attempts 8) ;;
+      three_tier_wc_oracle_v2*|three_tier_wc_dl_poll0) RQ=(--hicache-storage-prefetch-retry-poll-interval 0 --hicache-storage-prefetch-retry-max-attempts 8) ;;
       *)                        RQ=(--hicache-storage-prefetch-retry-poll-interval 8 --hicache-storage-prefetch-retry-max-attempts 8) ;;
     esac
     case "$ARM" in
       three_tier_wc_wb)           ARGS=("${COMMON[@]}" "${HOST_WB[@]}" "${L3_WC[@]}" "${RQ[@]}") ;;
-      three_tier_wc_dl)           ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_WC[@]}" "${RQ[@]}" "${V2[@]}") ;;
+      three_tier_wc_dl|three_tier_wc_dl_poll0) ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_WC[@]}" "${RQ[@]}" "${V2[@]}") ;;
       three_tier_wc_oracle_v2)    NTP=on
                                   ARGS=("${COMMON[@]}" "${HOST[@]}" "${L3_WC[@]}" "${RQ[@]}" "${V2[@]}" --hicache-storage-next-turn-prefetch on) ;;
+      three_tier_wc_oracle_v2_nu_owned) NTP=on
+                                  ARGS=("${COMMON_NU[@]}" "${HOST[@]}" "${L3_WC[@]}" "${RQ[@]}" "${V2[@]}" "${NU[@]}" --hicache-storage-next-turn-prefetch on --hicache-storage-next-turn-reply-key-source hint --hicache-storage-next-turn-read-timing just_in_time --hicache-storage-next-turn-arrival-gate on --hicache-storage-next-turn-arrival-hold on) ;;
+      three_tier_wc_oracle_v2_nu_jit) NTP=on
+                                  ARGS=("${COMMON_NU[@]}" "${HOST[@]}" "${L3_WC[@]}" "${RQ[@]}" "${V2[@]}" "${NU[@]}" --hicache-storage-next-turn-prefetch on --hicache-storage-next-turn-reply-key-source hint --hicache-storage-next-turn-read-timing just_in_time) ;;
+      three_tier_wc_oracle_v2_nu_table) NTP=on
+                                  ARGS=("${COMMON_NU[@]}" "${HOST[@]}" "${L3_WC[@]}" "${RQ[@]}" "${V2[@]}" "${NU[@]}" --hicache-storage-next-turn-prefetch on --hicache-storage-next-turn-reply-key-source hint) ;;
       three_tier_wc_oracle_v2_nu) NTP=on
                                   ARGS=("${COMMON_NU[@]}" "${HOST[@]}" "${L3_WC[@]}" "${RQ[@]}" "${V2[@]}" "${NU[@]}" --hicache-storage-next-turn-prefetch on) ;;
     esac
     ENVV=("${L3ENV[@]}") ;;
   *) echo "STOP: unknown ARM '$ARM' (hbm_lru | hbm_host | three_tier_to | three_tier_wc | three_tier_wc_norq |" \
           "three_tier_{wc,to}_ntpobs | three_tier_{wc,to}_oracle | three_tier_{wc,to}_ntpobs_norq | three_tier_{wc,to}_oracle_norq |" \
-          "three_tier_wc_dl | three_tier_wc_oracle_v2 | three_tier_wc_oracle_v2_nu | three_tier_wc_wb)"; exit 1 ;;
+          "three_tier_wc_dl | three_tier_wc_oracle_v2 | three_tier_wc_oracle_v2_nu | three_tier_wc_wb | three_tier_wc_poll0 | three_tier_wc_dl_poll0 | three_tier_wc_oracle_v2_nu_table | three_tier_wc_oracle_v2_nu_jit | three_tier_wc_oracle_v2_nu_owned)"; exit 1 ;;
 esac
 
 echo "arm: $ARM  level: $LEVEL (L1=${L1:-natural} tokens, host=$HSIZE GB)  model: $MODEL  ctx: $CTX  run dir: $RUN"
@@ -182,7 +195,7 @@ if [ "$NTP" != off ] && [ ! -f "$ENGINE/srt/mem_cache/next_turn_prefetch.py" ]; 
   echo "STOP: $ARM needs the next-turn prefetcher, which $ENGINE lacks (unset ENGINE_PYTHONPATH or freeze a newer copy)"
   rm -rf -- "$RUN"; exit 1
 fi
-case "$ARM" in three_tier_wc_dl|three_tier_wc_oracle_v2*)
+case "$ARM" in three_tier_wc_dl|three_tier_wc_dl_poll0|three_tier_wc_oracle_v2*)
   if [ ! -f "$ENGINE/srt/mem_cache/storage_read_scheduler.py" ]; then
     echo "STOP: $ARM needs the storage read scheduler (ORACLE_V2_PLAN.md 4.2), which $ENGINE lacks (unset ENGINE_PYTHONPATH or freeze a newer copy)"
     rm -rf -- "$RUN"; exit 1
@@ -223,9 +236,10 @@ case "$ARM" in three_tier_*)
   echo "L3 cleaner marks: $(grep -aoE 'high=[0-9.]+% low=[0-9.]+%' "$RUN/server.log" | head -1)   (want ${L3_CLEANER_PCT:-80,70})"
   echo "re-query cap:     $(grep -aoE "'hicache_storage_prefetch_retry_max_attempts': [0-9]+" "$RUN/server.log" | head -1)   (want $(case "$ARM" in *_norq) echo 0 ;; *) echo 8 ;; esac))"
   echo "next-turn mode:   $(grep -aoE "'hicache_storage_next_turn_prefetch': '[a-z]+'" "$RUN/server.log" | head -1), prefetcher banner $(grep -ac 'HiCache next-turn prefetch: mode=' "$RUN/server.log")   (want $NTP, banner $([ "$NTP" = off ] && echo 0 || echo 1))"
-  case "$ARM" in three_tier_wc_dl|three_tier_wc_oracle_v2*|three_tier_wc_wb)
+  echo "retry interval:   $(grep -aoE "'hicache_storage_prefetch_retry_poll_interval': [0-9]+" "$RUN/server.log" | head -1)   (want $(case "$ARM" in *_poll0|three_tier_wc_oracle_v2*) echo 0 ;; *) echo 8 ;; esac))"
+  case "$ARM" in three_tier_wc_dl|three_tier_wc_dl_poll0|three_tier_wc_oracle_v2*|three_tier_wc_wb)
     echo "read order:       $(grep -aoE "'hicache_storage_read_order': '[a-z]+'" "$RUN/server.log" | head -1), $(grep -aoE "'hicache_storage_prefetch_pin_fraction': [0-9.]+" "$RUN/server.log" | head -1), srs banner $(grep -ac 'HiCache storage reads: order=deadline' "$RUN/server.log") $(grep -aoE 'retry_poll_interval=[0-9]+' "$RUN/server.log" | head -1)   (want $(case "$ARM" in three_tier_wc_wb) echo "fifo, pin 0.0, banner 0" ;; three_tier_wc_dl) echo "deadline, pin 0.3, banner 1 retry_poll_interval=8" ;; *) echo "deadline, pin 0.3, banner 1 retry_poll_interval=0" ;; esac))"
     echo "write policy:     $(grep -aoE "'hicache_write_policy': '[a-z_]+'" "$RUN/server.log" | head -1)   (want $(case "$ARM" in three_tier_wc_wb) echo write_back ;; *) echo write_through ;; esac))"
-    echo "eviction policy:  $(grep -aoE "'radix_eviction_policy': '[a-z_]+'" "$RUN/server.log" | head -1)   (want $(case "$ARM" in *_nu) echo next_use ;; *) echo lru ;; esac))" ;;
+    echo "eviction policy:  $(grep -aoE "'radix_eviction_policy': '[a-z_]+'" "$RUN/server.log" | head -1)   (want $(case "$ARM" in *_nu|*_nu_table|*_nu_jit|*_nu_owned) echo next_use ;; *) echo lru ;; esac))" ;;
   esac ;;
 esac

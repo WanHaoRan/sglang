@@ -1,0 +1,36 @@
+arm          started finished  cut skipped  turns last end s wait to start mean    p50    p90    max user-h waiting user-h in session
+c19 wc           536      413  123     232  15033      18196               5748   6332  11869  12367           1226               596
+c19 oracle       768      768    0       0  24879      16907                732    636   2057   2424            156               352
+c20 p50          768      768    0       0  24879      16905                738    644   2069   2418            157               352
+
+c19 wc: client 10-18 10:38:54Z +18221 s; SSD read 8.28 TB, written 10.39 TB, busy mean 38 %, samples >= 99 % 1 %
+   waiting to start: peak 422 at 7620 s, last > 0 at 18000 s; requests in flight 1,800-10,000 s mean 113.5, max 126; 2,100-9,000 s turns/s 0.72, 5-min mean TTFT 21.4-189.5 s; max 5-min 193.5 s at 170 min
+c19 oracle: client 10-18 15:46:10Z +16907 s; SSD read 16.64 TB, written 2.16 TB, busy mean 53 %, samples >= 99 % 1 %
+   waiting to start: peak 165 at 7620 s, last > 0 at 10020 s; requests in flight 1,800-10,000 s mean 93.7, max 112; 2,100-9,000 s turns/s 2.27, 5-min mean TTFT 15.4-35.0 s; max 5-min 50.6 s at 165 min
+c20 p50: client 10-31 20:48:51Z +16905 s; SSD read 16.58 TB, written 2.16 TB, busy mean 53 %, samples >= 99 % 1 %
+   waiting to start: peak 167 at 7620 s, last > 0 at 10020 s; requests in flight 1,800-10,000 s mean 92.8, max 113; 2,100-9,000 s turns/s 2.27, 5-min mean TTFT 15.7-34.8 s; max 5-min 47.7 s at 165 min
+
+c19 oracle - c19 wc: 15033 shared turns in 30 blocks; mean -75.55 s, 95 % interval resampling 10-min blocks [-105.41, -49.84]
+   baseline send time 0-2280 s: 5031 turns, baseline 3.58 s, arm 3.66 s, difference +0.07 s, contribution +0.02 s
+   baseline send time 2280-1e+09 s: 10002 turns, baseline 142.22 s, arm 28.63 s, difference -113.59 s, contribution -75.58 s
+c20 p50 - c19 wc: 15033 shared turns in 30 blocks; mean -75.46 s, 95 % interval resampling 10-min blocks [-105.27, -49.81]
+   baseline send time 0-2280 s: 5031 turns, baseline 3.58 s, arm 3.71 s, difference +0.13 s, contribution +0.04 s
+   baseline send time 2280-1e+09 s: 10002 turns, baseline 142.22 s, arm 28.75 s, difference -113.47 s, contribution -75.50 s
+c20 p50 - c19 oracle, all 24879 turns both ran, in 27 blocks: mean +0.045 s, 95 % interval resampling 10-min blocks [-0.116, +0.196]; absolute paired difference median 2.47 s, mean 3.46 s
+
+c19 oracle: Tracebacks 0, boot pools OK; SSD cleanups at client s [8673, 10031]
+   admitted planned turns 24111; waited 60 s or more: 67, longest 71.8 s; of those, in the 5 min after a cleanup: 67
+     -600..+0 s around 8673 s: 1388 admissions, wait mean 27.1 s, max 39.2 s, >= 60 s 0
+     +0..+300 s around 8673 s: 609 admissions, wait mean 31.2 s, max 46.8 s, >= 60 s 0
+     +300..+900 s around 8673 s: 1176 admissions, wait mean 35.9 s, max 51.9 s, >= 60 s 0
+     -600..+0 s around 10031 s: 1128 admissions, wait mean 36.3 s, max 46.8 s, >= 60 s 0
+     +0..+300 s around 10031 s: 448 admissions, wait mean 50.8 s, max 71.8 s, >= 60 s 67
+     +300..+900 s around 10031 s: 1162 admissions, wait mean 21.4 s, max 49.3 s, >= 60 s 0
+c20 p50: Tracebacks 0, boot pools OK; SSD cleanups at client s [8673, 10062]
+   admitted planned turns 23706; waited 60 s or more: 51, longest 66.4 s; of those, in the 5 min after a cleanup: 27
+     -600..+0 s around 8673 s: 1388 admissions, wait mean 26.4 s, max 37.3 s, >= 60 s 0
+     +0..+300 s around 8673 s: 592 admissions, wait mean 31.1 s, max 52.1 s, >= 60 s 0
+     +300..+900 s around 8673 s: 1161 admissions, wait mean 35.9 s, max 52.5 s, >= 60 s 0
+     -600..+0 s around 10062 s: 1090 admissions, wait mean 37.6 s, max 66.4 s, >= 60 s 24
+     +0..+300 s around 10062 s: 459 admissions, wait mean 47.2 s, max 66.1 s, >= 60 s 27
+     +300..+900 s around 10062 s: 1150 admissions, wait mean 20.7 s, max 43.6 s, >= 60 s 0

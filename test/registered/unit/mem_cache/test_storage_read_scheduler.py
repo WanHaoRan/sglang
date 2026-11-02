@@ -74,6 +74,41 @@ class TestStorageReadScheduler(CustomTestCase):
         # Freed budget lets the last one go.
         self.assertEqual(self.dispatch(srs, deadlines, held=0), ["c"])
 
+    def test_a_held_read_is_passed_over_and_its_pages_stay_ahead_of_the_next(self):
+        """Unlike a full window, a hold must not block the due read behind it. The held
+        read still goes first once it starts, so the next estimate has to count it."""
+        srs = scheduler(window_pages=100)
+        for handle in ("held", "due", "last"):
+            srs.park(handle=handle, operation=None, pages=10, now=0.0)
+        deadlines = {"held": 110.0, "due": 120.0, "last": 130.0}
+        hold = {"held": 150.0}
+        ahead = {}
+
+        def not_before(handle, read, ahead_pages):
+            ahead[handle] = ahead_pages
+            return hold.get(handle)
+
+        def dispatch(now, in_flight=5):
+            return [
+                d.read.handle
+                for d in srs.dispatch(
+                    now=now,
+                    deadline_of=deadlines.get,
+                    in_flight_pages=in_flight,
+                    held_tokens=0,
+                    not_before_of=not_before,
+                )
+            ]
+
+        self.assertEqual(dispatch(100.0), ["due", "last"])
+        self.assertEqual(ahead, {"held": 5, "due": 15, "last": 25})
+        self.assertEqual(srs.parked_handles(), ["held"])
+        self.assertEqual(srs.stats.hold_skips, 1)
+        # Past its start time the read still respects the window, like any timed read.
+        self.assertEqual(dispatch(150.0, in_flight=100), [])
+        self.assertEqual(srs.stats.window_holds, 1)
+        self.assertEqual(dispatch(150.0), ["held"])
+
     def test_discard_clear_and_duplicate_park(self):
         srs = scheduler()
         srs.park(handle="a", operation=None, pages=1, now=0.0)

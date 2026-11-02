@@ -58,7 +58,12 @@ ARM_COLOR = {"hbm_lru": GRAY, "hbm_host": ORANGE, "three_tier": AQUA,
              "three_tier_to_oracle": "#4a3aa7",
              # campaign 16: Okabe-Ito sky, Tol wine, violet again (never with three_tier_to_oracle); with GREEN,
              # worst normal-vision dE 18.2 and worst CVD dE 11.4 (OKLab x100, Machado)
-             "three_tier_wc_dl": "#56b4e9", "three_tier_wc_oracle_v2": "#882255", "three_tier_wc_oracle_v2_nu": "#4a3aa7"}
+             "three_tier_wc_dl": "#56b4e9", "three_tier_wc_oracle_v2": "#882255", "three_tier_wc_oracle_v2_nu": "#4a3aa7",
+             # campaign 20 beside campaign 19, labeled by campaign: magenta again, never with three_tier_wc_oracle (campaign 15);
+             # with GREEN and the violet, worst normal-vision dE 29.7 and worst CVD dE 16.5 (OKLab x100, Machado)
+             "c19_three_tier_wc": GREEN, "c19_three_tier_wc_oracle_v2_nu": "#4a3aa7", "c20_three_tier_wc_oracle_v2_nu_p50": "#e87ba4"}
+# Nearly coincides with the arm drawn before it, which shows through the gaps.
+ARM_DASH = {"c20_three_tier_wc_oracle_v2_nu_p50": (0, (4, 3))}
 TS_RE = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d{3})?)\]\s*(.*)$")
 KV_RE = re.compile(r"(\w+)=(-?[\w./-]+)")
 HOST_POOL_RE = re.compile(r"Allocating kv hierarchical KV host pool: (\d+) tokens, ([\d.]+) GB")
@@ -448,7 +453,8 @@ def draw_compare(results: list, out_png: str, steady_from: float = None, steady_
     a_done, a_cdf, a_cdf0, a_tier = axes.flatten()
     for arm, cl, sv, m in results:
         ends = sorted(t["t0"] + t["lat"] for t in cl["turns"])
-        a_done.plot(ends, range(1, len(ends) + 1), color=colors[arm], linewidth=1.8, label=arm, drawstyle="steps-post")
+        a_done.plot(ends, range(1, len(ends) + 1), color=colors[arm], linewidth=1.8, label=arm, drawstyle="steps-post",
+                    linestyle=ARM_DASH.get(arm, "-"))
     if steady_from is not None:
         a_done.axvline(steady_from, color=MUTED, linestyle="--", linewidth=1)
     style(a_done, "turns completed over time (all conversations)" if steady_from is None
@@ -471,7 +477,7 @@ def draw_compare(results: list, out_png: str, steady_from: float = None, steady_
             xs = sorted(max(0.01, t["ttft"]) for t in cl["turns"] if sel(t))
             if xs:
                 ax.plot(xs, [(i + 1) / len(xs) for i in range(len(xs))], color=color, linewidth=1.8, label=arm,
-                        drawstyle="steps-post")
+                        drawstyle="steps-post", linestyle=ARM_DASH.get(arm, "-"))
     for ax, sel in ((a_cdf, sel_ret), (a_cdf0, sel_first)):
         log = spans_decades(sel)
         if log:
@@ -529,7 +535,7 @@ def draw_paired_cdf(ref: tuple, other: tuple, out_png: str, max_pairs: int = 0, 
     fig, axes = plt.subplots(1, 3, figsize=(18, 6.4), gridspec_kw={"width_ratios": [5, 4, 4]})
     fig.patch.set_facecolor("#fcfcfb")
     for sel, panels in ((is_returning, ((axes[0], "returning turns", 0.0),
-                                        (axes[1], f"returning turns, the slowest 15 % in {ref_arm}", 0.85))),
+                                        (axes[1], "returning turns, the slowest 15 % on the curve", 0.85))),
                         (is_first, ((axes[2], "first turns", 0.0),))):
         pairs = sorted((max(0.01, t["ttft"]), max(0.01, theirs[(t["conv"], t["turn"])]["ttft"]))
                        for t in ref_cl["turns"] if sel(t) and (t["conv"], t["turn"]) in theirs)
@@ -563,11 +569,12 @@ def draw_paired_cdf(ref: tuple, other: tuple, out_png: str, max_pairs: int = 0, 
                      f"{100 * sum(d > 0.5 for d in diffs) / m:.0f} % (by over 0.5 s)\n"
                      f"paired difference: mean {sum(diffs) / m:+.2f} s, median {diffs[m // 2]:+.2f} s")
             leg = ax.legend(handles=None if ax is axes[0] else [], title=stats, loc="best", fontsize=8,
-                            title_fontsize=7.5, frameon=False, alignment="left", markerscale=2)
+                            title_fontsize=7.5, frameon=True, facecolor="#fcfcfb", edgecolor="none", framealpha=0.9,
+                            alignment="left", markerscale=2)
             leg.get_title().set_color(MUTED)
             style(ax, f"TTFT of {what}", "fraction of turns" if y_lo == 0 else f"fraction of turns (from {y_lo:g})")
-    title = (f"{arm} against {ref_arm}, turn by turn: each dot is one (user, turn) of {arm}, at the height of the same "
-             f"turn on the {ref_arm} ECDF, joined to it by a dashed line; left of the curve, {arm} was faster")
+    title = (f"{arm} against {ref_arm}, turn by turn\neach dot is one (user, turn) of the first, at the height of the same "
+             "turn on the second's ECDF, joined to it by a dashed line; left of the curve, the first was faster")
     if steady_from is not None:
         title += f"\nsteady state only: turns both arms sent from {steady_from:.0f} s on, {steady_why}"
     fig.suptitle(title, x=0.01, ha="left", fontsize=10, color=INK)
@@ -592,11 +599,12 @@ def draw_ttft_over_time(results: list, out_png: str, window_s: float) -> list:
         idx = range(max(bins) + 1) if bins else range(0)
         mid = [(i + 0.5) * window_s / 60 for i in idx]
         mean = [sum(bins[i]) / len(bins[i]) if bins[i] else float("nan") for i in idx]
-        a_ttft.plot(mid, mean, color=colors[arm], linewidth=1.3, label=arm)
-        a_n.plot(mid, [len(bins[i]) * 60 / window_s for i in idx], color=colors[arm], linewidth=1.1)
+        dash = ARM_DASH.get(arm, "-")
+        a_ttft.plot(mid, mean, color=colors[arm], linewidth=1.3, label=arm, linestyle=dash)
+        a_n.plot(mid, [len(bins[i]) * 60 / window_s for i in idx], color=colors[arm], linewidth=1.1, linestyle=dash)
         caps = cl.get("caps") or []
         a_wait.plot([c["t"] / 60 for c in caps], [c["waiting"] for c in caps], color=colors[arm], linewidth=1.3,
-                    drawstyle="steps-post")
+                    drawstyle="steps-post", linestyle=dash)
         rows += [dict(arm=arm, t_from_s=round(i * window_s, 1), turns=len(bins[i]),
                       ttft_mean_s=round(mean[k], 3) if bins[i] else "") for k, i in enumerate(idx)]
     w = f"{window_s / 60:g}-min" if window_s % 60 == 0 else f"{window_s:g}-s"

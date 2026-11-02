@@ -152,6 +152,33 @@ class TestOracleV2Flags(CustomTestCase):
             )
         )
 
+    def test_arrival_gate_and_hold_prerequisites(self):
+        """Both act on the prefetcher's plans, and the hold on parked reads; on any
+        other setup they would be accepted and silently do nothing."""
+        deadline = dict(**THREE_TIER, hicache_storage_read_order="deadline")
+        gate_alone = dict(hicache_storage_next_turn_arrival_gate="on")
+        hold_alone = dict(hicache_storage_next_turn_arrival_hold="on")
+        for overrides in (gate_alone, hold_alone):
+            with self.subTest(overrides=overrides):
+                with self.assertRaisesRegex(ValueError, "prefetch on"):
+                    handle_hicache(make_args(**deadline, **overrides))
+        with self.assertRaisesRegex(ValueError, "read-order deadline"):
+            handle_hicache(
+                make_args(
+                    **THREE_TIER,
+                    **hold_alone,
+                    hicache_storage_next_turn_prefetch="on",
+                )
+            )
+        handle_hicache(
+            make_args(
+                **deadline,
+                **gate_alone,
+                **hold_alone,
+                hicache_storage_next_turn_prefetch="on",
+            )
+        )
+
     def test_cli_spellings_reach_their_fields(self):
         parser = server_args_module.argparse.ArgumentParser()
         ServerArgs.add_cli_args(parser)
@@ -163,6 +190,8 @@ class TestOracleV2Flags(CustomTestCase):
                 "--hicache-storage-prefetch-pin-fraction", "0.3",
                 "--radix-eviction-policy", "next_use",
                 "--radix-eviction-policy-config", '{"horizon_s": 300}',
+                "--hicache-storage-next-turn-arrival-gate", "on",
+                "--hicache-storage-next-turn-arrival-hold", "on",
             ]
         )
         self.assertEqual(
@@ -172,8 +201,10 @@ class TestOracleV2Flags(CustomTestCase):
                 ns.hicache_storage_prefetch_pin_fraction,
                 ns.radix_eviction_policy,
                 ns.radix_eviction_policy_config,
+                ns.hicache_storage_next_turn_arrival_gate,
+                ns.hicache_storage_next_turn_arrival_hold,
             ),
-            ("deadline", 256, 0.3, "next_use", {"horizon_s": 300}),
+            ("deadline", 256, 0.3, "next_use", {"horizon_s": 300}, "on", "on"),
         )
         with self.assertRaises(SystemExit):
             parser.parse_args(

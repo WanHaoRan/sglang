@@ -21,6 +21,7 @@ from sglang.srt.managers.cache_controller import (
     HiCacheController,
 )
 from sglang.srt.mem_cache.base_prefix_cache import CacheRequestHandle
+from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import PrefetchSubmission
 from sglang.srt.mem_cache.radix_cache import RadixKey
 from sglang.srt.mem_cache.storage_prefetch import StoragePrefetchRetries
 from sglang.srt.mem_cache.storage_read_scheduler import StorageReadScheduler
@@ -110,6 +111,8 @@ def cache_mode_fixture(
     )
     cache.deadlines = {}
     cache.read_deadline_fn = cache.deadlines.get
+    cache.prefetch_gate_fn = None
+    cache.read_not_before_fn = None
     cache.read_scheduler = (
         None
         if order == "fifo"
@@ -294,6 +297,86 @@ class TestParkAndDispatch(CustomTestCase):
         self.assertFalse(cache._can_terminate_prefetch(op))
         cache._dispatch_storage_reads()
         self.assertTrue(cache._can_terminate_prefetch(op))
+
+
+class TestReadOwnerHooks(CustomTestCase):
+    """The cache's two hooks for the next-turn prefetcher's gate and hold."""
+
+    def gated_cache(self, *, allow):
+        cache = cache_mode_fixture()
+        cache.enable_storage = True
+        cache.tree_components = ()
+        cache._build_sidecar_transfers = Mock(return_value=[])
+        cache.tree_core.is_eagle = False
+        cache.tree_core.prefetch_anchor_info = lambda node: (None, None)
+        cache.cache_controller.get_prefetch_submission = lambda rid: None
+        cache.cache_controller.submit_prefetch = Mock(
+            return_value=PrefetchSubmission(operation=Mock(assume_stored=False))
+        )
+        cache.cache_controller.pp_prefetch_decisions = {}
+        cache.asked = []
+
+        def gate(handle, matched_tokens):
+            cache.asked.append((handle.rid, matched_tokens))
+            return allow
+
+        cache.prefetch_gate_fn = gate
+        return cache
+
+    def prefetch(self, cache, *, tokens=8 * PAGE, matched=2 * PAGE):
+        handle = CacheRequestHandle("a", 0)
+        cache.prefetch_from_storage(
+            handle,
+            7,
+            array("q", range(tokens)),
+            matched_prefix_tokens=list(range(matched)),
+        )
+        return handle
+
+    def test_a_declined_lookup_leaves_nothing_for_admission_to_wait_on(self):
+        """Admission waits for a read it knows about; a declined one must leave no entry
+        or the turn would never be admitted, and no anchor lock to leak."""
+        cache = self.gated_cache(allow=False)
+        handle = self.prefetch(cache)
+        self.assertEqual(cache.asked, [("a", 2 * PAGE)])
+        cache.cache_controller.submit_prefetch.assert_not_called()
+        self.assertTrue(cache.check_prefetch_progress(handle))
+        self.assertEqual(dict(cache.tree_core.locks), {})
+
+    def test_joining_a_read_under_way_does_not_ask_the_gate(self):
+        """The gate counts a turn's lookups: arrival joining the staged read must not
+        spend the budget the turn needs if that read is later lost."""
+        cache = self.gated_cache(allow=True)
+        handle = self.prefetch(cache)
+        self.assertTrue(cache.has_ongoing_prefetch(handle))
+        self.prefetch(cache)
+        self.assertEqual(len(cache.asked), 1)
+
+    def test_a_call_that_would_not_look_up_does_not_ask_the_gate(self):
+        """Too short or rate limited: no lookup would be issued, so none is counted."""
+        cache = self.gated_cache(allow=True)
+        self.prefetch(cache, tokens=1)
+        cache.cache_controller.prefetch_rate_limited = lambda: True
+        self.prefetch(cache)
+        self.assertEqual(cache.asked, [])
+
+    def test_a_held_read_holds_no_memory_and_keeps_its_turn_waiting(self):
+        """The turn must not be admitted past a read that is only delayed: it would
+        recompute history the SSD was about to return."""
+        cache = cache_mode_fixture()
+        cache.cache_controller.pp_prefetch_decisions = {}
+        cache.pp_rank = 0
+        cache._all_reduce = lambda tensor, op: None
+        cache.read_not_before_fn = lambda handle, read, ahead_pages: float("inf")
+        handle, _ = hit(cache, "a", 4 * PAGE)
+        drain(cache, 1)
+        cache._dispatch_storage_reads()
+        self.assertEqual(launched(cache), [])
+        self.assertEqual(cache.cache_controller.mem_pool_host.allocs, [])
+        self.assertFalse(cache.check_prefetch_progress(handle))
+        cache.read_not_before_fn = lambda handle, read, ahead_pages: None
+        cache._dispatch_storage_reads()
+        self.assertEqual(launched(cache), ["a"])
 
 
 class TestPinnedStaging(CustomTestCase):
