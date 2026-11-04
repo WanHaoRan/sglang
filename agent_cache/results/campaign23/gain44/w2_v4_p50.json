@@ -1,0 +1,170 @@
+{
+ "checker": "v4_p50",
+ "overall": "Every headline number I checked reproduces from my own parser: the 7,768-set means, the stretch and queue shares, the 405-turn cell, capped counts 528 to 235, the recompute terms, the pin totals, the 4.72 s staged lead and its 72/12/30/-14 % split, and a1's +0.045 s. What fails is the mechanism wording. The old cap (MAX_REFETCHES=2) ends a run of reads denied host room: 71 % of re-fetch reads that found data were revoked and 21 % cut. So \"capped\" against \"uncapped revoked/cut\" splits one failure by queue length. Counted by outcome, host-room recompute does fall under p50 (1,111 to 832). Most of the 405 turns' gain is queue wait that uncapped turns in the same queue band also got. The forecast also makes 2.7x more turns need an SSD read, so pins explain about half at most. Within the p50 pair, recompute follows pins block by block. a5's read walk labels 311 revoked arrival reads as re-fetches.",
+ "verdicts": [
+  {
+   "claim": "The new routine's 0.44 s gain over the old under p50 hints is 72 % in positions 5,500-7,000 and 84 % queue wait",
+   "source": "a5 [1]",
+   "verdict": "confirmed",
+   "reproduced": "7,768 set (returning turns with TTFT in baseline, oracle, old p50, new exact, new p50; positions = rank in the oracle's send order of all its turns): old p50 1.947 -> new p50 1.511 s, gain 0.436. By stretch, per turn of the set: 0-3,000 (2,883) -0.011, 3,000-5,500 (2,421) +0.094 (21.6 %), 5,500-7,000 (1,453) +0.314 (72.0 %), 7,000-8,750 (1,005) +0.042 (9.6 %), 8,750-end (6) -0.002. Queue wait as ntp_admit wait_ms on the 7,610 turns planned in all four hinted arms: TTFT gain 0.440 = wait 0.369 (84.0 %) + service 0.070.",
+   "discrepancies": "None in the headline. a5's own-read split (held back 0.111 -> 0.166 s, -0.055) depends on the order of turns logged in the same tick. With true queue-entry times (ReqTimeStats) on the same 7,610 turns it is 0.086 -> 0.167 s (-0.081). The rest of the queue is then +0.45 s, 102 % of the gain. Example: old p50 c232-t8 was passed by c239-t2, which entered 1 ms later.",
+   "alternatives_tested": "(a) Queue wait exists only for planned turns: ReqTimeStats queue_duration on all 7,768 turns gives 0.364 of 0.436 (83.4 %); the two definitions agree within 0.5 ms on every planned turn. (b) The queue saving is the turns' own reads: that part goes the other way (-0.06 to -0.08 s). Both alternatives fail.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_base.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_extra.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_heldback_compare.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_lib.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_base.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_extra.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_cmp_held.py"
+   ]
+  },
+  {
+   "claim": "The old routine's re-fetch cap and what 'capped' means in the logs",
+   "source": "a5 [2], definitions",
+   "verdict": "confirmed",
+   "reproduced": "engine_5df71c4bf0_v2 next_turn_prefetch.py:73 sets MAX_REFETCHES = 2. In _wants_refetch (lines 520-564), a queued planned turn with refetches > 0 and still missing at least prefetch_threshold tokens logs 'ntp_reevict evicted=<missing> refetches=N capped=int(N>=2)'; when capped it refuses further re-fetches. on_refetch_result (lines 360-377) increments refetches only when issued, and scheduler.py:3203-3210 sets issued = has_ongoing_prefetch after the re-issued prefetch. Whole runs: every capped=1 line has refetches=2, and no plan has two (oracle 564, old p50 641, new exact 57, new p50 175). engine_owned keeps this cap (lines 88, 689-698) and adds the gate's cap (lookups > 2 -> decision=capped, lines 896-900; 25 and 215 lines). Capped turns on the 7,768 set: oracle 371, old p50 528, new exact 28 (18 re-fetch + 10 gate), new p50 235 (113 + 125).",
+   "discrepancies": "Wording only. 'evicted' counts missing tokens, including pages that never landed. Of old p50's 1,056 issued re-fetches behind the 528 caps, 221 (21 %) found nothing on the SSD. Of the 835 that found data, 594 (71 %) were revoked at launch, 173 (21 %) cut and 58 (7 %) read in full. On 42 % of capped turns no re-fetch loaded anything. A capped turn is the end of a run of reads denied room (or a read that found nothing), not pages evicted a second time.",
+   "alternatives_tested": "Could capped=1 repeat per plan, or come with refetches other than 2? No: zero plans with more than one capped line, and all capped lines are (2, capped).",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_capped.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_capped.py"
+   ]
+  },
+  {
+   "claim": "73 % of the p50 gain is 405 turns that in old p50 re-fetched lost history twice, failed, hit a cap and recomputed (10.7 s), served by new p50 at 4.6 s",
+   "source": "a5 [2]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "7,768 set; classes are each arm's own: capped = either cap; denied = revoked or cut (read_denied.py groups) with no cap; fine = rest. Capped -> fine: 405 turns, 10.72 -> 4.58 s, +0.320 s per turn of the set (73.5 %). In old p50: 2.00 re-fetches issued, 2.00 reevict lines, 1.89 revoked launches, queue 8.09 s, recompute 9,550, arrival position median 5. In new p50: 0.26, 0.17 revoked, 95 held, position 2, queue 3.52 s, recompute 118. Other cells: fine->fine 6,509 +0.170; fine->capped 135 -0.092. Re-fetches issued on the set 1,948 -> 1,068.",
+   "discrepancies": "The cell is chosen on the outcome in both arms. Of its 0.320 s, 0.238 s is queue wait and 0.082 s is service, its own recompute. Turns that move into capped (160) take back 0.114 s. The net over all turns capped in either arm is +0.256 s (59 %).",
+   "alternatives_tested": "Shared queue rather than the cap: uncapped old p50 turns in the same stretch and old queue-wait band dropped 0.286 s of the capped turns' 0.362 s per turn of the set (79 %). In 5,500-7,000, the 298 fine turns that waited 4 s or more in old p50 went 10.72 -> 5.50 s, against 12.35 -> 6.00 for capped turns. This alternative largely holds, so the 73 % is accounting, not cause.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_capped.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_capped.py"
+   ]
+  },
+  {
+   "claim": "The gain is half because the forecast undoes the pin saving: staged pins 34.9K -> 4.4K (exact) but 27.1K -> 26.9K (p50), landing a median 4.7 s before admission because of the p50-p10 early start and late arrivals, so uncapped revoked or cut recompute does not fall (510 -> 549)",
+   "source": "a5 [3]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "Mean pinned tokens 0-7,200 s (time-weighted pinned= level, equal to the per-pin pairs): oracle 39.44, old p50 32.26, new exact 6.17, new p50 31.00K. Staged-class pins (my attribution: the last lookup that found data before srs_pin; pins starting before 7,200 s): 35.12, 27.20, 4.44, 27.46K. Pin token-seconds per turn of the 7,768 set: the exact pair cuts 23,030, the p50 pair 2,731; the difference of 20,299 is 96.4 % staged. Lead, staged pins due before the forecast, admission = ntp_arrive + wait: 9.78 (p90 48.1), 7.92 (29.5), 1.66 (2.6), 4.72 (24.3) s. Split of the 884 admit-ended new p50 staged pins, token-weighted: early start 71.7 %, 1 s margin 12.1 %, arrival error 30.2 %, rest -14.0 %. Uncapped revoked+cut recompute: 510 -> 549 (p50), 422 -> 44 (exact). Gain ratio 0.436/0.979 = 0.45.",
+   "discrepancies": "Including the 48 new p50 staged pins whose plan expired before arrival (admission from ReqTimeStats), the median lead is 5.13 s (p90 35.5); old p50 8.48 s. The admit-ended pins carry only 50 % of staged token-seconds; 24 % end at plan expiry and 25 % by replacement. Same pins over the whole run hide the stretch profile: in 5,500-7,000 new p50 pins 50.7K against old p50 62.0K (-18 %), and more before it (7.7 vs 3.7K, 41.0 vs 32.1K). 'Does not fall' holds only if capped turns are taken out first. Counting revoked or cut turns whether capped or not, host-room recompute falls 1,111 -> 832 under p50 (3,940 -> 2,933 in 5,500-7,000) and 831 -> 77 under exact.",
+   "alternatives_tested": "Eviction on the forecast: turns whose lookup found history on the SSD go 723 (new exact) -> 1,925 (new p50), with denial rate 7.2 % -> 24.7 %. Denied turns rise 9.15x = 2.66x more turns needing a read (44 % on a log scale) times 3.44x the denial rate (56 %). Device-served tokens per turn fall 21,710 -> 18,996, already in 0-3,000 (21,906 -> 21,084) where pins are 0.5K and 7.7K. Under the old routine the p50's extra denied turns are all more turns needing a read (1,734 vs 2,252; denial rate 30.9 % in both). Pins can explain at most the denial-rate half; pins against eviction is still not separated.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_pins.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_reads.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_terms.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_extra.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_pins.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_reads.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_terms.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_extra.py"
+   ]
+  },
+  {
+   "claim": "In recompute, the difference between the gains is reads denied host room on turns with no cap (revoked 206 + cut 211 of 474); in every arm the revoke rate rises with pinned tokens at dispatch",
+   "source": "a5 [4]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "7,768 set, tokens per turn, a5's order (capped first): capped 464/682/33/303, revoked 196/239/14/264, cut 226/271/31/286, rest 91/137/36/88 (oracle/old p50/new exact/new p50). Exact gain 863, p50 gain 389, difference 474 = revoked 206 (43.5 %) + cut 211 (44.4 %) + capped 51 (10.8 %) + rest 6. Revoked share by pinned tokens at dispatch, 0-7,200 s: new exact 4 % (<10K) to 50 % (44-60K), new p50 13 % to 37 %, old arms 18-20 % to 41-44 %. Totals 379 of 2,077 and 1,742 of 4,996.",
+   "discrepancies": "'No cap' comes from the order of the classes. With host room first (revoked or cut whether capped or not), the difference is revoked 217 + cut 258 = 475 of 474 (100 %). The p50 gain itself is 280 of 389 host-room recompute (72 %), so both gains are mostly that recompute.",
+   "alternatives_tested": "Pins set the revoke rate: at 44-60K pinned the rate is hint-free 16 %, new p50 37 %, oracle 41 %, old p50 44 %, new exact 50 %. With pinned + in-flight pages, the hinted arms are 31-40 % at 44-60K and hint-free still 16 %. The rate rises with pins in every arm, but its level is not fixed by pins.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_terms.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_pins.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_reads.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_terms.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_pins.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_reads.py"
+   ]
+  },
+  {
+   "claim": "58 % of the 0.54 s difference sits on 549 turns whose reads failed only under p50",
+   "source": "a5 [5]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "7,768 set; coarse classes as above; partition fixed across the four hinted arms; difference = (oracle - new exact) - (old p50 - new p50) = 0.543 s. Fine in all four (6,144): +0.138 (25.4 %). Fine in both new arms only (1,014): +0.117 (21.6 %). Fine in new exact, not new p50 (549): +0.313 (57.6 %), TTFT 4.19/5.17/0.87/6.27 s. Fine only in new p50 (45): -0.034. Neither (16): +0.009. Stretches: 5,500-7,000 77.9 %, 3,000-5,500 18.2 %.",
+   "discrepancies": "'Reads failed': in new p50, 225 of the 549 were capped (gate or re-fetch cap), 215 cut and 109 revoked. Of their 0.313 s, 0.180 s is queue wait. They are slow episode turns in the old arms too.",
+   "alternatives_tested": "A partition not chosen on outcome, by the p50 error on the turn: within 1 s, 71.5 % of turns carry 59.1 % of the difference; 1 s or more late, 16.3 % and 27.6 %; 1 s or more early, 11.8 % and 13.3 %. The cost is shared roughly in proportion, as a5 also says. The 58 % is accounting over an outcome-defined group.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_terms.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_base.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_terms.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_base.py"
+   ]
+  },
+  {
+   "claim": "'Recomputation follows pins' does not hold within the old routine (oracle pins more than old p50 yet recomputes less)",
+   "source": "a5 [7]",
+   "verdict": "confirmed",
+   "reproduced": "Whole run (pins 0-7,200 s; recompute on the 7,768 set): oracle 39.4K and 977, old p50 32.3K and 1,329.",
+   "discrepancies": "None.",
+   "alternatives_tested": "Time resolution. By stretch (each arm's own send window), the oracle pins at least as much in every stretch (12.4/3.7K, 39.3/32.1K, 60.6/62.0K, 30.9/16.8K) yet recomputes less in all four (55/93, 859/1,149, 3,404/4,564, 403/634). By blocks of 500 positions, old p50 pins less in 13 of 17 blocks, but pins and recompute move the same way in only 3 of 14 moving blocks. Both routines' denial rate is 30.9 %, and old p50's extra recompute is more turns needing a read (2,252 vs 1,734). The inversion holds at every resolution.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_terms.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_blocks.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_reads.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_terms.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_blocks.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_reads.py"
+   ]
+  },
+  {
+   "claim": "'Recomputation follows pins' does not hold within the p50 pair (old p50 and new p50 pin about the same yet recompute 1,329 vs 940)",
+   "source": "a5 [7]",
+   "verdict": "refuted",
+   "reproduced": "Whole run: 32.3K vs 31.0K pinned, 1,329 vs 940 recompute (7,768 set). By stretch, pins (own send window) and recompute per turn: 0-3,000 3.7->7.7K, 93->142; 3,000-5,500 32.1->41.0K, 1,149->745; 5,500-7,000 62.0->50.7K, 4,564->3,193 (host-room part 3,940->2,933); 7,000-8,750 16.8->12.7K, 634->444. Blocks of 500 positions: correlation of the change in pins with the change in recompute +0.58; same sign in 9 of 14 moving blocks. The 5 blocks where pins fell hold -283 of the -389 tokens per turn recompute fall (73 %).",
+   "discrepancies": "The equal whole-run pins are the sum of opposite moves in different stretches. Where 72 % of the p50 gain lies, new p50 pins 18 % less and recomputes 30 % less. Only 3,000-5,500 goes against the link (pins +28 %, recompute -35 %).",
+   "alternatives_tested": "The claim's own reading (pins do not drive recompute within the pair), tested at stretch and block level. It fails in three of four stretches, including the one that carries the gain.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_terms.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_blocks.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_extra.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_terms.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_blocks.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_extra.py"
+   ]
+  },
+  {
+   "claim": "With p50 hints the hinted rungs net about +0.05 s against the hint-free arm (1.51 vs 1.47 s on 7,768 turns): the old routine costs 0.48 s and the new one wins back 0.44 s",
+   "source": "a1 [7]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "7,768 set: hint-free 1.466, old p50 1.947 (+0.481), new p50 1.511 (-0.436), net +0.045 s. Set (i), the 7,410 turns all seven arms share: +0.038 s. Set (iv), the 9,688 turns of hint-free, oracle, old p50, new exact and new p50: -0.166 s. All 7,768 turns are in hint-free, the last sent at 5,811 s, and none of its turn records lacks TTFT.",
+   "discrepancies": "The sign depends on the turn set. On set (iv), 8,750-end (hint-free 4.44 s, new p50 2.84 s) gives -0.202 s per turn of the set. That is the stretch DECISIONS reads as even between oracle and old p50, with no repeat.",
+   "alternatives_tested": "How the net is made up: on the 7,768 set new p50 is slower than hint-free in the calm stretches (+0.022, +0.091, +0.025 s per turn of the set) and faster in 5,500-7,000 (-0.095). In blocks of 500 positions it is 0.05 s or more slower in 10 of 18 and 0.05 s or more faster in 2. The +0.05 s is a small difference of opposite terms, inside the 0.05-0.14 s noise. The robust reading is 'not distinguishable on 7,768 turns, ahead by 0.17 s on the longer set if its second episode is real'.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v4_p50_base.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v4_p50_base.py"
+   ]
+  }
+ ],
+ "new_findings": [
+  "a5's read walk (a5_p50_lib.walk) mislabels arrival reads as re-fetches. Its 50 ms class window skips prefetch_start lines but does not stop at them, so an arrival read revoked at launch and followed within 50 ms by a re-fetch call takes that call's ntp_refetch. This hits 311 reads on old p50's 7,768 set, 309 of them revoked; example c32-t28 at 2,340.760-2,340.793 s. Revoked launches by class on the set (oracle/old p50/new exact/new p50): staged 410/542/70/444, arrival 386/516/25/270, re-fetch 781/1,004/55/464. a5 has re-fetch 1,039/1,313/68/612. So 'revoked re-fetch launches 1,313 -> 612' should read 1,004 -> 464, and the 556-launch difference splits re-fetch 186, staged 242, arrival 115, later 13 (a5: re-fetch 270, staged 242). Pins by class are unaffected, because those reads never pinned. (v4_p50_a5walk_compare.out)",
+  "The old cap also counts re-fetch calls whose lookup found nothing on the SSD: issued = has_ongoing_prefetch after the call. That is 221 of the 1,056 issued re-fetches behind old p50's 528 caps on the 7,768 set (21 %). (v4_p50_capped.out)",
+  "Under the new routine, the forecast raises the number of turns that need an SSD read at all: 723 (new exact) to 1,925 (new p50) on the 7,768 set, about 44 % of the log rise in denied turns. Device-served tokens per turn are 21,710 against 18,996, and already lower in 0-3,000 (21,906 vs 21,084), where mean pins are 0.5K and 7.7K. This is direct evidence for the eviction-on-the-forecast path that option B would test. (v4_p50_reads.out, v4_p50_extra.out)",
+  "At equal pinned tokens at dispatch the revoke rate differs by arm. At 44-60K pinned: hint-free 16 %, new p50 37 %, oracle 41 %, old p50 44 %, new exact 50 %. Adding in-flight read pages, hint-free is still 16 % against 31-40 %. Something other than pins also sets the rate; not found. (v4_p50_pins.out, v4_p50_reads.out)",
+  "a5's open question 5 says new p50 is slower than old p50 below the knee '(0.42 vs 0.39 s and 0.94 vs 1.24 s)'. In 3,000-5,500 new p50 is faster (0.94 < 1.24 s); only 0-3,000 is slower.",
+  "A fixed four-stretch split of the 7,768-set recompute fall under p50 (389 tokens per turn): 5,500-7,000 256, 3,000-5,500 126, 7,000-8,750 25, 0-3,000 -18. Two-thirds of the fall is where new p50 pins less than old p50. (v4_p50_terms.out)"
+ ],
+ "corrections_to_docs": [
+  "CAMPAIGN23_FINDINGS.md, 'Across the hinted arms recomputation follows pins' (39.3K/977, 32.3K/1,329, 30.9K/940, 6.2K/114): the four points are not monotone, because the oracle pins most but recomputes less than old p50. Suggested wording: within the new routine, and within the p50 pair, recompute follows pins block by block (correlation +0.58 to +0.75). In the old routine it does not: p50's extra recompute there is more turns needing a read at the same 30.9 % denial rate.",
+  "CAMPAIGN23_FINDINGS.md and campaign23/DECISIONS.md: 'staged reads land a median 4.7 s before admission (p90 24.6 s)' with p50 hints leaves out the 48 staged pins whose plan expired before their turn arrived, since those turns have no ntp_admit. Measured from ReqTimeStats admission with those pins included, it is 5.1 s (p90 35.5 s).",
+  "CAMPAIGN23_FINDINGS.md should add that eviction on the forecast is visible, not only possible. new p50 has 2.7x as many turns needing an SSD read as new exact (1,925 vs 723 on the 7,768 set), and fewer device hits already in the calm first stretch. So the 1.01 s forecast cost is not only pins at 44 users."
+ ]
+}

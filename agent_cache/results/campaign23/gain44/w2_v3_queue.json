@@ -1,0 +1,178 @@
+{
+ "checker": "v3_queue",
+ "overall": "Held: every reference number. a2's split reproduces from ReqTimeStats: queue 70.9 %, lag 7.5 %, after admission 21.5 %. a4's chunk medians reproduce, and a regression over 18,266 Decode windows gives the same 0.08-0.10 s per batch, with means 10-15 % higher. The 64-request cap never binds (at most 38 running). The direct share is small: 11 % measured, 14 % modelled, under 25 % even counting all after-admission time and own-size waiting. The closed loop works against new exact. Corrected: the queue split depends on method (others' prefill 0.37-0.64 s, not admitted 0.05-0.19 s, own read 0.01-0.14 s). 87 % of the prefill part is other turns' recomputation. The 'unexplained' 0.07 s is the lag behind the prefill batch already on the GPU. The knee excess is 8-15 %, and new p50 shares it. Refuted: 42-54 % lost while queued. ntp_reevict mostly marks revoked re-reads; true in-queue loss is 13-26 % in the hinted arms and 34 % in the baseline.",
+ "verdicts": [
+  {
+   "claim": "Prefill costs about 0.13 ms per new token in full 8,192-token chunks at 8-24K prefix. It rises with prefix: 0.18, 0.25 and 0.34 ms at 24-32K, 32-48K and 48-64K. Each batch adds about 0.06-0.1 s, and the numbers are the same on all three engine freezes.",
+   "source": "a4 [1]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "Continuation chunks re-detected from scratch, all 7 arms: a Prefill line right after a capped 8,192 line, alone (nseq 1, cached 0), with no Decode line between. Prefix = the first chunk's cached tokens + 8,192 per earlier chunk. Median 1.051 s per 8,192 chunk at 8-24K prefix = 0.128 ms/token (n 1,750; p10 0.915, p90 1.376). v2 freeze: 0.129, 0.128, 0.181, 0.245 and 0.339 ms/token at 8-16, 16-24, 24-32, 32-48 and 48-64K, with a4's exact counts (326, 1,076, 663, 503, 54). Independent method: least squares over 18,266 windows between consecutive Decode lines (exactly 40 decode steps plus the logged prefill batches, running >=4 at both ends). It gives 0.092 s fixed per prefill batch (0.079-0.104 by arm). An 8,192 chunk then costs 1.21 s at 16K prefix (0.148 ms/token), 1.61 s at 25K (0.197) and 2.28 s at 40K (0.278). Last chunks after a capped chunk: 0.070 s + 0.138 ms/token at 16K prefix.",
+   "discrepancies": "The 1.05 s chunk median already includes the batch's fixed cost, so 'plus 0.06-0.1 s per batch' double counts for full chunks. The marginal cost there is about 0.12 ms/token. The fixed cost dominates small batches: a last chunk under 512 tokens at 27K prefix takes 0.112 s. The regression's means run 10-15 % above a4's medians, because chunk times are right-skewed. 'Same on all freezes' holds only to about 2 %. engine_owned arms (new exact, new p50) are 1.7-2.3 % slower per chunk at 16-48K (4.5 % at 48-64K, 17 chunks), which works against new exact.",
+   "alternatives_tested": "(1) Decode steps or CPU time hidden inside the line gaps. The window regression models the 40 decode steps per window explicitly and finds equal or higher prefill cost, so the chunk medians are not inflated. (2) GPU unit or engine. Per-arm medians at 16-24K are 1.047-1.066 s. Decode in pure-decode windows at matched load (running 10-25, KV 300-500K) is 35.2-37.1 ms/step in every arm (oracle 36.7, new exact 36.8). a4's 19.0 ms/step for new exact at 0-4 running comes from windows after the client stopped: 25.7 ms after 7,200 s, 13.6 ms before.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_cost.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_cost.json"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_cost.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_lib.py"
+   ]
+  },
+  {
+   "claim": "Oracle against new exact, 7,768 turns: a turn's own extra recomputation is only about 14 % (0.14 s) of the 0.98 s gap. The rest is waiting: 0.52 s behind other turns' prefill, 0.15 s blocked by a nearly full pool, 0.03 s on its own read and 0.07 s unexplained.",
+   "source": "a4 [2]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "7,768 shared returning turns: gap +0.979 s; queue +0.695 s from ReqTimeStats queue_duration. Every Prefill line was tied to its turns: forward-entry groups matched on #new-seq and #cached-token, chunked turns followed through their continuations. This placed 10,288 of 10,319 oracle turns and all 12,201 new exact turns. Each batch's interval was rebuilt from a model scaled so every Decode-to-Decode window holds 40 modelled decode steps (W). Own prefill, as the turn's token share of its batches: +0.110 s (11.2 %); a4's model gives +0.140. Whole after-admission difference: +0.211 s (21.5 %) = own batches +0.110 + in flight before own first batch +0.063 + other +0.037 + line-to-client +0.001. Queue split with a4's precedence (prefill first), W: others' prefill +0.473, of which +0.413 (87 %) on other turns' recomputed tokens; own read +0.034; decoding with the turn not admitted +0.188. Model capped at the line gap: +0.478 / +0.033 / +0.184.",
+   "discrepancies": "The split depends on method and precedence. With the own read counted first: read +0.139, prefill +0.367. Counting whole line gaps as prefill (an upper bound): +0.644 / +0.005 / +0.046. So: behind prefill 0.37-0.64 s, not admitted 0.05-0.19 s, own read 0.01-0.14 s; a4's figures sit inside these ranges. a4's '0.07 s unexplained (co-batched tokens and model error)' is in fact the send-to-queue-entry lag (+0.074 s). That lag is waiting for the prefill batch already on the GPU: the residual of that batch differs by +0.065 s between the arms. The direct share by a measured own-batch time is 11 %, not 14 %.",
+   "alternatives_tested": "(1) Own recomputation lengthening its own queue wait (memory need, failed reads). Turns recomputing >=4K tokens wait 0.55 s longer than turns under one page sent in the same 20 s (oracle, 589 turns; 0.49-0.77 s in every arm). That adds only +0.027 s (2.8 %) to the gap. (2) Own read gating admission. Counting only read-open time after a later-queued turn was admitted past it gives +0.013 s. (3) Decode slowdown or GPU unit: decode speed is equal at matched load. (4) Closed loop. Through positions 5,500-7,000 new exact carries 92.4 vs 59.6 turns/min and 70.2K vs 44.9K non-recomputed new tokens/min, so the same-turn gap is conservative. None of these overturns '~85 % is waiting, mostly behind other turns' recomputation'.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_split.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_split_turns.csv.gz",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_match.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_own.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_passed.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_loop.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_sanity.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_split.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_match.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_own.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_passed.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_loop.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_sanity.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_lib.py"
+   ]
+  },
+  {
+   "claim": "Of the oracle-to-new-exact gap, 71 % is logged queue wait, 8 % is send-to-queue-entry and 21 % is after admission (77 % queue in positions 5,500-7,000). The send-to-queue lag behaves like a wait behind the running prefill batch.",
+   "source": "a2 [2], a2 [4]",
+   "verdict": "confirmed",
+   "reproduced": "From ReqTimeStats alone on the 7,768 turns. Definitions: lag = entry_time (wait_queue_entry_time) - client t_send; queue = queue_duration; after = TTFT - lag - queue. Result: lag +0.074 (7.5 %), queue +0.695 (70.9 %), after +0.211 (21.5 %). Oracle lag/queue/after 0.192/0.828/0.464 s; new exact 0.118/0.133/0.254 s. Positions 5,500-7,000: 77.3 % queue. a2's after-admission classes: oracle prefilled >=4K, 656 turns, 14.2 points; both under 1K, 6,107 turns, 6.5 points (a2: 663 and 6,067). Baseline - new exact: 1.7 / 88.0 / 10.3 %. Old p50 - new p50: 4.0 / 83.4 / 12.6 %.",
+   "discrepancies": "None in the arithmetic. a2's 'about 10 points with the own read pending' sits between my bounds. Read-open time gives 14.2 points (window closed at prefetch success rather than I/O end). Time actually gated by the read gives 1.4 points.",
+   "alternatives_tested": "(1) Clock skew between client and server. No turn has a negative lag (minimum 4 ms). queue_duration equals ntp_admit wait_ms within 0.5 ms on 7,412-11,804 planned turns per arm. (2) Lag as tokenization or HTTP time. Fit: lag = 0.042 + 0.80 x (residual of the prefill batch on the GPU at send) + 0.022 per 10K prompt tokens. Turns sent during a prefill batch (37 % in the oracle) lag 0.340 s, against 0.106 s otherwise. The residual difference (+0.065 s) explains 88 % of the lag gap. Counting the lag, plus the in-flight and co-batched parts of after-admission, as waiting puts about 89 % of the gap in waiting.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_sanity.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_own.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_split.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_sanity.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_own.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_split.py"
+   ]
+  },
+  {
+   "claim": "The 64-request cap never binds (at most 31-37 running).",
+   "source": "a4 [4]",
+   "verdict": "confirmed",
+   "reproduced": "max_running_requests=64 in every server.log. Max #running-req on Decode lines: 31-35 per arm. Max running + #new-seq on Prefill lines: 31-38 (new p50 38, oracle 36, baseline 35, new exact 33).",
+   "discrepancies": "Counting the new sequences of a batch, new p50 reaches 38, one above a4's 37. Still far from 64.",
+   "alternatives_tested": "Other admission blocks at low memory. Over the time between Decode lines with a queue at both ends, the pool is at least 0.8 used 89-98 % of the time (oracle 97.9 %, baseline 95.1 %, new exact 90.9 %). The remaining 2-11 % fits two other causes, not the request cap. One is the scheduler's sticky batch_is_full: set on a NO_TOKEN refusal and reset only when a running request finishes. The other is skips for prefetches still in flight.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_load.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_own.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_load.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_own.py"
+   ]
+  },
+  {
+   "claim": "Queued turns lose their history while waiting and recompute it: 42-54 % of recomputed tokens in the hinted arms (27 % baseline, 23 % hint-free). So the queue makes its own work.",
+   "source": "a4 [5]",
+   "verdict": "refuted",
+   "reproduced": "a4's flag (prefix shrank or ntp_reevict) reproduces on returning turns with an arrival lookup: 53.3 % oracle, 53.8 old p50, 51.9 jit_70, 51.0 new exact, 41.9 new p50, 26.5 baseline, 22.3 hint-free. I then counted only recomputation beyond what was already missing from device and host at arrival (the arrival prefetch_start size minus delta tokens). Bounds are with and without SSD hits; turns with no arrival line are charged wholly to the queue. The shares become: 17.8-26.2 % oracle, 15.0-22.6 old p50, 18.9-26.0 jit_70, 12.9-20.8 new exact, 14.7-21.6 new p50, 34.2-34.5 baseline, 22.6-22.9 hint-free.",
+   "discrepancies": "ntp_reevict does not mean fetched pages were evicted again. It is logged whenever an issued refetch left the history still missing (next_turn_prefetch.py _wants_refetch). Only 17-24 % of these events follow a read that landed; 35-51 % follow a read revoked at launch, and 15-20 % a lookup that found nothing. In the oracle, 84 % of flagged turns recomputing at least one page had that history missing at arrival (75 % of their recomputed tokens), and 493 of 658 had a revoked launch. So in the hinted arms the in-queue share is about half of a4's figure, and it is higher than a4's in the baseline. a2's 'lost history' class has the same problem: 14-24 % of its recompute exceeds the arrival shortfall.",
+   "alternatives_tested": "Validity of the arrival measure. Turns that waited under 0.1 s yet recomputed show about zero recompute beyond the arrival shortfall (oracle: 0 of 2,596K tokens), as they must. For big flagged oracle turns, the first refetch's 'shrink' equals the arrival shortfall within 512 tokens on 194 of 338.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_lost.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_reevict.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_lost.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_reevict.py"
+   ]
+  },
+  {
+   "claim": "Below 900K load the arms do the same prefill work within 3 %. The old routine does 10-17 % more just below the knee. The baseline does no more than new exact, yet has the deepest episode.",
+   "source": "a4 [6]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "Load re-coded from load_curve_c44.py, minutes from 20. GPU prefill s/min from the window-calibrated intervals; differences are against new exact. Below 900K: -0.9 to +1.1 s/min (-2 to +2 %) in every arm. 900-1,000K: oracle +5.0 (8 %), old p50 +4.7 (8 %), new p50 +5.6 (9 %), baseline +1.3 (2 %), hint-free -1.7, jit_70 -0.7. 1,000-1,050K: +8.5 (14 %), +9.2 (15 %), +9.3 (15 %), baseline +3.1 (5 %). In the 5 minutes before each arm's own 5,500th send: baseline 16.0 s/min = new exact 16.0 (oracle 20.9, old p50 20.4, new p50 19.5). Episode TTFT is 23.62 s against 1.12 s.",
+   "discrepancies": "The knee excess is 8-15 %, not 10-17(19) %. It is shared by new p50 (the new routine), so it belongs to the p50/oracle-hint arms, not to the old routine. Measured in tokens, the baseline is not 'no more'. At 900-1,050K it adds +21.5K and +32.6K new tokens/min (+26 % and +31 %), all recomputation. Over positions 3,000-5,500 it adds +19 % (94K vs 80K/min). It is equal only in the last 5 minutes before 5,500 (80K vs 82K).",
+   "alternatives_tested": "Model-free token counts per minute as the work measure (above). Per-minute regression of queue seconds per minute on prefill s/min: pooled r = 0.87 (pool use 0.75, recomputed tokens 0.88). But prefill and pool use correlate 0.86-0.93 within the five arms with deep episodes (0.63-0.68 in jit_70 and new exact). At fixed prefill of 25-35 s/min, the queue still rises 39 -> 94 -> 186 -> 299 s/min from pool <0.8 to >=0.95. So per-minute data cannot separate compute from memory.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_load.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_loop.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_load.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_loop.py"
+   ]
+  },
+  {
+   "claim": "For every pair of arms, the turn's own extra prefill is 9-15 % of the TTFT gap and the rest is queueing.",
+   "source": "a4 [3]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "Own batch time as the turn's token share of its matched batches (W), same turn sets as a4. Baseline - new exact (7,768): +0.321 of 4.666 s (6.9 %). Oracle - jit_70 (7,412): +0.099 of 0.852 (11.6 %). jit_70 - new exact: +0.013 of 0.174 (7.5 %). New p50 - new exact: +0.110 of 1.006 (10.9 %). Old p50 - new p50: +0.044 of 0.436 (10.1 %). Queue shares: 88.0, 70.2, 79.9, 67.6 and 83.4 %.",
+   "discrepancies": "Measured own shares are 7-12 %, against a4's 9-15 % from a per-turn model; the baseline pair is 7 %.",
+   "alternatives_tested": "The same tests as for a4 [2]: own-size waiting at the same moment adds 0.2-2.9 %, read gating is small, and decode speed is equal.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_split.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_own.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_split.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_own.py"
+   ]
+  },
+  {
+   "claim": "New exact spends the GPU time it saves on 18 % more turns (closed loop), so same-turn comparisons are the fair ones.",
+   "source": "a4 [8]",
+   "verdict": "confirmed",
+   "reproduced": "12,201 vs 10,319 turns (+18.2 %; 101.7 vs 86.0 per minute). Non-recomputed new tokens: 8.41 vs 7.29 M (from batch lines; a4 has 7.14 M from the client). Completion tokens: 2.47 vs 2.11 M. GPU prefill: 38.5 vs 51.8 min (window-calibrated; a4's per-batch model 40.4 vs 56.5), with 24 % vs 56 % of it on recomputed tokens. Turns per minute through each arm's own positions 5,500-7,000: 92.4 (new exact), 83.6 (jit_70), 59.6 (oracle), 59.3 (new p50), 59.3 (hint-free), 51.8 (old p50), 27.7 (baseline).",
+   "discrepancies": "Recomputation's share of prefill time is higher under token-share attribution (24 % / 56 %) than under a4's per-turn model (15.5 % / 50 %).",
+   "alternatives_tested": "Whether the closed loop favours new exact. It does not. On the same turns new exact faces more offered work per minute: in 5,500-7,000, 70.2K vs 44.9K non-recomputed tokens/min. It also has fewer requests in flight when each turn is sent (21.9 vs 27.8). So the same-turn gap is conservative.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_loop.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_loop.py"
+   ]
+  },
+  {
+   "claim": "Contrary to the task text, the baseline and hint-free arms do log a queue wait: ReqTimeStats queue_duration equals ntp_admit wait_ms.",
+   "source": "a4 [9], a2 [3]",
+   "verdict": "confirmed",
+   "reproduced": "ReqTimeStats lines exist for every client turn: 8,037 / 10,355 / 10,319 / 10,021 / 7,671 / 12,201 / 10,419. queue_duration against ntp_admit wait_ms: |diff| median 0.23-0.24 ms, p99 0.49 ms, maximum 0.5 ms. In req_time_stats.py convert_to_duration, entry_time is wait_queue_entry_time.",
+   "discrepancies": "None.",
+   "alternatives_tested": "queue_duration accumulates over retractions, which could make it differ from a single wait. No line has attempts>0, so it is a single wait.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v3_queue_sanity.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v3_queue_sanity.py"
+   ]
+  }
+ ],
+ "new_findings": [
+  "Matching batches to turns: 99.7 % or more of turns are placed in every arm (oracle 10,288 of 10,319). In the oracle, 87 % of the extra queue time spent behind others' prefill (+0.413 of +0.473 s) is behind other turns' recomputed tokens. Recomputed tokens' share of the prefill a queued turn waits behind: baseline 95 %, old p50 85 %, hint-free 85 %, oracle 80 %, new p50 76 %, jit_70 75 %, new exact 66 % (v3_queue_split.out).",
+  "The send-to-queue-entry lag is mostly waiting for the scheduler to finish the prefill batch already on the GPU. lag = 0.04 + 0.75-0.86 x that batch's residual. A turn sent during a prefill lags 0.34 s in the oracle, against 0.11 s otherwise. So queue plus lag puts 78 % of the oracle-to-new-exact gap in waiting, and adding the in-flight and co-batched parts of after-admission gives about 89 %. Own prefill is about 11 %.",
+  "Own reads barely gate admission once a 'passed by a later-queued turn' test is applied: +0.013 s of the oracle-to-new-exact gap. Read-open time differs by +0.139 s, but most of it overlaps periods when the queue was not moving past the turn. For old p50 against new p50 the sign flips: new p50's reads gate 0.105 s per turn against 0.054 s, which is -11.7 % of that 0.436 s gap.",
+  "ntp_reevict is logged when a previously issued refetch leaves the history missing, not only when fetched pages are evicted again. 35-51 % of these events follow a read revoked at launch, 15-20 % a lookup that found nothing, and only 17-24 % a read that landed. Recomputation from history lost while the turn was queued is 13-26 % in the hinted arms, 34 % in the baseline (above a4's 27 %) and 23 % in hint-free. In the hinted arms, 74-80 % of the recompute a4 flags was history already missing from device and host at arrival, whose reads were revoked for lack of host room.",
+  "a4's spike claim (56-77 % of the recompute at positions 8,750-9,250 on turns that 'lost history while queued') rests on the same flag. It does not overturn the background docs' reading of the spike.",
+  "The scheduler's batch_is_full flag is sticky. Once set by a NO_TOKEN refusal, admission is not retried until a running request finishes (scheduler.py last-batch filter and update_running_batch). So 'decoding while the turn could not be admitted' includes waiting for the next finish; 2-11 % of queued time has the pool under 0.8.",
+  "Turns recomputing 4K or more tokens wait 0.49-0.77 s longer than turns under one page sent in the same 20 s, in every arm. This own-size effect adds only 0.027 s (2.8 %) to the oracle-to-new-exact gap.",
+  "Decode speed is equal across arms and units at matched load: 35.2-37.1 ms/step at running 10-25 and KV 300-500K. a4's 19.0 ms/step for new exact at 0-4 running is an artefact of windows after the client stopped (25.7 ms there, 13.6 ms during the run).",
+  "Over positions 3,000-5,500 the baseline already does 19 % more prefill tokens per minute than new exact (94K vs 80K/min), mostly recomputation (22.6K vs 4.8K/min). It is equal only in the last 5 minutes before position 5,500. It still does far less than the oracle or p50 arms, so 'pre-episode work does not set episode depth' survives."
+ ],
+ "corrections_to_docs": [
+  "results/campaign23/DECISIONS.md, new exact section, 'Re-fetched spans evicted again before admission: 197 against 1,336': these are ntp_reevict counts. Only 48 of 197 and 230 of 1,336 follow a re-read that landed. 78 and 638 follow a re-read revoked at launch, and 31 and 263 a lookup that found nothing. Suggested wording: 're-fetches that left the history missing, mostly for lack of host room' (v3_queue_reevict.out).",
+  "results/campaign21/DECISIONS.md, 're-fetched spans were evicted again (115-195 re-evictions per 5 min)': this counts the same event, which next_turn_prefetch.py logs after any issued refetch that left the history missing, including revoked launches. 'Evicted again' overstates (not re-measured on the campaign 21 runs).",
+  "CAMPAIGN23_FINDINGS.md, GPU units, 'Speeds match at 44 users': true for decode (35.2-37.1 ms/step at matched load in every arm). But 8,192-token prefill chunks on the engine_owned arms (new exact, new p50) are 1.7-2.3 % slower than on the v2 arms at 16-48K prefix. The difference is small and goes against the new arms.",
+  "w1_a4_gpu.json: (1) The attribution row 'Unexplained remainder of service 0.067 s: co-batched tokens and model error' is the send-to-queue-entry lag behind the prefill batch already on the GPU. (2) The 0.515 / 0.150 / 0.030 queue split should be given as ranges, 0.37-0.64 / 0.05-0.19 / 0.01-0.14 s, by method and precedence. (3) 'Lost history while queued 42-54 %' should be 13-26 %. (4) 'The old routine spends 10-17 % more' should read 'oracle, old p50 and new p50 spend 8-15 % more'.",
+  "w1_a2_where.json: (1) 'About 10 points with the own read pending' is between 1.4 points (read actually gated) and 14.2 points (read open). (2) Finding [8]'s 'lost history while queued' class (a refetch issued, a re-evicted span or a shrunk prefix) mostly marks history already missing at arrival: 14-24 % of its recompute exceeds the arrival shortfall.",
+  "The engine comment at next_turn_prefetch.py _wants_refetch ('The fetched pages were evicted again before admission') describes only 17-24 % of the ntp_reevict events it emits.",
+  "Task text: the baseline and hint-free arms do log a queue wait. ReqTimeStats queue_duration is on every turn, and its entry_time is wait_queue_entry_time; it equals ntp_admit wait_ms within 0.5 ms wherever both exist."
+ ]
+}

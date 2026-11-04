@@ -1,0 +1,186 @@
+{
+ "angle": "a1_ladder",
+ "summary": "On the 7,410 returning turns all seven arms share, mean TTFT falls from 5.33 s (baseline) to 0.49 s (new exact). The hint-free arm, which uses no hint, reaches 1.51 s: 79 % of the gain. In that arm deadline order and the read window never act (every read is due now), so this rung is read pins plus no paced retries. Its saving sits almost entirely in the heavy stretch (positions 5,500-7,000), 90 % of it as shorter queue wait. Without pins, the baseline loses spans it has read from SSD before their turn is admitted: 2,375 of its 2,870 recomputed tokens per turn on the 7,768-turn set, against 0 with pins. Adding the old hinted routine with exact hints changes nothing (+0.01 s). Just-in-time timing gives 0.85 s (18 %), and the gate and hold 0.17 s (4 %, within run-to-run noise). With p50 hints, the hinted rungs net +0.05 s against the hint-free arm (1.51 s against 1.47 s on 7,768 turns): the old routine costs 0.48 s and the new one wins back 0.44 s. The hint-free arm's hardware speed matches the others. One run per arm; the rung order is fixed by the arms that exist.",
+ "sanity_check": "Reproduced exactly. On the 7,768 returning turns shared by baseline, oracle, old p50, new exact and new p50: mean TTFT 5.17, 1.48, 1.95, 0.50 and 1.51 s; recomputed 2,870, 977, 1,329, 114 and 940 tokens per turn. In positions 5,500-7,000 (1,453 turns): baseline 23.62, oracle 5.06, new exact 1.12 s. On the 7,412 set: 1.52, 0.67 and 0.49 s. Turns sent in 2 h: 8,037, 10,319, 10,021, 12,201 and 10,419. Mean pinned tokens over 2 h: 39.3K, 32.3K, 6.2K and 30.9K. Hardware figures as in the background: decode 45.0-45.4 ms on the five older arms; new p50 45.8 ms median and 47.1 ms mean; prefill 0.099-0.102 ms per uncached token; first-turn median 0.22-0.24 s; big-read p10 1.83-1.96 ms per page. No numeric mismatch. Four points differ from the task text. (1) Set (ii) is exactly the 7,768 set: the baseline's 8,037 turns bound it, and the hint-free arm had sent all 7,768 turns by 5,811 s. (2) Baseline and hint-free do log a queue wait: ReqTimeStats queue_duration covers every client turn in every arm, and on all hinted turns it equals ntp_admit wait_ms to within 0.5 ms. (3) The hint-free arm's deadline order and read window are inert: all 2,297 parks are deadline=now, and by the code a 'now' read bypasses window and budget. (4) Set (i) has 7,410 turns, two fewer than the 7,412-turn set.",
+ "findings": [
+  {
+   "claim": "Along the ladder, the hint-free rung gives about 79 % of the 44-user TTFT gain, the old hinted routine about 0 %, just-in-time timing about 18 %, and the gate plus hold about 4 %.",
+   "evidence": "Set (i) is the 7,410 returning turns all seven arms share (oracle positions 1-7,831, bounded by jit_70's 75 min). Mean TTFT: baseline 5.332, hint-free 1.511, oracle 1.518, jit_70 0.666, new exact 0.492 s. Steps: -3.821 s (78.9 % of 4.840), +0.007 (-0.1 %), -0.852 (17.6 %), -0.174 (3.6 %). Recomputed tokens per turn: 2,940, 709, 1,000, 229, 112; the steps take 78.9 %, -10.3 %, 27.3 % and 4.1 % of the 2,828 reduction. Tier mix per turn (device/host/SSD): 17,414/1,543/2,332; 18,627/1,826/3,066; 19,486/1,829/1,914; 21,470/883/1,646; 21,642/868/1,607. On the 7,768 set (sets (ii) and (iii)): 5.171, 1.466, 1.484, then 0.505 for new exact; steps -3.705 (79.4 % of 4.666), +0.019 (-0.4 %), -0.979 (21.0 %, just-in-time plus gate plus hold). Variant of (i) restricted to turns sent before 4,500 s on every arm's clock (6,039 turns): 2.595, 0.952, 1.118, 0.488, 0.420 s, so 75.5 %, -7.6 %, 29.0 %, 3.1 %. Per-stretch tables, text waterfall bars and 500-position block consistency are in the outputs.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_waterfall.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_sets.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_waterfall.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_sets.py"
+   ],
+   "confidence": "medium",
+   "caveats": "One run per arm, no repeats. The only noise estimate is 0.05-0.14 s from oracle repeats, and two single oracle runs once differed by about 0.2 s in heavy stretches. The order is fixed by the arms that exist: no arm has hints without pins, just-in-time timing without the old routine, or the gate and hold without just-in-time timing. So each share holds given the rungs below it. Engines differ: v2 for baseline, hint-free, oracle and old p50; table for jit_70; owned for new exact and new p50. By diff, v2 to table changes only read timing and table intake, and table to owned adds the gate and hold. jit_70's 75 min confine the jit versus gate-and-hold split to the first heavy stretch."
+  },
+  {
+   "claim": "The hint-free rung is read pins plus paced retries off. Deadline order and the window never act, because every read is due now. The data point to pins: most of the baseline's recompute is SSD reads that landed and were gone by admission, and the pinned arm loses none.",
+   "evidence": "In the hint-free log, all 2,297 srs_park lines have deadline_ms=now; storage_read_scheduler.py lets a 'now' read ignore window and budget; 239 launches were revoked. Recompute on the 7,768 set, split by rid into landed but gone by admission + found on SSD but never loaded + not found: baseline 2,870 = 2,375 + 443 + 52 (strict lower bound on the first part 2,373); hint-free 680 = 0 + 638 + 42. Turns that lost a page or more after it landed: 993 against 0. Stretch 5,500-7,000 (1,453 turns): the baseline loaded 16,602 tokens per turn from SSD but served 4,080 at admission (11,644 lost); the hint-free arm loaded and served 9,475. Turns with a 'device prefix shrank before admission' re-issue: 444 against 166. Host evictions per turn sent over 0-7,019 s: 8,491 against 4,894. Example turn c123-t40 in the baseline: it read 18,880 tokens, a re-issued lookup found 59,840, it recomputed 59,901, TTFT 53.7 s. In the hint-free arm the same turn read 36,992 tokens, pinned them 27 s until admission, recomputed 125, TTFT 29.8 s.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_reads.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_trace.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_reads.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_trace.py"
+   ],
+   "confidence": "medium",
+   "caveats": "Pins and paced retries off arrive together and no arm separates them, so 'pins did it' is inferred from the mechanism, not separated. The three-way recompute split is an accounting by rid in a fixed order (lost, then unread, then not found). The baseline was never repeated, and a storm's depth may vary between runs."
+  },
+  {
+   "claim": "Most of every rung's saving shows up as shorter queue wait, and every arm logs a queue wait.",
+   "evidence": "ReqTimeStats queue_duration covers every client turn in all seven arms. It equals ntp_admit wait_ms to within 0.5 ms on 9,980 oracle, 7,412 jit_70, 11,804 new exact, 9,494 old p50 and 9,875 new p50 turns. On set (i), TTFT = queue + after admission: baseline 5.332 = 4.389 + 0.943; hint-free 1.511 = 0.961 + 0.550; oracle 1.518 = 0.861 + 0.657; jit_70 0.666 = 0.263 + 0.403; new exact 0.492 = 0.123 + 0.369. The steps split as: -3.821 = -3.428 - 0.393 (90 % queue); +0.007 = -0.100 + 0.107; -0.852 = -0.598 - 0.254 (70 %); -0.174 = -0.139 - 0.034 (80 %). Stretch 5,500-7,000: baseline 23.62 = 20.53 + 3.08; hint-free 5.75 = 4.36 + 1.39.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_queue.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_waterfall.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_queue.py"
+   ],
+   "confidence": "high",
+   "caveats": "In a closed loop the queue is shared: less recompute on some turns shortens everyone's wait. The split says where time is saved, not which turns caused the saving. 'After admission' also includes client-to-scheduler overhead."
+  },
+  {
+   "claim": "With exact hints, the old next-turn routine and next-use eviction add nothing net over the hint-free arm. They help in the heavy stretches and cost in the calm ones.",
+   "evidence": "Hint-free to oracle, mean TTFT: +0.007 s on set (i); +0.019 s on the 7,768 set; -0.035 s on set (iv), the 9,688 returning turns that hint-free, oracle, old p50, new exact and new p50 share, which reaches the second heavy stretch. Mean change per turn by stretch: 3,000-5,500 +0.336 s; 5,500-7,000 -0.690 s; 7,000-8,750 +0.336 s (7,768 set); 8,750 to end -0.370 s (set iv, 1,227 turns). Of 17 blocks of 500 positions, 2 are better by 0.05 s or more and 8 worse. On the 7,768 set: recompute +297 tokens per turn, device hits +883, SSD-served -1,140; turns with a revoked read launch go from 132 to 820. Mean pinned tokens over 0-7,019 s go from 9.3K to 38.9K, on about 44K of host room.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_sets.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_reads.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_waterfall.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_sets.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_reads.py"
+   ],
+   "confidence": "medium",
+   "caveats": "The net change is within the oracle's repeat noise. The rung bundles exact hints, staging within 120 s, re-fetch of queued turns and next-use eviction, and none of these is separated. That the calm-stretch cost comes through pins and revoked launches is an inference consistent with the counts, not separated from eviction."
+  },
+  {
+   "claim": "Just-in-time read timing gives 0.85 s, 18 % of the gain, the largest hinted rung. Because the old routine nets zero, this is also what exact hints are worth once reads start on time.",
+   "evidence": "Set (i): oracle 1.518 to jit_70 0.666 s (-0.852, 17.6 % of 4.840); queue -0.598, after admission -0.254. Contribution by stretch: -0.006, -0.192, -0.618, -0.036 s. Of 16 blocks, 10 are better and none worse. Recompute falls from 1,000 to 229 tokens per turn, the found-but-never-loaded part from 816 to 174. Turns with a revoked launch fall from 804 to 170. Over 0-4,500 s, mean pinned tokens fall from 35.2K to 5.9K, and pins of 10 s or more from 414 to 23.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_waterfall.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_reads.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_waterfall.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_reads.py"
+   ],
+   "confidence": "medium",
+   "caveats": "Measured only within jit_70's 75 min, so not in the second heavy stretch, where oracle to new exact gains 1.79 s per turn on 1,227 turns (set iv). The engine changes from v2 to table. Timing cannot be tested without a hint. One run each."
+  },
+  {
+   "claim": "The gate and the hold add 0.17 s, 4 % of the gain, not separated from noise; two-thirds of it comes from one 500-position block.",
+   "evidence": "Set (i): jit_70 0.666 to new exact 0.492 s (-0.174, 3.6 %), of which queue -0.139. Stretch 5,500-7,000 contributes -0.155 s, and positions 6,500-7,000 alone -0.114 s (66 %). Of 16 blocks, 6 are better by 0.05 s or more and none worse. Recompute falls from 229 to 112 tokens per turn, lookups per turn from 0.67 to 0.13, and turns with a revoked launch from 170 to 109. Mean pinned tokens over 0-4,500 s fall from 5.9K to 4.4K.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_waterfall.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_reads.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_waterfall.py"
+   ],
+   "confidence": "low",
+   "caveats": "The engine changes from table to owned, and the run was on a later GPU unit after the preemptions; speeds match. Single runs. Two single oracle runs once differed by about 0.2 s in heavy stretches."
+  },
+  {
+   "claim": "With realistic p50 hints, the hinted rungs together are worth about nothing against the hint-free arm at this setting. The old routine costs about 0.48 s and the new routine wins about the same back.",
+   "evidence": "7,768 set: hint-free 1.466, old p50 1.947 (+0.481), new p50 1.511 (-0.436 against old p50); net +0.045 s (queue -0.110, after admission +0.155, recompute +260 tokens per turn). Set (i): +0.496 and -0.459, net +0.038. Set (iv): +0.227 and -0.393, net -0.166; in positions 8,750 to end hint-free has 4.438 s and new p50 2.840 s, while calm stretches go +0.03 to +0.29 s. Exact hints with the new routine instead gain 0.961 s over the hint-free arm on the 7,768 set. Mean pinned tokens over 0-7,019 s: hint-free 9.3K, old p50 31.7K, new p50 30.6K.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_waterfall.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_sets.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_reads.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_waterfall.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_sets.py"
+   ],
+   "confidence": "medium",
+   "caveats": "Single runs on different engines (v2 against owned); the net differences sit inside the noise estimate. This contradicts the framing in CAMPAIGN23_FINDINGS.md ('5.17 s with no hints') and campaign 21 ('the p50 keeps 87 % of the oracle's gain'). Both measure against original HiCache, not against a hint-free design, which reaches 1.47 s on the same turns."
+  },
+  {
+   "claim": "The hint-free arm ran at the same hardware speed as the other arms.",
+   "evidence": "On the 3,000 turns of the oracle's first 3,000 that all seven arms have, the hint-free arm sits inside the other arms' ranges: decode median 45.05 ms per token (others 45.00-45.84); first-turn TTFT median 0.236 s (0.217-0.239); prefill 0.100 ms per uncached token on first turns over 2,000 tokens (0.099-0.102). Over the whole run, the p10 of SSD reads of 500 pages or more is 1.90 ms per page (1.83-1.96). Decode step time at matched batch size, minutes 0-25: 43.05 ms at 15-19 running requests (42.09-44.19) and 49.90 ms at 20-24 (49.90-52.97).",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_hw.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_hw.py"
+   ],
+   "confidence": "high",
+   "caveats": "No GPU UUID was recorded. Its driver log shows it ran straight after the oracle in the same launcher session, so it probably used campaign 21's unit; that is inferred."
+  },
+  {
+   "claim": "Counted in turns sent, the split depends on the time window.",
+   "evidence": "Turns sent by 7,019 s (the hint-free arm's last send): baseline 7,746, hint-free 10,353, oracle 10,079, new exact 11,885, so the steps take 63 %, -7 % and 44 % of +4,139 turns. Turns sent by 4,500 s: 6,262, 6,872, 6,783, jit_70 7,671, 7,822, so 39 %, -6 %, 57 % and 10 % of +1,560. Minutes from position 5,500 to 7,000 in each arm's own send order: baseline 54.3, hint-free 25.3, oracle 25.2, jit_70 18.0, new exact 16.2, old p50 29.0, new p50 25.3.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_sets.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_sets.py"
+   ],
+   "confidence": "medium",
+   "caveats": "In a closed loop, turns sent depend on the window and on where each arm's storm falls (the baseline's runs from 52 to 110 min). Position-matched TTFT is the cleaner measure."
+  },
+  {
+   "claim": "Two facts about the turn sets: sets (ii) and (iii) are the same 7,768 turns, and the hint-free arm's cut at 117 min matters only for set (iv) and the 7,019 s windows.",
+   "evidence": "The hint-free arm sent every turn of the 7,768 set by 5,811 s, while the baseline's 8,037 turns in 2 h bound it. Set (iv) is limited by the hint-free arm, last send 7,019 s.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a1_ladder_sets.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a1_ladder_sets.py"
+   ],
+   "confidence": "high",
+   "caveats": "None beyond the definitions: positions are ranks in the oracle's send order, and returning turns are those with turn > 0 and a TTFT."
+  }
+ ],
+ "attribution": [
+  {
+   "component": "Hint-free rung: read pins plus paced retries off (deadline order and read window present but inert)",
+   "amount": "-3.82 s of -4.84 s (78.9 %) on set (i), 7,410 turns; -3.71 s of -4.67 s (79.4 %) on the 7,768 set",
+   "basis": "Same-turn mean TTFT, baseline against hint-free. 90 % of it is queue wait, and 92 % falls in positions 5,500-7,000. Pins are inferred as the active part (lost-after-landing recompute goes from 2,375 tokens per turn to 0); not separated from paced retries off."
+  },
+  {
+   "component": "Old hinted next-turn routine plus next-use eviction, exact hints",
+   "amount": "+0.007 s on set (i), +0.019 s on the 7,768 set, -0.035 s on set (iv): about 0 % of the gain",
+   "basis": "Hint-free against oracle on the same turns. About -0.69 s per turn in the 5,500-7,000 episode and +0.34 s per turn in calm 3,000-5,500 cancel out."
+  },
+  {
+   "component": "Just-in-time read timing",
+   "amount": "-0.85 s (17.6 % of 4.84 s), set (i) only",
+   "basis": "Oracle against jit_70. 70 % of it is queue wait. Includes the v2-to-table engine change and covers 75 min only."
+  },
+  {
+   "component": "Gate plus hold",
+   "amount": "-0.17 s (3.6 % of 4.84 s), set (i); within run-to-run noise",
+   "basis": "jit_70 against new exact. 66 % of it comes from positions 6,500-7,000. Includes the table-to-owned engine change."
+  },
+  {
+   "component": "Just-in-time plus gate plus hold together, exact hints",
+   "amount": "-0.98 s (21.0 % of 4.67 s) on the 7,768 set; -1.01 s on set (iv)",
+   "basis": "Oracle against new exact on the same turns."
+  },
+  {
+   "component": "Old hinted routine with p50 hints",
+   "amount": "+0.48 s against hint-free on the 7,768 set (+0.50 s on set (i))",
+   "basis": "Hint-free against old p50."
+  },
+  {
+   "component": "New routine (just-in-time plus gate plus hold) with p50 hints",
+   "amount": "-0.44 s against old p50 on the 7,768 set. Net of all hinted rungs with p50 against hint-free: +0.045 s (7,768 set), +0.038 s (set i), -0.166 s (set iv)",
+   "basis": "Old p50 against new p50, and hint-free against new p50, on the same turns."
+  }
+ ],
+ "open_questions": [
+  "Which part of the hint-free rung carries the 3.7 s: pins or paced retries off? No arm has one without the other. The mechanism points at pins, but that is not separated.",
+  "Do the baseline's storm (23.6 s in positions 5,500-7,000) and the hint-free arm's milder episode (5.75 s) repeat? Neither arm has a repeat, and a storm's depth may vary between runs.",
+  "How does the gain split between just-in-time timing and the gate plus hold in the second heavy stretch (positions 8,750 on), where oracle to new exact gains 1.79 s per turn? jit_70 stopped at 75 min.",
+  "Order dependence: every hinted rung is measured on top of pins. No arm has hints without pins, just-in-time timing without the old horizon routine, or the gate and hold without just-in-time timing.",
+  "Does 'p50 hints add about nothing over a hint-free design' hold at other user counts or memory sizes? At 128 users no hint-free arm exists, and campaign 22's ladder never ran.",
+  "Within the old routine, does the calm-stretch cost (+0.34 s per turn at 3,000-5,500) come from early staging pins or from next-use eviction? CAMPAIGN23 option B, exact gaps for eviction with p50 for reads, would separate the two."
+ ]
+}

@@ -1,0 +1,234 @@
+{
+ "angle": "a5_p50",
+ "summary": "On the 7,768 shared returning turns, new p50 beats old p50 by 0.44 s and new exact beats the oracle by 0.98 s. The p50 gain lies 72 % in the 5,500-7,000 episode and is 84 % queue wait. 73 % of it is 405 turns that in old p50 re-fetched lost history twice, failed, hit the cap and recomputed (10.7 s); new p50 serves them at 4.6 s. Recompute falls 389 tokens per turn, 379 of it on capped turns. The gain is half because the forecast undoes the new routine's pin saving. With exact hints, staged-read pins fall from 34.9K to 4.4K tokens and recompute on reads revoked or cut for host room from 422 to 44 tokens per turn. With p50 hints staged pins stay at 26.9K (old p50 27.1K), landing a median 4.7 s before admission, not 1.7 s, because of the p50 - p10 early start and late arrivals; that recompute does not fall (510 to 549). Of the 0.54 s difference, 78 % is the episode, 88 % of its recompute is those revoked and cut reads, and 58 % sits on 549 turns whose reads failed only under p50. One run per arm.",
+ "sanity_check": "Reproduced exactly (a5_p50_check.out): 7,768-turn set mean TTFT 5.17/1.48/1.95/0.50/1.51 s and recompute 2,870/977/1,329/114/940 tokens per turn; 7,412-turn set 1.52/0.67/0.49 s; every stretch in DECISIONS.md (5,500-7,000: oracle 5.06, new exact 1.12 s); mean pinned tokens 39.3K/32.3K/6.2K/30.9K; gate decisions 5,928/1,486/682/25 (new exact) and 3,757/2,721/2,549/215 (new p50); revoked launches 2,329 of 5,317, 2,554 of 5,933, 381 of 2,088, 1,743 of 5,001. Small mismatch: my server-logged set has 8,009 turns against the known 8,008. On it, pages are 592,964/293,763/375,505/215,881/430,996 (known 293,759, 375,501, 430,992) and I/Os per reading turn are 1.057/1.330/1.308/1.145/1.276 (known 1.331, 1.309). The cause is that one extra turn: I key turns on more event kinds than arrival_fetch.py does. The two p50 arms' hints agree to 10 ms on 9,063 of 9,703 turns and differ by 1 s or more on only 51. True gaps match between old p50 and new exact on all 9,732 turns checked. Turns with no read are almost never passed by a later arrival (34, 29, 1 and 3 of 6,800-10,300), so the passed-delay measure carries over from 128 users.",
+ "findings": [
+  {
+   "claim": "The p50 gain (old p50 -> new p50) sits mostly in the 5,500-7,000 episode, and it is queue wait other than waiting on a turn's own read.",
+   "evidence": "Five-arm 7,768-turn set: 1.947 -> 1.511 s, gain 0.436 s. By stretch (oracle's send order), seconds per turn of the set: 0-3,000 -0.011, 3,000-5,500 +0.094 (22 %), 5,500-7,000 +0.314 (72 %), 7,000-8,750 +0.042 (10 %). On the 7,610 of these turns planned in every arm (gain 0.440 s): queue wait +0.369 s (84 %), made of time held back by the turn's own read (passed by a later arrival) -0.055 s (new p50 0.166 vs old p50 0.111 s per turn) and the rest of the queue +0.424 s; service (TTFT - wait) +0.070 s. On the 9,689 returning turns the two p50 arms share (all of them also in the oracle and new exact): gain 0.393 s; 64 % in 5,500-7,000, 19 % in 3,000-5,500, 10 % in 7,000-8,750, 9 % in 8,750-end, -2 % in 0-3,000; queue wait 85 %.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_summary.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_terms.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_passed.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_summary.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_terms.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_passed.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_lib.py"
+   ],
+   "confidence": "high",
+   "caveats": "One run per arm. Repeat noise on the oracle was 0.05-0.14 s, so stretch terms under 0.1 s are not known to be real. Queue wait comes from ntp_admit, so it exists only for planned turns. Held back = admission minus the earliest admission of any later arrival, if 0.1 s or more (late_reads_c128.py's measure)."
+  },
+  {
+   "claim": "Most of the p50 gain is queued turns that the old routine re-fetched until a cap stopped it. The new routine avoids most of them even with p50 hints, and that is where its recompute saving comes from.",
+   "evidence": "Paired, 7,768 set: 405 turns capped in old p50 (a re-read refused by a cap) and fine in new p50 go 10.72 -> 4.58 s, +0.320 s per turn of the set (73.5 % of the gain). 6,509 turns fine in both go 1.08 -> 0.88 s (+0.170 s, 39 %). 135 turns fine in old p50 but capped in new p50 go 4.26 -> 9.55 s (-0.092 s, -21 %). In old p50 those 405 turns arrived at queue position median 5, each issued 2.00 re-fetches, saw 2.00 re-evictions and 1.89 revoked launches, waited 8.09 s and recomputed 9,550 tokens. In new p50 they arrived at position 2, with 0.26 re-fetches, 0.17 revoked launches, 3.52 s wait and 118 tokens; 95 were held. Recompute per turn of the set falls 389 tokens: capped turns 682 -> 303 (-379), uncapped revoked 239 -> 264 and cut 271 -> 286 (+39 together), everything else 137 -> 88. Counts on the set: re-fetches issued 1,948 -> 1,068, revoked re-fetch launches 1,313 -> 612, capped turns 528 -> 235.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_paired.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_capped.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_terms.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_summary.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_paired.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_capped.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_terms.py"
+   ],
+   "confidence": "medium",
+   "caveats": "The accounting is exact; the mechanism is not separated. The hold, the gate's 3-lookup cap, just-in-time staging and the shorter queue arrive together, and no p50 arm has one without the others. Classes are each arm's own: capped = the gate's cap (new routine) or the re-fetch cap after two re-evictions (both routines); 'denied' = revoked or cut with no cap; 'fine' = the rest."
+  },
+  {
+   "claim": "Under p50 hints the new routine's staged reads pin as much host memory as the old routine's, so the pin saving behind the exact gain is gone.",
+   "evidence": "Pins starting in the first 2 h, whole run, by the class of the read that landed just before the pin. Staged-read pins: oracle 34.9K, old p50 27.1K, new exact 4.4K, new p50 26.9K mean pinned tokens (all pins 39.3K, 32.3K, 6.2K, 30.9K). Landing to admission for staged pins due before the forecast, median (p90): 9.8 (48.3), 7.9 (29.5), 1.7 (2.6) and 4.7 (24.3) s. Time-weighted pinned tokens over each arm's own clock window of stretch 5,500-7,000: 63.0K, 62.0K, 14.9K, 49.8K, against about 44K of host room. On the 7,768 set, staged pins carry 95 % of the difference in pin reduction (19,346 of 20,299 token-seconds per turn). New p50's staged pins that ended at admission (880 pins, 50 % of staged token-seconds) split their lead into the p50 - p10 early start 72 %, arrival later than forecast 30 %, the 1 s margin 12 %, and the rest -14 %. Across all staged pins, 88 % of token-seconds are on turns whose true gap exceeded the p50 (46 % p50-p90, 42 % above p90); old p50: 84 % (48 %, 36 %).",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_pins.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_summary.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_pins.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_summary.py"
+   ],
+   "confidence": "high",
+   "caveats": "The numbers are direct. That the early start and late arrivals cause the long pins is a linear identity on admit-ended pins only. The other half of staged token-seconds ended by replacement (431 pins) or by plan expiry (63). Pins are not separated from eviction on the forecast."
+  },
+  {
+   "claim": "In recompute, the difference between the two gains is reads denied host room on turns with no cap. In every arm the revoke rate rises with pinned tokens at dispatch.",
+   "evidence": "7,768 set, recompute per turn. Exact gain 863: capped 430, uncapped revoked 182, uncapped cut 196, rest 55. p50 gain 389: capped 379, revoked -24, cut -15, rest 49. Difference 474 = revoked 206 (43.5 %) + cut 211 (44.4 %) + capped 51 (10.8 %) + rest 6. Within each routine, the forecast costs 826 tokens per turn in the new routine (505 uncapped revoked or cut, 270 capped) and 352 in the old (88 and 218). Counts on the set: revoked launches 1,598 -> 151 in the exact pair against 2,074 -> 1,183 in the p50 pair (difference 556: re-fetch 270, staged 242); cut reads 906 -> 143 against 1,123 -> 816 (difference 456, staged 230). First 2 h, whole run: the share of dispatches revoked rises with pinned tokens at dispatch, from 4 % under 10K to 50 % at 44-60K in new exact, 13 % to 37 % in new p50, and 18-20 % to 41-44 % in the old arms. Applying new p50's per-bucket rates to new exact's pinned mix gives 460 revoked launches against new exact's 379; new p50 itself revoked 1,742 of 4,996 (34.9 % against 18.2 %).",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_terms.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_summary.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_pins.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_reads.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_terms.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_pins.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_reads.py"
+   ],
+   "confidence": "medium",
+   "caveats": "The revoke-pin link is an association. Pinned tokens at dispatch also rise with congestion, and neither eviction on the forecast nor device-pool fill is separated from pins (option B in CAMPAIGN23_FINDINGS would separate them). Revoked = srs_dispatch launched=0; cut = landed less than the lookup found, at turn level as read_denied.py defines it."
+  },
+  {
+   "claim": "In TTFT the 0.54 s difference is the 5,500-7,000 episode. About 58 % is paid by turns whose reads failed only under p50; the rest is shared through the queue by turns that read fine. It does not concentrate on turns the p50 forecast got wrong.",
+   "evidence": "7,768 set, difference 0.543 s: 5,500-7,000 0.423 s (78 %), 3,000-5,500 0.099 s (18 %), 0-3,000 0.024 s (4 %), 7,000-8,750 0.001 s. On the 7,610 planned turns (0.531 s): queue wait 0.320 s (60 %), made of held back by own read 0.101 s (19 %) and the rest of the queue 0.219 s (41 %); service 0.210 s (40 %). Partition fixed across the four arms: 549 turns fine in new exact but revoked, cut or capped in new p50 carry 0.313 s (58 %; their TTFT is 0.87 vs 6.27 s). 1,014 turns fine in both new arms but not in an old arm carry 0.117 s (22 %), 6,144 turns fine in all four 0.138 s (25 %), and the rest -0.025 s. By the p50's error on the turn (true gap minus p50), turns within 1 s (5,553, 71 %) carry 59 % of the difference. New p50's read-gated time is 1,264 s, of which 11 % falls on turns arriving 1 s or more before the forecast and 34 % on held reads. On the four-arm 9,689 set the difference is 0.621 s; 31 % of it is stretch 8,750-end, where the oracle is slow (4.06 vs 3.12 s for old p50).",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_summary.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_paired.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_passed.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_band.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_capped.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_summary.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_paired.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_passed.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_band.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_capped.py"
+   ],
+   "confidence": "high",
+   "caveats": "These partitions are accounting, not cause. The 8,750-end stretch exists only in the four-arm set, and DECISIONS.md reads its oracle-p50 gap as even (no repeat), so the 7,768 set is the cleaner basis. The difference sums four single runs, so its noise is larger than any one arm's."
+  },
+  {
+   "claim": "SSD pages and the gate's lookup saving do not explain the difference. The gate removes the blind lookups equally under both hints, and new p50 reads more pages than old p50.",
+   "evidence": "7,768 set: SSD pages 294,691 -> 215,381 (-27 %) in the exact pair against 376,902 -> 432,331 (+15 %) in the p50 pair. Of the 134,739-page difference, arrival first reads account for +79,033 and re-fetches for +30,045. I/Os per reading turn go 1.334 -> 1.148 against 1.311 -> 1.278; turns that read 1,540 -> 709 against 1,993 -> 1,766. Arrival lookups that found nothing go 2,834 -> 12 and 2,877 -> 70 (difference 15). Gate decisions on the set, new exact vs new p50: covered 3,995 vs 3,015, first read 732 vs 1,898, re-read 282 vs 1,728, capped 10 vs 125; holds 40 vs 331.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_reads.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_summary.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_check.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_reads.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_check.py"
+   ],
+   "confidence": "high",
+   "caveats": "Pages are counted from s2h_io per turn, and read classes follow arrival_fetch.py's rules. The gate's cap is part of the capped recompute (51 tokens per turn of the difference)."
+  },
+  {
+   "claim": "Contradiction with the background: 'recomputation follows pins' holds for the exact pair and for the difference between the gains, but not within the old routine or within the p50 pair.",
+   "evidence": "The oracle pins more than old p50 (39.3K vs 32.3K) yet recomputes less (977 vs 1,329 tokens per turn, 7,768 set). Old p50 and new p50 pin about the same (32.3K vs 30.9K; staged pins 27.1K vs 26.9K) yet recompute 1,329 vs 940; 379 of that 389 difference is on capped turns. In the old routine, p50's extra recompute over the oracle is mostly capped turns (218 of 352).",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_terms.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_pins.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_check.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_terms.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_pins.py"
+   ],
+   "confidence": "high",
+   "caveats": "CAMPAIGN23_FINDINGS lists the four pin and recompute pairs side by side; the inversion is visible there but not called out."
+  },
+  {
+   "claim": "Small issue logged: arrival_fetch.py's 'pinned, <class>' rows miss most pins.",
+   "evidence": "Its read walk stops at the next prefetch call once a read has landed. A pin whose turn makes another call before admission (nearly every staged read, at its arrival call) therefore never gets its unpin. arrival_fetch_jit_p50_c44.out lists 'pinned, staged (n 182)' for the whole run, against 1,374 staged pins in the first 2 h from paired srs_pin and srs_unpin lines (a5_p50_pins.out). Its landing-to-admission rows use landing and admission times and are unaffected.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a5_p50_pins.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a5_p50_pins.py"
+   ],
+   "confidence": "high",
+   "caveats": "As far as I can see, no headline number in CAMPAIGN23_FINDINGS uses those rows."
+  }
+ ],
+ "attribution": [
+  {
+   "component": "p50 gain: stretch 5,500-7,000",
+   "amount": "0.314 s of the 0.436 s p50 gain (72 %)",
+   "basis": "7,768-turn five-arm set, 1,453 turns; seconds per turn of the set (a5_p50_summary.out)"
+  },
+  {
+   "component": "p50 gain: stretch 3,000-5,500",
+   "amount": "0.094 s (22 %)",
+   "basis": "7,768 set, 2,421 turns"
+  },
+  {
+   "component": "p50 gain: stretches 7,000-8,750 and 0-3,000",
+   "amount": "+0.042 s (10 %) and -0.011 s (-2.5 %)",
+   "basis": "7,768 set, 1,005 and 2,883 turns"
+  },
+  {
+   "component": "p50 gain: queue wait other than being held back by the turn's own read",
+   "amount": "+0.424 s of 0.440 s",
+   "basis": "7,610 turns planned in every arm (a5_p50_passed.out)"
+  },
+  {
+   "component": "p50 gain: held back by own read, and service",
+   "amount": "-0.055 s and +0.070 s",
+   "basis": "7,610 planned turns; held back = passed by a later arrival by 0.1 s or more"
+  },
+  {
+   "component": "p50 gain: turns capped in old p50 that read fine in new p50",
+   "amount": "0.320 s (73.5 %)",
+   "basis": "405 turns, paired (a5_p50_paired.out)"
+  },
+  {
+   "component": "p50 gain: turns fine in both p50 arms",
+   "amount": "0.170 s (39 %)",
+   "basis": "6,509 turns, paired"
+  },
+  {
+   "component": "p50 gain: turns newly capped in new p50",
+   "amount": "-0.092 s (-21 %)",
+   "basis": "135 turns, paired"
+  },
+  {
+   "component": "Difference of gains (exact 0.979 - p50 0.436 = 0.543 s): stretch 5,500-7,000",
+   "amount": "0.423 s (78 %)",
+   "basis": "7,768 set"
+  },
+  {
+   "component": "Difference: stretch 3,000-5,500",
+   "amount": "0.099 s (18 %)",
+   "basis": "7,768 set"
+  },
+  {
+   "component": "Difference: queue wait, held back by own read",
+   "amount": "0.101 s (19 % of 0.531 s)",
+   "basis": "7,610 planned turns"
+  },
+  {
+   "component": "Difference: rest of the queue wait",
+   "amount": "0.219 s (41 %)",
+   "basis": "7,610 planned turns"
+  },
+  {
+   "component": "Difference: service (TTFT - queue wait)",
+   "amount": "0.210 s (40 %)",
+   "basis": "7,610 planned turns"
+  },
+  {
+   "component": "Difference: turns fine in new exact but revoked, cut or capped in new p50",
+   "amount": "0.313 s (58 %)",
+   "basis": "549 turns, partition fixed across the four arms"
+  },
+  {
+   "component": "Difference: turns that read fine in both new arms (in all four, or only in the new ones)",
+   "amount": "0.138 s (25 %) + 0.117 s (22 %)",
+   "basis": "6,144 + 1,014 turns, partition fixed across the four arms; the other 61 turns carry -0.025 s"
+  },
+  {
+   "component": "Difference in recompute: revoked and cut reads on turns with no cap",
+   "amount": "417 of 474 tokens per turn (88 %)",
+   "basis": "7,768 set, each arm's own classes (a5_p50_terms.out)"
+  },
+  {
+   "component": "Difference in recompute: capped turns",
+   "amount": "51 of 474 tokens per turn (11 %)",
+   "basis": "7,768 set"
+  },
+  {
+   "component": "Difference in pin reduction: staged reads",
+   "amount": "19,346 of 20,299 token-seconds per turn (95 %)",
+   "basis": "pins starting in the first 2 h, of the 7,768 turns"
+  }
+ ],
+ "open_questions": [
+  "Which of the hold, the gate's 3-lookup cap, just-in-time staging or the shorter queue removes the old routine's capped turns under p50 hints? Re-fetches per turn on those 405 turns fall from 2.00 to 0.26, but only 95 of them were held, and no p50 arm separates the changes.",
+  "Would dropping the p50 - p10 early start (option C) bring back the pin saving, and at what cost? It is 72 % of the lead of admit-ended staged pins. The cost would fall on early arrivals, which now take only 11 % of new p50's read-gated seconds.",
+  "Pins against eviction on the forecast: would exact gaps for eviction with p50 for reads (option B) keep the uncapped revoked and cut reads (549 tokens per turn) high?",
+  "Noise: every arm is one run. The 0.54 s difference sums four runs' noise (0.05-0.14 s each on the oracle), so stretch and class terms under about 0.1 s are not known to be real.",
+  "Why does new p50 pin more than old p50 below the knee (time-weighted 7.9K vs 4.6K in 0-3,000 and 43.9K vs 34.9K in 3,000-5,500), where it is also slower (0.42 vs 0.39 s and 0.94 vs 1.24 s)?",
+  "The old and new arms differ in engine freeze and possibly GPU unit, and new p50's decode slowed from about minute 40 (DECISIONS.md). How much of its 0.32 s higher service time than new exact is that rather than recompute is not separated."
+ ]
+}

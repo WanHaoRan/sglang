@@ -1,0 +1,147 @@
+{
+ "checker": "v5_tiers",
+ "overall": "Every number I re-derived from scratch reproduced: the tier mix on the 7,768 turns, the stretch and gap splits, churn per turn, victim counts, lead shares and backup coverage. The code claims also hold. In all three engines `_launch_storage_hit` (asks `evict_host` for the whole read) and `_execute_kv_backup` (asks for the shortfall, skips the backup without logging it) are byte-identical. Several readings do not hold. The churn \"conservation rule\" is just accounting: what is left over is the pool size, and the writes the trace itself requires are the same in every arm, so \"writes less, so evicts less\" is circular. \"Three times chance\" holds for every `evict_host` caller, not just staged reads, and staged reads take soon-needed copies in rough proportion to how much they evict. jit_70 matches new exact on the tiers but recomputes twice as much, and is 0.8 s slower in the heavy stretch. Turns whose p50 plan expired are mostly lost under exact hints too (76-84 %). The skipped-backup claim is stronger than a3 stated, because log lines show it.",
+ "verdicts": [
+  {
+   "claim": "New exact serves more history from the GPU than the oracle (21,710 vs 19,661 tokens per returning turn on the 7,768 set), less from host (858 vs 1,777) and less from SSD (1,600 vs 1,866).",
+   "source": "a6 [1]",
+   "verdict": "confirmed",
+   "reproduced": "Turn set: the 7,768 returning turns (turn > 0, ttft present) shared by baseline, oracle, old p50, new exact and new p50. Adding hint-free gives exactly the same set. History = prompt - delta = device + host + storage + max(reply_reprefilled, 0), with zero failures in all 7 arms. Mean TTFT 5.171/1.484/1.947/0.505/1.511 s. Recomputed 2,870/977/1,329/114/940. Device/host/SSD/recomputed per turn: oracle 19,661/1,777/1,866/977, new exact 21,710/858/1,600/114, baseline 17,543/1,535/2,334/2,870, hint-free 18,778/1,817/3,007/680. Paired new exact minus oracle: +2,049/-919/-267/-863, TTFT -0.979 s. Paired new p50 minus old p50: +653/-680/+416/-389, -0.436 s. All identical to a6.",
+   "discrepancies": "None in the numbers. One nuance on mechanism. With turns binned by the GPU token usage their own arm had at send, device share differs by only 1-4 points below 0.90 usage (0.70-0.80: 83.2 vs 84.5 %). 6.5 of the 7.8-point device-share gap is load mix: the oracle sent 1,133 turns at usage >= 0.90 against new exact's 310. So 'keeps more on the GPU' mostly means 'spends less time congested'. Load is endogenous in a closed loop.",
+   "alternatives_tested": "(1) Different turns or histories across arms. Fails: same 7,768 keys, gap_slept identical, and per-turn history differs by only +-1-2 tokens on 2,220 turns (mean |d| 0.2; mean 24,281 in every arm). (2) Load composition. Explains most of the gap (above) but does not contradict the descriptive claim.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v5_tiers_mix.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v5_tiers_mix.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v5_tiers_lib.py"
+   ]
+  },
+  {
+   "claim": "jit_70 matches new exact, so read timing alone gives the new routine's tier mix.",
+   "source": "a6 [1]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "On the 7,410 returning turns all seven arms share: jit_70 21,470/883/1,646/229 (device/host/SSD/recomputed) against new exact 21,642/868/1,607/112. TTFT 0.666 vs 0.492 s (oracle 1.518). On the 7,412 three-arm set: TTFT 1.517/0.666/0.492. Heavy stretch, oracle send positions 5,500-7,000 (1,453 turns, all in jit_70): jit_70 18,064/2,143/5,452/984, TTFT 1.91 s; new exact 19,111/1,862/5,262/408, 1.12 s; oracle 11,538/5,459/6,243/3,404, 5.06 s.",
+   "discrepancies": "'Matches' holds for device, host and SSD (within 171/15/39 tokens), not for recompute (2x: 229 vs 112) or TTFT (+0.17 s). In the heavy stretch jit_70 recomputes 2.4x as much and is 0.79 s slower. It closes about 86 % of the device gap and 80 % of the TTFT gap there. 'Read timing alone does this' is therefore about 85-90 %, not all. jit_70 also ran on a different freeze for 75 min, one run, and the 0.17 s is close to the 0.05-0.2 s noise.",
+   "alternatives_tested": "Same turns stratified by oracle stretch. The match is close in calm stretches (0-3,000: 21,913 vs 21,906; 3,000-5,500: 22,163 vs 22,117) and breaks only under load, so the difference is load-specific, not a set artifact.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v5_tiers_mix.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v5_tiers_mix.py"
+   ]
+  },
+  {
+   "claim": "The GPU-residency gap grows with load: none in the calm first stretch, large in the heavy one, and the oracle loses history even at short tool gaps.",
+   "source": "a6 [2]",
+   "verdict": "confirmed",
+   "reproduced": "7,768 set, stretches by position in the oracle's send order (all oracle turns), oracle vs new exact. Device: 0-3,000 (2,883 turns) 21,876 vs 21,906; 3,000-5,500 (2,421) 20,392 vs 22,117; 5,500-7,000 (1,453) 11,538 vs 19,111; 7,000-8,750 (1,005) 23,324 vs 24,051. Recomputed: 55/33, 859/50, 3,404/408, 403/45. GPU usage at send (Decode line before t_send): 0.45/0.45, 0.70/0.66, 0.89/0.75, 0.61/0.55. By gap_slept: 0-5 s (2,434 turns, history 23,834) device 21,644 vs 23,391, recomputed 572 vs 80. 5-15 s (4,372) 20,144 vs 22,552, 934 vs 130. 30-60 s (281) SSD 3,899 vs 7,155, recomputed 2,156 vs 97. All identical to a6.",
+   "discrepancies": "None. Stretches are oracle positions, so in new exact the same turns ran at lower usage. That is part of the effect, not a confound.",
+   "alternatives_tested": "(1) History length drives the gap. Fails: 7,000-8,750 has long histories (25,180) but a gap of only +727, while 5,500-7,000 (26,644) has +7,573. (2) Within equal-usage bins the shares nearly match. The gap follows load.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v5_tiers_mix.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v5_tiers_mix.py"
+   ]
+  },
+  {
+   "claim": "A full tier evicts about what is written into it (within 3 %). New exact writes less per turn (prefill 879 vs 1,794, h2d 2,957 vs 3,928), so it makes 32 % fewer GPU and 22 % fewer host evictions.",
+   "source": "a6 [4]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "server.log events and Prefill-batch #new-token, client time 0-7,200 s, per turn sent. GPU in (prefill + h2d_done) vs evict_device: oracle 5,723 vs 5,831 (1.019); new exact 3,836 vs 3,953 (1.031); baseline 7,206 vs 7,297. Host in (d2h_done + s2h_io pages x 64) vs evict_host: 4,234 vs 4,166; 3,298 vs 3,240; 8,351 vs 8,266. Prefill 1,794 vs 879, h2d 3,928 vs 2,957, d2h 1,600 vs 1,029 (= h2s), SSD read 2,633 vs 2,269; -32 % GPU and -22 % host evictions. Each arm's own turns 5,500-7,000: evictions 15,559 vs 8,239, usage 0.91 vs 0.77, running 25.4 vs 21.6, queue 2.9 vs 0.7. Peak per 5 min 4.4-5.4 M. Bins at usage >= 0.85: 11/6/7/9/1/1/8 (baseline/hint-free/oracle/old p50/jit_70/new exact/new p50).",
+   "discrepancies": "This is accounting, not a finding. Host in minus evicted is 678-741K tokens in every arm, which equals the 712K host pool. GPU in plus decode minus evicted is 0.9-1.0 M, the 668K pool plus about 30 tokens per turn of unaligned tails. Any pool that fills gives a residual of pool divided by total writes (1.6-3 %). New exact's GPU ratio is 3.1 %, at the edge. What the trace requires each turn to write is equal in all arms: new text 689-695 + decode 202-205 = 892-899 tokens per turn sent. Recompute plus reloads, which are caused by earlier losses, make up 78-88 % of GPU writes. So 'churn is set by what each turn must write' and 'writes less, so evicts less' restate the identity and are circular.",
+   "alternatives_tested": "Conservation alone predicts both the ratio and the balance. Per 5 min, evicted/written is 0.41/0.31 at 5 min (pools filling), then about 1.00 in every arm whatever the routine. That confirms the identity carries no information about routines.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v5_tiers_churn.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v5_tiers_writes.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v5_tiers_churn.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v5_tiers_writes.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v5_tiers_lib.py"
+   ]
+  },
+  {
+   "claim": "A read launch that finds the host full asks evict_host for the whole read rather than the shortfall (all three engines).",
+   "source": "a6 [5]",
+   "verdict": "confirmed",
+   "reproduced": "Code. `_launch_storage_hit` is byte-identical (sha1 abcb1318b4) in engine_5df71c4bf0_v2, engine_table_20261101 and engine_owned_20261101: `alloc_len = hit_tokens`; if alloc(alloc_len) fails, `self.evict_host(alloc_len)` (line 2962/2962/2976). It then falls back to a prefix that fits in free room if that is >= 256 tokens, else revokes. `_execute_kv_backup` (identical, sha1 660037c9e3) asks for the shortfall only (`needed = kv_tokens - host_avail`). `drive_host_eviction` frees whole leaves until the request is met. Data, with read-launch evictions identified only as 'next event is srs_dispatch within 10 ms' and no size matching: requested == dispatched pages x 64 on 1,553/1,553 (oracle), 1,045/1,045 (new exact) and 0 exceptions in 6 arms. 132 oracle launches (89 new exact) went out whole after an eviction that freed less than requested, so room was already free (median >= 3,168 tokens). Staged reads with lead >= 5 s, share of host-evicted tokens in 0-7,200 s: oracle 7.7 M of 43.0 M (17.9 %), old p50 8.4 M (17.7 %), new p50 8.4 M of 56.3 M (14.8 %), jit_70 and new exact 0.1 M.",
+   "discrepancies": "Alloc fails whenever free room is less than the whole read, not only when the host is full. a6's 'data agree' check was circular (its classifier required requested == pages x 64), but it holds without that. Oracle share 17.9 % vs a6's 18.3 %. 'Almost none under just-in-time' applies only to lead >= 5 s: staged reads with lead < 5 s are 656 launches and 17.7 M, 44.7 % of new exact's host evictions. That is twice the oracle's staged-read volume (9.0 M, 20.9 %). Backup-path evictions free 2.5-3.7x what they ask (leaf granularity), so over-eviction is not only on the read path.",
+   "alternatives_tested": "(1) The match is an artifact of size matching. Fails: 0 mismatches without it. (2) The host was truly full, so whole read = shortfall. Fails: 132/89 whole launches after short evictions show free room.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v5_tiers_evictcall.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v5_tiers_extra.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v5_tiers_evictcall.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v5_tiers_extra.py"
+   ]
+  },
+  {
+   "claim": "Self-induced eviction (another turn's staged read evicting a soon-needed host copy) is about three times chance but explains only about 12 % of the oracle-to-new-exact gap.",
+   "source": "a6 [6]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "Victims: ntp_due case 1 with lead < 119.4 s, more than 0.6 s after the last ntp_plan, in 0-7,200 s. Oracle 1,747 (lead median 11.6 s). A staged-read eviction for another, not-yet-sent turn in the 0.6 s before: 412 (23.6 %; a6 418, 23.9 %). Reader due later than the victim: 293 (16.8 %). Chance by time coverage in the victims' 5-min bins: 7.6 %. A time-shift null (+-10-40 s) gives 6.2-9.0 %. Gap on the 7,768 set: all victims 1,208 turns, 0.528 of 0.979 s (53.9 %); staged-read victims 307 turns, 0.114 s (11.6 %). Old p50: 2,030 victims, 563 (27.7 %), chance 8.0 %, 6.3 % of 0.436 s. A stricter definition (lead < 115 s, > 2 s after plan) gives 1,094 victims and 25.2 %.",
+   "discrepancies": "The 3x is not specific to staged reads. At oracle victims every evict_host caller shows 2.5-3.1x its time-coverage chance: backup path 60.5 vs 23.2 %, reads for sent turns 27.8 vs 10.9 %, staged reads 23.6 vs 7.6 %, any host eviction 86.5 vs 33.0 %. That is because victims are losses at host evictions. Staged reads made 20.9 % of host-evicted tokens. Splitting each victim by the tokens evicted in its window gives 17.5 % staged-read victims, so staged reads act roughly in proportion to their volume. The gap share is at most 11.6 % (co-occurrence), about 8.6 % token-weighted. New exact's staged reads evict 17.7 M host tokens, twice the oracle's, with fewer losses.",
+   "alternatives_tested": "A time-shift null (agrees with chance), a per-caller chance ratio (all about 2.6x) and token-share attribution. The last two undercut '3x' as evidence that staged reads are special.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v5_tiers_victims.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v5_tiers_extra.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v5_tiers_victims.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v5_tiers_extra.py"
+   ]
+  },
+  {
+   "claim": "Write-through backups go missing when pins are high (coverage 80 % vs 95 %), leaving holes in the SSD copy.",
+   "source": "a3 [8]",
+   "verdict": "confirmed",
+   "reproduced": "Coverage = d2h_submit tokens / (server Prefill #new-token + decode tokens of finished turns), each arm's window: baseline 98.9, hint-free 95.0, oracle 80.1 (4.10 M not backed up), old p50 77.6, jit_70 94.2, new exact 95.2, new p50 89.7 %. Pooled 5-min bins from 20 min, by mean pinned: 99.0 (0), 97.0 (<5K), 93.9 (5-20K), 89.8 (20-44K), 80.9 (44-60K), 65.6 % (>60K). SSD holes at the last s2h_query into history before admission, 7,768 set: oracle 75.6 vs new exact 3.5 tokens per turn (827 vs 72 turns), all recomputed (a3: 80 vs 4). Code (identical in all three engines): `_execute_kv_backup` returns None when evict_host frees less than the shortfall. `_execute_and_commit_kv_backup` then returns 0 and drops the rest of the chain. An unbacked node is deleted outright at device eviction; that is counted only in the Prometheus counter write_through_unbacked_eviction, not logged. It is retried only if the node is hit again first.",
+   "discrepancies": "a3's caveat 'no log line names a skipped backup' is literally true, but logs do confirm skips. A backup-path evict_host line that freed less than the shortfall means, by the code, that the backup was skipped. Counts in 0-7,200 s: oracle 190, old p50 171, new p50 104, new exact 26, jit_70 14, hint-free 17. In the oracle the failing share rises with pins at that moment: 0 % (0 pinned), 1.5 % (<20K), 4.2 % (20-44K), 7.2 % (>=44K). Failures that free nothing log no line, so these counts are a lower bound. Holes are 75.6, not 80, under my page-rounding rule.",
+   "alternatives_tested": "(1) Load or recompute alone. Fails: the baseline recomputes 22.3 M yet keeps 99.6 % coverage in its 8 busiest bins (2.0 M KV per 5 min). (2) Recomputed history re-attaching to host copies, which would need no backup. Fails: 0 load_back_init with tokens < host_hit in any arm. (3) The L3 cleaner deleting SSD data. Fails: no 'NIXL L3 cleanup' line in any 44-user run. (4) Lost or lagging SSD writes. Fails: h2s_done equals d2h_submit tokens in every arm, and the SSD write holds a host lock.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v5_tiers_backup.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v5_tiers_evictcall.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v5_tiers_backup.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v5_tiers_evictcall.py"
+   ]
+  },
+  {
+   "claim": "Under p50 hints, mistimed plans expire, and the tail is re-registered as ended and evicted first.",
+   "source": "a6 [9]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "Code (v2 and owned): `_expire` calls `_end_session`, which calls `_register_next_use(next_use=None)`. In NextUseStrategy (identical in all three engines) that is TIER_ENDED = 0, evicted first, and the same strategy orders both device and host eviction. Logs: 171 (old p50) and 177 (new p50) 'ntp_expire reason=timeout' lines, each with a 'nue_register next_use_ms=ended' for the same rid within 5 ms (new exact 23/23, oracle 0). 166 and 172 returning turns were sent after expiry. True gap median 166/168 s against a p50 hint median of 10 s. Lost (SSD + recomputed >= 128 history tokens at admission): 95.8 / 95.3 %.",
+   "discrepancies": "The same turns lose their history 84.3 % of the time in the oracle and 76.2 % in new exact, because their true gaps are long. Expiry adds 12-19 points of loss, not 95 %. Its larger cost is recompute: new p50 4,492 vs new exact 265 tokens per turn, TTFT 3.32 vs 1.22 s, on about 2 % of turns. Only the tail node is registered ended. Ancestors fall back to the LRU tier, and an overdue registration (tier 1, more than 60 s past) would be evicted nearly as early anyway.",
+   "alternatives_tested": "Same-turn exact-hint control (above). A same-arm control (gap 66-1,200 s, plan not expired) loses 73-79 % but has only 26-29 turns.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v5_tiers_expire.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v5_tiers_expire.py"
+   ]
+  }
+ ],
+ "new_findings": [
+  "Most of the device-share gap is load mix. Device share is oracle 81.8 % vs new exact 89.7 %, and 6.5 of the 7.8 points come from the oracle sending 1,133 of the 7,768 turns at GPU usage >= 0.90, against 310 for new exact. Within equal-usage bins below 0.90 the shares differ by 1-4 points. (v5_tiers_mix.out section 6.)",
+  "The writes the trace itself requires are identical in every arm: 892-899 tokens per turn sent (new text plus decode). Recompute plus reloads make up 78-88 % of GPU writes and are the whole difference between arms. (v5_tiers_writes.out.)",
+  "Revoked launches almost never come with a host eviction. 2,324 of 2,329 oracle revocations (old p50 2,546/2,550, new exact 378/379, new p50 1,738/1,742) had no evict_host line just before. By the code, the host then freed nothing and had under 256 free tokens, or the read had been terminated. (v5_tiers_revoke.out.)",
+  "Under just-in-time, staged reads are the largest host-eviction caller. In new exact they free 17.7 M tokens with lead < 5 s, 44.7 % of host evictions; jit_70 9.3 M, 43.7 %. The oracle's staged reads free 9.0 M (20.9 %). More staged-read eviction yet fewer losses suggests pin duration matters, not eviction volume.",
+  "The backup path asks evict_host only for the shortfall, yet frees 2.5-3.7x what it asks (whole leaves): oracle 20.2 M freed for 8.0 M requested. Read launches free 1.03-1.24x their request.",
+  "At old-routine victims, every evict_host caller shows about 2.6x its time-coverage chance (backup path 2.6x, reads for sent turns 2.5x, staged reads 3.1x, any 2.6x).",
+  "No L3 cleaner pass ran in any of the ten 44-user runs (no 'NIXL L3 cleanup' line), and SSD writes equal host backups token for token in every arm. History missing from SSD can only come from skipped backups or page rounding.",
+  "Per-turn history differs across arms by +-1-2 tokens on 2,220 of 7,768 turns (prompt tokenization at the reply boundary). The mean is the same (24,281) in every arm, so this does not matter."
+ ],
+ "corrections_to_docs": [
+  "w1_a6_tiers.json summary and finding [4]: describe 'churn follows a conservation rule' as an accounting identity. The host residual equals the 712K pool in every arm, and the writes the trace requires per turn are equal across arms (about 896 tokens). Drop the causal 'because new exact writes less per turn, it makes 32 % fewer GPU and 22 % fewer host evictions', or say that the extra writes are themselves caused by earlier losses.",
+  "w1_a6_tiers.json finding [6]: 'about three times as often as chance' should say that every evict_host caller shows about 2.6x at victims. Staged reads free 20.9 % of host-evicted tokens and match 17.5 % of victims token-weighted, so their share of the gap is at most 11.6 %, about 9 % weighted.",
+  "w1_a6_tiers.json finding [5]: 'under the just-in-time arms almost none' holds only for lead >= 5 s. With lead < 5 s, staged reads are 44.7 % (17.7 M) of new exact's host evictions. Its 'data agree' check matched on requested == pages x 64; it holds without that matching too.",
+  "w1_a6_tiers.json finding [1]: 'jit_70 matches new exact, so read timing alone does this' should read about 85-90 %. Recompute is 229 vs 112 tokens per turn and TTFT 0.666 vs 0.492 s on 7,410 turns. In oracle stretch 5,500-7,000 it is 984 vs 408 tokens and 1.91 vs 1.12 s.",
+  "w1_a6_tiers.json finding [9]: next to 'plan expired before arrival ... lost 95.8 / 95.3 %', add that the same turns are lost 84.3 % (oracle) and 76.2 % (new exact) under exact hints.",
+  "w1_a3_room.json finding [8] caveat 'no log line names a skipped backup': add that backup-path evict_host lines freeing less than the shortfall mark skipped backups by the code. That is 190 (oracle) vs 26 (new exact) in 0-7,200 s, a lower bound.",
+  "results/campaign21/DECISIONS.md line 34 cites unified_radix_cache.py:2962 for 'a read that cannot get host memory is shortened or dropped'. Line 2962 is the evict_host(alloc_len) call that asks for the whole read. The shortening is at 2964-2973 and the drop from 2974 (engine_5df71c4bf0_v2). The backup at :1723 asks only for the shortfall."
+ ]
+}

@@ -1,0 +1,193 @@
+{
+ "angle": "a4_gpu",
+ "summary": "Saved recomputation helps TTFT mostly through other turns' waits. On the 7,768 shared returning turns the oracle is 0.98 s slower than new exact and recomputes 863 more tokens per turn. Measured prefill costs about 0.13 ms per token in 8,192-token chunks at 8-24K context (0.18-0.25 ms at 24-48K), plus 0.06-0.1 s per batch. So a turn's own extra recomputation adds only 0.14 s. The other 0.84 s is waiting: 0.59 s behind other turns' prefill, 0.15 s while a nearly full pool blocked admission, 0.03 s for its own SSD read and 0.07 s unexplained. Prefill runs before decode, and in episodes it takes 63-87% of GPU time, mostly recomputation. The 64-request cap never binds (at most 37 running). The full pool evicts, and queued turns lose histories they then recompute (54% of the oracle's recomputed tokens). Below 900K load every arm's prefill time is within 3% of the minute of new exact's. Just below the knee the old routine spends 10-17% more. Yet the baseline spends no more than new exact and has the deepest episode, so episode depth is set by the work the queue creates. New exact spends the GPU time it saves on 18% more turns.",
+ "sanity_check": "All known numbers reproduce exactly. There are 7,768 returning turns in baseline, oracle, old p50, new exact and new p50, with mean TTFT 5.17, 1.48, 1.95, 0.50 and 1.51 s and recomputed tokens per turn 2,870, 977, 1,329, 114 and 940. There are 7,412 turns in oracle, jit_70 and new exact, at 1.52, 0.67 and 0.49 s. At positions 5,500-7,000 (1,453 turns) the oracle is at 5.06 s and new exact at 1.12 s. Turn counts with a TTFT equal the turns sent in 2 h (8,037; 10,319; 10,021; 12,201; 10,419). In every arm, client new tokens (prompt - cached) equal the scheduler's summed #new-token (for example 27.84 M both ways in the baseline, 18.52 M in the oracle). ReqTimeStats queue_duration equals ntp_admit wait_ms (median difference 0.2 ms, p99 0.5 ms). Model prefill time plus measured decode time adds up to 0.94-1.03 of every busy minute. Calm prefill on first turns is about 0.105 ms per uncached token, in line with hw_control's 0.100-0.102. One mismatch with the task text: baseline and hint-free do log a queue wait, in the ReqTimeStats lines. Two model totals differ: the per-batch model gives 56.5 min of oracle prefill and the per-turn model 61.7 min, because the per-turn model charges every turn a batch overhead.",
+ "findings": [
+  {
+   "claim": "Prefill costs about 0.13 ms per new token in full 8,192-token chunks at 8-24K prefix. The cost rises with prefix: 0.18 ms at 24-32K, 0.25 ms at 32-48K and 0.34 ms at 48-64K. Each batch also has a fixed cost of about 0.06-0.1 s. The numbers are the same on all three engine freezes.",
+   "evidence": "Source: 5,153 continuation chunks that ran back to back after a capped chunk, from all 7 arms. A full 8,192-token chunk takes a median 1.05-1.07 s at 8-24K prefix, 1.48-1.51 s at 24-32K, 2.00-2.08 s at 32-48K and 2.78-2.90 s at 48-64K, on each engine. An 8,192-token chunk at 25K prefix takes 1.556-1.584 s by engine.\nFitted model: GPU s = 0.057 + 0.0576 n/1e3 + 0.00558 P max(n,256)/1e6 - 0.00326 n^2/2e6 (n = new tokens, P = prefix). The median residual is -0.04 s, and binned last-chunk medians match within 0.02 s. The marginal cost is 0.17-0.20 ms per token at 25K prefix.\nCheck against measured turns: 125 turns queued under 0.1 s in both the oracle and new exact, with 1,024 or more extra new tokens in the oracle (mean 12,342 extra). The measured service gap is +1.76 s against +1.90 s from the model, so the model is about 8% high. A slope that ignores prefix, fitted on 14,811 calm turns, gives 0.089 ms per token.\nAccounting check: in minutes with requests running, model prefill time plus decode time (40 steps per Decode line at the measured step time) comes to 0.94-1.03 of the minute, in every arm and at every queue level. So the GPU never idles while requests run. A decode step takes 14 ms at 1-4 running requests and 41-44 ms at 25-29.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_cost.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_cost.json",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_closure.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_direct.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_cost.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_closure.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_lib.py"
+   ],
+   "confidence": "high",
+   "caveats": "Batch durations are gaps between log lines; a Prefill line marks the end of its batch. The prefix of a continuation chunk is rebuilt from its chain of chunks. The fit is poor at zero prefix: it overestimates first turns. Multi-request batches split their cached tokens evenly. The fixed per-batch cost includes CPU time in the scheduler loop."
+  },
+  {
+   "claim": "For the oracle against new exact, a turn's own extra recomputation explains about 14% of the TTFT gap. About 85% is waiting that other turns cause: mostly prefill of other turns, partly a full GPU pool.",
+   "evidence": "Turn set: the 7,768 returning turns shared by baseline, oracle, old p50, new exact and new p50. The gap is +0.979 s (1.48 vs 0.50 s); recomputed tokens per turn are 977 vs 114.\nDirect effect, the model cost of each turn's own prefill in the oracle minus new exact: +0.140 s. With the slope that ignores prefix it is +0.077 s.\nQueue wait (ReqTimeStats): +0.695 s in total.\n- +0.515 s while the GPU ran other turns' prefill batches.\n- +0.150 s while the GPU decoded and the turn could not be admitted.\n- +0.030 s while the turn's own SSD read was open.\nRest of service: +0.145 s, of which +0.078 s after admission behind another turn's batch still on the GPU.\nBy turn type: the 1,117 turns where the oracle recomputed at least one page more contribute +0.671 s of the gap. Of that, +0.150 s is their own direct cost; they also waited 3.36 s longer in the queue. The 6,540 turns that recomputed the same in both arms contribute +0.316 s, none of it direct.\nStretch 5,500-7,000 (1,453 turns): gap +3.94 s = direct 0.48 + queue 3.05 (behind prefill 2.28, not admissible 0.69, read 0.08) + rest 0.41.\nOn the 9,980 turns the two arms share: gap 1.046 s, direct 0.154 s, queue 0.738 s.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_direct.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_queue.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_queue_turns.csv"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_direct.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_queue.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_lib.py"
+   ],
+   "confidence": "medium",
+   "caveats": "The direct effect is a model estimate: the turn's own prefill at uncongested cost. The other parts only describe what the GPU was doing while the turn waited. That removing other turns' recomputation would remove this wait is inferred; the closed loop does not separate it. Prefill intervals use model durations, capped at the gaps between log lines. One run per arm. The oracle and new exact ran on different engine freezes and GPU units, but prefill cost per chunk matches within 2%."
+  },
+  {
+   "claim": "The same split holds for every pair of arms: the turn's own extra prefill is 9-15% of the TTFT gap, and the rest is queueing.",
+   "evidence": "All on the same turns.\n- Baseline vs new exact (7,768 turns): gap +4.67 s, direct +0.40 s, queue +4.11 s (behind prefill 3.48, read 0.21, not admissible 0.42).\n- Oracle vs jit_70 (7,412 turns): gap +0.85 s, direct +0.12 s, queue +0.60 s (0.44, 0.04, 0.12).\n- jit_70 vs new exact (7,412 turns): gap +0.17 s, direct +0.02 s, queue +0.14 s. Most of it falls in stretch 5,500-7,000 (+0.79 s).\n- New p50 vs new exact (7,768 turns): gap +1.01 s, direct +0.14 s, queue +0.68 s (behind prefill 0.47, read 0.15, not admissible 0.06).\n- Old p50 vs new p50: gap +0.44 s, direct +0.06 s, queue +0.36 s.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_direct.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_direct.py"
+   ],
+   "confidence": "medium",
+   "caveats": "Same as the oracle against new exact: the direct effect is a model estimate, and the split of the rest is descriptive, not causal. One run per arm."
+  },
+  {
+   "claim": "The queue mostly waits on prefill throughput, and in episodes most prefill is recomputation. The full GPU pool is the precondition, and it blocks admission directly for a smaller share of the wait. The 64-request cap never binds.",
+   "evidence": "Queue seconds per turn on the 7,768 turns, spent while the GPU ran other turns' prefill: baseline 3.55 of 4.24 s, oracle 0.58 of 0.83, old p50 0.84 of 1.18, new p50 0.54 of 0.81, new exact 0.07 of 0.13. Spent while the GPU decoded and the turn could not be admitted: 0.43, 0.16, 0.24, 0.07 and 0.01 s. The GPU was never idle while turns were queued.\nRunning requests: at most 31-37 per arm on any scheduler line, never 40 or more.\nPool: on lines with 3 or more queued, the pool is at least 0.95 full on 67-84% of lines and at least 0.99 on 26-34%, with 23-26 requests running on average.\nPrefill share in 5-minute blocks: during episodes, prefill takes 38-42 s per minute in the oracle and 48-52 s in the baseline (63-87% of GPU time). Recomputed tokens are 75-90% (oracle) and 90-100% (baseline) of the prefill tokens. Calm blocks spend 15-21 s per minute on prefill.\nPer minute, pooled over all arms (652 minutes from minute 20): queue wait correlates with GPU prefill s/min at r = 0.73, with recomputed tokens/min at 0.76, with pool use at 0.58 and with running requests at 0.49. Long waits need both to be high: 21.0 s with prefill of 45 s/min or more and the pool at 0.95 or more. At 40-45 s/min of prefill with the pool at 0.8-0.9 the wait is 2.2 s, and at 25-35 s/min with the pool at 0.9-0.95 it is 3.0 s.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_queue.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_pool.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_minutes.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_minutes.csv",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_onset.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_queue.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_pool.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_minutes.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_onset.py"
+   ],
+   "confidence": "medium",
+   "caveats": "The scheduler runs a prefill batch whenever it can form one (scheduler.py:3765 in engine_5df71c4bf0_v2, :3769 in engine_owned_20261101). It skips turns whose prefetch is still in flight (:4003 and :4007). So the bucket 'decoding while the turn could not be admitted' mixes memory blocking with other blocks: when the request at the head of the queue cannot get memory, the requests behind it wait too. The engine logs no event when admission is refused for memory. The per-minute correlations link symptoms that move together within the same episodes; they are not causal estimates. Recomputed tokens are binned by send minute and prefill tokens by batch time."
+  },
+  {
+   "claim": "Once a queue forms, it creates its own work: queued turns lose their history while they wait and then recompute it. This is what makes the arms' episodes differ.",
+   "evidence": "Share of each arm's recomputed tokens on turns the engine logged as losing history while queued (the device prefix shrank before admission, or a re-fetched span was evicted again): oracle 54.3%, old p50 54.5%, jit_70 52.3%, new exact 51.0%, new p50 42.1%, baseline 26.8%, hint-free 22.8%. These are lower bounds, since only device-side loss is logged.\nRecomputation by wait: returning turns that waited 5 s or more recompute 16,368 tokens each in the baseline (1,281 turns, 94% of its recomputed tokens). The oracle recomputes 5,028, old p50 5,616, new p50 4,098 and new exact 2,407. That is 0.06-0.11 GPU-seconds of own prefill per second waited.\nThe spike at each arm's own positions 8,750-9,250: recomputation rises from 32-131 tokens per returning turn just before to 1,873-2,937 in every arm. 56-77% of it is on turns logged as losing history while queued (hinted arms), and 72-91% is on turns queued 1 s or more. The wait is 3.2-5.1 s, of which 2.2-3.8 s is behind prefill.\nDevice evictions are 48-70 M tokens per 2 h run (jit_70: 26 M in 75 min).",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_knee.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_queue.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_spike.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_knee.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_queue.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_spike.py"
+   ],
+   "confidence": "medium",
+   "caveats": "In an episode everyone waits and many turns recompute, so wait and recomputation correlate partly through the episode itself; only the lost-history flag is direct evidence of loss during the wait. This partly contradicts the background docs. They read the 8,750 spike as 'the GPU short of room for what is running, which no read routine can give back'. The pool is indeed 0.90-0.97 full there, but most of the spike's recomputation is on turns that lost history while queued, the same loop as the other episodes. Whether any routine could avoid it is untested."
+  },
+  {
+   "claim": "A few percent more GPU work before the knee does not by itself explain the episodes. Below 900K load every arm is within 3% of the minute of new exact's prefill time. The old routine's extra work grows to 10-17% just below the knee, which fits its deeper episodes. But the baseline does no more prefill than new exact before the episode and still has by far the deepest one.",
+   "evidence": "Load bands per minute (load as defined in load_curve_c44.py, from minute 20). Extra GPU prefill time compared with new exact, in s/min (and % of the minute):\n- Below 800K and at 800-900K: -0.1 to +1.9 s (0-3%) in every arm.\n- 900-1,000K: oracle +6.8 (11%), old p50 +5.8 (10%), new p50 +7.0 (12%), baseline +2.4 (4%), hint-free -1.2, jit_70 +0.4.\n- 1,000-1,050K: oracle +10.4 (17%), old p50 +11.2 (19%), new p50 +10.0 (17%), baseline +3.8 (6%).\n- 1,050-1,100K: baseline +15.4 (26%), oracle +11.4 (19%).\nTTFT at 1,050-1,100K: new exact 1.23 s, jit_70 1.39, oracle 2.69, new p50 3.54, hint-free 3.93, old p50 4.68, baseline 10.15.\nPrefill in the 5 minutes before each arm reached position 5,500: new exact 18.5 s/min, jit_70 18.8, baseline 18.9, hint-free 19.0, new p50 22.7, old p50 23.8, oracle 24.5.\nOn the 7,768 turns, own prefill per turn at positions 3,000-5,500 against TTFT at 5,500-7,000: new exact 0.175 s -> 1.12 s, new p50 0.286 -> 5.24, oracle 0.303 -> 5.06, old p50 0.350 -> 6.92, baseline 0.205 -> 23.62.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_knee.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_minutes.csv"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_knee.py"
+   ],
+   "confidence": "medium",
+   "caveats": "Load is partly an effect of the arm: slower arms park fewer sessions. Minutes from one workload are not independent, and the top load bands rest on few minutes. Among the hinted arms, prefill before the episode does order episode depth, so the GPU-work reading holds within that family. It fails for the baseline, which never re-reads lost history."
+  },
+  {
+   "claim": "At sharp episode onsets the pool fills before the recomputation arrives. Pool use and running requests climb for about 2 minutes while evictions rise. Then a burst of recomputed history is admitted, and the queue forms within 10 s.",
+   "evidence": "9 onsets, defined as a queue of 2 or more for 30 s after 2 minutes averaging under 0.5 queued, from minute 20. They fall at minutes 46.7-107.3, with none in the baseline or jit_70. In 10 s bins:\n- From -120 s to -20 s: pool use 0.61 -> 0.79, running 18.0 -> 21.9, device evictions 46K -> 100K tokens per 10 s, recomputed tokens admitted 0.5-10.7K per 10 s.\n- At -10 s: 37.5K recomputed tokens admitted, prefill 5.6 s per 10 s.\n- At 0 s: 38.7K admitted, prefill 8.2 s per 10 s, queue 4.0, pool 0.91.\n- At +10 to +20 s: pool 0.97, 26 running.\nArrivals do not rise beforehand (16-18 per 10 s), then fall to 6-10. With a 60 s calm window there are 7 onsets with the same shape.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_onset.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_onset_calm60s.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_onset.py"
+   ],
+   "confidence": "low",
+   "caveats": "Only a few onsets, mostly late in the runs. The main episodes at positions 5,500-7,000 start gradually, and this criterion does not catch them."
+  },
+  {
+   "claim": "New exact spends the GPU time it saves on 18% more turns. It does more work per clock minute and reaches later, heavier parts of the trace, so comparisons on the same turns are the fair ones.",
+   "evidence": "Each arm's own 2 h: new exact sends 12,201 turns (101.7 per minute) against the oracle's 10,319 (86.0 per minute), +18%. Its new tokens other than recomputation are 8.41 M against 7.14 M (+18%), and its completion tokens 2.47 M against 2.11 M (+17%). Yet its model prefill time is 40.4 min against 56.5 min (per-batch model). Recomputation takes 6.7 vs 30.8 min (per-turn model: 15.5% vs 50.0% of prefill time); the baseline spends 54.3 min, 70%.\nTurns per minute through positions 5,500-7,000: new exact 92.4, jit_70 83.5, oracle 59.6, new p50 59.3, hint-free 59.3, old p50 51.7, baseline 27.6.\nNew exact reaches position 8,750 at minute 84.8 (oracle at 97.7), then sends turns the oracle never reaches.\nWhole-run means per minute, new exact vs oracle: prefill 20.2 vs 28.3 s, pool use 0.65 vs 0.72, running 18.9 vs 20.9, queued 0.4 vs 1.3.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_recompute_time.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_minutes.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_minutes.csv"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_recompute_time.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_minutes.py"
+   ],
+   "confidence": "high",
+   "caveats": "The per-batch and per-turn model totals differ by about 5 min per run, because the per-turn model charges every turn a batch overhead."
+  },
+  {
+   "claim": "Contrary to the task text, the baseline and hint-free arms do log a queue wait. Every arm's server.log has a ReqTimeStats line per request, and its queue_duration equals ntp_admit wait_ms.",
+   "evidence": "ReqTimeStats lines cover every client turn: 8,037 / 10,355 / 10,319 / 10,021 / 7,671 / 12,201 / 10,419 requests. On the 7,412-11,804 planned turns per hinted arm that have both values, the difference between queue_duration and wait_ms has a median of 0.2 ms and a p99 of 0.5 ms. queue_duration runs from entry into the waiting queue to the first forward pass (set_forward_entry_time in req_time_stats.py).",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_check.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_check.py"
+   ],
+   "confidence": "high",
+   "caveats": "None."
+  },
+  {
+   "claim": "The hint-free arm, never analysed before, matches the oracle on the same turns.",
+   "evidence": "On the 7,768 returning turns shared by baseline, hint-free, oracle and new exact, mean TTFT is 1.47 s for hint-free against 1.48 s for the oracle, 5.17 s for the baseline and 0.50 s for new exact. Recomputed tokens per turn are 680 against 977, 2,870 and 114.\nBy stretch, hint-free against the oracle: 0.65 vs 0.99 s at 3,000-5,500, 5.75 vs 5.06 s at 5,500-7,000, and 0.41 vs 0.74 s at 7,000-8,750.\nOver hint-free's own turns the queue wait is 1.21 s: 0.86 s behind prefill, 0.15 s read, 0.20 s not admissible.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_direct.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a4_gpu_queue.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_direct.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a4_gpu_queue.py"
+   ],
+   "confidence": "medium",
+   "caveats": "One run, cut at 117 min; all 7,768 turns fall before the cut. This is outside my angle, and other analysts may cover the arm."
+  }
+ ],
+ "attribution": [
+  {
+   "component": "Turn's own extra recomputation at the measured prefill cost (direct)",
+   "amount": "0.140 s of the 0.979 s oracle-minus-new-exact gap (14%)",
+   "basis": "7,768 shared returning turns. Model GPU time of each turn's own chunked prefill, oracle minus new exact. A slope that ignores prefix gives 0.077 s; the model was 8% high on 125 calm check turns."
+  },
+  {
+   "component": "Queued while the GPU ran other turns' prefill batches",
+   "amount": "0.515 s (53%)",
+   "basis": "ReqTimeStats queue intervals overlapped with model prefill intervals rebuilt from the Prefill batch lines, same 7,768 turns."
+  },
+  {
+   "component": "After admission, behind another turn's batch still on the GPU",
+   "amount": "0.078 s (8%)",
+   "basis": "Remaining length of the prefill interval covering the turn's forward entry."
+  },
+  {
+   "component": "Queued while the GPU decoded and the turn could not be admitted (full pool)",
+   "amount": "0.150 s (15%)",
+   "basis": "Queue time outside prefill with no own read open. The pool is at least 0.95 full on 67-84% of lines with 3 or more queued, and the 64-request cap never binds."
+  },
+  {
+   "component": "Queued with the turn's own SSD read open",
+   "amount": "0.030 s (3%)",
+   "basis": "Turn's own prefetch spans (prefetch_start to an empty lookup, revoked launch or prefetch success) outside prefill."
+  },
+  {
+   "component": "Unexplained remainder of service",
+   "amount": "0.067 s (7%)",
+   "basis": "Gap minus all of the above: co-batched tokens and model error."
+  }
+ ],
+ "open_questions": [
+  "Is the indirect 0.84 s really caused by other turns' recomputation? A controlled run would separate it: fixed arrivals with recomputation added or removed, or an engine option that never evicts a queued turn's prefix.",
+  "Would protecting the histories of queued turns cut episode depth? In the hinted arms, 42-54% of recomputed tokens sit on turns logged as losing history while queued.",
+  "What starts the main episode at positions 5,500-7,000: the gradual pool fill as load rises, or a burst of recomputation? The onset test caught only 9 sharp onsets, all late in the runs.",
+  "The hint-free arm matches the oracle (1.47 vs 1.48 s on the 7,768 turns). This needs a repeat and an explanation; the one run was cut at 117 min.",
+  "The engine logs no event when admission is refused for lack of memory. Logging those refusals would split pool blocking from the prefetch skip, which the 'could not be admitted' bucket currently mixes."
+ ]
+}

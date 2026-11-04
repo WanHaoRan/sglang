@@ -1,0 +1,282 @@
+{
+ "checker": "v6_critic",
+ "overall": "Numerically the six analyses hold. All agreed reference numbers and nearly every cross-analyst figure I rebuilt from scratch reproduced. Most disagreements are definitional: turn set, which read labels a turn, reads vs pins, and how overlapping waits are split. Two are errors. a6's mean pins come from sorting same-millisecond pin and unpin lines by value (hint-free 12.3K; the true value is 9.3K). a4's 'unexplained 7 %' is the send-to-queue lag, so waiting is about 92 % of the oracle gap. The shared answer stands on the 7,768 turns. About 79 % of the gain over original HiCache needs no hint (pins plus paced retries off). The rest is just-in-time timing with exact hints, and almost all of it shows as shorter queues in one episode. But this is a single-run, mean-only, first-episode fact: medians barely move, within-run intervals on the ties are about 0.4-0.5 s either way, and on longer sets the hint-free vs p50 sign flips.",
+ "verdicts": [
+  {
+   "claim": "Where the oracle-to-new-exact gap sits. a3 says the oracle's revoked or cut turns carry 0.45 s of the 1.05 s (9,980 turns). a6 says 70 % of the 0.98 s is on turns the oracle recomputed (7,768 turns). a2 gives 38.3 % under read_denied classes and 68.7 % on turns with any cut or revoked read.",
+   "source": "a3 summary and attribution (groups F/J); a6 [3] and attribution [1]; a2 [5]",
+   "verdict": "confirmed",
+   "reproduced": "9,980 set (oracle/new exact returning turns), rule 'the oracle's last lookup that found >= 256 tokens was revoked or cut': 852 turns, 0.449 of 1.046 s (43.0 %). 7,768 set: the same rule gives 580 turns, 0.412 of 0.979 s (42.1 %). Recomputed >= 64 tokens: 1,187 turns, 0.684 s (69.9 %; 73.0 % on 9,980). read_denied rule: 537 turns, 38.5 %. Any refused launch or cut read: 1,119 turns, 68.7 %.",
+   "discrepancies": "No numeric error. The gap between 43 % and 70 % comes from the rule, not the set; the set moves each figure by 1-3 points. Every last-read-revoked/cut turn also recomputed. The other 607 recomputed turns (last read whole, or no lookup) hold 27.8 % of the gap but only 6.5 % of the oracle's recompute. a3's JSON attribution omits its 26-turn 'still revoked/cut' group (0.01 s); with that group the parts sum to 1.05 s.",
+   "alternatives_tested": "First: the turn set (7,768 vs 9,980) as the cause. It fails: 42.1 vs 43.0 % and 69.9 vs 73.0 %. Second: selection on waiting. The 1,088 turns the oracle queued >= 1 s hold 91.5 % of the gap whatever their class, and 419 of them that recomputed nothing hold 27.0 %. So a per-turn read class says who waited, not why.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_classes.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_classes.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_lib.py"
+   ]
+  },
+  {
+   "claim": "a6's mean pinned tokens: hint-free 12.3K against the oracle's 38.6K (0-7,020 s), and 39.6/32.4/6.3/31.5K for the four hinted arms (0-7,200 s). a6 says these differ from the docs' 39.3/32.3/6.2/30.9K only by definition.",
+   "source": "a6 sanity_check and [10]; a1 [4] and a3 [1] give 9.3K",
+   "verdict": "refuted",
+   "reproduced": "Two methods agree within 0.1K: closed srs_pin->srs_unpin pairs, and the logged 'pinned=' running total in log order. Hint-free is 9.3K over 0-7,019 s, the oracle 38.5-38.9K. Over 0-7,200 s: oracle 39.3-39.4K, old p50 32.3K, new exact 6.2K, new p50 30.9-31.0K. Sorting the lines by (time, value), as a6_tiers_churn.py pinned_area does, gives exactly a6's figures: 12.3K, 38.6K, and 39.6/32.4/6.3/31.5K. a6_tiers_selfevict.py's pins_total is sorted the same way.",
+   "discrepancies": "This is an error, not a definition. When a pin and its unpin are logged in the same millisecond, the sort leaves the level at the pinned value until the next line. The hint-free arm lands most reads about 1 ms before admission, so it is inflated 32 % (8.3K to 11.5K over 0-4,500 s). The hinted arms are inflated 0.1-0.6K. a1's and a3's 9.3K are right.",
+   "alternatives_tested": "a6's own explanation (running total vs pins started in the first 2 h). It fails: in log order the two definitions agree within 0.1K in every arm (columns A and C).",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_pins_lag.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_pins_lag.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_lib.py"
+   ]
+  },
+  {
+   "claim": "Baseline recompute that landed and was lost before admission: a1 gives 2,375 of 2,870 tokens per turn, a3 gives 2,007 (7,768 set).",
+   "source": "a1 [2]; a3 [2]",
+   "verdict": "confirmed",
+   "reproduced": "7,768 set, my own parser. Any-landing rule (sum of all landings' loaded tokens minus SSD-served, capped at recompute): 2,375. Last-read rule (only the last data-finding lookup, if it read whole): 2,007. 116 turns have two or more landings.",
+   "discrepancies": "Definitional. a3 labels a turn by its last read, so an earlier landing that was then lost goes to its 'revoked' (111) or 'rest' (325) parts; a1 counts every landing. Both put about 70-83 % of baseline recompute on spans that landed and were lost. Neither separates pins from paced retries in TTFT.",
+   "alternatives_tested": "First: different turn sets. It fails; both use the 7,768 set. Second: an arithmetic error in either. It fails; both reproduce exactly under their stated rules.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_misc.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_misc.py"
+   ]
+  },
+  {
+   "claim": "a4 splits the 0.979 s oracle-to-new-exact gap into direct own recompute 0.140 s (14 %), about 85 % waiting caused by other turns, and an 'unexplained remainder' of 0.067 s (7 %, co-batched tokens and model error).",
+   "source": "a4 [2] and attribution; a2 [2]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "7,768 set: gap 0.979 = send-to-queue lag +0.074 (7.5 %) + ReqTimeStats queue +0.695 (70.9 %) + after admission +0.211 (21.5 %). a4's 'rest of service' (gap minus queue minus direct) is 0.145 s, which is the lag 0.074 plus 0.071 after admission. a4's in-flight part (0.078 s) already covers that 0.071.",
+   "discrepancies": "The 0.067 s labelled unexplained is the client-send-to-queue-entry lag. a4 never separates that lag; a2 shows it tracks the prefill batch running at arrival. The true residual is about -0.007 s, inside the model's 8 % error, so waiting behind other turns is about 92 %, not 85 %. a4's 0.030 s for 'own read open' against a2's 0.102 s is precedence: a4 gives overlapping time to prefill first. I reproduced a2's 0.102 s (10.4 %).",
+   "alternatives_tested": "The lag is already inside a4's queue term. It fails: queue_duration starts at entry_time, which follows the client send (lag mean 0.19 s in the oracle, 0.12 s in new exact, never negative).",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_pins_lag.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_ownread.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_pins_lag.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_ownread.py"
+   ]
+  },
+  {
+   "claim": "a4: in the hinted arms 42-54 % of recomputed tokens sit on turns logged as losing history while queued (a lower bound). a3: re-fetched turns hold 95.5 % of the oracle's recompute.",
+   "source": "a4 [5]; a3 [4]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "Whole runs, each arm's returning turns. a4's rule (device prefix shrank, or ntp_reevict): oracle 54.3, old p50 54.5, jit_70 52.3, new exact 51.0, new p50 42.1, baseline 26.8, hint-free 22.8 %. Adding ntp_refetch issued=1 raises the hinted arms to 96.4, 88.7, 84.6, 82.0 and 89.2 %.",
+   "discrepancies": "a4's numbers are right for its rule, but the rule leaves out ntp_refetch, the engine's own line for a queued turn whose prefix shrank. The hinted arms' share is 82-96 %, not 42-54 %. Baseline and hint-free log only 'shrank'; 87-98 % of their recompute is on turns queued >= 1 s.",
+   "alternatives_tested": "An ntp_refetch is not a loss while queued. It fails: the line carries shrink= (device prefix lost) and the queue position pos=.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_tail.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_tail.py"
+   ]
+  },
+  {
+   "claim": "a1: with p50 hints the hinted rungs net +0.05 s against the hint-free arm (1.51 vs 1.47 s), so p50 hints add about nothing over a hint-free design.",
+   "source": "a1 [7] and attribution",
+   "verdict": "confirmed with corrections",
+   "reproduced": "7,768 set: hint-free 1.466, new p50 1.511 (+0.045), old p50 1.947. Set iv (9,688 turns that hint-free and the four 2 h hinted arms share): hint-free 1.768, new p50 1.602, so new p50 is 0.166 s ahead. Pair set (10,007 turns): 0.184 s ahead. Within-run block bootstrap over 250-position blocks, 95 % intervals: -0.39 to +0.31 s and -0.20 to +0.57 s.",
+   "discrepancies": "The sign flips with the turn set. Past oracle position 8,750, hint-free averages 4.44 s against new p50's 2.84 s on 1,227 turns. Its bins at 9,750-10,128 reach 8.30 and 11.26 s, with 5.0-9.3K tokens recomputed per turn. 'About nothing' holds only in the sense 'not separable from zero either way'.",
+   "alternatives_tested": "First: hint-free's late episode is a failing host before its shutdown. It fails. In calm minutes 100-105 and 115-116 the decode step is 47.9-52.4 ms at 15-25 running, as in other arms. Big-read p10 is 2.02 ms/page over 105-117 min, against 1.81-1.97 in the other arms' last block. Every arm has an episode at those positions. Second: different work per turn. It fails: completions and gaps are identical, and prompts differ by 0.2-0.5 tokens on average.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_sets.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_misc.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_tail.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_work.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_sets.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_misc.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_tail.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_work.py"
+   ]
+  },
+  {
+   "claim": "a1's ladder on set (i): hint-free rung -3.82 of -4.84 s (79 %), old routine with exact hints +0.007 (0 %), just-in-time -0.85 (18 %), gate plus hold -0.17 (4 %). The hint-free rung is pins plus paced retries off; deadline order and the read window are inert there. a3, a4 and a6 also report the hint-free/oracle tie.",
+   "source": "a1 [1], [2], [4] and attribution; a3 [9], a4 [9], a6 [10]",
+   "verdict": "confirmed",
+   "reproduced": "Set (i), 7,410 turns: 5.332, 1.511, 1.518, 0.666 and 0.492 s; steps -3.821, +0.007, -0.852, -0.174. 7,768 set: 5.171, 1.466, 1.484, 0.505 (79.4 %, -0.4 %, 21.0 %). Hint-free keeps 79.4 % of new exact's gain and 100.5 % of the oracle's. All 2,297 hint-free srs_park lines have deadline_ms=now. storage_read_scheduler.dispatch checks the window and budget only when deadline is not None, and orders by (deadline is not None, deadline), so all-now reads go FIFO. The arm's server_args differ from the baseline's only in pin_fraction 0 -> 0.3, retry_poll_interval 8 -> 0, read_order fifo -> deadline, and the seed. The rung's gain is 91.7 % in positions 5,500-7,000 and 89.7 % queue.",
+   "discrepancies": "None in the numbers; the uncertainty is wide. Within-run 95 % intervals: baseline to hint-free +1.40 to +6.67 s; hint-free vs oracle -0.46 to +0.51 s. The old-routine step is -0.035 s on set iv and -0.069 s on 9,958 turns, still about zero.",
+   "alternatives_tested": "First: unequal work per turn. It fails (completions and gaps identical). Second: deadline order active in hint-free. It fails (no numeric deadline). Third: turn set. Shares move under 3 points between set (i) and the 7,768 set.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_sets.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_queue.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_pins_lag.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_work.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_misc.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_sets.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_queue.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_pins_lag.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_work.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_misc.py"
+   ]
+  },
+  {
+   "claim": "The docs say the gate and the hold add 0.18 s of the 1.03 s; a1 and a2 say 0.17 s.",
+   "source": "a1 [6], a2 [10]; CAMPAIGN23_FINDINGS.md:131; campaign23/DECISIONS.md:41",
+   "verdict": "confirmed with corrections",
+   "reproduced": "7,412 set: oracle 1.517, jit_70 0.666, new exact 0.492 s. The step jit_70 -> new exact is -0.174 s, 17 % of 1.025 s. Within-run bootstrap: +0.03 to +0.41 s.",
+   "discrepancies": "0.18 s is the difference of rounded means; the unrounded step is 0.17 s. The bootstrap leaves out run-to-run noise (0.05-0.2 s), so 'not separated from noise' stands.",
+   "alternatives_tested": "A different turn set behind the docs' figure. It fails: the docs use the same 7,412 turns.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_sets.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_misc.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_sets.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_misc.py"
+   ]
+  },
+  {
+   "claim": "a2: forecast_cost.py's '62 % of the exact-vs-p50 gap is queue wait' gives the 201 unplanned new p50 turns 0 s of queue; the correct share is 64.9 %.",
+   "source": "a2 sanity_check; campaign23/DECISIONS.md:79",
+   "verdict": "confirmed",
+   "reproduced": "10,076 returning turns new exact and new p50 share, gap 0.940 s (0.71 vs 1.65 s). Queue share with ntp_admit only is 61.3 %; with ReqTimeStats for every turn it is 64.9 %. The 201 unplanned new p50 turns waited 1.73 s on average. 63.2 % of the gap is in positions 5,500-7,000.",
+   "discrepancies": "My ntp_admit-only reproduction is 61.3 %, not 62 %; the corrected 64.9 % matches a2.",
+   "alternatives_tested": "The unplanned turns did not queue. It fails: their mean wait is 1.73 s.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_misc.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_misc.py"
+   ]
+  },
+  {
+   "claim": "a4: the spike near position 8,750 is the same loop as the other episodes, with recompute on turns that lost history while queued. The docs read it as the GPU short of room for what is running, which no read routine can give back.",
+   "source": "a4 [5]; campaign23/DECISIONS.md:59; CAMPAIGN23_FINDINGS.md:201",
+   "verdict": "confirmed with corrections",
+   "reproduced": "Set iv, oracle positions 8,750-9,000: every arm spikes (hint-free 7.92, oracle 10.12, old p50 7.21, new exact 7.01, new p50 6.43 s), with 2.1-4.4K tokens recomputed per turn. Over 8,500-9,250, 82.2-98.5 % of each hinted arm's recompute is on turns with ntp_refetch, ntp_reevict or a shrunk prefix, and 70-91 % on turns queued >= 1 s. Recovery differs: at 9,250-9,500 new exact is at 0.58 s and the oracle at 2.34 s, while hint-free spikes again (8.30 s at 9,750, 11.26 s at 10,000). On the 1,519 turns past 8,750 that oracle and new exact share: 3.77 vs 1.93 s. The 64-request cap never binds: at most 30-37 running in any arm.",
+   "discrepancies": "a4's 56-77 % uses its narrower rule and each arm's own positions; counting re-fetches gives more. The docs' 'no read routine can give back' is contradicted for the episode as a whole, although the peak bin is high in every arm.",
+   "alternatives_tested": "The same depth everywhere, so routine-independent. It fails: the peak bin ranges 6.4-10.1 s and recovery differs widely.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_misc.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_sets.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_misc.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_sets.py"
+   ]
+  },
+  {
+   "claim": "a5: 'recomputation follows pins' holds for the exact pair, but not within the old routine or within the p50 pair.",
+   "source": "a5 [7]; CAMPAIGN23_FINDINGS.md:91-92",
+   "verdict": "confirmed",
+   "reproduced": "Mean pinned (closed pins, 0-7,200 s) against recompute per turn on the 7,768 set: oracle 39.3K/977, old p50 32.3K/1,329, new p50 30.9K/940, new exact 6.2K/114. On each arm's own sends over 0-7,019 s: oracle 38.9K/1,117, old p50 31.7K/1,291, new p50 30.6K/1,033, new exact 6.0K/193, hint-free 9.3K/891.",
+   "discrepancies": "None with a5. Beyond a5, the hint-free arm pins about as little as new exact yet recomputes 4.6 times as much. The readings of a3 (revocations rise with pins across 5-min bins), a6 (pin level does not mark the moment of a loss) and a5 are about different outcomes and are compatible.",
+   "alternatives_tested": "A better pin statistic orders the arms. It fails. p90 pinned at dispatch is 95.4K for the oracle (1,117), 90.4K for old p50 (1,291), 77.8K for new p50, 62.2K for hint-free (891) and 50.5K for new exact (193), so recompute is not monotone in it.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_misc.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_pins_lag.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_sets.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_misc.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_pins_lag.py"
+   ]
+  },
+  {
+   "claim": "All analysts: baseline and hint-free do log a queue wait; ReqTimeStats queue_duration equals ntp_admit wait_ms within 0.5 ms.",
+   "source": "a1 sanity (2), a2 [3], a3 [10], a4 [9]",
+   "verdict": "confirmed",
+   "reproduced": "Every client turn with a TTFT has a ReqTimeStats line in all seven arms (8,037 / 10,355 / 10,319 / 10,021 / 7,671 / 12,201 / 10,419). On 7,412-11,804 planned turns, |queue_duration - wait_ms| has p50 0.23-0.24 ms, p99 0.49 ms and max 0.5 ms. No line has attempts > 0.",
+   "discrepancies": "It contradicts only the task background.",
+   "alternatives_tested": "queue_duration sums waits across retractions. It fails: attempts = 0 on every line.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_queue.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_queue.py"
+   ]
+  },
+  {
+   "claim": "Staged landing-to-admission for the p50 arms differs by source. a3: old p50 8.5 s (p90 40.0), new p50 5.2 s (p90 38.3). a5: 7.9 (29.5) and 4.7 (24.3). The docs: 4.7 (24.6).",
+   "source": "a3 [1] and sanity (a); a5 [3]; CAMPAIGN23_FINDINGS.md:100; campaign23/DECISIONS.md:90",
+   "verdict": "confirmed with corrections",
+   "reproduced": "All staged reads that found data and landed by admission, whole runs, my own rule: oracle 9.8 (48.3), old p50 8.5 (40.0), jit_70 1.8 (2.9), new exact 1.7 (2.6), new p50 5.2 (38.3). These equal a3's figures exactly.",
+   "discrepancies": "Definitional. a5 counts pins by the class of the read that landed before each pin, and splits off 'due past forecast'; the docs use shared turns. Medians agree within 0.6 s. The p50-arm p90 ranges from 24.3 to 38.3 s depending on the definition, so the docs' 24.6 s needs its definition stated.",
+   "alternatives_tested": "Reads that came due after the predicted admission explain a5's lower p90. It fails: dropping them leaves new p50 at 5.2 s (p90 36.2) and old p50 at 8.5 s (p90 37.8). I did not reproduce a5's exact pin rule.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_landing.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_landing.py"
+   ]
+  },
+  {
+   "claim": "Each analyst's attribution adds up to its stated total.",
+   "source": "attribution arrays of a1-a6",
+   "verdict": "confirmed with corrections",
+   "reproduced": "a1: 78.9 - 0.1 + 17.6 + 3.6 = 100.0 % on set (i); its queue/after-admission splits add. a2: stretches 75.3 + 19.7 + 4.9, queue/lag/after admission 10.4 + 60.5 + 7.6 + 21.5, and timing steps 83.1 + 16.9 each make 100 %. a3: token parts 99.9 %. Its TTFT groups 0.32 + 0.12 - 0.02 + 0.61 make 1.03 of 1.05 s; the 26-turn group (0.01 s) is only in a3_room_need.out. a4: 14 + 53 + 8 + 15 + 3 + 7 = 100 % (but see the a4 verdict). a5: p50 stretches sum to 0.439 of 0.436 s and the difference-of-gains stretches to 0.547 of 0.543 s, because the 6 turns past 8,750 are omitted (-0.002 and -0.003 s). a5's class list covers 3 of 9 cells (91.2 %); my full 9-cell partition sums to 0.436 s. a6: 69.9 + 21.4 + 8.8 = 100.1 %; 48 host-class turns hold -0.0 %.",
+   "discrepancies": "Only the omissions above, and none changes a conclusion.",
+   "alternatives_tested": "I recomputed every partition and its missing cells with my own parser and classes.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_sets.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_misc.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_ownread.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_classes.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_sets.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_misc.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_ownread.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_classes.py"
+   ]
+  },
+  {
+   "claim": "a2: on the 7,768 set, 75 % of the oracle-to-new-exact gap is in positions 5,500-7,000 and 71 % is queue wait. On the 9,980 set, 54.8 % is in that stretch and 26.9 % is past 8,750.",
+   "source": "a2 [1], [2]",
+   "verdict": "confirmed",
+   "reproduced": "7,768 set: 0.979 s, split 1.2 / 19.7 / 75.3 / 4.3 / -0.6 % by stretch; queue 70.9 %, lag 7.5 %, after admission 21.5 %. 9,980 set: 1.046 s, split 0.9 / 14.4 / 54.8 / 3.0 / 26.9 % (1,519 turns past 8,750, 3.77 vs 1.93 s).",
+   "discrepancies": "None.",
+   "alternatives_tested": "A broad median shift rather than a tail. It fails: the paired median is only +0.034 s (+0.038 on 9,980). Turns over 5 s hold 60.5 % of the oracle's TTFT seconds and 22.6 % of new exact's.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_sets.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v6_critic_pins_lag.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_sets.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v6_critic_pins_lag.py"
+   ]
+  }
+ ],
+ "new_findings": [
+  "Bug in a6. a6_tiers_churn.py pinned_area, and a6_tiers_selfevict.py pins_total, sort srs_pin/srs_unpin lines by (time, value). A pin and its unpin in the same millisecond then leave the level at the pinned value. This inflates hint-free's mean pins by 32 % (9.3K -> 12.3K over 0-7,019 s; 8.3K -> 11.5K over 0-4,500 s) and the hinted arms' by 0.1-0.6K. It skews a6's churn tables and, slightly, its 'pinned at loss vs time' baseline.",
+  "The small ladder steps depend on the turn set. On the 7,768 set hint-free beats new p50 by 0.045 s and the oracle by 0.019 s. On set iv (9,688 turns) it trails new p50 by 0.166 s and the oracle by 0.035 s; on pair sets the margins are 0.184 s (10,007 turns) and 0.069 s (9,958). The cause is hint-free's late episodes: 7.92 s at oracle positions 8,750-9,000, and 8.30 and 11.26 s at 9,750-10,128 with 5.0-9.3K tokens recomputed per turn. These are deeper than every hinted arm's. Hardware speed in the arm's calm minutes is normal, so the cause is open; candidates are LRU eviction and no re-fetch of queued turns' lost history.",
+  "The gain is a tail effect. On the 7,768 set, medians run from 0.26 s (new exact) to 0.36 s (old p50), with the baseline at 0.34 s. Paired medians are +0.01 to +0.04 s for every step. The hint-free/oracle tie holds for the mean only: p90 is 2.87 vs 4.32 s and p99 19.66 vs 15.64 s.",
+  "Every per-turn class is mostly a class of who waited. The 1,088 turns (14 %) the oracle queued 1 s or more hold 91.5 % of the oracle-to-new-exact gap (96.3 % on the 9,980 set). 419 of them recomputed nothing and still hold 27.0 %. This reconciles a6 (70 % of the gap on recomputed turns) with a4 (only 14 % is the turn's own recompute): the recomputing turns carry the gap mostly as queue wait.",
+  "Counting ntp_refetch, history lost while queued holds 82-96 % of each hinted arm's recompute over the whole run, against a4's 42-54 %.",
+  "Within-run block bootstrap over 250-position blocks, 95 % intervals, run-to-run noise not included: baseline -> hint-free +1.40 to +6.67 s; oracle -> jit_70 +0.39 to +1.41 s; jit_70 -> new exact +0.03 to +0.41 s; oracle -> new exact +0.47 to +1.59 s. The hint-free ties fall within about -0.46 to +0.57 s. So the 79/0/18/4 % split is a point estimate on one baseline storm.",
+  "Pins do not order recompute across designs. Over 0-7,019 s hint-free averages 9.3K pinned (new exact 6.0K) but recomputes 891 tokens per returning turn (new exact 193). Its pinned tokens at dispatch reach p90 62.2K because its pins bunch in episodes. Neither the 2 h mean nor the p90 at dispatch orders the six pinned arms by recompute.",
+  "The hint-free rung is exactly three server flags against the baseline: pin_fraction 0 -> 0.3, retry_poll_interval 8 -> 0, read_order fifo -> deadline (plus the seed). Every park is 'now', so the deadline scheduler acts as FIFO with no window or budget. The rung is therefore pins plus paced retries off, and no arm separates the two.",
+  "Work per turn is matched. On the 7,768 shared turns, completion tokens and gaps are identical. Prompts differ on about 15 % of turns, by 0.2-0.5 tokens on average (max 80 in new p50), so per-turn pairing is sound.",
+  "Other cross-analyst differences are definitional, with no error. Own-read share of the oracle gap: a2 0.102 s (overlap; reproduced) vs a4 0.030 s (only outside prefill). Own-read share of the p50 pair: a2 -0.171 s (reproduced) vs a5 -0.055 s (passed by a later arrival). Hint-free rung in 5,500-7,000: a1 92 % on set (i) (91.7 % reproduced) vs 90.2 % on the 7,768 set. Hint-free queue: 0.92 s (7,768 set, a3), 0.96 s (set i, a1), 1.21 s (own turns, a4). Revoked launches: 2,329/2,554/381/1,743 over the whole log vs a6's 0-7,200 s counts. a6's open question on the baseline's 0.47 SSD-served tokens per read token is already answered by a1 and a3: the spans landed and were lost.",
+  "Missing: no ladder that includes the baseline can extend past oracle position 8,940. On the 9,980 set, 26.9 % of the oracle-to-new-exact gap lies past 8,750, where the just-in-time vs gate+hold split is unmeasured (jit_70 ran 75 min). A headline needs both the 7,768 set and the pairwise sets.",
+  "Missing arms: pins vs paced retries off; the old routine with LRU, or staging without re-fetch; gate vs hold; a hint-free arm at 128 users (campaign 22); and a repeat of the baseline storm, on which the 79 % share rests.",
+  "Missing: a causal test of the queue feedback (a4's indirect 0.84 s). An engine option that never evicts a queued turn's prefix, or fixed-arrival runs with recompute added or removed, would do it. Today the attribution to other turns' recompute is inferred.",
+  "Missing: a capacity figure for hint-free. a4's load bands put hint-free at 3.93 s at 1,050-1,100K, against the oracle's 2.69 s and new p50's 3.54 s, which is the opposite of the matched-turn tie (load is endogenous). Also unexplained: why the old routine pays +0.34 s per turn in calm positions 3,000-5,500 compared with hint-free (staging pins or next-use eviction)."
+ ],
+ "corrections_to_docs": [
+  "CAMPAIGN23_FINDINGS.md:10-12, \"At 44 users and 70 GB, mean TTFT is 1.51 s against the old routine's 1.95 s on the same turns (5.17 s with no hints).\" 5.17 s is original HiCache, not 'no hints'. It should read: \"... (original HiCache 5.17 s; the hint-free arm, with read pins and paced retries off and no hints, 1.47 s). So with p50 hints the new routine only draws level with no hints. On the 9,688 turns that reach the second heavy stretch it is 0.17 s ahead, inside the noise.\"",
+  "CAMPAIGN23_FINDINGS.md:13-14, \"Exact next-turn times reach 0.50 s, so 1.01 s is still on the table.\" This is incomplete. Add: \"Measured against the hint-free arm, exact hints are worth 0.96 s under the new routine and nothing (+0.02 s) under the old one. p50 hints are worth -0.05 s on the 7,768 turns and +0.17 s on the 9,688.\"",
+  "CAMPAIGN23_FINDINGS.md:15-17, \"(53.12 s with no hints)\", and :127, \"Hints already removed what memory was costing, so no read routine can shorten what is left.\" Both imply the gain over the baseline needs hints, which is untested at 128 users. They should read \"53.12 s for original HiCache\" and \"The hinted routines removed what memory was costing against original HiCache; whether read pins and paced retries off alone would is unmeasured at 128 users. At 44 users they alone give 79 % of the gain.\"",
+  "CAMPAIGN23_FINDINGS.md:22-24, \"At 44 users most are needed, and what to do about them is open.\" The data do not support this. It should read: \"At 44 users the data do not show these reads are needed. The hint-free arm never reads before arrival and matches new p50 (1.47 vs 1.51 s on 7,768 turns); it trails new p50 by 0.17 s on 9,688 turns.\"",
+  "CAMPAIGN23_FINDINGS.md:46, \"**Baseline** is HiCache with no hints\", and the 44-user table at :49-61. They should say \"original HiCache: no hints, no read pins, paced retries on\". The table should add a hint-free column: 1.47 s, 680 tokens, 9.3K mean pinned over 0-7,019 s, 10,355 turns in 117 min. It should also note that the 7,768 set ends at oracle position 8,940, before the second heavy stretch.",
+  "CAMPAIGN23_FINDINGS.md:91-92, \"Across the hinted arms recomputation follows pins: 39.3K pinned and 977 tokens per turn (oracle), 32.3K and 1,329 (old p50), 30.9K and 940 (new p50), 6.2K and 114 (new exact).\" The doc's own numbers contradict this. It should read: \"Recomputation follows mean pins only between the exact pair. The oracle pins more than old p50 yet recomputes less. Old p50 and new p50 pin about the same yet differ by 389 tokens (a5: 379 of them on capped re-fetch turns). The hint-free arm pins 9.3K and recomputes 680. Read revocations follow pins at the moment a read launches, during episodes, which a 2 h mean does not measure.\"",
+  "CAMPAIGN23_FINDINGS.md:100, \"With p50 hints it is 4.7 s (p90 24.6 s).\" Add the definition. Over all staged reads of the run the figure is 5.2 s (p90 38.3 s); the p90 is 24-38 s depending on whether pins or reads, and which turns, are counted.",
+  "CAMPAIGN23_FINDINGS.md:130-132, \"At 44 users most of the exact-hint gain is read timing ... The gate and the hold add 0.18 s of the 1.03 s\", and campaign23/DECISIONS.md:41, \"the gate and hold add 0.18 s\". The step is 0.17 s (0.666 -> 0.492 s; 0.18 is the difference of rounded means). 'Most of the gain' should read 'most of the gain over the oracle'. Add: \"Against the hint-free arm, all of what exact hints buy at 44 users (0.96 s) comes with the new routine. The split covers only jit_70's 75 min, before the second heavy stretch, where oracle to new exact is 1.84 s per turn on 1,519 turns.\"",
+  "CAMPAIGN23_FINDINGS.md:152-154 and campaign23/DECISIONS.md:58 and :105 (load carried at a TTFT target, 'with exact hints' / 'with p50 hints'). These are incomplete: the hint-free arm has no curve. a4's load bands put it at 3.93 s at 1,050-1,100K, against 2.69 s for the oracle and 3.54 s for new p50. The capacity gain over original HiCache should not be credited to hints until that curve exists.",
+  "CAMPAIGN23_FINDINGS.md:158-159, \"the 0.18 s from the gate and hold are not known to be real\". Change to 0.17 s. Add: \"At 44 users the hint-free/oracle/new-p50 ties have within-run block-bootstrap 95 % intervals of about +/-0.4-0.5 s. The 79 % hint-free share rests on one baseline storm (baseline to hint-free +3.7 s, interval +1.4 to +6.7 s).\"",
+  "CAMPAIGN23_FINDINGS.md:179 and 181-183 (option G, \"Analyse the hint-free arm at 44 users\", and \"Do G now\") are out of date. G is done: the hint-free levers give about 79 % of the 44-user gain over original HiCache, and exact hints help only with just-in-time timing. The recommendation should add an arm that separates pins from paced retries off, and should treat F (the 128-user ladder) as the test of whether hints are needed there.",
+  "CAMPAIGN23_FINDINGS.md:201, \"The spike near position 8,750 ... looks like the GPU short of room for what is running.\", and campaign23/DECISIONS.md:59, \"... which no read routine can give back.\" Partly contradicted. They should read: \"It appears in every arm in the same 250-position bin (6.4-10.1 s), so the workload sets it off. As in the main episode, 82-99 % of each hinted arm's recompute in positions 8,500-9,250 is history lost while queued. The arms differ in depth and recovery: new exact is at 0.58 s by position 9,250 while the oracle is at 2.3 s. On the 1,519 turns past 8,750 that the two share, new exact averages 1.93 s against 3.77 s.\"",
+  "CAMPAIGN23_FINDINGS.md:202 and campaign23/DECISIONS.md:106 (below the knee new p50 is slower than the baseline, and new exact is not). Add: \"Nor is the hint-free arm (0.36 s and 0.65 s in the first two stretches). The cost below the knee belongs to the hinted routines' staging.\"",
+  "campaign23/DECISIONS.md:77, \"The p50 keeps 78 % of exact gaps' gain over the baseline, against 87 % before.\" This is incomplete. Add: \"The hint-free arm alone keeps 79 % (1.47 s), and 100.5 % of the oracle's gain. So on these turns neither p50 routine adds to what pins and paced retries off give. What needs a hint is 0.96 s of the 4.67 s, and only with exact hints under the new routine.\" The same applies to campaign21/DECISIONS.md, \"so the p50 keeps 87 % of the oracle's gain\".",
+  "campaign23/DECISIONS.md:79, \"62 % of it is queue wait (mean 0.88 s against 0.30 s)\". It should read 64.9 %, counting the ReqTimeStats wait of the 201 unplanned p50 turns (mean 1.73 s), which forecast_cost.py counts as 0. My ntp_admit-only reproduction gives 61.3 %."
+ ]
+}

@@ -1,0 +1,236 @@
+{
+ "angle": "a2_where",
+ "summary": "For oracle to new exact, the gap is 0.98 s per turn on the 7,768 returning turns all five arms share. It sits in one load episode. Positions 5,500-7,000 hold 75 % of it (oracle minutes 54-79, new exact minutes 51-67). Positions 3,000-5,500 hold 20 % and the rest 5 %. Most of it is waiting. Logged queue wait carries 71 % (0.83 to 0.13 s), and about 10 points of that passed while the turn's own SSD read was pending. Time before queue entry adds 8 %; it grows with the prefill batch running when the turn arrives. Time after admission is 21 %. The gap is concentrated. The top 5 % of turns (388) carry 61 % and the top 10 % carry 88 %. These are mostly oracle turns queued 5 s or more in that episode, 70 % of them with a cut or revoked read. Turns whose history the oracle found on SSD (22 %) carry 90 %. Old p50 to new p50 (0.44 s) sits in the same stretch (72 %) and is 83 % queue, but it is the net of large swaps in both directions. Baseline to new exact (4.67 s) is 90 % in that stretch and 88 % queue. The baseline does log a queue wait: ReqTimeStats queue_duration equals ntp_admit wait_ms to within 0.5 ms.",
+ "sanity_check": "Every known number came out exactly. On the 7,768 returning turns in baseline, oracle, old p50, new exact and new p50, mean TTFT is 5.17, 1.48, 1.95, 0.50 and 1.51 s, and recomputed tokens per turn are 2,870, 977, 1,329, 114 and 940. On the 7,412 turns shared by oracle, jit_70 and new exact, TTFT is 1.52, 0.67 and 0.49 s. On positions 5,500-7,000, the oracle is at 5.06 s and new exact at 1.12 s, and all four stretches match compare_c44.out (0.35/0.32, 0.99/0.37, 5.06/1.12, 0.74/0.41). On the 9,980 turns oracle and new exact share, the paired gap is -1.046 s, as in compare_c44.out. Turn counts per arm match (8,037, 10,319, 10,021, 7,671, 12,201, 10,419). s2h_io totals match: the baseline has 2,184 reads and 592,964 pages. The oracle has 2,984 reads and 424,214 pages on client turns, against 2,988 reads in the log; the 4 extra reads belong to requests with no client TTFT. Each arm's minute at positions 5,500 and 7,000 matches the docs' 25 min for the oracle (16.2 min for new exact). There were no numeric mismatches. One contradiction with the task text: the baseline and hint-free arms do log a queue wait. The log has one ReqTimeStats line per turn (8,037 and 10,355). Its queue_duration is forward_entry_time minus wait_queue_entry_time, the same interval ntp_admit logs, and it agrees within 0.5 ms on all 9,494-11,804 planned turns of every hinted arm and jit_70. A small correction to a background figure: forecast_cost.py says 62 % of the exact-vs-p50 gap is queue wait, but it counts 0 s of queue for new p50's 201 unplanned turns. Those turns waited 1.73 s on average, and the share becomes 64.9 % (10,076 turns).",
+ "findings": [
+  {
+   "claim": "The oracle-to-new-exact gap sits in one load episode. Positions 5,500-7,000 carry 75 % of it, 3,000-5,500 carry 20 %, and the rest carry 5 %.",
+   "evidence": "7,768 shared returning turns (all five arms), gap +0.979 s per turn. By stretch:\n- 0-3,000: 2,883 turns, 0.35 to 0.32 s, 1.2 %\n- 3,000-5,500: 2,421 turns, 0.99 to 0.37 s, 19.7 %\n- 5,500-7,000: 1,453 turns, 5.06 to 1.12 s, 75.3 %\n- 7,000-8,750: 1,005 turns, 0.74 to 0.41 s, 4.3 %\n- 8,750 on: 6 turns, -0.6 %\n\nBy 250-position bin: seven of 36 bins hold 81 % (6,750: 19.3 %; 6,500 and 5,750: 13.9 % each; 6,000: 12.4 %; 6,250: 9.2 %; 5,500: 6.5 %; 4,000: 6.2 %).\n\nOn each arm's clock (minute at its own 5,500th and 7,000th turn), the stretch is oracle minutes 54.0-79.2 and new exact minutes 50.5-66.7. Oracle minutes 55-80 hold 76.8 % of the gap; new exact minutes 50-70 hold 77.6 %.\n\nOn all 9,980 turns the two arms share (gap +1.046 s): 54.8 % is in 5,500-7,000 and 26.9 % past position 8,750 (1,519 turns, 3.77 to 1.93 s). The 7,768-turn set cannot see that second heavy stretch.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_gap.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_table.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_parse.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_common.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_gap.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_table.py"
+   ],
+   "confidence": "high",
+   "caveats": "One run per arm, no repeats. Positions are ranks in the oracle's send order. The 7,768 set is exactly the baseline's returning turns, so it stops near position 8,000."
+  },
+  {
+   "claim": "71 % of the oracle-to-new-exact gap is logged queue wait. 8 % is time before the turn enters the queue, and 21 % is time after admission. In the episode stretch the queue share is 77 %.",
+   "evidence": "7,768 turns. Queue wait (ntp_admit wait_ms): 0.83 to 0.13 s, 70.9 % of the gap (0.694 s). TTFT minus queue: 0.66 to 0.37 s, 29.1 %. That splits into send-to-queue-entry 7.6 % (0.074 s) and after admission 21.5 % (0.210 s).\n\nQueue share of each stretch's own gap: 0-3,000: 93 %; 3,000-5,500: 52 % (after admission 35 %, lag 14 %); 5,500-7,000: 77 %; 7,000-8,750: 43 %.\n\nIn points of the whole gap, 5,500-7,000 is queue 58.2 (7.1 with the turn's own read pending, 51.1 other), lag 4.2 and after admission 12.8.\n\nAfter admission splits two ways:\n- Turns where the oracle prefilled 4K or more uncached tokens: 663 turns, 14.2 points. This is the turn's own recompute.\n- Turns where both arms prefilled under 1K: 6,067 turns, 0.284 against 0.202 s, 6.5 points. Same own work, so contention or noise.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_gap.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_class.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_gap.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_class.py"
+   ],
+   "confidence": "high",
+   "caveats": "The split is exact arithmetic on each turn. It says where a turn's time went, not which mechanism removed it, because one turn's queue wait is made by other turns' work.\n\n'Own read pending' is the overlap of queue time with the window from a turn's data-finding lookup to its I/O end, or to a revoked launch. That is an upper bound: deadline-parked reads and held reads overlap the GPU queue by design."
+  },
+  {
+   "claim": "The baseline does log a queue wait. ReqTimeStats queue_duration is the same interval as ntp_admit wait_ms. With it, 88 % of the baseline-to-new-exact gap is queue wait, and 90 % of that gap is in positions 5,500-7,000.",
+   "evidence": "There is one ReqTimeStats line per turn in every arm: baseline 8,037, hint-free 10,355, oracle 10,319, old p50 10,021, jit_70 7,671, new exact 12,201, new p50 10,419. On every turn that also has an ntp_admit line (9,980 / 9,494 / 7,412 / 11,804 / 9,875), the two agree within 0.5 ms. In the code, both are forward_entry_time minus wait_queue_entry_time.\n\nBaseline to new exact, 7,768 turns, gap +4.666 s:\n- Queue 4.24 to 0.13 s, 88.0 % (own read pending 9.9 points, other queue 78.1)\n- Send to queue entry 1.7 %\n- After admission 10.3 %\n\nBy stretch: 5,500-7,000 holds 90.2 % (1,453 turns, 23.62 to 1.12 s, of which 88.7 % queue), 7,000-8,750 7.3 %, 3,000-5,500 2.4 %.\n\nOn the baseline's clock, minutes 55-110 hold 94 % of the gap.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_check.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_gap.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_class.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_check.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_gap.py"
+   ],
+   "confidence": "high",
+   "caveats": "This contradicts the task text, which says these arms have no logged queue wait. queue_duration adds up waits across retractions; no line had attempts>0. The 195 old p50 and 201 new p50 returning turns that had no plan use ReqTimeStats in my split. The baseline logs no srs_dispatch lines, so its found-but-unread turns show as 'never dispatched'."
+  },
+  {
+   "claim": "The time from send to queue entry, which the split counts as service, behaves like a wait behind the prefill batch that is running. Counting it as waiting puts about 78 % of the oracle-to-new-exact gap in waiting.",
+   "evidence": "7,768 turns. Mean lag by the new tokens of the last Prefill batch logged before queue entry, the same in all five arms: under 2K, 0.084-0.087 s; 2-8K, 0.30-0.40 s; 8K or more, 0.70-0.79 s.\n\nThe oracle had 760 turns arrive after an 8K-plus batch; new exact had 167. Mean lag is 0.192 s against 0.118 s overall, and 0.384 against 0.164 s in 5,500-7,000.\n\nArrival SSD lookups take a median 3-4 ms (arrival_fetch_*_c44.out). In _add_request_to_queue the queue entry time is set after _prefetch_kvcache.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_lag.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_check.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_lag.py"
+   ],
+   "confidence": "medium",
+   "caveats": "This is correlational. The mechanism (the scheduler receives requests between iterations) is inferred from the code, not measured per iteration."
+  },
+  {
+   "claim": "The gap sits on the turns whose history the oracle found on the SSD: 22 % of turns carry 90 % of the gap. Even there it is mostly queue wait, not read time. Turns that read the SSD only under the oracle carry 56 %.",
+   "evidence": "7,768 turns.\n\nBy whether the turn read the SSD (s2h_io):\n- Neither arm: 6,063 turns (78.1 %), 23.1 % of the gap\n- Only the oracle: 996 turns (12.8 %), 56.0 %. TTFT 4.75 to 0.47 s; oracle wait 3.54 s, of which 0.88 s with its own read pending\n- Both: 544 turns, 19.4 %\n- Only new exact: 165 turns, 1.5 %\n\nBy the oracle's read class (read_denied.py):\n- Nothing found: 6,034 turns, 9.5 %\n- Revoked at launch: 184 turns, 15.0 % (7.09 to 0.86 s; recomputed 16,687 against 91 tokens)\n- Cut: 352 turns, 23.3 %\n- Whole: 1,188 turns, 52.1 % (4.22 to 0.89 s; 69 % of their gap is other queue)\n- Never dispatched: 10 turns, 0.1 %\n\nPer read: the 1,115 turns with any cut read or revoked launch carry 68.7 %.\n\nBy queue wait: oracle 5 s or more and new exact under 5 s, 462 turns, 64.7 %. Both under 5 s, 7,246 turns, 39.9 %. Oracle under 5 s and new exact 5 s or more, 45 turns, -4.8 %.\n\nExclusive table (share of the gap):\n- Oracle queued 5 s or more, in 5,500-7,000: 415 turns, 58.2 %\n- Oracle queued 5 s or more, elsewhere: 62 turns, 6.7 %\n- Oracle under 5 s, new exact 5 s or more: 45 turns, -4.8 %\n- Both under 5 s, oracle read cut or revoked: 768 turns, 23.7 %\n- Both under 5 s, oracle read whole: 471 turns, 6.1 %\n- Both under 5 s, only new exact read: 84 turns, -0.6 %\n- Both under 5 s, neither read: 5,923 turns (76 %), 10.7 %",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_class.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_table.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_class.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_table.py"
+   ],
+   "confidence": "high",
+   "caveats": "These classes describe where the gap sits. They are partly selected on waiting: a turn that waits longer has more time for its read to be cut or its history evicted. So they do not separate cause from effect."
+  },
+  {
+   "claim": "Turns whose prompt was largely not in the oracle's GPU pool carry nearly all of the gap. On about half of the gap, new exact had that history on the GPU.",
+   "evidence": "7,768 turns, by prompt tokens minus device hit:\n- Oracle 4K or more off the GPU: 1,853 turns (23.9 %), 88.1 % of the gap\n- Of those, new exact under 1K off the GPU: 853 turns, 52.5 % (the 565 turns at 16K or more in the oracle hold 37.0 %)\n- 4K or more in both arms: 897 turns, 29.3 %\n\nQueue wait rises with off-GPU tokens in every arm. In 5,500-7,000, at under 1K / 1-4K / 4-16K / 16K or more:\n- Oracle: 0.43 / 2.15 / 4.46 / 4.96 s\n- New exact: 0.03 / 0.41 / 0.99 / 1.77 s\n- Baseline: 3.22 / 19.85 / 22.76 / 22.31 s",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_need.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_need.py"
+   ],
+   "confidence": "medium",
+   "caveats": "The off-GPU amount is itself set by each routine's eviction and by the episode. For SSD-reading turns the queue wait includes their own read time. Whether the wait is for GPU memory or GPU compute is not separated."
+  },
+  {
+   "claim": "The gap is concentrated. The top 1 %, 5 % and 10 % of turns by paired difference carry 19 %, 61 % and 88 % of it. Those turns were sent at oracle minutes 56-78 and new exact minutes 52-66.",
+   "evidence": "7,768 turns.\n- Top 1 % (78 turns): 18.7 %, 18.63 to 0.44 s\n- Top 5 % (388 turns): 61.0 %, 12.53 to 0.58 s\n- Top 10 % (777 turns): 87.6 %\n- Top 20 %: 107.5 %\n- Positive differences sum to 114 % of the net; the bottom 10 % holds -12.8 %\n\nThe top 5 %: queue is 81 % of their gap; 88.9 % are in 5,500-7,000; 88.9 % queued 5 s or more in the oracle; 69.8 % had a cut or revoked oracle read; 77.3 % read the SSD in the oracle against 26.0 % in new exact.\n\nTheir send times, p10-p90: oracle minutes 56.5-77.7 (median 67.5), new exact 52.2-66.3 (median 59.6). Over those minutes:\n- Oracle: GPU pool 0.91, 25.4 running, 3.1 queued (its other minutes from 20: 0.72, 22.1, 1.0)\n- New exact: 0.78, 21.6, 0.7 (others: 0.66, 20.1, 0.5)\n\nBaseline to new exact: top 1/5/10 % carry 11.4/42.8/71.8 %. Their send times are baseline minutes 66-96 (median 86.6) and new exact minutes 56-65; the baseline's pool is 0.98 with 11.5 queued there.\n\nThe three pairs' top-5 % sets share only 90-105 of 388 turns.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_top.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_top.py"
+   ],
+   "confidence": "medium",
+   "caveats": "The top shares are picked on outcome, so they include run-to-run noise per turn. Two oracle attempts once differed by a median 0.235 s per turn after 30 min. The bottom-10 % share gives a rough scale of that noise."
+  },
+  {
+   "claim": "13 % of turns lost history in the oracle while queued, and they carry 71 % of the gap.",
+   "evidence": "7,768 turns. Lost history means a re-fetch issued, a re-evicted span, or a device prefix that shrank before admission.\n- Any of the three: 1,027 turns (13.2 %), 6.22 to 0.97 s, 70.8 % of the gap. The oracle recomputed 7,089 tokens per turn on them, new exact 288.\n- A re-fetched span evicted again: 514 turns, 56.3 %.\n\nOld p50: 1,262 turns hold 104.8 % of its net gap. Baseline: 444 turns with a shrunk prefix hold 35.0 %.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_class.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_class.py"
+   ],
+   "confidence": "medium",
+   "caveats": "This class is picked by waiting: the longer a turn waits, the likelier it loses history. Cause and effect are not separated."
+  },
+  {
+   "claim": "Old p50 to new p50 sits in the same stretch and is even more queue wait (83 %). But it is the net of large swaps in both directions: new p50 waits longer for its own reads and much less in the general queue.",
+   "evidence": "7,768 turns, gap +0.436 s.\n\nBy stretch: 5,500-7,000 holds 72.0 % (6.92 to 5.24 s), 3,000-5,500 21.6 %, 7,000-8,750 9.6 %. In 0-3,000 new p50 is slower, 0.39 against 0.42 s (-2.6 %).\n\nQueue 1.18 to 0.81 s, 83.4 % of the gap: own read pending 0.23 to 0.40 s (-39.1 points), other queue +122.4 points. Send to queue entry 4.0 %, after admission 12.7 %.\n\nPositive differences sum to 230 % of the net. Exclusive classes:\n- Old p50 queued 5 s or more, in 5,500-7,000: 614 turns, +116.8 %\n- Old p50 under 5 s, new p50 5 s or more: 231 turns, -58.6 %\n- Both under 5 s, only new p50 read: 375 turns, -11.3 %\n- Both under 5 s, old p50 read cut or revoked: 855 turns, +27.1 %\n\nTop 5 % of turns: 123.5 %. Bottom 10 %: -114.5 %.\n\nOn all 9,689 turns the pair shares: +0.393 s, 64.1 % in 5,500-7,000 and 9.0 % past 8,750.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_gap.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_class.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_table.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_top.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_gap.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_class.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_table.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_top.py"
+   ],
+   "confidence": "medium",
+   "caveats": "One run each, and the two arms differ in engine freeze as well as routine. Whether the swapped turns follow forecast error is not tested here."
+  },
+  {
+   "claim": "Read timing alone (jit_70) gives 83 % of the oracle-to-new-exact gap, spread over the stretches like the whole gap. The gate and hold's 17 % sits almost all in the episode and is 80 % queue wait.",
+   "evidence": "7,412 returning turns shared by oracle, jit_70 and new exact. Oracle to new exact is +1.025 s.\n- Oracle to jit_70: +0.85 s (83.1 %), by stretch 0.6 / 18.8 / 60.3 / 3.5 points; 70.2 % of it is queue.\n- jit_70 to new exact: +0.17 s (16.9 %), of which 15.1 points in 5,500-7,000; 80.2 % of it is queue.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_gap.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_gap.py"
+   ],
+   "confidence": "low",
+   "caveats": "jit_70 ran 75 min on engine_table_20261101. The 0.17 s is not separated from noise, which was once measured at 0.05-0.14 s on the oracle."
+  },
+  {
+   "claim": "Inferred, not separated: in the episode the queue follows how much prefill the GPU had to do, and in the oracle most of that prefill is recomputed history.",
+   "evidence": "Over each arm's own send positions 5,500-7,000:\n\n| Arm | Minutes | Prefill new tokens/s | Recomputed tokens/s |\n|---|---|---|---|\n| Oracle | 25.2 | 4.03K | 3.27K |\n| New exact | 16.2 | 1.82K | 0.62K |\n| Old p50 | 29.0 | 4.43K | 3.82K |\n| New p50 | 25.3 | 3.75K | 3.07K |\n| Baseline | 54.3 | 6.29K | 6.01K |\n\nIn 3,000-5,500, the oracle runs 2.43K/s prefill with 1.34K/s recomputed, new exact 1.33K/s with 0.08K/s.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/a2_where_table.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/a2_where_table.py"
+   ],
+   "confidence": "low",
+   "caveats": "Each rate covers that arm's own time window. GPU memory admission (pool 0.91 against 0.78 in those minutes) is an alternative or joint explanation that these runs cannot separate."
+  }
+ ],
+ "attribution": [
+  {
+   "component": "Positions 5,500-7,000 (oracle minutes 54-79, new exact minutes 51-67)",
+   "amount": "0.737 s of the 0.979 s mean gap (75.3 %)",
+   "basis": "Paired TTFT (oracle minus new exact) on the 1,453 of the 7,768 shared returning turns in that stretch"
+  },
+  {
+   "component": "Positions 3,000-5,500",
+   "amount": "0.193 s (19.7 %)",
+   "basis": "Same, 2,421 turns"
+  },
+  {
+   "component": "Positions 0-3,000, 7,000-8,750 and past 8,750",
+   "amount": "0.048 s (4.9 %)",
+   "basis": "Same, 3,894 turns: +1.2, +4.3 and -0.6 points"
+  },
+  {
+   "component": "Queue wait while the turn's own read was pending",
+   "amount": "0.102 s (10.4 %)",
+   "basis": "ntp_admit wait overlapped with the window from a data-finding lookup to I/O end or revoked launch, 7,768 turns; an upper bound"
+  },
+  {
+   "component": "Other queue wait",
+   "amount": "0.592 s (60.5 %)",
+   "basis": "ntp_admit wait minus the above, 7,768 turns"
+  },
+  {
+   "component": "Send to queue entry (tracks the running prefill batch)",
+   "amount": "0.074 s (7.6 %)",
+   "basis": "ReqTimeStats entry_time minus client t_send, 7,768 turns"
+  },
+  {
+   "component": "After admission",
+   "amount": "0.210 s (21.5 %), of which 0.139 s on turns where the oracle prefilled 4K or more uncached tokens and 0.064 s on turns where both arms prefilled under 1K",
+   "basis": "TTFT minus lag minus queue wait, 7,768 turns"
+  },
+  {
+   "component": "Top 5 % of turns by paired difference (388)",
+   "amount": "0.597 s (61.0 %)",
+   "basis": "7,768 turns sorted by oracle-minus-new-exact TTFT"
+  },
+  {
+   "component": "Read-timing step, oracle to jit_70",
+   "amount": "0.85 of 1.025 s (83.1 %)",
+   "basis": "The 7,412 returning turns shared by oracle, jit_70 and new exact"
+  },
+  {
+   "component": "Gate and hold step, jit_70 to new exact",
+   "amount": "0.17 of 1.025 s (16.9 %), 15.1 points of it in 5,500-7,000",
+   "basis": "Same 7,412 turns"
+  },
+  {
+   "component": "Old p50 to new p50: queue wait",
+   "amount": "0.364 of 0.436 s (83.4 %): own read pending -0.170 s, other queue +0.534 s",
+   "basis": "7,768 turns; ntp_admit, or ReqTimeStats for unplanned turns"
+  },
+  {
+   "component": "Old p50 to new p50: positions 5,500-7,000",
+   "amount": "0.314 of 0.436 s (72.0 %)",
+   "basis": "1,453 turns"
+  },
+  {
+   "component": "Baseline to new exact: positions 5,500-7,000",
+   "amount": "4.21 of 4.67 s (90.2 %)",
+   "basis": "1,453 turns"
+  },
+  {
+   "component": "Baseline to new exact: queue wait",
+   "amount": "4.11 of 4.67 s (88.0 %)",
+   "basis": "ReqTimeStats queue_duration, 7,768 turns"
+  }
+ ],
+ "open_questions": [
+  "Is the oracle's extra episode queue a GPU compute queue (prefill 4.03K against 1.82K tokens/s, mostly recompute) or a GPU memory admission queue (pool 0.91 against 0.78)? These runs do not separate the two.",
+  "How much of the per-turn concentration is run-to-run noise? There are no repeats; the bottom 10 % of turns carry -13 % of the oracle-to-new-exact gap and -114 % of the p50 pair's.",
+  "For which turns did their own read actually gate admission? Pending-read time is an upper bound, because held reads overlap the GPU queue by design.",
+  "In old p50 to new p50, are the 231 turns where only new p50 queued 5 s or more (-59 % of the net) caused by forecast error, or are they turns the episode moved around?",
+  "Past position 8,750 the oracle-to-new-exact gap is 27 % of the total on the 9,980 shared turns. The 7,768-turn set leaves this out because the baseline never got there. Should the headline use the pairwise set?"
+ ]
+}

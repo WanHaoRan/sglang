@@ -1,0 +1,182 @@
+{
+ "checker": "v2_room",
+ "overall": "Every number I was asked to check reproduced from my own parser, with my own lookup classes and a per-token fate rule. Held: oracle staged reads land a median 9.78 s (p90 48 s) before admission, 86 % of it before arrival, and hold 88.9 % of pinned token-seconds. 87.9 % of oracle recompute is SSD-held history revoked or cut; the total holds under any attribution rule, the 75/13 split only under the last-read rule. jit_70 alone: pinned 35.2K to 5.9K, recompute 1,000 to 229. Of the drop, 90.5 % is revoked/cut tokens and 65.5 % sits on turns needing no read in new exact, 91 % of it on the GPU. a1's engine-diff statement holds. GPU residency follows GPU pressure (mix explains 79-99 %), and timing alone reproduces it: routine feedback, not eviction code. Wrong as written: a3's re-fetch/arrival revocation rates (class-window bug, 355 reads), '689 of 1,999', a2's 897 (is 911). Pinned tokens understate the host memory pins hold.",
+ "verdicts": [
+  {
+   "claim": "Under the old routine (oracle, exact gaps) staged reads land a median ~9.8 s (p90 ~48 s) before admission and hold ~89 % of pinned token-seconds.",
+   "source": "a3 [1] (summary)",
+   "verdict": "confirmed with corrections",
+   "reproduced": "Oracle whole run, all requests, window 0-7,200 s. 2,000 staged lookups found >= 256 tokens (703 whole, 696 cut, 601 revoked at launch). 1,395 of them landed (srs_pin) and were admitted. Landing to admission (ReqTimeStats entry_time + queue_duration): median 9.78 s, p90 48.05 s (interpolated; a3's nearest-rank 48.3); 689 of 1,395 over 10 s. Staged pins hold 35.1K of 39.4K mean pinned = 88.9 % of token-seconds (pairs srs_pin->srs_unpin, open pins run to 7,200 s; integrating the pinned= running total also gives 39.4K). Pin length median 8.9 s, p90 47.5 s. On the 7,412 set: 9.57 s (p90 44.55), matching DECISIONS' 9.6 (44.7) on 7,642. jit_70 1.77 s (2.85), new exact 1.66 s (2.62).",
+   "discrepancies": "'689 of 1,999 more than 10 s early' uses the wrong denominator. 1,999 (my 2,000) counts staged lookups that found data, including 601 revoked at launch that never landed. Correct: 689 of 1,395 landed reads (49 %). Pinned token-seconds also understate the host memory these pins hold (see new findings).",
+   "alternatives_tested": "Could the long lead come from queue waits after arrival rather than early staging? No. 1,286 of 1,395 reads landed before arrival. Median landing-to-arrival 6.76 s vs arrival-to-admission 0.57 s; 86.4 % of the summed lead seconds fall before arrival. For the 689 reads over 10 s early: median 16.8 s before arrival, 1.7 s of queue. The 120 s staging horizon explains it, not queueing.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_staged.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_staged.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_reads.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_parse.py"
+   ]
+  },
+  {
+   "claim": "88 % of the oracle's recompute is history the SSD held whose read was revoked at launch (~75 %) or cut (~13 %).",
+   "source": "a3 [2] (summary)",
+   "verdict": "confirmed",
+   "reproduced": "7,768 five-arm returning turns; recompute = max(reply_reprefilled, 0) = 977.1 per turn in the oracle. Per-token rule: each recomputed history token in [cached, prompt - delta_tokens) below the committed key (ntp_plan chain) takes the fate of the last lookup before admission that asked for it. Lookup start = ntp_stage matched=, or (input_len - 1) - prefetch_start tokens; this was page-aligned on all 7,370 non-staged lookups. Result: revoked 735 (75.2 %), cut 124 (12.7 %), not on SSD 80 (8.2 %), rounding 32 (3.2 %), no lookup 6 (0.7 %). Revoked + cut = 87.9 %; 88.2 % on 9,980 turns. Landed-then-lost 0. Fates sum to the recompute on every turn.",
+   "discrepancies": "None in the totals; a3's turn-level rule and my per-token rule agree to the token per turn. The revoked/cut split depends on the rule: if the first lookup that asked for a token decides, it is 54.3 % revoked and 33.7 % cut. The total stays 87.9 %.",
+   "alternatives_tested": "(a) Lost after landing, or missing from the SSD: landed-then-lost 0 tokens; not on SSD 8.2 %. (b) The attribution rule: last-, first- and any-lookup rules all give 87.9 % SSD-held but unloaded. (c) Revoked meaning something other than host room: by the code (_launch_storage_hit), launched=0 means host alloc failed after evict_host and the shorter-prefix fallback, or the op was terminated. Aborted requests' parked reads are discarded before dispatch, and no lookup under 256 tokens was ever dispatched.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_fates.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_rules.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_reads_selfcheck.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_sets.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_fates.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_rules.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_reads.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_sets.py"
+   ]
+  },
+  {
+   "claim": "The usual chain is a staged read revoked or cut, then the queued turn's re-fetch revoked (96 % of revoked+cut tokens on turns whose last failed read was a re-fetch; 581 of 805 began with a staged read revoked or cut).",
+   "source": "a3 [4]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "Oracle turns with >= 64 revoked/cut tokens (per-token rule). 7,768 set: 567 turns, 6.67 M such tokens, 96.1 % decided by re-fetch lookups (82.8 % revoked, 13.3 % cut). Pattern 'first reading lookup a staged read revoked or cut ... last bad lookup a re-fetch revoked': 347 turns (61.2 %), 58.7 % of the tokens; ending in a re-fetch cut instead: 58 (10.2 %). Whole run: 502 of 833 (60.3 %). Of the 804 turns whose last bad read is a re-fetch, 581 began with a staged read revoked or cut (a3: 581 of 805).",
+   "discrepancies": "The supporting per-class revocation rates are wrong. a3_room_parse._cls scans the 50 ms after a prefetch_start and passes over the next prefetch_start. So 355 oracle arrival reads that were revoked at launch, and whose re-fetch was issued within 50 ms, are counted as re-fetches (28 in new exact, 30 in jit_70, 210 in new p50). Corrected oracle rates: re-fetch 1,137 of 1,772 (64.2 %, not 1,493 of 2,128 = 70.2 %); at arrival 570 of 1,468 (38.8 %, not 19.8 %); later 21 of 77; staged 601 of 2,000 (30.1 %, unchanged). New exact: re-fetch 42.1 %, arrival 15.1 %, staged 11.7 % (not 46.2 / 9.9 / 11.7). '6.89 M revoked+cut tokens' is really the recompute on turns whose last read was revoked or cut; the token-level total is 6.67 M. The 96 % share holds either way.",
+   "alternatives_tested": "Re-fetches might fail only because they go out when pins are high. At equal srs_dispatch pinned_tokens, oracle re-fetches are revoked 62-67 % in every band (0-20K: 62.7 % of 59), against 14-45 % for staged reads and 17-51 % for arrival reads. So the class matters beyond pinned tokens. This fits re-fetches being issued just as their span has left host memory, when room is gone: a selection effect, as a3's caveat says.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_chain.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_fates.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_probes.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_chain.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_fates.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_probes.py"
+   ]
+  },
+  {
+   "claim": "Just-in-time timing alone (jit_70) cuts mean pinned 35.2K to 5.9K (0-4,500 s) and recompute 1,000 to 229 tokens per turn on 7,412 turns.",
+   "source": "a3 [7]",
+   "verdict": "confirmed",
+   "reproduced": "Mean pinned over 0-4,500 s, from the pinned= running total and from pin pairs: oracle 35.2K, jit_70 5.9K (new exact 4.4K). Staged pin median 8.9 s -> 1.8 s. On the 7,412 three-arm returning turns: recompute 999.7 -> 229.3 (new exact 112.1); TTFT 1.517 -> 0.666 -> 0.492 s. The 770-token drop splits revoked 76.3 %, cut 13.7 %, not on SSD 9.1 %.",
+   "discrepancies": "None in the headline numbers. a3's '(revoked+cut 908 to 187)' is the recompute on turns whose last read was revoked or cut; at token level it is 879 -> 185. One client difference: jit_70's 4,500 s timeout suppressed 26 next-turn hints (sends from 3,583 s, median 4,466 s), so those sessions were registered as ended near the end.",
+   "alternatives_tested": "Other differences between the two runs. Engine: only read timing and the table intake differ, and the intake never acted (0 ntp_pick lines with v1 exact hints). Server args: only the read-timing and reply-key-source flags, plus random_seed, which does nothing at the client's temperature 0.0; prompts of the same turn differ by at most 7 tokens across arms. Client: same args except the timeout (26 suppressed hints, too few to matter). GPU unit: both runs were before the 14:25Z shutdown, so probably the same unit (not logged).",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_staged.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_sets.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_fates.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_chain.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_engdiff.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_staged.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_sets.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_fates.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_chain.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_engdiff.py"
+   ]
+  },
+  {
+   "claim": "90 % of the oracle-to-new-exact recompute drop is fewer revoked or cut tokens, yet 65 % of the drop sits on turns that needed no SSD read in new exact because their history stayed on the GPU.",
+   "source": "a3 [6]",
+   "verdict": "confirmed",
+   "reproduced": "9,980 returning turns shared by oracle and new exact: recompute 1,140 -> 191 per turn (drop 949). Per token: revoked 861 -> 125 (77.6 % of the drop), cut 144 -> 22 (12.9 %), not on SSD 96 -> 7 (9.4 %); revoked + cut = 90.5 %. Turns with >= 64 revoked/cut tokens in the oracle and no lookup finding >= 256 tokens in new exact: 530 (539 under a3's rule), 6.22 -> 0.02 M = 65.5 % of the drop. Read but not bad: 278 turns, 39.2 %. Bad only in new exact: 89 turns, -11.6 %. On the 530 turns, new exact served the oracle's revoked/cut token positions 90.6 % from the device and 9.4 % from host (device 26,814 / host 2,116 / SSD 0 tokens per turn, against 7,423 / 5,112 / 4,695 in the oracle). In new exact, 273 of them were gate-covered, 234 had a span under 256 tokens or no lookup, and 23 had no call. Paired TTFT: the oracle's bad turns carry 0.449 s of the 1.046 s.",
+   "discrepancies": "Numbers match; group sizes differ only through the bad-turn rule. 'Yet' is not a tension: the 65 % is part of the 90 %, since those revoked tokens vanished because no read was needed.",
+   "alternatives_tested": "(1) An engine change: no eviction, write-through backup or pin code differs between the trees. jit_70 (read timing only) shows the same pattern: 71.1 % of its drop in this group, 89.5 % of those positions on its device, and history device fraction 0.897 vs 0.903 (new exact) vs 0.827 (oracle) on 7,412 turns. (2) Next-use eviction behaving differently: at equal GPU pressure the arms keep the same share on the device. Binning each turn by gap length and by running requests' token usage over its gap, the cell mix explains 96 % (oracle cells reweighted) or 86 % (new exact cells reweighted) of the 0.810 vs 0.888 device-fraction gap; with peak usage 99 % / 94 %; vs jit_70, 79-92 %. Next-use predictions are worse in the oracle's episode (23.7 % of commits off by > 5 s vs 4.3 %), but that is a symptom of its queue. Pressure in positions 5,500-7,000: gap usage 0.893 vs 0.756, mean running 25.4 vs 21.6, prefill 6.08 vs 1.75 M. Device evictions match inflow 1:1 in both arms.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_fates.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_gpu.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_gpu2.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_fates.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_gpu.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_gpu2.py"
+   ]
+  },
+  {
+   "claim": "By diff, v2 to table changes only read timing and table intake, and table to owned only adds the gate and hold.",
+   "source": "a1 [1] caveats (engine statement)",
+   "verdict": "confirmed",
+   "reproduced": "Whole python/ trees diffed (5,079 common files). v2 -> table: fields/memory.py and field_order.py add --hicache-storage-next-turn-reply-key-source (default reply) and --hicache-storage-next-turn-read-timing (default horizon); scheduler.py passes them on; reply_key.py is new. next_turn_prefetch.py adds the v2 table intake (a v1 hint gives the old plan, with early_s 0) and the just-in-time start in case 1 (lookup deferred to admission - load - (early_s + 1 s)). table -> owned: two flags (default off); validation in hicache_hook.py; scheduler.py passes them. unified_radix_cache.py gets the gate hook in prefetch_from_storage (after the too-short and rate-limit checks; a declined call gets no lookup, no anchor host lock and no retry) and passes read_not_before to dispatch. storage_read_scheduler.py: a held read is skipped and its pages count as ahead; the loop over a pre-sorted order is order-equivalent with no hold. next_turn_prefetch.py adds prefetch_gate (covered / capped above 2 / read / reread), read_not_before, queue-position deadlines for unplanned reads under the hold, and the admission rate computed every tick. No diff in next_use_eviction.py, the tree core, cache_controller.py, pin code (_pin_prefetch, _unpin_prefetch, _release_stale_pins) or the schedule policy.",
+   "discrepancies": "a1's wording leaves out three side effects. The hold also gives unplanned turns' parked reads a queue-position deadline instead of 'now', which puts them under the 512-page window and the 356K budget (4 parks in new exact, 10 in new p50). The hold computes the admission rate every tick. The gate's cap of 3 lookups spans staged, arrival and re-fetch triggers (25 refused). None of these matters at this setting.",
+   "alternatives_tested": "(1) A change elsewhere in python/: the full-tree diff shows only the files listed. (2) The tree on disk not being what ran: each run.txt names the frozen path; file mtimes predate the runs (owned 15:23-15:58Z vs the 20:21Z run; table 04:38-04:45Z vs the 05:02Z run); server_args differ only by the new flags and random_seed; there are 0 ntp_pick lines in the exact-hint arms.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_engdiff.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_probes.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_engdiff.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_probes.py"
+   ]
+  },
+  {
+   "claim": "The oracle-to-new-exact gap sits on turns whose history the oracle found on the SSD (22 % of turns, 90 % of the gap). By s2h_io: only oracle 996 turns 56.0 %, neither 6,063 23.1 %, both 544 19.4 %, only new exact 165 1.5 %. By read class: nothing found 6,034 9.5 %, revoked at launch 184 15.0 %, cut 352 23.3 %, whole 1,188 52.1 %, never dispatched 10 0.1 %. Any cut or revoked read: 1,115 turns 68.7 %. Oracle queued >= 5 s and new exact < 5 s: 462 turns 64.7 %. Top 1/5/10 % carry 19/61/88 %.",
+   "source": "a2 [5] and [7]",
+   "verdict": "confirmed",
+   "reproduced": "7,768 five-arm set; gap = oracle TTFT - new exact TTFT, +0.979 s per turn. All classes match exactly. Found anything: 1,734 turns (22.3 %), 90.5 %. s2h_io: 996/6,063/544/165 turns at 56.0/23.1/19.4/1.5 %; only-oracle TTFT 4.75 -> 0.47 s, oracle queue 3.54 s. Read class: 6,034/184/352/1,188/10 turns at 9.5/15.0/23.3/52.1/0.1 %. Revoked class 7.09 -> 0.86 s, recompute 16,687 -> 91. Any revoked/cut read: 1,119 turns, 68.7 %. Queue classes: 462 turns 64.7 %; 7,246 turns 39.9 %; 45 turns -4.8 %. Top 1/5/10/20 %: 18.7/61.0/87.6/107.5 %; bottom 10 % -12.8 %. Top 5 %: 12.53 -> 0.58 s; queue 81.1 %; 88.9 % in 5,500-7,000; 88.9 % queued >= 5 s; 70.1 % cut/revoked; 77.3 % vs 26.0 % read the SSD.",
+   "discrepancies": "Minor: 1,119 vs 1,115 turns with any cut or revoked read, and 70.1 % vs 69.8 % of the top 5 %. The shares are the same.",
+   "alternatives_tested": "Position: do the classes just mark the episode? No. Inside positions 5,500-7,000, nothing-found turns gain +0.57 s per turn, against +4.51 (whole), +6.76 (cut) and +7.37 s (revoked); their gap is mostly oracle queue (4.6-5.7 s). A per-token class instead: oracle reading turns with no revoked/cut tokens (1,157) carry 48.7 % of the gap, turns with >= 64 revoked/cut tokens (567) 41.7 %, and non-reading turns 9.6 %. So about half the TTFT gap sits on reads that did not fail.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_a2.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_a2top.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_a2.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_a2top.py"
+   ]
+  },
+  {
+   "claim": "Turns whose prompt was largely not in the oracle's GPU pool carry nearly all of the gap: oracle 4K or more off the GPU 1,853 turns, 88.1 %; of those, new exact under 1K off 853 turns, 52.5 %; 4K or more in both 897 turns, 29.3 %.",
+   "source": "a2 [6]",
+   "verdict": "confirmed with corrections",
+   "reproduced": "7,768 set; off-GPU = prompt_tokens - cached_details.device. Oracle >= 4K off: 1,853 turns, 88.1 %. Of them: new exact < 1K off, 853 turns, 52.4 % (TTFT 5.06 -> 0.38 s, recompute 4,295 -> 32); 1K-4K off, 89 turns, 6.5 %; >= 4K in both, 911 turns, 29.1 %.",
+   "discrepancies": "'4K or more in both arms: 897 turns, 29.3 %' counts only the two diagonal cells of a2_where_need.out (394 + 503). It drops 14 turns where one arm is 4-16K off and the other 16K+ off. Correct: 911 turns, 29.1-29.2 %.",
+   "alternatives_tested": "Is off-GPU history a policy difference rather than pressure? At equal gap length and GPU token usage, both arms keep the same share of history on the device; the mix explains 79-99 % of the residency gap (see the a3 [6] verdict). So the off-GPU difference is the oracle's higher GPU pressure, as a2's caveat suspected, not a per-turn eviction rule.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_a2.out",
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_gpu2.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_a2.py",
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_gpu2.py"
+   ]
+  },
+  {
+   "claim": "13 % of turns lost history in the oracle while queued (re-fetch issued, re-evicted span, or device prefix shrank) and carry 71 % of the gap; a re-fetched span evicted again: 514 turns, 56.3 %.",
+   "source": "a2 [8]",
+   "verdict": "confirmed",
+   "reproduced": "7,768 set: 1,027 turns (13.2 %) carry 70.8 % of the gap; TTFT 6.22 -> 0.97 s; recompute 7,089 -> 288 per turn. ntp_reevict: 514 turns (6.6 %) carry 56.3 %, TTFT 9.33 -> 1.00 s.",
+   "discrepancies": "None.",
+   "alternatives_tested": "Could these be long-queued turns with no extra work of their own? No: they recompute 7,089 tokens per turn in the oracle against 46 for the other turns, so the class marks real lost history, not just waiting. It is still selected by waiting, as a2 notes.",
+   "outputs": [
+    "/home/wanhr/sglang/agent_cache/results/campaign23/gain44/v2_room_a2.out"
+   ],
+   "scripts": [
+    "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c23_gain44/v2_room_a2.py"
+   ]
+  }
+ ],
+ "new_findings": [
+  "Under the old routine, pins hold more host memory than srs_pin tokens show. _is_host_leaf never evicts a node with a child or a host lock, so a pinned early read keeps its session's host-only history above it. Upper bound, from load_back_init host_hit at admission: oracle mean 60.3K held vs 39.4K pinned. At the 2,329 revoked launches: median 97.7K held vs 61.5K pinned (p10 54.3K vs 28.9K); old p50 49.3K vs 32.3K. Staged pins' held/pinned p90 is 8.9 (oracle) and 7.5 (old p50), against 1.0 in jit_70 and new exact. Example c0-t45: in the oracle a 16-page staged read was pinned 33 s, then 17,920 host tokens loaded back. In new exact the same turn's read came due 3.4 s ahead with 608 pages missing (ntp_due l3_pages).",
+  "a3_room_parse._cls classifies a lookup by scanning 50 ms after its prefetch_start and passes over the next prefetch_start. In the oracle, 355 of 570 arrival reads revoked at launch are followed within 50 ms by an issued re-fetch and get labeled re-fetches (jit_70 30, new exact 28, new p50 210). Per-class revocation rates in a3 [4] are wrong because of this; turn-level last-read counts are barely affected.",
+  "The oracle often re-issues a just-revoked read at once, for the same span, and it is revoked again. Example: c36-t6 at 744 s, two revoked launches of 50 pages 33 ms apart with 4,416 tokens pinned and nothing in flight. This double-counts revocations, and room is short even at low pins.",
+  "GPU residency follows GPU pressure, not the arm. In each cell of gap length x mean running-request token usage over the gap, oracle, jit_70 and new exact keep about the same device fraction of history (e.g. gap < 20 s, usage 0.7-0.8: 0.869/0.881/0.875). Reweighting cells explains 79-99 % of the oracle's lower residency. jit_70 alone reproduces new exact's residency gain (0.897 vs 0.903 vs 0.827), so it comes from read timing via the routine's feedback (recompute, queue, running requests: 25.4 vs 21.6 in the episode), not from eviction code.",
+  "Next-use predictions degrade with the queue. At commit, the registered next use minus the next turn's actual admission is off by more than 5 s for 23.7 % of oracle commits in positions 5,500-7,000, against 6.2 % in jit_70 and 4.3 % in new exact (0 % before 3,000 in every arm).",
+  "About half of the oracle-to-new-exact TTFT gap (48.7 % on 7,768 turns) sits on oracle reading turns whose reads were neither revoked nor cut. Turns with >= 64 revoked/cut tokens carry 41.7 %. Revoked/cut tokens explain 90 % of the recompute drop but less than half of the TTFT gap; the rest is shared queueing.",
+  "Device evictions match device inflow (prefill + host-to-device) about 1:1 in every arm and stretch (0.94-1.06), so the full pool turns every miss into an eviction. In positions 5,500-7,000 the oracle moved 23.1 M tokens in (6.08 M prefill, 16.99 M host-to-device) against new exact's 12.1 M on the same turns."
+ ],
+ "corrections_to_docs": [
+  "w1_a3_room.json finding 1: '689 of 1,999 more than 10 s early' should read 689 of 1,395 landed staged reads (49 %). 1,999 counts staged lookups that found data, including 601 revoked at launch.",
+  "w1_a3_room.json finding 4: the oracle revocation rates by class should be re-fetch 1,137 of 1,772 (64.2 %), at arrival 570 of 1,468 (38.8 %), later 21 of 77, staged 30.1 %. New exact: 42.1 %, 15.1 %, 11.7 %. a3's figures come from the _cls 50 ms window bug. Also, '6.89 M revoked+cut tokens' is the recompute on turns whose last read was revoked or cut; the token-level revoked + cut total is 6.67 M.",
+  "w1_a3_room.json finding 7: '(revoked+cut 908 to 187)' is the recompute on turns whose last read was revoked or cut; token-level revoked + cut is 879 -> 185 per turn on 7,412 turns.",
+  "w1_a3_room.json summary and finding 3: 'mean 39.3K pinned against about 44K of room' understates the host memory early pins hold. Pins also keep their sessions' host-only history: up to 60.3K mean, and a median 97.7K at revocations.",
+  "w1_a3_room.json finding 2: the 75 % / 13 % revoked/cut split holds only under the last-read rule. Under a first-read rule it is 54 % / 34 %; the 88 % total holds under both.",
+  "w1_a3_room.json open question 1 (why new exact kept history on the device): largely answered by GPU pressure. Equal gap and token-usage cells give equal residency (mix explains 79-99 %), and jit_70 reproduces the gain.",
+  "w1_a2_where.json finding 6: '4K or more in both arms: 897 turns, 29.3 %' should be 911 turns, 29.1 %. a2_where_need.out's own cross table includes the 14 off-diagonal turns.",
+  "w1_a2_where.json finding 5: '1,115 turns with any cut read or revoked launch' is 1,119 by a direct per-read count; the 68.7 % share is unchanged.",
+  "w1_a1_ladder.json caveat 'table to owned adds the gate and hold': add that the hold also gives unplanned turns' parked reads a queue-position deadline (window and budget then apply; 4 parks in new exact) and computes the admission rate every tick, and that the gate caps lookups at 3 per planned turn across all triggers (25 refused)."
+ ]
+}
