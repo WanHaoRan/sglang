@@ -1,0 +1,747 @@
+diff --git a/python/sglang/srt/arg_groups/field_order.py b/python/sglang/srt/arg_groups/field_order.py
+index 8b346474e9..346591cfac 100644
+--- a/python/sglang/srt/arg_groups/field_order.py
++++ b/python/sglang/srt/arg_groups/field_order.py
+@@ -518,6 +518,10 @@ POSITIONAL_FIELD_ORDER = (
+     "enable_response_store",
+     "disaggregation_decode_host_receive_threshold",
+     "hicache_storage_next_turn_prefetch",
++    "hicache_storage_next_turn_reply_key_source",
++    "hicache_storage_next_turn_read_timing",
++    "hicache_storage_next_turn_arrival_gate",
++    "hicache_storage_next_turn_arrival_hold",
+     "hicache_storage_read_order",
+     "hicache_storage_read_window_pages",
+     "hicache_storage_prefetch_pin_fraction",
+diff --git a/python/sglang/srt/arg_groups/fields/memory.py b/python/sglang/srt/arg_groups/fields/memory.py
+index f666563d13..4c56184807 100644
+--- a/python/sglang/srt/arg_groups/fields/memory.py
++++ b/python/sglang/srt/arg_groups/fields/memory.py
+@@ -241,6 +241,57 @@ class Memory(msgspec.Struct):
+             choices=["off", "observe", "on"],
+         ),
+     ] = "off"
++    hicache_storage_next_turn_reply_key_source: A[
++        str,
++        Arg(
++            help=(
++                "Where the next-turn prefetcher finds a reply's tool call when the "
++                "request carries a sglang.next_turn v2 gap table. 'reply' reads the "
++                "generated reply. 'hint' reads the table's replay_reply_key, for a "
++                "trace replay whose generated replies are not the recorded ones."
++            ),
++            choices=["reply", "hint"],
++        ),
++    ] = "reply"
++    hicache_storage_next_turn_read_timing: A[
++        str,
++        Arg(
++            help=(
++                "When the next-turn prefetcher issues a read under "
++                "--hicache-storage-read-order deadline. 'horizon': as soon as the span "
++                "is missing and the predicted admission is near. 'just_in_time': only "
++                "when the load estimate says the read must start, which holds pinned "
++                "memory for less time but depends more on the forecast."
++            ),
++            choices=["horizon", "just_in_time"],
++        ),
++    ] = "horizon"
++    hicache_storage_next_turn_arrival_gate: A[
++        str,
++        Arg(
++            help=(
++                "Make the next-turn prefetcher the one owner of SSD reads. 'on': a "
++                "planned turn whose prefix match covers its committed history gets no "
++                "SSD lookup when it arrives, and a planned turn's lookups are capped. "
++                "A turn with no plan looks up as usual. Needs "
++                "--hicache-storage-next-turn-prefetch on."
++            ),
++            choices=["off", "on"],
++        ),
++    ] = "off"
++    hicache_storage_next_turn_arrival_hold: A[
++        str,
++        Arg(
++            help=(
++                "'on': a parked read of a queued turn waits until the turn's predicted "
++                "admission minus the load estimate minus a margin, so it does not hold "
++                "pinned memory through the queue wait; near the head it goes at once. "
++                "Needs --hicache-storage-next-turn-prefetch on and "
++                "--hicache-storage-read-order deadline."
++            ),
++            choices=["off", "on"],
++        ),
++    ] = "off"
+     hicache_storage_read_order: A[
+         str,
+         Arg(
+diff --git a/python/sglang/srt/arg_groups/hicache_hook.py b/python/sglang/srt/arg_groups/hicache_hook.py
+index aca95abc4e..57e5b6e90c 100644
+--- a/python/sglang/srt/arg_groups/hicache_hook.py
++++ b/python/sglang/srt/arg_groups/hicache_hook.py
+@@ -218,12 +218,26 @@ def resolve_storage_read_order(server_args: Any):
+             "--hicache-storage-read-window-pages must be at least 1, got "
+             f"{cfg.hicache_storage_read_window_pages}."
+         )
++    arrival_hold = cfg.hicache_storage_next_turn_arrival_hold == "on"
++    if (
++        cfg.hicache_storage_next_turn_arrival_gate == "on" or arrival_hold
++    ) and cfg.hicache_storage_next_turn_prefetch != "on":
++        raise ValueError(
++            "--hicache-storage-next-turn-arrival-gate and "
++            "--hicache-storage-next-turn-arrival-hold act on the next-turn prefetcher's "
++            "plans and need --hicache-storage-next-turn-prefetch on."
++        )
+     if cfg.hicache_storage_read_order == "fifo":
+         if pin > 0:
+             raise ValueError(
+                 "--hicache-storage-prefetch-pin-fraction > 0 needs "
+                 "--hicache-storage-read-order deadline."
+             )
++        if arrival_hold:
++            raise ValueError(
++                "--hicache-storage-next-turn-arrival-hold holds parked reads, which "
++                "needs --hicache-storage-read-order deadline."
++            )
+         return
+     if cfg.hicache_storage_backend is None:
+         raise ValueError(
+diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
+index 52733e96a5..149e7309d7 100644
+--- a/python/sglang/srt/managers/scheduler.py
++++ b/python/sglang/srt/managers/scheduler.py
+@@ -1429,6 +1429,10 @@ class Scheduler(
+             pp_size=get_parallel().pp_size,
+             enable_dp_attention=self.enable_dp_attention,
+             disaggregation_mode=DisaggregationMode(get_disagg().disaggregation_mode),
++            reply_key_source=get_memory().hicache_storage_next_turn_reply_key_source,
++            read_timing=get_memory().hicache_storage_next_turn_read_timing,
++            arrival_gate=get_memory().hicache_storage_next_turn_arrival_gate,
++            arrival_hold=get_memory().hicache_storage_next_turn_arrival_hold,
+         )
+         self.tree_cache.next_turn_prefetch = self.next_turn_prefetch
+ 
+diff --git a/python/sglang/srt/mem_cache/next_turn_prefetch.py b/python/sglang/srt/mem_cache/next_turn_prefetch.py
+index 51b3cf17b1..127a45fc18 100644
+--- a/python/sglang/srt/mem_cache/next_turn_prefetch.py
++++ b/python/sglang/srt/mem_cache/next_turn_prefetch.py
+@@ -16,6 +16,16 @@ is missing and the predicted admission is within NTP_LEAD_HORIZON_S, labels the
+ parked read with its predicted admission through read_deadline(), and the cache's
+ read scheduler decides the dispatch order. With --radix-eviction-policy next_use it
+ also registers each committed turn's tail node with the predicted next admission.
++Read timing just_in_time delays that lookup until the load estimate says it must start.
++
++Two more switches make the prefetcher the one owner of reads (agent_cache/DIST_HINT_DESIGN.md).
++The arrival gate is consulted by every read trigger: a planned turn whose match covers its
++key gets no SSD lookup, and a turn's reads are capped. The arrival hold keeps a parked read
++of a queued turn until its queue position says the read must start, at the head at once.
++
++A request may instead carry a table of gaps per reply key (action v2,
++agent_cache/DIST_HINT_DESIGN.md). The reply is not known when the request is sent, so
++the commit resolves it: the reply's key picks an entry, and that entry's p50 is the gap.
+ 
+ The decisions use this rank's wall clock, so create() refuses multi-rank setups.
+ """
+@@ -26,7 +36,8 @@ import heapq
+ import itertools
+ import logging
+ import math
+-from typing import TYPE_CHECKING, Annotated, Optional
++import re
++from typing import TYPE_CHECKING, Annotated, Optional, TypeVar
+ 
+ import msgspec
+ import msgspec.structs
+@@ -48,17 +59,21 @@ from sglang.srt.mem_cache.next_turn_estimators import (
+ )
+ from sglang.srt.mem_cache.next_use_eviction import NextUseStrategy
+ from sglang.srt.mem_cache.radix_cache import RadixKey
++from sglang.srt.mem_cache.reply_key import KEY_SEP, reply_key
+ 
+ if TYPE_CHECKING:
+     from sglang.srt.disaggregation.utils import DisaggregationMode
+     from sglang.srt.managers.kv_hints import KvHintsEnvelope
+     from sglang.srt.managers.schedule_batch import Req
++    from sglang.srt.mem_cache.storage_read_scheduler import ParkedRead
+     from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
+ 
+ logger = logging.getLogger(__name__)
+ 
+ NEXT_TURN_ACTION_TYPE = "sglang.next_turn"
+ NEXT_TURN_ACTION_VERSION = "1"
++NEXT_TURN_TABLE_VERSION = "2"
++ANY_GAP_KEY = "*"
+ 
+ # Ticks run once per scheduler pass (well under 1 ms when idle); a plan's
+ # residency is probed at most this often.
+@@ -77,6 +92,12 @@ MAX_REFETCHES = 2
+ # in campaign 15); 256 is arbitrary, it bounds the anchor locks parked lookups hold.
+ NTP_LEAD_HORIZON_S = 120.0
+ NTP_MAX_PARKED = 256
++# Just-in-time reads start this much before the load estimate requires. Arbitrary, but
++# well above the arrival error of exact hints (p90 0.2 s, campaign 19).
++NTP_JIT_MARGIN_S = 1.0
++# Held reads of queued turns start this much before the load estimate requires. Arbitrary;
++# a late read costs only its own turn, which admission passes over until it lands.
++NTP_HOLD_MARGIN_S = 2.0
+ 
+ 
+ class NextTurnHint(msgspec.Struct, frozen=True):
+@@ -85,28 +106,82 @@ class NextTurnHint(msgspec.Struct, frozen=True):
+     session: str
+     next_rid: str
+     next_gap_s: Annotated[float, msgspec.Meta(ge=0)]
++    # How much sooner than next_gap_s the turn may plausibly come.
++    early_s: Annotated[float, msgspec.Meta(ge=0)] = 0.0
+ 
+ 
+-def read_next_turn_hint(
+-    kv_hints: Optional[KvHintsEnvelope],
+-) -> Optional[NextTurnHint]:
+-    """The request's next-turn hint; other action types are not ours to read."""
++class GapEntry(msgspec.Struct, frozen=True):
++    """One row of a v2 table; its p90 and n are not read yet."""
++
++    key: str
++    p10: Optional[Annotated[float, msgspec.Meta(ge=0)]] = None
++    p50: Optional[Annotated[float, msgspec.Meta(ge=0)]] = None
++    ended: bool = False
++
++
++class NextTurnTable(msgspec.Struct, frozen=True):
++    """Payload of the sglang.next_turn v2 action."""
++
++    session: str
++    next_rid: str
++    gaps: list[GapEntry]
++    # A replay's generated reply is not the recorded one, so the replay names the
++    # recorded reply's key; read only under reply_key_source "hint".
++    replay_reply_key: Optional[str] = None
++
++
++_Payload = TypeVar("_Payload", NextTurnHint, NextTurnTable)
++
++
++def _read_action(
++    kv_hints: Optional[KvHintsEnvelope], version: str, payload_type: type[_Payload]
++) -> Optional[_Payload]:
++    """The action of this version; other action types are not ours to read."""
+     if kv_hints is None:
+         return None
+     for action in kv_hints.actions:
+         if (
+             action.action_type != NEXT_TURN_ACTION_TYPE
+-            or action.action_version != NEXT_TURN_ACTION_VERSION
++            or action.action_version != version
+         ):
+             continue
+         try:
+-            return msgspec.convert(action.payload, NextTurnHint)
++            return msgspec.convert(action.payload, payload_type)
+         except msgspec.ValidationError as e:
+             logger.warning("Ignoring a malformed %s hint: %s", NEXT_TURN_ACTION_TYPE, e)
+             return None
+     return None
+ 
+ 
++def read_next_turn_hint(
++    kv_hints: Optional[KvHintsEnvelope],
++) -> Optional[NextTurnHint]:
++    return _read_action(kv_hints, NEXT_TURN_ACTION_VERSION, NextTurnHint)
++
++
++def read_next_turn_table(
++    kv_hints: Optional[KvHintsEnvelope],
++) -> Optional[NextTurnTable]:
++    return _read_action(kv_hints, NEXT_TURN_TABLE_VERSION, NextTurnTable)
++
++
++def pick_gap_entry(table: NextTurnTable, key: Optional[str]) -> Optional[GapEntry]:
++    """The entry of the reply's key, else of its tool, else the default."""
++    by_key = {entry.key: entry for entry in table.gaps}
++    if key is not None:
++        for candidate in (key, key.split(KEY_SEP, 1)[0]):
++            if candidate in by_key:
++                return by_key[candidate]
++    return by_key.get(ANY_GAP_KEY)
++
++
++def _event_value(key: Optional[str]) -> str:
++    """A key as a HICACHE_EVT value; a key can come from model output."""
++    if key is None:
++        return "none"
++    return re.sub(r"[^\w./-]", "_", key.replace(ANY_GAP_KEY, "any"))
++
++
+ class RefetchDecision(msgspec.Struct, frozen=True):
+     """Why a queued request was handed back for a re-issued prefetch."""
+ 
+@@ -127,6 +202,7 @@ class TurnPlan(msgspec.Struct):
+     predicted_arrival: float
+     expires_at: float
+     next_check: float
++    early_s: float = 0.0
+     # Queue entry time; None while the next turn has not reached the scheduler.
+     arrival_t: Optional[float] = None
+     pred_wait_ql: Optional[float] = None
+@@ -144,6 +220,8 @@ class TurnPlan(msgspec.Struct):
+     refetches: int = 0
+     last_refetch_t: float = -math.inf
+     refetch_capped: bool = False
++    # Arrival gate: SSD lookups let through for this turn, by any trigger.
++    lookups: int = 0
+     # Handed to the Scheduler this tick; reported back by on_refetch_result.
+     pending_refetch: Optional[RefetchDecision] = None
+ 
+@@ -170,10 +248,22 @@ def _log_event(kind: str, rid: str, **fields) -> None:
+ class NextTurnPrefetcher:
+     """Plans an SSD read per hinted next turn; the Scheduler ticks it every pass."""
+ 
+-    def __init__(self, *, mode: str, tree_cache: UnifiedRadixCache, page_size: int):
++    def __init__(
++        self,
++        *,
++        mode: str,
++        tree_cache: UnifiedRadixCache,
++        page_size: int,
++        reply_key_source: str = "reply",
++        read_timing: str = "horizon",
++        arrival_gate: str = "off",
++        arrival_hold: str = "off",
++    ):
+         self._mode = mode
+         self._tree_cache = tree_cache
+         self._page_size = page_size
++        self._reply_key_source = reply_key_source
++        self._just_in_time = read_timing == "just_in_time"
+         self._offset = ArrivalOffset()
+         self._admissions = AdmissionRate()
+         self._load = L3LoadModel()
+@@ -193,6 +283,15 @@ class NextTurnPrefetcher:
+         self._positions: dict[str, int] = {}
+         if self._deadline_mode:
+             tree_cache.read_deadline_fn = self.read_deadline
++        if mode == "on" and arrival_gate == "on":
++            tree_cache.prefetch_gate_fn = self.prefetch_gate
++        self._hold_arrived = (
++            mode == "on" and arrival_hold == "on" and self._deadline_mode
++        )
++        if self._hold_arrived:
++            tree_cache.read_not_before_fn = self.read_not_before
++        # Requests with an ntp_hold event logged: one per request, not one per pass.
++        self._hold_logged: set[str] = set()
+         # Next-use eviction: the strategy's registry, when that policy is on.
+         strategy = tree_cache.tree_core.eviction_strategy
+         self._next_use = strategy.registry if isinstance(strategy, NextUseStrategy) else None
+@@ -211,6 +310,10 @@ class NextTurnPrefetcher:
+         pp_size: int,
+         enable_dp_attention: bool,
+         disaggregation_mode: DisaggregationMode,
++        reply_key_source: str = "reply",
++        read_timing: str = "horizon",
++        arrival_gate: str = "off",
++        arrival_hold: str = "off",
+     ) -> NextTurnPrefetcher:
+         from sglang.srt.disaggregation.utils import DisaggregationMode
+         from sglang.srt.mem_cache.unified_cache.unified_tree_core import (
+@@ -240,7 +343,15 @@ class NextTurnPrefetcher:
+                 f"--hicache-storage-next-turn-prefetch {mode} needs " + ", ".join(unmet)
+             )
+         logger.info("HiCache next-turn prefetch: mode=%s", mode)
+-        return cls(mode=mode, tree_cache=tree_cache, page_size=page_size)
++        return cls(
++            mode=mode,
++            tree_cache=tree_cache,
++            page_size=page_size,
++            reply_key_source=reply_key_source,
++            read_timing=read_timing,
++            arrival_gate=arrival_gate,
++            arrival_hold=arrival_hold,
++        )
+ 
+     def on_turn_committed(
+         self,
+@@ -262,7 +373,7 @@ class NextTurnPrefetcher:
+         if len(key) == 0 or isinstance(req.finished_reason, FINISH_ABORT):
+             self._end_session(rid=req.rid, session=session, now=now)
+             return
+-        hint = read_next_turn_hint(req.kv_hints)
++        hint = self._resolve_hint(req)
+         if hint is None:
+             # The session ended (or the client sends no hints): evict it first.
+             self._register_next_use(
+@@ -296,6 +407,7 @@ class NextTurnPrefetcher:
+             predicted_arrival=predicted,
+             expires_at=predicted + max(MIN_EXPIRY_S, hint.next_gap_s),
+             next_check=now,
++            early_s=hint.early_s,
+         )
+         self._plans[plan.next_rid] = plan
+         heapq.heappush(self._pending, (now, next(self._seq), plan.next_rid))
+@@ -308,6 +420,34 @@ class NextTurnPrefetcher:
+             pred_arr_ms=_ms(predicted - now),
+         )
+ 
++    def _resolve_hint(self, req: Req) -> Optional[NextTurnHint]:
++        """The finished turn's hint. A v2 table wins: its v1 companion, if any, only
++        serves engines that cannot read tables."""
++        table = read_next_turn_table(req.kv_hints)
++        if table is None:
++            return read_next_turn_hint(req.kv_hints)
++        if self._reply_key_source == "hint":
++            key = table.replay_reply_key
++        elif req.tokenizer is None:
++            key = None
++        else:
++            key = reply_key(req.tokenizer.decode(req.output_ids))
++        entry = pick_gap_entry(table, key)
++        _log_event(
++            "ntp_pick",
++            table.next_rid,
++            key=_event_value(key),
++            entry=_event_value(None if entry is None else entry.key),
++        )
++        if entry is None or entry.ended or entry.p50 is None:
++            return None
++        return NextTurnHint(
++            session=table.session,
++            next_rid=table.next_rid,
++            next_gap_s=entry.p50,
++            early_s=0.0 if entry.p10 is None else max(0.0, entry.p50 - entry.p10),
++        )
++
+     def tick(self, *, waiting_queue: list[Req], now: float) -> list[Req]:
+         """One scheduler pass: follow the queue and advance every plan that is due
+         a check. Returns the queued requests to prefetch again (none in observe)."""
+@@ -320,7 +460,8 @@ class NextTurnPrefetcher:
+         self._positions = {req.rid: position for position, req in enumerate(waiting_queue)}
+         if self._deadline_mode:
+             self._refresh_load_model()
+-        if not self._plans:
++        # The hold times reads of turns with no plan, so it needs a fresh rate regardless.
++        if not self._plans and not self._hold_arrived:
+             return []
+ 
+         rate = self._admissions.rate(now)
+@@ -377,6 +518,7 @@ class NextTurnPrefetcher:
+         )
+ 
+     def _on_departure(self, req: Req, *, now: float) -> None:
++        self._hold_logged.discard(req.rid)
+         plan = self._plans.pop(req.rid, None)
+         stats = req.time_stats
+         if stats.forward_entry_time <= 0:
+@@ -680,13 +822,21 @@ class NextTurnPrefetcher:
+         recheck: float,
+     ) -> float:
+         """Case 1 under the deadline order: issue the lookup within the lead
+-        horizon; the cache's read scheduler orders the dispatch."""
++        horizon, or just in time; the cache's read scheduler orders the dispatch."""
+         if admission_at - now > NTP_LEAD_HORIZON_S:
+             return min(admission_at - NTP_LEAD_HORIZON_S, recheck)
+         if now - plan.last_probe_t >= PROBE_INTERVAL_S:
+             plan.missing_tokens = len(plan.key) - self._resident_tokens(plan, now=now)
+         enough = plan.missing_tokens >= self._tree_cache.prefetch_threshold
+         load_s = self._load_seconds(plan.missing_tokens, backlog_pages)
++        if self._just_in_time:
++            start_at = trigger_time(
++                admission_at=admission_at,
++                load_s=load_s,
++                margin_s=plan.early_s + NTP_JIT_MARGIN_S,
++            )
++            if now < start_at:
++                return min(start_at, recheck)
+         if plan.due_case == 0 and enough:
+             self._mark_due(
+                 plan,
+@@ -715,10 +865,11 @@ class NextTurnPrefetcher:
+     def read_deadline(self, handle: CacheRequestHandle) -> Optional[float]:
+         """Dispatch deadline of a parked read, for the cache; None = needed now."""
+         plan = self._plans.get(handle.rid)
+-        if plan is None:
++        # Under the hold a turn with no plan is timed from its queue position too.
++        if plan is None and not self._hold_arrived:
+             return None
+         now = self._last_now
+-        if plan.arrival_t is None:
++        if plan is not None and plan.arrival_t is None:
+             wait, _ = self._wait_after_arrival(
+                 queue_len=len(self._queued), rate=self._last_rate
+             )
+@@ -730,6 +881,71 @@ class NextTurnPrefetcher:
+         wait = residual_wait(position=position, rate=self._last_rate)
+         return None if wait is None else now + wait
+ 
++    def prefetch_gate(self, handle: CacheRequestHandle, matched_tokens: int) -> bool:
++        """May this prefetch look up the SSD? Every read trigger ends here. A read
++        already under way has been joined by now, so a new one means history is missing."""
++        plan = self._plans.get(handle.rid)
++        # A first turn, a client without hints, a plan gone: only a lookup can tell.
++        if plan is None:
++            return True
++        chain = len(plan.key)
++        if chain - matched_tokens < self._tree_cache.prefetch_threshold:
++            # The history is resident and the rest is new. It is on the SSD only if
++            # another session shares this prefix, which is not worth a lookup per turn.
++            decision = "covered"
++        elif plan.lookups > MAX_REFETCHES:
++            # A re-read beats a recompute, but not without limit: reads that keep being
++            # evicted before admission only evict others.
++            plan.refetch_capped = True
++            decision = "capped"
++        else:
++            decision = "read" if plan.lookups == 0 else "reread"
++            plan.lookups += 1
++        _log_event(
++            "ntp_gate",
++            handle.rid,
++            decision=decision,
++            matched=matched_tokens,
++            chain=chain,
++            lookups=plan.lookups,
++        )
++        return decision in ("read", "reread")
++
++    def read_not_before(
++        self, handle: CacheRequestHandle, read: ParkedRead, ahead_pages: int
++    ) -> Optional[float]:
++        """When a parked read of a queued turn may start; None = no hold. `ahead_pages`
++        counts the pages the read thread serves first."""
++        position = self._positions.get(handle.rid)
++        if position is None:
++            # Parked since the last tick, so the queue position is not known yet: wait
++            # one pass. Still unknown after a tick means not queued, which includes a
++            # staged read before its turn arrives: the prefetcher already timed that.
++            return math.inf if read.parked_at > self._last_now else None
++        if position <= 1:
++            return None
++        wait = residual_wait(position=position, rate=self._last_rate)
++        if wait is None:
++            return None
++        load_s = self._load.seconds(own_pages=read.pages, backlog_pages=ahead_pages)
++        not_before = trigger_time(
++            admission_at=self._last_now + wait,
++            load_s=load_s,
++            margin_s=NTP_HOLD_MARGIN_S,
++        )
++        if not_before > self._last_now and handle.rid not in self._hold_logged:
++            self._hold_logged.add(handle.rid)
++            _log_event(
++                "ntp_hold",
++                handle.rid,
++                pos=position,
++                pages=read.pages,
++                wait_ms=_ms(wait),
++                load_ms=_ms(load_s),
++                hold_ms=_ms(not_before - self._last_now),
++            )
++        return not_before
++
+     def _refresh_load_model(self) -> None:
+         """Replace the load model's per-page seeds with the read thread's EWMA."""
+         ms_per_page = self._tree_cache.cache_controller.storage_read_ms_per_page
+diff --git a/python/sglang/srt/mem_cache/reply_key.py b/python/sglang/srt/mem_cache/reply_key.py
+new file mode 100644
+index 0000000000..00f442e9dd
+--- /dev/null
++++ b/python/sglang/srt/mem_cache/reply_key.py
+@@ -0,0 +1,78 @@
++"""The key of a reply's tool call: the engine's half of the sglang.next_turn v2 table.
++
++An agent system keeps a gap distribution per key and sends the table on every request
++(agent_cache/DIST_HINT_DESIGN.md). Once a reply exists, the engine reads the same key from
++it. The rule must match the client's (agent_cache/scripts/gap_hints.py: reply_key, text_call,
++command_word), or a key finds no entry and falls back to its tool's.
++"""
++
++from __future__ import annotations
++
++import json
++import re
++from typing import Optional
++
++NO_CALL_KEY = "_no_call"
++KEY_SEP = "/"
++
++_TEXT_CALL = re.compile(r"<function=([^>\s]+)>(.*?)(?:</function>|$)", re.S)
++_TEXT_ARG = re.compile(
++    r"<parameter=([^>\s]+)>(.*?)(?:</parameter>|(?=<parameter=)|$)", re.S
++)
++_JSON_CALL = re.compile(r"<tool_call>\s*(\{.*?\})\s*(?:</tool_call>|$)", re.S)
++_LEADING_WORDS = re.compile(r"cd\s+\S+\s*(?:&&|;)\s*|[A-Za-z_]\w*=\S*\s+")
++# Within the value grammar of HICACHE_EVT lines; the length bound is arbitrary.
++_KEY_PART = re.compile(r"[A-Za-z0-9_.\-]{1,48}")
++
++
++def _text_call(text: str) -> Optional[tuple[str, dict]]:
++    match = _TEXT_CALL.search(text)
++    if match is None:
++        return None
++    args = {k: v.strip("\n") for k, v in _TEXT_ARG.findall(match.group(2))}
++    return match.group(1), args
++
++
++def _json_call(text: str) -> Optional[tuple[str, dict]]:
++    match = _JSON_CALL.search(text)
++    if match is None:
++        return None
++    try:
++        call = json.loads(match.group(1))
++        args = call.get("arguments", {})
++        args = json.loads(args) if isinstance(args, str) else args
++        name = call.get("name")
++    except (json.JSONDecodeError, AttributeError):
++        return None
++    if not isinstance(name, str):
++        return None
++    return name, args if isinstance(args, dict) else {}
++
++
++def _command_word(command: str) -> Optional[str]:
++    """A command's first word after any leading cd and VAR=value; None if it makes no key."""
++    rest = command.strip()
++    while (match := _LEADING_WORDS.match(rest)) is not None:
++        rest = rest[match.end() :]
++    words = rest.split()
++    if not words:
++        return None
++    word = words[0].rsplit("/", 1)[-1]
++    if word.startswith("python"):
++        if len(words) >= 3 and words[1] == "-m":
++            word = f"python-m-{words[2]}"
++        else:
++            word = "python-c" if len(words) >= 2 and words[1] == "-c" else "python"
++    return word if _KEY_PART.fullmatch(word) else None
++
++
++def reply_key(text: str) -> str:
++    """The key of the first tool call a reply writes, after any reasoning, or NO_CALL_KEY."""
++    answer = text.rsplit("</think>", 1)[-1]
++    call = _text_call(answer) or _json_call(answer)
++    if call is None:
++        return NO_CALL_KEY
++    tool, args = call
++    command = args.get("command", args.get("cmd"))
++    word = _command_word(command) if isinstance(command, str) else None
++    return tool if word is None else f"{tool}{KEY_SEP}{word}"
+diff --git a/python/sglang/srt/mem_cache/storage_read_scheduler.py b/python/sglang/srt/mem_cache/storage_read_scheduler.py
+index 6d4bae5da3..92ed54e96b 100644
+--- a/python/sglang/srt/mem_cache/storage_read_scheduler.py
++++ b/python/sglang/srt/mem_cache/storage_read_scheduler.py
+@@ -9,7 +9,7 @@ deadline; a timed deadline is the predicted admission of a next-turn prefetch.
+ The I/O thread holds at most `window_pages` of dispatched work and dispatched
+ plus landed-and-pinned pages stay within `budget_tokens`. A "now" read ignores
+ both limits, as the FIFO path allocates it unconditionally and an admission may
+-be waiting on it.
++be waiting on it. An optional hold passes a read over until its start time.
+ 
+ Pure policy: no clock, no tree, no controller; every time is passed in.
+ """
+@@ -40,6 +40,7 @@ class ReadSchedulerStats(msgspec.Struct):
+     dispatched_now: int = 0
+     window_holds: int = 0
+     budget_holds: int = 0
++    hold_skips: int = 0
+     max_wait_s: float = 0.0
+ 
+ 
+@@ -92,25 +93,38 @@ class StorageReadScheduler:
+         deadline_of: Callable[[Hashable], Optional[float]],
+         in_flight_pages: int,
+         held_tokens: int,
++        not_before_of: Optional[
++            Callable[[Hashable, ParkedRead, int], Optional[float]]
++        ] = None,
+     ) -> list[DispatchDecision]:
+         """Pop the reads to launch now, earliest deadline first.
+ 
+         `in_flight_pages` is what the I/O thread already holds; `held_tokens`
+         is the host memory charged to prefetching (the in-flight reads plus
+         the pinned spans), so a read is charged once, here on top of it.
++        `not_before_of(handle, read, ahead_pages)` gives a read's start time. A held
++        read is passed over, unlike the window and budget holds that stop the loop,
++        so it never blocks a due read, but its pages still count as ahead of the next.
+         """
+         decisions: list[DispatchDecision] = []
+         if not self._parked:
+             return decisions
+         deadlines = {handle: deadline_of(handle) for handle in self._parked}
++        order = sorted(
++            self._parked,
++            key=lambda h: (deadlines[h] is not None, deadlines[h] or 0.0),
++        )
+         held = held_tokens
+-        while self._parked:
+-            handle = min(
+-                self._parked,
+-                key=lambda h: (deadlines[h] is not None, deadlines[h] or 0.0),
+-            )
++        ahead_pages = in_flight_pages
++        for handle in order:
+             read = self._parked[handle]
+             deadline = deadlines[handle]
++            if not_before_of is not None:
++                not_before = not_before_of(handle, read, ahead_pages)
++                ahead_pages += read.pages
++                if not_before is not None and now < not_before:
++                    self.stats.hold_skips += 1
++                    continue
+             if deadline is not None:
+                 if in_flight_pages >= self.window_pages:
+                     self.stats.window_holds += 1
+diff --git a/python/sglang/srt/mem_cache/unified_radix_cache.py b/python/sglang/srt/mem_cache/unified_radix_cache.py
+index c595c3f773..82218286c2 100644
+--- a/python/sglang/srt/mem_cache/unified_radix_cache.py
++++ b/python/sglang/srt/mem_cache/unified_radix_cache.py
+@@ -48,7 +48,10 @@ from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
+ from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool
+ from sglang.srt.mem_cache.radix_cache import RadixKey
+ from sglang.srt.mem_cache.storage_prefetch import StoragePrefetchRetries
+-from sglang.srt.mem_cache.storage_read_scheduler import StorageReadScheduler
++from sglang.srt.mem_cache.storage_read_scheduler import (
++    ParkedRead,
++    StorageReadScheduler,
++)
+ from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
+ from sglang.srt.mem_cache.unified_cache.cache_action import (
+     BackupKV,
+@@ -296,6 +299,11 @@ class UnifiedRadixCache(BasePrefixCache):
+         self.read_deadline_fn: Optional[
+             Callable[[CacheRequestHandle], Optional[float]]
+         ] = None
++        # Bound by the next-turn prefetcher when it owns reads; None keeps today's paths.
++        self.prefetch_gate_fn: Optional[Callable[[CacheRequestHandle, int], bool]] = None
++        self.read_not_before_fn: Optional[
++            Callable[[CacheRequestHandle, ParkedRead, int], Optional[float]]
++        ] = None
+         self.prefetch_pin_budget_tokens = 0
+         self.pinned_prefetch: dict[CacheRequestHandle, _PinnedPrefetch] = {}
+         self.pinned_prefetch_tokens = 0
+@@ -310,6 +318,7 @@ class UnifiedRadixCache(BasePrefixCache):
+             "issued_assumed_stored": 0,
+             "declined_too_short": 0,
+             "declined_rate_limited": 0,
++            "declined_gate": 0,
+             "declined_anchor_lost": 0,
+             "declined_device_covered": 0,
+             "revoked_insufficient": 0,
+@@ -2126,6 +2135,11 @@ class UnifiedRadixCache(BasePrefixCache):
+             # Paced: the limiter clears as transfers finish, not on the next pass.
+             self.storage_prefetch_retries.poll_miss(req_id, storage_hit_end)
+             return
++        if self.prefetch_gate_fn is not None and not self.prefetch_gate_fn(
++            request, storage_start
++        ):
++            stats["declined_gate"] += 1
++            return
+ 
+         # Buffer mode holds no tree state during the fetch: buffers are
+         # operation-owned, so the anchor needs no pin.
+@@ -3068,6 +3082,7 @@ class UnifiedRadixCache(BasePrefixCache):
+             deadline_of=self._read_deadline,
+             in_flight_pages=self.storage_read_backlog_pages(),
+             held_tokens=cc.prefetch_tokens_occupied + self.pinned_prefetch_tokens,
++            not_before_of=self.read_not_before_fn,
+         )
+         for decision in decisions:
+             operation = decision.read.operation

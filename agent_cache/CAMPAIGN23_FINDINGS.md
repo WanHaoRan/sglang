@@ -4,19 +4,33 @@ Campaign 23 tested the request of 2026-10-31: stop the blind match and fetch at 
 to fetch, ideally exactly once per turn. Its last arm finished on 2026-11-02, and no arm had client errors. This note
 gathers the findings so the next steps can be chosen from them. The evidence arm by arm is in
 `results/campaign23/DECISIONS.md`. Every arm is one run, with no repeats. Updated 2026-11-04 with where the 44-user gain
-comes from, which brings in the hint-free arm and corrects several statements below.
+comes from, which brings in the hint-free arm and corrects several statements below, and again that night with campaign
+25's hint-free arm at 128 users, whose reading a check on 2026-11-05 corrected. Updated 2026-11-05 with campaign 25's
+44-user arms at a faster arrival rate, a repeat of original HiCache, and the split between read pins and paced retries.
 
 ## In short
 
 - **At 44 users, about 79 % of the gain over original HiCache needs no hint.** On the same 7,768 turns original HiCache is
   at 5.17 s, and a hint-free arm with read pins (and paced miss retries off) at 1.47 s. Exact hints take that to 0.50 s, all
-  of it through the new routine's just-in-time timing; under the old routine they add nothing measurable (1.48 s).
+  of it through the new routine's just-in-time timing; under the old routine they add nothing measurable (1.48 s). The read
+  pins carry it: with paced retries left on, the pinned arm is within 0.10 s of the hint-free arm, while turning retries off
+  without pins leaves original HiCache where it was (campaign 25).
 - **With realistic hints the new routine beats the old one, but not the hint-free arm.** New p50 is at 1.51 s against old
   p50's 1.95 s, 23 % lower, and level with the hint-free arm's 1.47 s (0.17 s ahead on the 9,688 turns that reach a second
   heavy stretch, inside the noise). Exact times would still give 1.01 s more, against 0.47 s under the old routine.
-- **When the GPU queue is the limit, the gain is I/O only.** At 128 users and 160 GB every hinted arm sits at
-  12.06-12.56 s on the same turns, against 53.12 s on original HiCache. With no hint-free arm at this setting, how much of
-  that needs a hint is unmeasured. The new routine reads 15 % fewer SSD pages with p50 hints and 29 % fewer with exact hints.
+- **The 44-user results hold when users arrive five times faster; only original HiCache varies run to run** (campaign
+  25). On the 6,762 turns all four arms share at 0.5 users/s, original HiCache is at 7.57 s, the hint-free arm 1.85 s, new
+  p50 1.65 s and new exact 0.66 s. The other three repeat their 0.1 runs within 0.01-0.12 s on the same turns. A straight
+  repeat of original HiCache at 0.1 ran 1.43 s slower than its first run (7.02 against 5.58 s on 6,812 turns), congesting
+  earlier and not recovering by the end, and the 0.5 run is 0.75 s from that repeat, so the rate's effect is inside the
+  baseline's spread. Against its three runs the hint-free arm keeps 78-83 % of the gain.
+- **At 128 users hints are worth up to about 42 % of the gain.** On the same 8,175 turns original HiCache is at 53.12 s,
+  the hint-free arm at 29.19 s, and every hinted arm at 12.06-12.56 s, realistic p50 hints included. The setup is clean, but
+  the hint-free arm also lacks three mechanisms that use only queue state and run only inside the hint machinery: keeping a
+  queued turn's history, pacing its read, and re-reading history it lost. Its losses go through exactly those gaps, so how
+  much of the 42 % needs the hint's information is not measured.
+- **Among the hinted arms at 128 users the gain is I/O only.** The GPU queue sets their TTFT. The new routine reads 15 %
+  fewer SSD pages with p50 hints and 29 % fewer with exact hints.
 - **The gate and the hold work as asked.** Lookups at arrival that find nothing fall by 90-93 %. No held read went out
   after its turn's admission or was left behind, in any arm.
 - **Exactly one fetch per turn holds in one case of four:** 128 users with exact hints. Short host room breaks it at 44
@@ -47,8 +61,9 @@ system can have.
 
 ## Results
 
-**Baseline** is original HiCache: no hints, no read pins, paced miss retries on. **Hint-free** (44 users only) adds read pins
-and turns paced retries off, still with no hints; it ran 117 of its 120 min. **Oracle** is the old routine on exact hints,
+**Baseline** is original HiCache: no hints, no read pins, paced miss retries on. **Hint-free** adds read pins and turns
+paced retries off, still with no hints; at 44 users it ran 117 of its 120 min, and at 128 users (campaign 25) the full 2 h.
+**Oracle** is the old routine on exact hints,
 **old p50** the old routine on p50 hints, and **new exact** and **new p50** the new routine. All use the same trace, seed and
 arrival rate, with gaps stretched by 10.
 
@@ -69,21 +84,24 @@ and reads on the 8,008 turns they share, and the last two rows cover each arm's 
 ![44 users, all arms over time](results/compare_c23_c44/arms_overview.png)
 
 **128 users, 160 GB of host memory.** Each arm's first 2 h, because the older arms ran 5 h. TTFT and recomputation are on
-the 8,175 returning turns all five arms share. Lookups and reads are on the 16,137 turns the four hinted arms share, since
-the baseline reached only about 8,500 turns.
+the 8,175 returning turns all six arms share. Lookups and reads are on the 16,137 turns the four hinted arms share, since
+the baseline reached only about 8,500 turns and the hint-free arm about 10,500.
 
-| | Baseline | Oracle | Old p50 | New exact | New p50 |
-|---|---|---|---|---|---|
-| Mean TTFT, s | 53.12 | 12.06 | 12.14 | 12.46 | **12.56** |
-| Recomputed tokens per turn | 3,784 | 35 | 34 | 33 | **34** |
-| Turns sent in 2 h | 8,511 | 16,228 | 16,210 | 16,101 | **16,082** |
-| Arrival lookups that found nothing | | 6,364 | 6,493 | 472 | **512** |
-| SSD pages | | 1,518,868 | 1,523,453 | 1,071,057 | **1,290,748** |
-| Reads per turn that reads | | 1.008 | 1.033 | 1.000 | **1.031** |
-| Mean pinned tokens | | 148.8K | 127.0K | 32.9K | **66.4K** |
-| SSD busy, minutes 45-120 | 39-48 % | 97-98 % | 97-98 % | 47-78 % | **60-92 %** |
+| | Baseline | Hint-free | Oracle | Old p50 | New exact | New p50 |
+|---|---|---|---|---|---|---|
+| Mean TTFT, s | 53.12 | 29.19 | 12.06 | 12.14 | 12.46 | **12.56** |
+| Recomputed tokens per turn | 3,784 | 1,468 | 35 | 34 | 33 | **34** |
+| Turns sent in 2 h | 8,511 | 10,454 | 16,228 | 16,210 | 16,101 | **16,082** |
+| Arrival lookups that found nothing | | | 6,364 | 6,493 | 472 | **512** |
+| SSD pages | | | 1,518,868 | 1,523,453 | 1,071,057 | **1,290,748** |
+| Reads per turn that reads | | | 1.008 | 1.033 | 1.000 | **1.031** |
+| Mean pinned tokens | | | 148.8K | 127.0K | 32.9K | **66.4K** |
+| SSD busy, minutes 45-120 | 39-48 % | 81-95 % | 97-98 % | 97-98 % | 47-78 % | **60-92 %** |
 
-![128 users, all arms over time](results/compare_c23_c128/arms_overview.png)
+On the 10,066 returning turns the hint-free arm and the oracle share, the hint-free arm is at 41.04 s against 15.82 s, and
+original HiCache (no 2 h limit) at 73.66 s.
+
+![128 users, all arms over time](results/compare_c25_c128/arms_overview.png)
 
 ## What explains the results
 
@@ -104,7 +122,9 @@ On the 7,768 turns without `jit_70` the steps are -3.71, +0.02 and -0.98 s. 70-9
   2,375 of its 2,870 recomputed tokens per turn. A landed read is lost 2 % of the time when admission follows within
   0.5 s, and 99.6 % of the time when it follows 15-60 s later. Pins hold the read until admission, and the hint-free arm
   loses none; it also reads each turn at most once (1.000 reads per reading turn on the 7,973 turns all six 2 h arms
-  share). Pins and paced retries off arrive together, so which of the two does it is inferred. Deadline order and the
+  share). Campaign 25 separated them on 6,621 shared turns: pins with paced retries on are at 1.71 s against 1.61 s with retries
+  off, and retries off without pins at 5.01 s against 5.36 and 6.22 s for original HiCache's two runs, so the pins do it
+  (`results/campaign25/compare_h.out`, figure `results/compare_c25_h/option_h.png`). Deadline order and the
   read window do nothing without hints, because every read is due at once.
 - **Why the old routine adds nothing.** It gains 0.69 s per turn in the main episode and loses 0.34 s per turn in the
   calmer stretches either side, so the means tie while the tails differ (p90 2.87 s for hint-free against 4.31 s, p99 19.7 s
@@ -136,7 +156,44 @@ average) and ran at the same speed (hint-free 0-4 % slower if anything). With on
 before run-to-run noise, are +1.4 to +6.7 s for the pin step, which rests on one baseline storm; about +-0.5 s on the ties;
 +0.4 to +1.4 s for just-in-time timing; and +0.03 to +0.41 s for the gate and hold. `jit_70` ran 75 min, so the last two
 steps cover only the first heavy stretch, while 27 % of the oracle-to-new-exact gap on the 9,980 turns those two share lies
-past position 8,750.
+past position 8,750. Campaign 25's arrival-0.5 runs act as near-repeats for the hint-free arm, new exact and new p50: on
+the turns each shares with its 0.1 run they moved +0.01, +0.04 and +0.12 s (`results/campaign25/compare_a05.out`). A
+straight repeat of original HiCache moved +1.43 s on 6,812 turns, all of it from position 3,000 on, so the pin step's gain
+is 3.9-5.2 s against its two runs at 0.1 (`results/campaign25/base_repeat.out`).
+
+**Why the hint-free arm falls behind at 128 users** (campaign 25, `results/campaign25/`; corrected 2026-11-05). The
+hint-free arm ran at campaign 19's speed (decode 49.5 against 49.2 ms per token, first-turn prefill 0.108 against
+0.111-0.113 ms per token), and all arms match for the first 30 min. Then the GPU pool fills in every arm, with 59-90 turns
+queued from minute 45, and the arms part:
+
+- **Queued turns lose their GPU history.** LRU eviction takes history a queued turn matched when it arrived: 36 % of the
+  hint-free arm's returning turns lose a mean 18.3K tokens of it before admission, against about 2 % in the oracle. (The
+  oracle's shrink line shows only 5. Its prefetcher re-read lost history for 304 more queued turns before admission, which
+  hides them from that line.) In the hinted arms the prefetcher marks a session's history as needed now when its turn
+  arrives (`next_turn_prefetch.py:439-445`), so next-use eviction passes over it.
+- **Reads are not paced.** Only the prefetcher sets read deadlines, and for a queued turn it uses queue state: the turn's
+  position over the admission rate. Without it all 4,476 reads are due now, and a read due now skips the 512-page window
+  and the 813,824-token budget (`storage_read_scheduler.py:9-11`). Reads in flight at dispatch then hold a median 494K of
+  the 959K tokens of room beyond the GPU mirror (39K in the oracle). This follows the losses rather than causing them: in
+  minutes 35-40 the hint-free arm held less host room for reads than the oracle (about 54K against 393K) and already lost
+  106 queued turns to the oracle's 15.
+- **Refused reads are not retried.** 535 reads were refused host room at dispatch, and about 630 lookups were declined
+  because reads in flight and pins reached half the host pool (inferred; no line logs a decline). Both refusals arm a paced
+  retry, and poll interval 0 cancels paced retries (`storage_prefetch.py:63-66`). The hinted arms re-read through the
+  prefetcher instead (312 times in the oracle); this arm has nothing. Over 80 % of its 21.2M recomputed tokens are on these
+  turns, about 18-20K tokens each.
+- **Recomputation lengthens the queue.** From minute 45 the GPU prefills 4.3-4.8M tokens per 15 min against the oracle's
+  1.2-1.6M, and generates 240-320 tokens/s against 460-510. 98 % of the 25.2 s gap per turn to the oracle is queue wait.
+
+At 44 users the same arm loses history 287 times in 10,355 turns and has 239 reads refused, so the mechanism is small there.
+
+None of the three needs the hint's information: the engine knows which turns are queued and what each matched on arrival.
+They run only when the prefetcher holds a plan, though, and a plan needs a hint, so the hint-free arm lost them with the
+hint. What needs the hint itself is staging a read before its turn arrives (about 4,950 of the oracle's 5,400 reads) and
+evicting ended or far-returning sessions first. No run separates the two, so 42 % is an upper bound on what hints carry at
+128 users. Read pins do act without hints (`unified_radix_cache.py:3091-3121`). A check of the setup on 2026-11-05 found
+nothing else that differs: the arms differ only in the prefetcher and next-use eviction; scripts, client, engine code,
+pools and the empty SSD at start match; and GPU speed is within 2-3 %.
 
 **The forecast costs where host room is short.** The forecast error is the same at both settings: actual minus predicted
 arrival is p10 about -5.5 s, median -0.3 s, p90 +4.9 s. Its cost is not. Against exact hints it costs 1.01 s at 44 users,
@@ -185,8 +242,8 @@ arrival hold 93 % of pinned token-seconds at 44 users and 66 % at 128 users, for
 **At 128 users the GPU queue decides TTFT.** Of about 21 s per returning turn, queue wait is 20.5-20.9 s and everything after
 admission is 0.42 s in every hinted arm. From minute 45 the GPU pool is 0.98 full, with about 30 requests running and 59-73
 queued. The hinted routines already removed what memory was costing against original HiCache, so no read routine can
-shorten what is left; whether read pins alone would do the same here is unmeasured. What the new routine adds is SSD
-headroom, and what that buys is unmeasured because the GPU is the limit.
+shorten what is left; read pins alone remove only part of it (above). What the new routine adds is SSD headroom, and what
+that buys is unmeasured because the GPU is the limit.
 
 **Both new arms at 128 users trail their old-routine rivals by about 0.4 s.** That is +0.40 s with exact hints and +0.38 s
 with p50 hints on about 15,500 turns, with 0.8 % fewer tokens generated. I first read this as GPU speed. The p50 arm weakens
@@ -214,15 +271,19 @@ curve yet, and by load band it does worse than the oracle near the knee (3.93 s 
 
 ## How far this can be trusted
 
-- **One run per arm.** The oracle's spread at 44 users was once measured at 0.05-0.14 s on runs since deleted, and 128 users
-  has no estimate. So the gaps of 0.07-0.4 s at 128 users and the 0.17 s from the gate and hold are not known to be real,
-  and the 79 % from pins at 44 users rests on one baseline storm.
+- **Few repeats.** At 44 users campaign 25 repeated original HiCache, which moved 1.43 s, and reran the hint-free arm, new
+  exact and new p50 at a faster arrival rate, which moved 0.01-0.12 s; the 79 % from pins is 78-83 % against original
+  HiCache's three runs. The oracle's spread at 44 users was once measured at 0.05-0.14 s on runs since deleted, and 128
+  users has no estimate. So the gaps of 0.07-0.4 s at 128 users and the 0.17 s from the gate and hold are not known to be
+  real.
 - **Changes arrive together.** The older arms ran on an older engine, `engine_5df71c4bf0_v2`. At 128 users nothing separates
   read timing, the gate and the hold.
 - **The settings differ in users and memory at once,** so "room" against "users" is a reading, not a result.
 - **GPU units.** The preemptible host changed unit twice on 2026-11-01. All four new arms ran on one unit, `GPU-b59d6a34`, and
   the older arms' units are unrecorded. Speeds match at 44 users, except that 8,192-token prefill chunks run 1.7-2.3 %
-  slower on the new arms' engine, which works against them. At 128 users early decode differs by up to 2 %.
+  slower on the new arms' engine, which works against them. At 128 users early decode differs by up to 2 %. The 128-user
+  hint-free arm ran on `GPU-2c5a8afb` after a reboot, at campaign 19's GPU speed. Its SSD speed under load is not separable
+  from its heavier writes: big reads take 3.63 ms per page against 3.20 ms, while it writes 2.4-3 times as much.
 - **Workload.** A batch-agent trace with gaps stretched by 10, in a closed loop. Real use has long human waits.
 
 ## Options for next steps
@@ -233,21 +294,24 @@ Each 2 h arm takes about 2 h 5 min, and a preemption loses at most the arm in pr
 |---|---|---|---|---|
 | A | Send a read before arrival only if the queue wait could not cover it; rerun p50 at 128 users, and at 44 users to check it does no harm | Does p50 reach one fetch at 128 users, and how much of the I/O saving comes back? It would touch 99 % of such reads at 128 users and 14 % at 44 | Small engine change | 4 h |
 | B | At 44 users, exact gaps for eviction and p50 for reads | Is the 1.01 s read timing and pins, or eviction on the forecast? Decides whether C is worth running | Small engine and client change | 2 h |
-| C | Lighter pins at 44 users: no early start by p50 - p10, a time limit on pins, or holding a read until room appears | How much of the 1.01 s comes back | Small each, none built | 2 h each |
-| D | Repeats on one recorded GPU unit: new exact, new p50 and oracle at 44 users; new exact and oracle at 128 | Which gaps are real, including the 0.4 s at 128 users | None | 10 h |
+| C | Lighter pins at 44 users: no early start by p50 - p10, a time limit on pins, or holding a read until room appears | How much of the 1.01 s comes back | No early start is client only (leave p10 out of the entries); the others are small engine changes, none built | 2 h each |
+| D | Repeats on one recorded GPU unit. Campaign 25 covered original HiCache (a straight repeat) and the hint-free arm, new exact and new p50 (near-repeats at a faster arrival rate) at 44 users; left: the oracle at 44 users, new exact and oracle at 128 | Which gaps are real, including the 0.4 s at 128 users | None | 6 h |
 | E | User-count sweep, best routine against the baseline | Sessions per GPU under a latency target, the number an operator buys | None | 20 h for 5 counts |
-| F | Campaign 22, the step-by-step ladder at 128 users | Whether the 128-user gain over original HiCache needs a hint; at 44 users 79 % does not | Check its launcher against today's `start_server.sh` | 6 h, 8 h if its first arm (the 44-user hint-free arm again) is not skipped |
+| F | The rest of campaign 22's ladder at 128 users: `three_tier_wc_oracle_v2` (staged reads, LRU eviction), then `three_tier_wc_poll0` (paced retries off, no pins) | Its hint-free step ran as campaign 25's first arm: up to 42 % there. `oracle_v2` keeps the prefetcher's pacing, re-reads and staging but not next-use eviction, so it shows what eviction carries; `poll0` splits pins from retries | None: both arms exist in `start_server.sh` and can be added to campaign 25's queue | 2 h each |
 | G | Analyse the hint-free arm at 44 users | Done 2026-11-04: see "Where the 44-user gain comes from" | | |
-| H | At 44 users, read pins with paced retries left on | Which of the two carries the 79 % | A new arm in `start_server.sh` (server flags only) | 2 h |
+| H | At 44 users, read pins with paced retries left on, or the reverse | Done 2026-11-05 (campaign 25): the pins carry the 79 %; paced retries off alone stays at original HiCache's level | | |
+| I | A hint-free arm at 128 users with what the hinted arms get from queue state: a queued turn's matched history marked as needed now, reads paced by queue position, refused reads retried. A partial step needs no change: `three_tier_wc_dl` (the hint-free arm with paced retries on), though its 8 attempts may run out as the baseline's do | How much of the up-to-42 % needs the hint's information | Partial step: none; full arm: engine change, not built | 2 h each |
 
-**My recommendation.** G changes the order. At 44 users realistic hints add nothing measurable over read pins alone, so
-whether hints matter at 128 users is now the first question for the paper: run F there, at least its hint-free arm (2 h). Then
-run A and B as one campaign of about 6 h: A answers the one-fetch goal at 128 users, and B says what the 1.01 s is. Run H if
-the paper must name the lever behind the 79 %, and C only if B points at pins. Hold D until the routine settles, so repeats
-are not spent twice. E comes last.
+**My recommendation.** Campaign 25 bounds the first question: at 128 users hints are worth up to about 42 % of the gain,
+and realistic p50 hints keep nearly all of it. How much of that needs the hint's information is open, and a reviewer will
+ask. Build I's full arm; it answers that directly. I's partial step and F's `oracle_v2` (2 h each, no change) give cheaper
+partial answers: what retries recover without hints, and what eviction carries.
+Then run A and B as one campaign of about 6 h: A answers the one-fetch goal at 128 users, and B says what the 1.01 s at
+44 users is. Run C only if B points at pins. H is done: the pins are the lever behind the 79 %. Hold D until the
+routine settles, so repeats are not spent twice. E comes last.
 
-The engine work behind all of this is uncommitted in `python/`. Committing it before A or B would give those changes a clean
-diff. The paper's other open items (human-paced workload, prior-work recheck, venue and deadline) are in `PAPER_PLAN.md`.
+The engine work is committed (03afa49778, 2026-11-02, together with result files); `git diff 5df71c4bf0 HEAD -- python/ test/`
+isolates it. The paper's other open items (human-paced workload, prior-work recheck, venue and deadline) are in `PAPER_PLAN.md`.
 
 ## Small issues logged
 
@@ -280,6 +344,9 @@ diff. The paper's other open items (human-paced workload, prior-work recheck, ve
 - `results/compare_c24_jit_vs_c21/` still draws attempts since deleted, and `c24_probe/jit_table.py`, `plot_jit.py`,
   `c21_x10_c44/plot_overview.py` and `plot_standard.py` no longer run.
 - Two tests in `test_pp_prefetch_ticket.py` fail the same way on this engine and on `engine_table_20261101`.
+- In the 128-user hint-free arm, 305 of the 314 turns campaign 25's notes first listed as having their history in no tier
+  never queried the SSD: the limiter declined the lookup. Whether the SSD held their history is unknown. The 161 turns
+  whose lost history the SSD did not hold are not examined.
 
 ## Where the data is
 
@@ -290,13 +357,15 @@ diff. The paper's other open items (human-paced workload, prior-work recheck, ve
 | Old p50 | `20261101_062014_three_tier_wc_oracle_v2_nu_custom_L1nat_H70` | `20261031_204526_three_tier_wc_oracle_v2_nu_NAT160` |
 | New exact | `20261101_202142_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70` | `20261102_002657_three_tier_wc_oracle_v2_nu_owned_NAT160` |
 | New p50 | `20261101_222451_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70` | `20261102_023031_three_tier_wc_oracle_v2_nu_owned_NAT160` |
-| Hint-free | `20261101_122705_three_tier_wc_dl_poll0_custom_L1nat_H70` | none |
+| Hint-free | `20261101_122705_three_tier_wc_dl_poll0_custom_L1nat_H70` | `20261104_213242_three_tier_wc_dl_poll0_NAT160` (campaign 25) |
 | `jit_70` | `20261101_050233_three_tier_wc_oracle_v2_nu_jit_custom_L1nat_H70` (75 min) | none |
 
 Run folders are under `results/`. Tables are in `results/campaign23/`, figures in `results/compare_c23_c44/` and
 `results/compare_c23_c128/`, scripts in `frozen/oracle_scripts_staging/c23_engine/`, and the engine in
 `frozen/engine_owned_20261101/python`. The 2026-11-04 analysis of the 44-user gain is in `results/campaign23/gain44/`: the
 analysts' results `w1_*.json`, the checks `w2_*.json` and every cited output, with scripts in
-`frozen/oracle_scripts_staging/c23_gain44/`. `frozen/` is excluded from git. Mean pinned tokens here use one definition for every
+`frozen/oracle_scripts_staging/c23_gain44/`. Campaign 25's 128-user tables are `results/campaign25/compare_c128.out`,
+`why_hintfree_c128.out` and `shrink_outcome.out`, its figures `results/compare_c25_c128/` (all six arms), and its scripts
+`frozen/oracle_scripts_staging/c25_c128/`. `frozen/` is excluded from git. Mean pinned tokens here use one definition for every
 arm, each arm's first 2 h, so new exact at 44 users reads 6.2K where `DECISIONS.md` also has 6.7K, which counts pins after the
 client stopped.
