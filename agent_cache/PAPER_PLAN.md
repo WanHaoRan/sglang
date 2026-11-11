@@ -27,6 +27,115 @@ Campaign 23's results and the options they open are in `CAMPAIGN23_FINDINGS.md`.
 4. **The hint-free rival.** The model says removing the host mirror cuts SSD reads more than any hint. A reviewer will ask, so measure it or explain why not; write-back's lookup bug (`ORACLE_FINDINGS.md` issue 7) blocks the direct test. A simpler hint-free rival, original HiCache with read pins (the retry setting does not matter, campaign 25), already matches the new routine's p50 arm at 44 users and beats the old routine's by 0.48 s. At 128 users it keeps only about 58 % of the gain (campaign 25), because LRU evicts the history of queued turns and the refused re-reads are never retried; the hinted arms avoid both with mechanisms that use queue state, not the hint. A version of it with those (option I in `CAMPAIGN23_FINDINGS.md`) is the rival a reviewer will ask for.
 5. **Recheck prior work** just before submission. SGLang #45128, vLLM #52113 and Dynamo's prefetch hooks are all moving.
 
+## Formulation
+
+From the 2026-11-06 discussion of the uncertain-hint results. It states the problem behind the design point below in one notation; rules 1-4 restate that section's policy, whose choices and offline check stay there. Math is LaTeX, for the paper.
+
+### 1. Shared resources
+
+| Symbol | Meaning | 44 users, 70 GB | 128 users, 160 GB |
+|---|---|---|---|
+| $N$ | sessions | 44 | 128 |
+| $C_{\mathrm{GPU}}$ | GPU KV pool, tokens | 668,160 | 668,160 |
+| $C_{\mathrm{host}}$ | host pool, tokens | 712,128 | 1,627,648 |
+| $R = C_{\mathrm{host}} - C_{\mathrm{GPU}}$ | host-only room, since write-through mirrors the GPU | 43,968 | 959,488 |
+| $b$ | KV bytes per token (bf16 Qwen3-30B-A3B) | 98,304 | 98,304 |
+| $\beta$ | SSD bandwidth, shared by reads and writes | 2.11 GB/s | 2.11 GB/s |
+| $\rho$ | GPU prefill rate | about 9K tokens/s | about 9K tokens/s |
+
+Pool sizes are the runs' `max_total_num_tokens` and host-pool allocation lines in `server.log`; $\rho$ is campaign 25's first-turn prefill, 0.108-0.113 ms per token. Per token, a read costs $b/\beta \approx$ 47 µs of SSD time and recomputing costs $1/\rho \approx$ 110 µs of GPU time.
+
+### 2. One session
+
+For session $i$ at time $t$:
+
+- $L_i$, the context length: tokens of KV history its next turn reuses. $\Delta_i$: the new tokens that turn adds, prefilled in any case.
+- $e_i$: when its last turn ended. $a_i = t - e_i$: how long it has been idle.
+- $k_i$: what its agent waits on, the tool plus the command's first word (`execute_bash/pip`), known when the turn ends.
+- $G_i \sim \Phi_{k_i}$: the gap. The hint is the distribution $\Phi_k$ for each key, with $G = \infty$ for a session that ends. The next arrival is $A_i = e_i + G_i$.
+- $h_i(t)$: tokens of its history kept in the host room; the rest is on SSD only. $p_i(t)$: tokens pinned by a read staged for it.
+
+Every rule reads one quantity off the hint, the chance the session returns within $x$ seconds given how long it has been idle:
+
+$$F_i(x \mid t) = \Pr(A_i \le t + x \mid A_i > t) = \frac{\Phi_{k_i}(a_i + x) - \Phi_{k_i}(a_i)}{1 - \Phi_{k_i}(a_i)}$$
+
+### 3. What a turn costs
+
+$$\mathrm{TTFT}_i = W_i + S_i + \frac{\Delta_i + U_i}{\rho}$$
+
+- $W_i$: queue wait, from arrival to admission $D_i = A_i + W_i$.
+- $S_i = (\ell_i - D_i)^+$: stall, when the history's read lands at $\ell_i$, after the turn is due.
+- $U_i$: recomputed history, tokens lost (evicted, or their read revoked or cut) and not read back. A read costs under half as much as recomputing and runs on another device, so $U_i$ is a failure, not an option.
+
+The sessions are coupled through $W$: one session's recomputation lengthens the wait of every turn queued behind it.
+
+### 4. The problem
+
+$$\min_{\pi} \mathbb{E}\Big[\sum_{\text{turns}} \mathrm{TTFT}\Big] \quad \text{s.t.} \quad \sum_i \big(h_i(t) + p_i(t)\big) \le R \text{ for all } t, \quad \text{SSD reads} + \text{writes} \le \beta, \quad \text{one GPU, first come first served}$$
+
+The policy $\pi$ sees $(L_i, k_i, a_i, h_i, p_i)$ for every session, the queue and the hints. Each tick it decides:
+
+- **Retain:** which idle histories stay in the room.
+- **Fetch:** for each history not in the room, start its read now or wait; the turn's arrival starts it in any case.
+- **Pins:** whether a staged read can be taken back for another.
+
+GPU eviction and admission order stay as HiCache does them. The sessions interact only through $R$, $\beta$ and the queue.
+
+### 5. The cost model: price the room, and the sessions separate
+
+Charge host memory a price $\lambda$, in seconds of TTFT per token-second, instead of enforcing the room. With the queue and the SSD's speed taken as given, the cost splits by session:
+
+$$\mathbb{E}\Big[\sum_{\text{turns}} \mathrm{TTFT}\Big] + \lambda \mathbb{E}\Big[\int \sum_i (h_i + p_i) dt\Big] - \lambda R T = \sum_i J_i(\lambda) - \lambda R T + \text{const}$$
+
+$$J_i(\lambda) = \mathbb{E}[S_i] + \frac{\mathbb{E}[U_i]}{\rho} + \lambda \mathbb{E}\Big[\int (h_i + p_i) dt\Big]$$
+
+$T$ is the run's length, and const is the queue waits and the new tokens' prefill, fixed once the queue is given. Each session minimizes its own $J_i$. This is Whittle's relaxation of restless bandits: the room holds on average, through its price. $\lambda$ is the room's shadow price, zero while the room sits idle and high when reads are refused room.
+
+**Rule 1, fetch.** Choose the start $\sigma \ge t$, or "at arrival", that minimizes
+
+$$J_i(\sigma \mid t) = \mathbb{E}[\text{stall}] + \lambda L_i \mathbb{E}[\text{seconds pinned}]$$
+
+given $A_i > t$, with the read starting at $\min(\sigma, A_i)$; start now if the best $\sigma$ is now. The read takes $r_i = b L_i / \beta$, 3.0 s for 64K tokens. With no queue and a one-moded distribution, a second late costs 1 and a second early costs $\lambda L_i$, so the read lands at the newsvendor quantile
+
+$$\Pr(D_i \le \ell) = q_i = \frac{\lambda L_i}{1 + \lambda L_i} \iff \text{start when } F_i(r_i \mid t) \ge q_i$$
+
+At $\lambda = 5 \times 10^{-5}$, an 8K-token read lands at p29, 32K at p62, 64K at p77 and 128K at p87. With a queue, start when $F_i(r_i - \hat W_i \mid t) \ge q_i$, where $\hat W_i$ is the predicted wait (queue position over admission rate); if $\hat W_i \ge r_i$, a read started at arrival lands in time, so nothing starts early. While $\lambda$, $\hat W_i$, the read rate and the key's entry hold, the best start does not move as the session stays idle, so it is solved when the gap starts and again only when one of them changes.
+
+**Rule 2, soft pins.** When an arrived turn's read needs room, take it from the staged read with the lowest $F_j(r_j \mid t)$, instead of revoking or cutting the arrived turn's read: Cao et al.'s "do no harm".
+
+**Rule 3, retain.** When the room is full, evict the history with the lowest $F_i(H \mid t) c_i$ over a horizon $H$, where $c_i$ is the cost per token to bring it back: $b/\beta$ from SSD, $1/\rho$ for holes the SSD lacks. For histories read back whole from SSD $c_i$ is the same, so the order is by $F_i(H \mid t)$ alone. No forecast ends a session; only the agent's end signal sets $F_i$ to 0. In the 2026-10-27 trace study this order separates returns better than point forecasts or LRU (AUC 0.900 against 0.825 and 0.763 at x70; 0.952 against 0.837 and 0.922 at x10).
+
+**Rule 4, the price.** $\lambda \leftarrow \lambda e^{\eta g}$, with $g$ the tokens refused room minus the idle room, over $R$: $\lambda$ rises when reads are revoked or cut for room and decays while room sits idle, which is dual ascent on the room constraint. Each key is recalibrated from where its arrivals fall in the distribution it sent: a key whose arrivals keep landing above its p90 gets a heavier tail.
+
+### 6. The methods in this notation
+
+| Method | Hint | Read lands at | Evicts first | Pins |
+|---|---|---|---|---|
+| Original HiCache | none | $A + r$, started at arrival | longest idle (LRU) | none: a landed read can be evicted before admission |
+| Hint-free arm | none | $A + r$ | LRU | hard, until admission |
+| Old routine | exact or p50 | deadline order within a horizon; a median 9.8 s early with exact hints | next use: ended, overdue, then farthest | hard |
+| JIT, exact | exact $A$ | $D - 1$ s | next use | hard |
+| JIT, p50 | p10, p50 | about the p10 for every $L$ (deadline at the p50, started p50 - p10 early); the session counts as ended at p50 + max(60 s, p50) | next use, from the p50 | hard |
+| Fixed quantile (rival, not run) | p10, p50, p90 | one quantile $q$ for every $L$ and any room; the p10 = p50 probe lands at the p50 | next use | hard |
+| Expected cost (proposed) | $\Phi_k$ | rule 1: $q_i = \lambda L_i / (1 + \lambda L_i)$, conditioned on $a_i$ | rule 3: lowest $F_i(H \mid t) c_i$ | soft (rule 2) |
+
+The limits match the arms:
+
+- **Exact hints.** $F_i(x \mid t)$ is a step at $A_i - t$, so rule 1 starts every read at $D_i - r_i$ for any $\lambda$, which is JIT exact, and rule 3 evicts the farthest next use (Belady).
+- **One pooled distribution for every key.** A longer idle means a later return, so $F(H \mid a)$ falls with $a$ and rule 3 is LRU; $F(r - \hat W \mid a)$ stays below $q_i$ unless $\lambda$ is near 0, so reads start at arrival. That is the hint-free arm.
+- **Price to zero or infinity.** As $\lambda \to 0$, every history stays in host memory or is read back at once, as HiCache does with ample room. As $\lambda \to \infty$, every read starts at arrival.
+
+### 7. Where the two settings sit
+
+- **44 users, 70 GB: the host room binds.** $R$ is 44K tokens. If the p50's whole 1.01 s cost over exact hints is its extra pins, $\lambda \approx 4 \text{ to } 6 \times 10^{-5}$, and a 64K-token read should land near p75-p80. JIT p50 lands every read near the p10, and 1,743 of its 5,001 read launches are revoked for room: 1.51 s, against 1.47 s with no hint and 0.50 s with exact hints, on 7,768 shared turns.
+- **128 users, 160 GB: the GPU binds.** $R$ is 959K tokens and no read is revoked, so $\lambda \approx 0$ and landing early costs nothing: p50 12.56 s against exact 12.46 s on 8,175 shared turns. With 59-90 turns queued, every recomputed token delays each of them, so it costs about $(1 + Q)/\rho$: an 18K-token history is 2 s of GPU time, and with 60 turns queued behind it about 2 min of summed TTFT. The gain there is not losing history: original HiCache recomputes 93 % of its prefill and JIT 4.6 % (minutes 40-120, `results/compare_c23_c128/hicache_vs_jit_gpu.png`), and TTFT falls 4.3-fold, from 53.12 s to 12.46 s.
+
+### 8. Open in the formulation
+
+- **The queue is taken as given.** At 128 users that leaves out the main cost. A price on GPU time, about $1 + Q$ per second of prefill, belongs on $U$, and one on SSD bandwidth too: JIT p50 keeps the SSD 87 % busy there (reads plus writes over 2.11 GB/s, minutes 40-120).
+- **Two-moded keys** (`pip`: p10 0.85 s, p50 22 s). The quantile form assumes $F_i(r_i \mid t)$ only rises with idle time. A threshold on it can fire in the first mode and keep the read pinned through the second; minimizing $J_i$ over a grid of start times handles both, at a few dozen evaluations per session per tick.
+- **The form of $\Phi_k$.** The lean is a log-spaced histogram of about 24 bins with an "ended" bin, and Kaplan-Meier for gaps still running (design point below). Offline, on p10/p50/p90 alone, rule 1 pins 14-49 % fewer token-seconds than any fixed quantile at the same stall, but does not reach exact hints.
+
 ## Design point: the hint's form and the engine's policy
 
 Discussed 2026-11-04 and 2026-11-05 to give the paper an algorithmic part. Settled: the client sends a distribution and the engine picks the operating point, and whatever is learned is learned in the engine. Open: the distribution's form. Nothing gets built or run until the author says go. Offline checks: `frozen/hint_policy_20261104/`.
@@ -39,7 +148,7 @@ Discussed 2026-11-04 and 2026-11-05 to give the paper an algorithmic part. Settl
 
 **Settled: the client sends a distribution, the engine picks the point.** The client knows what the agent is waiting for and its history. Only the engine knows what landing early or late costs at that moment: free host room, and queue wait against read time. One number fixes a trade-off the client cannot see, and the right point moves with server state: with room to spare (128 users, 160 GB, no read revoked) landing early costs nothing, while with 44K tokens of room a rough price (below) puts it near p75-p80. This is the paper's case against sending one number.
 
-**Open: the form.** Sending the distribution and sending all the percentiles carry the same information; what is open is the encoding. My lean is the histogram.
+**Open: the form.** Sending the distribution and sending all the percentiles carry the same information; what is open is the encoding. My lean is the histogram. The CPU calibration (below) finds no gain from it for timing reads: p10/p50/p90, a 24-bin histogram and every sample are within 3 % of each other. So its case now rests on eviction, merging levels and the explicit end.
 
 | Form | For | Against |
 |---|---|---|
@@ -80,8 +189,17 @@ With exact hints this reduces to today's just-in-time routine, and with an uninf
 - If the 1.01 s forecast cost came entirely from the extra 24.7K pinned tokens (30.9K against 6.2K with exact hints), λ is about 4e-5 to 6e-5, which lands a 64K-token read near p75-p80, not p10.
 - A crude rule that moves the quantile with current pins (p10 below 15K, p50 below 30K, else p80) does no better than a fixed quantile.
 
+**CPU calibration, 2026-11-07** (`results/cpu_calib_c44/FINDINGS.md`, `scripts/room_model.py`). The model replays a run's reads with its evictions, queue waits and re-reads held fixed, and adds the host room, revokes at launch, retries, the read window and soft pins. One room of 90K tokens fits both campaign 23 runs within about ±25 % on staged reads, revokes, re-reads, pinned tokens and landing leads. On its own, without being fitted to it, it reproduces the run's p50 rule costing more than reading at arrival: 1,766 against 1,481 s of stall plus recomputation, over the 2,576 turns that read history. The GPU runs gave 1.51 against 1.47 s.
+
+- **λ.** The expected-cost rule on p10/p50/p90 is best at λ = 5e-5 (1,269 s): 28 % below the run's rule, 14 % below reading at arrival and 5 % below the best fixed quantile (q = 0.9). The best λ falls as the room grows, 1e-4 at 70K to 2e-5 at 110K, so λ should be learned.
+- **Form.** Neither the histogram nor every sample beats p10/p50/p90 for timing reads: all within 3 % at 70K, 90K and 110K. The histogram's case rests on eviction and the explicit end.
+- **Soft pins.** They cut the run's rule by 24 % but the best rule by only 2-6 %.
+- **Timing alone stops short.** Exact arrival times on the same reads cost 813 s; the best realistic rule (1,241 s, with soft pins) covers 36 % of the way from reading at arrival.
+- **Recomputation's price.** Weighted for the queue it causes (campaign 23 implies 6-8 times its own prefill), the best rule only ties reading at arrival.
+- **So the rest of p50's 1.01 s is eviction.** It lies in eviction acting on wrong times (2.7 times as many SSD reads). That makes option B of `CAMPAIGN23_FINDINGS.md` (exact gaps for eviction, p50 for reads, one 2 h GPU arm) the deciding experiment, and rule 3 at least as important as rule 1.
+
 **Next, when the author says go.**
-1. CPU, a few hours: add host room and revokes to this model, calibrate it on the pins and revokes of `jit_p50_c44` and `jit_exact_c44`, choose λ, and test whether soft pins pay.
+1. ~~CPU, a few hours: add host room and revokes to this model, calibrate it on the pins and revokes of `jit_p50_c44` and `jit_exact_c44`, choose λ, and test whether soft pins pay.~~ Done 2026-11-07, above.
 2. Engine, small: rule 1 with a fixed λ, and no forecast ends a session; the plan keeps the whole entry instead of the p50 and the early start. Rules 2 and 3 after, each behind its own flag.
 3. GPU, 2 h arms: rule 1 at 44 users / 70 GB and at 128 users / 160 GB, against `jit_p50`, `jit_exact` and the hint-free arm on the same turns.
 
