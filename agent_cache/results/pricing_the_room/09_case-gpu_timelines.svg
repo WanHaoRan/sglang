@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="832pt" height="228pt" viewBox="0 0 1664 456" font-family="'IBM Plex Sans', Arial, sans-serif">
+<title>Just-in-time reads trade SSD bandwidth for GPU time</title>
+<text x="0" y="25.8" font-size="24" fill="#1B2330" xml:space="preserve"><tspan font-weight="600">No hint, no pin</tspan> · original HiCache <tspan fill="#636B78">· the GPU recomputes all 35.6K tokens of history</tspan></text>
+<text x="1664" y="25.8" font-size="24" font-weight="600" fill="#1B2330" text-anchor="end" xml:space="preserve">TTFT 111.00 s</text>
+<text x="0" y="70.8" font-size="24" fill="#636B78" xml:space="preserve">history</text>
+<text x="0" y="122.8" font-size="24" fill="#636B78" xml:space="preserve">turn</text>
+<rect x="170" y="61" width="1470" height="2" fill="#E4E1D8"/>
+<rect x="170" y="113" width="1470" height="2" fill="#E4E1D8"/>
+<rect x="257" y="34" width="2" height="108" fill="#1B2330"/>
+<rect x="259" y="41" width="1155" height="42" rx="5" fill="none" stroke="#A94E12" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="836.5" y="71" font-size="24" fill="#8F400C" text-anchor="middle" xml:space="preserve">in GPU and host memory at arrival; evicted while the turn queued</text>
+<rect x="258" y="92" width="1157" height="44" rx="6" fill="#D9D6CC"/>
+<text x="836.5" y="123" font-size="24" fill="#1B2330" text-anchor="middle" xml:space="preserve">in the queue behind 82 turns: 104.6 s</text>
+<rect x="1415" y="92" width="70" height="44" rx="6" fill="#8F400C"/>
+<text x="1497" y="122.8" font-size="24" fill="#4A5363" xml:space="preserve">GPU: 6.4 s</text>
+<text x="0" y="181.8" font-size="24" fill="#1B2330" xml:space="preserve"><tspan font-weight="600">p50 hint</tspan> · JIT p50 <tspan fill="#636B78">· pip: p10 7.2 s, p50 17.5 s, p90 55 s</tspan></text>
+<text x="1664" y="181.8" font-size="24" font-weight="600" fill="#1B2330" text-anchor="end" xml:space="preserve">TTFT 18.99 s</text>
+<text x="0" y="226.8" font-size="24" fill="#636B78" xml:space="preserve">history</text>
+<text x="0" y="278.8" font-size="24" fill="#636B78" xml:space="preserve">turn</text>
+<rect x="170" y="217" width="1470" height="2" fill="#E4E1D8"/>
+<rect x="170" y="269" width="1470" height="2" fill="#E4E1D8"/>
+<rect x="257" y="190" width="2" height="108" fill="#1B2330"/>
+<rect x="189" y="196" width="16" height="44" rx="6" fill="#2A62A8"/>
+<rect x="206" y="197" width="258" height="42" rx="5" fill="#F6E2D2" stroke="#A94E12" stroke-width="2"/>
+<text x="335" y="227" font-size="24" fill="#8F400C" text-anchor="middle" xml:space="preserve">pinned 23.5 s</text>
+<text x="477" y="226.8" font-size="24" fill="#4A5363" xml:space="preserve">SSD reads 35.6K tokens in 1.4 s, before the turn arrives</text>
+<rect x="258" y="248" width="207" height="44" rx="6" fill="#D9D6CC"/>
+<rect x="465" y="248" width="3" height="44" rx="6" fill="#8F400C"/>
+<text x="480" y="278.8" font-size="24" fill="#4A5363" xml:space="preserve">in the queue 18.7 s behind 38 turns; GPU: 0.3 s for 371 new tokens</text>
+<text x="0" y="337.8" font-size="24" fill="#1B2330" xml:space="preserve"><tspan font-weight="600">Exact hint</tspan> · JIT exact <tspan fill="#636B78">· the same turn, gap 27.8 s</tspan></text>
+<text x="1664" y="337.8" font-size="24" font-weight="600" fill="#1B2330" text-anchor="end" xml:space="preserve">TTFT 19.98 s</text>
+<text x="0" y="382.8" font-size="24" fill="#636B78" xml:space="preserve">history</text>
+<text x="0" y="434.8" font-size="24" fill="#636B78" xml:space="preserve">turn</text>
+<rect x="170" y="373" width="1470" height="2" fill="#E4E1D8"/>
+<rect x="170" y="425" width="1470" height="2" fill="#E4E1D8"/>
+<rect x="257" y="346" width="2" height="108" fill="#1B2330"/>
+<rect x="423" y="352" width="18" height="44" rx="6" fill="#2A62A8"/>
+<rect x="442" y="353" width="32" height="42" rx="5" fill="#F6E2D2" stroke="#A94E12" stroke-width="2"/>
+<text x="487" y="382.8" font-size="24" fill="#4A5363" xml:space="preserve">SSD reads 35.6K tokens in 1.7 s, while the turn queues</text>
+<rect x="258" y="404" width="217" height="44" rx="6" fill="#D9D6CC"/>
+<rect x="475" y="404" width="4" height="44" rx="6" fill="#8F400C"/>
+<text x="491" y="434.8" font-size="24" fill="#4A5363" xml:space="preserve">in the queue 19.6 s behind 41 turns; GPU: 0.4 s for 371 new tokens</text>
+</svg>

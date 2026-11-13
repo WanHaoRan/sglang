@@ -1,0 +1,19 @@
+# label arm users host_gb oracle_hints hints arrival gap engine timeout [extra server flags]
+# controls on today's engines, on the GPU unit the new arms will use (GPU-605dfc41 after the 2026-11-11 02:34Z boot)
+jit_p50_ctl three_tier_wc_oracle_v2_nu_owned 44 70 0 dist 0.1 10 engine_owned_20261101 7200
+# the expected-cost policy (deck "Pricing the Room"), engine frozen 2026-11-11 04:50Z as engine_ec_20261111b (engine_ec_20261111 released a landed read's pin too eagerly and was never run); base arm = today's JIT p50 arm
+# rule 1 alone: expected-cost read start and release at a fixed price, next-use eviction and hard pins as today
+# stopped 04:57Z, 30 s into its client, for two defects a code review found (the wait estimate, restaging after a refusal); requeued below on a fixed engine: ec_r1 three_tier_wc_oracle_v2_nu_owned 44 70 0 dist 0.1 10 engine_ec_20261111b 7200 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5
+hintfree_ctl three_tier_wc_dl_poll0 44 70 1 oracle 0.1 10 engine_5df71c4bf0_v2 7200
+# engine_ec_20261111d, frozen 06:03Z with the fixes of two code reviews (three earlier freezes are deleted; none produced a run).
+# Base arm for all: today's JIT p50 arm (gate and hold on, pin fraction 0.3); the extra flags replace its read timing and eviction.
+# rules 1 and 3: expected-cost read start at a fixed price, eviction by chance of return within 30 s from the entry's three quantiles
+ec_r13 three_tier_wc_oracle_v2_nu_owned 44 70 0 dist 0.1 10 engine_ec_20261111d 7200 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}
+# the rival that uses no gap forecast: reads only at arrival, eviction by the end signal and the queue alone (ended first, queued last, LRU between)
+nofc three_tier_wc_oracle_v2_nu_owned 44 70 0 dist 0.1 10 engine_ec_20261111d 7200 --hicache-storage-next-turn-read-timing arrival --radix-eviction-policy return_chance --radix-eviction-policy-config {"score":"lru"}
+# rule 1 alone: next-use eviction from the p50 as today
+ec_r1 three_tier_wc_oracle_v2_nu_owned 44 70 0 dist 0.1 10 engine_ec_20261111d 7200 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5
+# added 09:10Z after ec_r13 (0.66 s on the shared turns, JIT exact 0.51): the other half of the split, then a repeat
+# rule 3 alone: the base arm's just-in-time timing (lands near the p10), eviction by chance of return within 30 s
+ec_r3 three_tier_wc_oracle_v2_nu_owned 44 70 0 dist 0.1 10 engine_ec_20261111d 7200 --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}
+ec_r13_rep three_tier_wc_oracle_v2_nu_owned 44 70 0 dist 0.1 10 engine_ec_20261111d 7200 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}

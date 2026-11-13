@@ -113,6 +113,12 @@ def cache_mode_fixture(
     cache.read_deadline_fn = cache.deadlines.get
     cache.prefetch_gate_fn = None
     cache.read_not_before_fn = None
+    cache.soft_pin_victims_fn = None
+    cache.prefetch_landed_fn = None
+    cache.room_refusals = None
+    cache.linker = None
+    cache.prefetch_loaded_tokens_by_reqid = {}
+    cache.prefetch_loaded_storage_start_by_reqid = {}
     cache.read_scheduler = (
         None
         if order == "fifo"
@@ -247,6 +253,70 @@ class TestParkAndDispatch(CustomTestCase):
         finish_read(cache, CacheRequestHandle("urgent", 0))
         cache._dispatch_storage_reads()
         self.assertEqual(launched(cache), ["timed"])
+
+    def test_room_refused_is_reported_once_whole_for_a_revoke_and_by_the_cut(self):
+        """The price of host memory follows these reports: a read trimmed to the
+        pages that fit reports the part cut, one that finds none reports whole, each
+        under its request and handed over once; nothing is kept until someone asks."""
+        cache = cache_mode_fixture()
+        pool = cache.cache_controller.mem_pool_host
+        pool.available = 0
+        hit(cache, "unasked", 6 * PAGE)
+        drain(cache, 1)
+        cache._dispatch_storage_reads()
+        self.assertIsNone(cache.room_refusals)
+        self.assertEqual(cache.take_room_refusals(), [])
+        pool.available = 2 * PAGE
+        cut, _ = hit(cache, "cut", 6 * PAGE)
+        drain(cache, 1)
+        cache._dispatch_storage_reads()
+        self.assertEqual(launched(cache), ["cut"])
+        self.assertEqual(cache.take_room_refusals(), [(cut, 4 * PAGE)])
+        pool.available = 0
+        revoked, _ = hit(cache, "revoked", 6 * PAGE)
+        drain(cache, 1)
+        cache._dispatch_storage_reads()
+        self.assertEqual(launched(cache), [])
+        self.assertEqual(
+            (cache.take_room_refusals(), cache.take_room_refusals()),
+            ([(revoked, 6 * PAGE)], []),
+        )
+
+    def test_soft_pins_free_a_staged_read_so_the_asking_read_launches_whole(self):
+        """Without them the read of a turn that has arrived is cut or revoked while a
+        read staged for a turn not here keeps its pin. The staged read named by the
+        prefetcher is released and eviction then finds its pages; the asking read is
+        not reported as refused. Only the pages it is short of are asked for."""
+        cache = cache_mode_fixture(pin_fraction=0.5)
+        cache.room_refusals = []
+        pool = cache.cache_controller.mem_pool_host
+        pool.available = 2 * PAGE
+        staged = CacheRequestHandle("staged", 0)
+        cache._pin_prefetch(staged, 7, 6 * PAGE)
+        cache.prefetch_loaded_tokens_by_reqid[staged] = 6 * PAGE
+        asked = []
+
+        def victims(handle, tokens):
+            asked.append((handle.rid, tokens))
+            return [staged]
+
+        def evict_host(tokens):
+            # Only an unpinned span can be evicted.
+            if staged not in cache.pinned_prefetch:
+                pool.available = 6 * PAGE
+
+        cache.soft_pin_victims_fn = victims
+        cache.evict_host = Mock(side_effect=evict_host)
+        hit(cache, "arrived", 6 * PAGE)
+        drain(cache, 1)
+        cache._dispatch_storage_reads()
+        self.assertEqual(asked, [("arrived", 4 * PAGE)])
+        self.assertEqual(cache.evict_host.call_args_list[-1].args, (4 * PAGE,))
+        self.assertEqual(launched(cache), ["arrived"])
+        self.assertEqual(pool.allocs, [6 * PAGE])
+        self.assertEqual((cache.tree_core.locks[7], cache.pinned_prefetch_tokens), (0, 0))
+        self.assertNotIn(staged, cache.prefetch_loaded_tokens_by_reqid)
+        self.assertEqual(cache.take_room_refusals(), [])
 
     def test_revoked_or_aborted_parked_read_is_dropped_at_dispatch(self):
         """A parked handle that left ongoing_prefetch (abort, revoke) must not be

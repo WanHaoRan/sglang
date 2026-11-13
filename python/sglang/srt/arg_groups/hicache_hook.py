@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from sglang.srt.arg_groups.overrides import (
@@ -219,26 +220,39 @@ def resolve_storage_read_order(server_args: Any):
             f"{cfg.hicache_storage_read_window_pages}."
         )
     arrival_hold = cfg.hicache_storage_next_turn_arrival_hold == "on"
+    soft_pins = cfg.hicache_storage_next_turn_soft_pins == "on"
     if (
-        cfg.hicache_storage_next_turn_arrival_gate == "on" or arrival_hold
+        cfg.hicache_storage_next_turn_arrival_gate == "on" or arrival_hold or soft_pins
     ) and cfg.hicache_storage_next_turn_prefetch != "on":
         raise ValueError(
-            "--hicache-storage-next-turn-arrival-gate and "
-            "--hicache-storage-next-turn-arrival-hold act on the next-turn prefetcher's "
+            "--hicache-storage-next-turn-arrival-gate, "
+            "--hicache-storage-next-turn-arrival-hold and "
+            "--hicache-storage-next-turn-soft-pins act on the next-turn prefetcher's "
             "plans and need --hicache-storage-next-turn-prefetch on."
         )
+    read_timing = cfg.hicache_storage_next_turn_read_timing
+    expected_cost = read_timing in ("expected_cost", "arrival")
+    validate_next_turn_pricing(cfg, expected_cost=expected_cost)
     if cfg.hicache_storage_read_order == "fifo":
         if pin > 0:
             raise ValueError(
                 "--hicache-storage-prefetch-pin-fraction > 0 needs "
                 "--hicache-storage-read-order deadline."
             )
-        if arrival_hold:
+        if arrival_hold or soft_pins or expected_cost:
             raise ValueError(
-                "--hicache-storage-next-turn-arrival-hold holds parked reads, which "
-                "needs --hicache-storage-read-order deadline."
+                "--hicache-storage-next-turn-arrival-hold, "
+                "--hicache-storage-next-turn-soft-pins and "
+                "--hicache-storage-next-turn-read-timing expected_cost or arrival act "
+                "on parked and pinned reads, which need --hicache-storage-read-order "
+                "deadline."
             )
         return
+    if expected_cost and pin <= 0:
+        raise ValueError(
+            "--hicache-storage-next-turn-read-timing expected_cost and arrival act on "
+            "pinned reads and need --hicache-storage-prefetch-pin-fraction above 0."
+        )
     if cfg.hicache_storage_backend is None:
         raise ValueError(
             "--hicache-storage-read-order deadline needs a storage backend "
@@ -260,6 +274,48 @@ def resolve_storage_read_order(server_args: Any):
             server_args,
             "resolve_storage_read_order",
             hicache_storage_prefetch_retry_poll_interval=0,
+        )
+
+
+def validate_next_turn_pricing(cfg: Any, *, expected_cost: bool) -> None:
+    quantile = cfg.hicache_storage_next_turn_landing_quantile
+    if quantile is not None:
+        if not 0.0 < quantile < 1.0:
+            raise ValueError(
+                "--hicache-storage-next-turn-landing-quantile must be in (0, 1), got "
+                f"{quantile}."
+            )
+        if cfg.hicache_storage_next_turn_read_timing != "just_in_time":
+            raise ValueError(
+                "--hicache-storage-next-turn-landing-quantile times just-in-time "
+                "reads and needs --hicache-storage-next-turn-read-timing just_in_time."
+            )
+    price = cfg.hicache_storage_next_turn_memory_price
+    if not (math.isfinite(price) and price >= 0):
+        raise ValueError(
+            "--hicache-storage-next-turn-memory-price must be a finite, non-negative "
+            f"number, got {price}."
+        )
+    soft_pins = cfg.hicache_storage_next_turn_soft_pins == "on"
+    if soft_pins and cfg.hicache_storage_next_turn_read_timing != "expected_cost":
+        # The other routines stage a bumped plan again without a cap.
+        raise ValueError(
+            "--hicache-storage-next-turn-soft-pins on needs "
+            "--hicache-storage-next-turn-read-timing expected_cost."
+        )
+    if (
+        cfg.hicache_storage_next_turn_price_learning != "off"
+        and cfg.hicache_storage_next_turn_read_timing != "expected_cost"
+    ):
+        raise ValueError(
+            "--hicache-storage-next-turn-price-learning moves the price that "
+            "--hicache-storage-next-turn-read-timing expected_cost decides by."
+        )
+    if expected_cost and cfg.hicache_storage_next_turn_prefetch != "on":
+        raise ValueError(
+            "--hicache-storage-next-turn-read-timing expected_cost and arrival act on "
+            "the next-turn prefetcher's plans and need "
+            "--hicache-storage-next-turn-prefetch on."
         )
 
 

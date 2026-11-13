@@ -27,15 +27,26 @@ from sglang.srt.mem_cache.next_turn_estimators import (
     L3LoadModel,
     residual_wait,
 )
+from sglang.srt.mem_cache.next_turn_policy import (
+    GapDistribution,
+    read_start,
+    remaining_gaps,
+)
 from sglang.srt.mem_cache.next_turn_prefetch import (
     MAX_REFETCHES,
+    MIN_EXPIRY_S,
     NTP_HOLD_MARGIN_S,
     NTP_JIT_MARGIN_S,
     NTP_LEAD_HORIZON_S,
     NTP_MAX_PARKED,
+    NTP_MAX_STAGINGS,
     NextTurnPrefetcher,
 )
-from sglang.srt.mem_cache.next_use_eviction import NextUseStrategy
+from sglang.srt.mem_cache.next_use_eviction import (
+    NextUseStrategy,
+    ReturnChanceStrategy,
+    ReturnForecast,
+)
 from sglang.srt.mem_cache.radix_cache import RadixKey
 from sglang.srt.mem_cache.reply_key import NO_CALL_KEY, reply_key
 from sglang.srt.mem_cache.storage_read_scheduler import (
@@ -1023,6 +1034,473 @@ class TestDeadlineMode(PrefetcherTestCase):
         req = make_req("s-t1", entered=self.arrival + 1.0)
         self.tick(self.arrival + 1.0, queue=[req])
         self.assertEqual(self.registry().lookup(7), (True, self.arrival + 1.0))
+
+
+class PricedCache(DeadlineCache):
+    """DeadlineCache plus the pin and room state that expected-cost timing reads."""
+
+    soft_pin_victims_fn = None
+    room_refusals = None
+    host_room_floor_tokens = 44_000
+
+    def __init__(self):
+        super().__init__()
+        self.pinned = {}
+        self.room = (44_000, 0)
+        self.refusals = []
+        # Tokens of a key in device memory; None = all the resident ones.
+        self.in_device = None
+
+    def resident_prefix_len(self, key):
+        self.probes += 1
+        resident = min(self.resident, len(key))
+        return (resident if self.in_device is None else self.in_device), resident
+
+    def pinned_prefetch_tokens_of(self, handle):
+        return self.pinned.get(handle, 0)
+
+    def host_room_tokens(self):
+        return self.room
+
+    def take_room_refusals(self):
+        refusals, self.refusals = self.refusals, []
+        return refusals
+
+    def land(self, handle, tokens):
+        self.ongoing.discard(handle)
+        self.pinned[handle] = tokens
+
+    def finish(self, handle, outcome):
+        super().finish(handle, outcome)
+        self.pinned.pop(handle, None)
+
+
+BIG_KEY_TOKENS = 1000 * PAGE
+SHARP = {"key": "*", "p10": 45.0, "p50": 50.0, "p90": 56.0, "n": 40}
+WIDE = {"key": "*", "p10": 0.85, "p50": 22.0, "p90": 58.0, "n": 500}
+
+
+class TestExpectedCost(PrefetcherTestCase):
+    """Read timing expected_cost: the start rule, the release of a landed read, soft
+    pins and the price (agent_cache/PAPER_PLAN.md, "Formulation")."""
+
+    mode = "on"
+
+    def make_cache(self):
+        return PricedCache()
+
+    def setUp(self):
+        super().setUp()
+        self.cache.resident = self.cache.matched_tokens = 4 * PAGE
+        self.missing = BIG_KEY_TOKENS - 4 * PAGE
+        self.read_s = (
+            L3LoadModel().seconds(own_pages=self.missing // PAGE, backlog_pages=0)
+            + NTP_JIT_MARGIN_S
+        )
+        self.handle = CacheRequestHandle(rid="s-t1", attempt_id=0)
+        self.ntp = self.make_ntp()
+
+    def make_ntp(self, **kwargs):
+        return NextTurnPrefetcher(
+            mode=self.mode,
+            tree_cache=self.cache,
+            page_size=PAGE,
+            read_timing="expected_cost",
+            reply_key_source="hint",
+            **kwargs,
+        )
+
+    def commit_entry(self, entry, *, session="s", now=0.0, tail_node_id=None):
+        table = {"session": session, "next_rid": f"{session}-t1", "gaps": [entry]}
+        self.ntp.on_turn_committed(
+            req=make_req(
+                f"{session}-t0", kv_hints=hints("-", version="2", payload=table)
+            ),
+            key=key_of(BIG_KEY_TOKENS),
+            rotation_tail_declined=False,
+            now=now,
+            tail_node_id=tail_node_id,
+        )
+
+    def tick(self, now, queue=()):
+        return self.events(lambda: self.ntp.tick(waiting_queue=list(queue), now=now))
+
+    def rule_start(self, entry, *, price):
+        """Rule 1's start for the entry, seconds after a commit at 0."""
+        dist = GapDistribution.from_quantiles(
+            p10=entry["p10"], p50=entry["p50"], p90=entry["p90"]
+        )
+        return read_start(
+            remaining=remaining_gaps(
+                support=dist.support(), idle_s=-ArrivalOffset().seconds
+            ),
+            read_s=self.read_s,
+            wait_s=0.0,
+            rent_per_s=price * self.missing,
+        )
+
+    def test_a_read_starts_where_rule_1_puts_it_from_the_engines_own_estimates(self):
+        """The read time is the load model's plus the margin, the idle time is net of
+        the arrival offset and the rent is the price times the missing tokens; a
+        lower price starts the same read earlier."""
+        starts = {}
+        for price in (5e-5, 5e-6):
+            with self.subTest(price=price):
+                self.cache.prefetches.clear()
+                self.cache.ongoing.clear()
+                self.ntp = self.make_ntp(memory_price=price)
+                starts[price] = start = self.rule_start(SHARP, price=price)
+                self.commit_entry(SHARP)
+                self.tick(start - 0.3)
+                self.assertEqual(self.cache.prefetches, [])
+                found = self.tick(start + 0.01)
+                self.assertEqual([h for h, *_ in self.cache.prefetches], [self.handle])
+                (due,) = [f for kind, f in found if kind == "ntp_due"]
+                self.assertEqual(
+                    int(due["load_ms"]), round((self.read_s - NTP_JIT_MARGIN_S) * 1000)
+                )
+        self.assertLess(starts[5e-6], starts[5e-5])
+
+    def test_an_exact_hint_starts_at_the_just_in_time_moment(self):
+        self.ntp = self.make_ntp()
+        self.ntp.on_turn_committed(
+            req=make_req("s-t0", kv_hints=hints("s-t1", 50.0)),
+            key=key_of(BIG_KEY_TOKENS),
+            rotation_tail_declined=False,
+            now=0.0,
+        )
+        start = ArrivalOffset().predict_arrival(t_commit=0.0, gap_s=50.0) - self.read_s
+        self.tick(start - 0.3)
+        self.assertEqual(self.cache.prefetches, [])
+        self.tick(start + 0.01)
+        self.assertEqual([h for h, *_ in self.cache.prefetches], [self.handle])
+
+    def test_a_wide_entry_is_left_to_the_turns_arrival(self):
+        """A read staged for pip's entry would sit pinned through its long mode, so
+        none is; the plan still matches the turn when it comes."""
+        self.commit_entry(WIDE)
+        for step in range(400):
+            self.tick(0.5 * step)
+        self.assertEqual(self.cache.prefetches, [])
+        late = make_req("s-t1", entered=200.0)
+        found = self.tick(200.5, queue=[late])
+        self.assertIn("ntp_arrive", [kind for kind, _ in found])
+
+    def test_arrival_timing_never_stages_and_still_follows_the_turn(self):
+        """The rival that uses no gap forecast: even an exact hint stages nothing, and
+        the plan still matches its turn for the gate, the hold and its protection."""
+        self.ntp = NextTurnPrefetcher(
+            mode=self.mode, tree_cache=self.cache, page_size=PAGE, read_timing="arrival"
+        )
+        self.ntp.on_turn_committed(
+            req=make_req("s-t0", kv_hints=hints("s-t1", 20.0)),
+            key=key_of(BIG_KEY_TOKENS),
+            rotation_tail_declined=False,
+            now=0.0,
+        )
+        for step in range(100):
+            self.tick(0.5 * step)
+        self.assertEqual((self.cache.prefetches, self.cache.probes), ([], 0))
+        found = self.tick(60.5, queue=[make_req("s-t1", entered=60.0)])
+        self.assertIn("ntp_arrive", [kind for kind, _ in found])
+
+    def test_a_landed_read_gives_its_pin_back_once_its_entry_has_passed(self):
+        """No forecast ends the plan: only the pin goes, and a turn that comes after
+        all is still the plan's."""
+        self.commit_entry(SHARP, tail_node_id=5)
+        self.tick(self.rule_start(SHARP, price=5e-5) + 0.01)
+        self.cache.land(self.handle, self.missing)
+        self.tick(54.0)
+        self.assertEqual(self.cache.finished, [])
+        found = self.tick(90.0)
+        self.assertEqual(self.cache.finished, [(self.handle, CacheRequestOutcome.ABORT)])
+        (release,) = [f for kind, f in found if kind == "ec_release"]
+        self.assertEqual(int(release["tokens"]), self.missing)
+        found = self.tick(50.0 + MIN_EXPIRY_S + 60.0)
+        self.assertEqual(
+            [kind for kind, _ in found if kind in ("ntp_expire", "nue_register")], []
+        )
+        late = make_req("s-t1", entered=300.0)
+        found = self.tick(300.5, queue=[late])
+        self.assertIn("ntp_arrive", [kind for kind, _ in found])
+
+    def test_a_read_refused_room_is_left_to_arrival_and_a_bumped_one_may_stage_again(self):
+        """A refused staging tried again half a second later meets the same full room
+        and spends the lookups the turn needs after it arrives. Only a read that was
+        bumped stages again, and each staging takes one of the gate's lookups, so the
+        cap leaves one for the turn's own read."""
+        self.assertLessEqual(NTP_MAX_STAGINGS, MAX_REFETCHES)
+        self.ntp = self.make_ntp(soft_pins="on")
+        start = self.rule_start(SHARP, price=5e-5)
+        self.commit_entry(SHARP)
+        self.tick(start + 0.01)
+        self.cache.ongoing.clear()
+        for probe in range(1, 4):
+            self.tick(start + 0.6 * probe)
+        self.assertEqual(len(self.cache.prefetches), 1)
+
+        self.ntp = self.make_ntp(soft_pins="on")
+        self.cache.prefetches.clear()
+        self.commit_entry(SHARP, now=1000.0)
+        asking = make_req("c-t1", entered=1000.0)
+        for round_ in range(1, 5):
+            at = 1000.0 + start + 0.6 * round_
+            self.tick(at)
+            if self.handle in self.cache.ongoing:
+                self.cache.land(self.handle, self.missing)
+                # The asking turn is queued by the time its read needs the room.
+                self.tick(at + 0.01, queue=[asking])
+                for victim in self.ntp.soft_pin_victims(asking.cache_request_handle, 1):
+                    self.cache.finish(victim, CacheRequestOutcome.ABORT)
+        self.assertEqual(len(self.cache.prefetches), NTP_MAX_STAGINGS)
+
+    def test_rent_is_charged_on_what_the_pin_keeps_in_the_host_room(self):
+        """A pinned tail keeps the session's whole chain out of host eviction, so the
+        rent is on every token not in device memory, not on the span being read. The
+        same 4K-token read is staged when the rest of the chain is on the device and
+        left to arrival when 60K tokens of it are host-only."""
+        staged = {}
+        for in_device in (4 * PAGE, None):
+            self.cache.prefetches.clear()
+            self.cache.ongoing.clear()
+            self.cache.resident = BIG_KEY_TOKENS - 64 * PAGE
+            self.cache.in_device = in_device
+            self.ntp = self.make_ntp()
+            self.commit_entry(SHARP)
+            for step in range(140):
+                self.tick(0.5 * step)
+            staged[in_device] = len(self.cache.prefetches)
+        self.assertEqual(staged, {4 * PAGE: 0, None: 1})
+
+    def test_a_turn_waiting_on_its_own_read_does_not_lengthen_the_wait_estimate(self):
+        """Admission passes over a queued turn whose read is still under way, so a
+        turn arriving now does not wait behind it; counting it made rule 1 leave reads
+        to arrival whenever a few such turns were queued."""
+        start = self.rule_start(SHARP, price=5e-5)
+        self.commit_entry(SHARP)
+        blocked = [make_req(f"b{i}-t1", entered=0.0) for i in range(3)]
+        for req in blocked:
+            self.cache.ongoing.add(req.cache_request_handle)
+        admitted = make_req("warm-t1", entered=0.0)
+        self.tick(0.0, queue=[admitted])
+        admitted.time_stats.forward_entry_time = 0.2
+        for step in range(1, 8):
+            more = make_req(f"warm{step}-t1", entered=0.2 * step)
+            self.tick(0.2 * step, queue=[more] + blocked)
+            more.time_stats.forward_entry_time = 0.2 * step + 0.1
+        self.tick(start - 0.3, queue=blocked)
+        self.assertEqual(self.cache.prefetches, [])
+        self.tick(start + 0.01, queue=blocked)
+        self.assertEqual([h for h, *_ in self.cache.prefetches], [self.handle])
+
+    def test_a_queue_of_turns_with_nothing_to_read_does_lengthen_it(self):
+        """When turns that need no read stay queued the GPU is the bottleneck, and the
+        whole queue is ahead of a turn arriving now: its wait then covers the read, so
+        nothing is staged where it would be with an idle GPU."""
+        start = self.rule_start(SHARP, price=5e-5)
+        self.commit_entry(SHARP)
+        admitted = make_req("warm-t1", entered=0.0)
+        self.tick(0.0, queue=[admitted])
+        admitted.time_stats.forward_entry_time = 0.2
+        for step in range(1, 8):
+            more = make_req(f"warm{step}-t1", entered=0.2 * step)
+            self.tick(0.2 * step, queue=[more])
+            more.time_stats.forward_entry_time = 0.2 * step + 0.1
+        stuck = [make_req(f"q{i}-t1", entered=start - 5.0) for i in range(12)]
+        self.tick(start - 5.0, queue=stuck)
+        for step in range(40):
+            self.tick(start - 4.5 + 0.25 * step, queue=stuck)
+        self.assertEqual(self.cache.prefetches, [])
+
+    def test_a_read_still_parked_when_its_entry_passes_is_given_up(self):
+        """Dispatched after that, it would take room, land, and be released at the
+        next probe: a read for nothing."""
+        self.commit_entry(SHARP)
+        self.tick(self.rule_start(SHARP, price=5e-5) + 0.01)
+        self.cache.read_scheduler.park(
+            handle=self.handle, operation=None, pages=1, now=60.0
+        )
+        self.tick(62.0)
+        self.assertEqual(self.cache.finished, [])
+        self.tick(90.0)
+        self.assertEqual(self.cache.finished, [(self.handle, CacheRequestOutcome.ABORT)])
+
+    def test_a_staging_that_issues_no_lookup_does_not_end_staging(self):
+        """An anchor not yet backed up cannot be read under; the attempt counts
+        against the cap, but the plan may stage once the anchor is."""
+        start = self.rule_start(SHARP, price=5e-5)
+        self.commit_entry(SHARP)
+        self.cache.backed_up = False
+        self.tick(start + 0.01)
+        self.assertEqual(self.cache.prefetches, [])
+        self.cache.backed_up = True
+        for step in range(1, 8):
+            self.tick(start + 0.3 * step)
+        self.assertEqual([h for h, *_ in self.cache.prefetches], [self.handle])
+
+    def test_an_overdue_staged_read_stays_a_timed_read(self):
+        """Under the p50 routines an overdue plan's read is "needed now" and skips the
+        window and the budget; a read started on purpose for a turn not here keeps
+        both."""
+        self.commit_entry(SHARP)
+        self.tick(100.0)
+        self.assertEqual(self.ntp.read_deadline(self.handle), 100.0 + NTP_JIT_MARGIN_S)
+
+    def test_soft_pins_bump_the_staged_read_least_likely_back_for_a_queued_turn(self):
+        self.ntp = self.make_ntp(memory_price=1e-6, soft_pins="on")
+        self.assertEqual(self.cache.soft_pin_victims_fn, self.ntp.soft_pin_victims)
+        self.commit_entry(SHARP, session="a")
+        self.commit_entry({**SHARP, "p10": 40.0, "p50": 52.0, "p90": 70.0}, session="b")
+        staged_a = CacheRequestHandle(rid="a-t1", attempt_id=0)
+        staged_b = CacheRequestHandle(rid="b-t1", attempt_id=0)
+        self.cache.pinned = {staged_a: 30_000, staged_b: 20_000}
+        asking = make_req("c-t1", entered=49.0)
+        self.assertEqual(
+            self.ntp.soft_pin_victims(asking.cache_request_handle, 10_000), []
+        )
+        self.tick(49.0, queue=[asking])
+        found = self.events(
+            lambda: self.assertEqual(
+                self.ntp.soft_pin_victims(asking.cache_request_handle, 10_000),
+                [staged_b],
+            )
+        )
+        self.assertEqual([f["for_rid"] for kind, f in found if kind == "ec_bump"], ["c-t1"])
+        self.assertEqual(
+            self.ntp.soft_pin_victims(asking.cache_request_handle, 40_000),
+            [staged_b, staged_a],
+        )
+
+    def test_the_price_follows_refused_room_only_when_it_is_learned(self):
+        for learning, moved in (("on", True), ("off", False)):
+            with self.subTest(learning=learning):
+                self.ntp = self.make_ntp(price_learning=learning)
+                self.commit_entry(WIDE)
+                self.cache.room = (44_000, 44_000)
+                self.cache.refusals = [(CacheRequestHandle("x", 0), 30_000)]
+                self.tick(0.0)
+                found = self.tick(5.01)
+                (price,) = [f for kind, f in found if kind == "ec_price"]
+                self.assertEqual(int(price["refused"]), 30_000)
+                self.assertEqual(float(price["price"]) > 5e-5, moved)
+
+    def test_harm_is_charged_only_for_what_a_staged_pin_held_from_an_arrived_turn(self):
+        """A read refused room costs its turn a recomputation only where a staged
+        read's pin was holding that room, and each turn in the queue waits behind
+        it; a refusal with nothing staged, or of a turn not here, charges nothing."""
+        self.ntp = self.make_ntp(price_learning="harm")
+        self.commit_entry(WIDE)
+        waiting = [make_req("a-t1", entered=0.0), make_req("b-t1", entered=0.0)]
+        asking = waiting[0].cache_request_handle
+
+        def harm_ms(refusals, pinned):
+            self.cache.pinned = pinned
+            start = self.ntp._last_now if self.ntp._last_now > 0 else 0.0
+            self.tick(start + 0.1, queue=waiting)
+            self.cache.refusals = refusals
+            found = self.tick(start + 5.2, queue=waiting)
+            (price,) = [f for kind, f in found if kind == "ec_price"]
+            return int(price["harm_ms"])
+
+        staged = {self.handle: 20_000}
+        self.assertEqual(harm_ms([(asking, 30_000)], {}), 0)
+        self.assertEqual(harm_ms([(CacheRequestHandle("z-t9", 0), 30_000)], staged), 0)
+        # 20,000 of the 30,000 refused tokens were under the staged pin, and the two
+        # queued turns have been waiting for the GPU.
+        self.assertEqual(harm_ms([(asking, 30_000)], staged), round(20_000 * 1.1e-4 * 2 * 1000))
+        # Two refusals in one pass cannot be charged for more than the pins held.
+        twice = [(asking, 15_000), (waiting[1].cache_request_handle, 15_000)]
+        self.assertEqual(harm_ms(twice, staged), round(20_000 * 1.1e-4 * 2 * 1000))
+
+
+class TestReturnChanceRegistration(PrefetcherTestCase):
+    """Under return_chance eviction a commit registers the entry's distribution, and
+    a plan that expires does not end its session."""
+
+    mode = "on"
+
+    def make_cache(self):
+        cache = DeadlineCache()
+        cache.tree_core = SimpleNamespace(
+            eviction_strategy=ReturnChanceStrategy(horizon_s=30.0, clock=lambda: 0.0)
+        )
+        return cache
+
+    def test_the_distribution_outlives_the_plan_and_only_an_end_signal_ends_it(self):
+        self.ntp = NextTurnPrefetcher(
+            mode=self.mode,
+            tree_cache=self.cache,
+            page_size=PAGE,
+            read_timing="just_in_time",
+            reply_key_source="hint",
+        )
+        registry = self.cache.tree_core.eviction_strategy.registry
+        table = {"session": "s", "next_rid": "s-t1", "gaps": [SHARP, {"key": "_end", "ended": True}]}
+        self.ntp.on_turn_committed(
+            req=make_req("s-t0", kv_hints=hints("-", version="2", payload=table)),
+            key=key_of(KEY_TOKENS),
+            rotation_tail_declined=False,
+            now=0.0,
+            tail_node_id=5,
+        )
+        known, forecast = registry.lookup(5)
+        self.assertIsInstance(forecast, ReturnForecast)
+        self.assertAlmostEqual(forecast.dist.quantile(0.9), 56.0)
+        # A span read back for the plan's turn joins the session at landing.
+        strategy = self.cache.tree_core.eviction_strategy
+        self.assertEqual(self.cache.prefetch_landed_fn, self.ntp.on_read_landed)
+        self.ntp.on_read_landed(CacheRequestHandle(rid="s-t1", attempt_id=0), 77)
+        span = SimpleNamespace(id=77, last_access_time=0.0, parent=None, children={})
+        self.assertEqual(strategy.get_priority(span)[1:], strategy.get_priority(
+            SimpleNamespace(id=5, last_access_time=0.0, parent=None, children={})
+        )[1:])
+        found = self.events(
+            lambda: self.ntp.tick(waiting_queue=[], now=50.0 + MIN_EXPIRY_S + 60.0)
+        )
+        self.assertIn("ntp_expire", [kind for kind, _ in found])
+        self.assertIs(registry.lookup(5)[1], forecast)
+        table["replay_reply_key"] = "_end"
+        self.ntp.on_turn_committed(
+            req=make_req("s-t0", kv_hints=hints("-", version="2", payload=table)),
+            key=key_of(KEY_TOKENS),
+            rotation_tail_declined=False,
+            now=200.0,
+            tail_node_id=5,
+        )
+        self.assertEqual(registry.lookup(5), (True, None))
+
+
+    def test_samples_score_hands_eviction_the_gaps_seen_for_the_entrys_key(self):
+        """The engine collects a key's gaps from its own arrivals, net of the delivery
+        offset, and a later commit with that key carries them to the strategy."""
+        self.cache.tree_core = SimpleNamespace(
+            eviction_strategy=ReturnChanceStrategy(score="samples", clock=lambda: 0.0)
+        )
+        self.ntp = NextTurnPrefetcher(
+            mode=self.mode, tree_cache=self.cache, page_size=PAGE, reply_key_source="hint"
+        )
+        registry = self.cache.tree_core.eviction_strategy.registry
+        table = {"session": "s", "next_rid": "s-t1", "gaps": [{**SHARP, "key": "tool/x"}],
+                 "replay_reply_key": "tool/x"}
+
+        def commit(now, next_rid):
+            self.ntp.on_turn_committed(
+                req=make_req("s-t0", kv_hints=hints("-", version="2", payload={**table, "next_rid": next_rid})),
+                key=key_of(KEY_TOKENS),
+                rotation_tail_declined=False,
+                now=now,
+                tail_node_id=5,
+            )
+
+        commit(0.0, "s-t1")
+        self.assertEqual(registry.lookup(5)[1].key_gaps, ())
+        offset = ArrivalOffset().seconds
+        self.ntp.tick(waiting_queue=[make_req("s-t1", entered=40.0 + offset)], now=40.2)
+        commit(50.0, "s-t2")
+        forecast = registry.lookup(5)[1]
+        self.assertEqual(len(forecast.key_gaps), 1)
+        self.assertAlmostEqual(forecast.key_gaps[0], 40.0)
+        self.assertEqual(forecast.all_gaps, forecast.key_gaps)
 
 
 class TestOwnerSwitches(CustomTestCase):

@@ -304,9 +304,22 @@ class UnifiedRadixCache(BasePrefixCache):
         self.read_not_before_fn: Optional[
             Callable[[CacheRequestHandle, ParkedRead, int], Optional[float]]
         ] = None
+        # Soft pins: the staged reads to give up for a read that found no host room.
+        self.soft_pin_victims_fn: Optional[
+            Callable[[CacheRequestHandle, int], list[CacheRequestHandle]]
+        ] = None
+        # Told the node a storage read's span was inserted as, for session-scored eviction.
+        self.prefetch_landed_fn: Optional[Callable[[CacheRequestHandle, NodeId], None]] = (
+            None
+        )
         self.prefetch_pin_budget_tokens = 0
         self.pinned_prefetch: dict[CacheRequestHandle, _PinnedPrefetch] = {}
         self.pinned_prefetch_tokens = 0
+        # (request, tokens) of storage reads revoked or cut for host room since
+        # take_room_refusals() last ran; None until the next-turn prefetcher asks.
+        self.room_refusals: Optional[list[tuple[CacheRequestHandle, int]]] = None
+        # Host pool beyond a full device mirror, tokens; set with the read scheduler.
+        self.host_room_floor_tokens = 0
         # Write-side dedupe: beliefs about what storage already holds, so
         # re-inserts of hot prefixes skip the redundant backup.
         self.storage_existence_cache = StorageExistenceCache()
@@ -582,6 +595,10 @@ class UnifiedRadixCache(BasePrefixCache):
         )
         self.prefetch_pin_budget_tokens = int(
             memory.hicache_storage_prefetch_pin_fraction * cc.mem_pool_host.size
+        )
+        self.host_room_floor_tokens = max(
+            self.page_size,
+            cc.mem_pool_host.size - self.token_to_kv_pool_allocator.size_full,
         )
         cc.extra_occupancy_fn = lambda: self.pinned_prefetch_tokens
         logger.info(
@@ -2460,6 +2477,8 @@ class UnifiedRadixCache(BasePrefixCache):
                 self._pin_prefetch(
                     request, insert_result.inserted_host_node, loaded_from_storage
                 )
+                if self.prefetch_landed_fn is not None:
+                    self.prefetch_landed_fn(request, insert_result.inserted_host_node)
 
         self.dec_host_lock_ref(last_host_node_id, anchor_lock_params)
         del self.ongoing_prefetch[request]
@@ -2975,6 +2994,11 @@ class UnifiedRadixCache(BasePrefixCache):
         if host_indices is None:
             self.evict_host(alloc_len)
             host_indices = cc.mem_pool_host.alloc(alloc_len)
+        if host_indices is None and self.soft_pin_victims_fn is not None:
+            shortfall = alloc_len - cc.mem_pool_host.available_size()
+            if shortfall > 0 and self._bump_staged_reads(request, shortfall):
+                self.evict_host(shortfall)
+                host_indices = cc.mem_pool_host.alloc(alloc_len)
         if host_indices is None and not buffer_mode:
             # Memory-pressure fallback: a shorter page-aligned prefix.
             # (Cache mode only — buffer mode parks for the full hit.)
@@ -2994,6 +3018,7 @@ class UnifiedRadixCache(BasePrefixCache):
                     max(alloc_len, aux_hit_tokens), "host_capacity"
                 )
                 return False
+            self._report_room_refusal(request, hit_tokens)
             self._finish_storage_prefetch(
                 request, fulfilled_tokens=0, reason="host_capacity"
             )
@@ -3026,6 +3051,8 @@ class UnifiedRadixCache(BasePrefixCache):
             )
             return True
 
+        if alloc_len < hit_tokens:
+            self._report_room_refusal(request, hit_tokens - alloc_len)
         self._resolve_storage_prefetch_tokens(
             request, hit_tokens - alloc_len, reason="host_capacity"
         )
@@ -3043,6 +3070,36 @@ class UnifiedRadixCache(BasePrefixCache):
         cc.prefetch_buffer.put(operation)
         return True
 
+
+    def _bump_staged_reads(self, request: CacheRequestHandle, tokens: int) -> bool:
+        """Soft pins: release the staged reads the prefetcher gives up so this read
+        finds the `tokens` of host room it is short of; True when any pin was released."""
+        victims = self.soft_pin_victims_fn(request, tokens)
+        for victim in victims:
+            self.release_aborted_request(victim)
+        return bool(victims)
+
+    def pinned_prefetch_tokens_of(self, request: CacheRequestHandle) -> int:
+        pin = self.pinned_prefetch.get(request)
+        return 0 if pin is None else pin.tokens
+
+    def host_room_tokens(self) -> tuple[int, int]:
+        """(room, held): host tokens beyond the device mirror as it stands, and those
+        that pinned and in-flight storage reads hold."""
+        cc = self.cache_controller
+        mirror = self.tree_core.evictable_size() + self.tree_core.protected_size()
+        return (
+            max(0, cc.mem_pool_host.size - mirror),
+            cc.prefetch_tokens_occupied + self.pinned_prefetch_tokens,
+        )
+
+    def _report_room_refusal(self, request: CacheRequestHandle, tokens: int) -> None:
+        if self.room_refusals is not None:
+            self.room_refusals.append((request, tokens))
+
+    def take_room_refusals(self) -> list[tuple[CacheRequestHandle, int]]:
+        refusals, self.room_refusals = self.room_refusals or [], []
+        return refusals
 
     def _park_storage_hit(self, operation) -> None:
         """Deadline order: hold the hit without host memory until dispatch."""

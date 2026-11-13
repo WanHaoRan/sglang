@@ -183,8 +183,12 @@ case "$ARM" in
           "three_tier_{wc,to}_ntpobs | three_tier_{wc,to}_oracle | three_tier_{wc,to}_ntpobs_norq | three_tier_{wc,to}_oracle_norq |" \
           "three_tier_wc_dl | three_tier_wc_oracle_v2 | three_tier_wc_oracle_v2_nu | three_tier_wc_wb | three_tier_wc_poll0 | three_tier_wc_dl_poll0 | three_tier_wc_oracle_v2_nu_table | three_tier_wc_oracle_v2_nu_jit | three_tier_wc_oracle_v2_nu_owned)"; exit 1 ;;
 esac
+# SERVER_EXTRA (optional): server flags appended after the arm's own, split on spaces, so a later flag overrides the arm's
+# (argparse keeps the last). It lets a campaign's queue define variants of an arm without editing this file while it runs.
+read -r -a EXTRA <<< "${SERVER_EXTRA:-}"
+ARGS+=("${EXTRA[@]}")
 
-echo "arm: $ARM  level: $LEVEL (L1=${L1:-natural} tokens, host=$HSIZE GB)  model: $MODEL  ctx: $CTX  run dir: $RUN"
+echo "arm: $ARM  level: $LEVEL (L1=${L1:-natural} tokens, host=$HSIZE GB)  model: $MODEL  ctx: $CTX  run dir: $RUN  extra: ${SERVER_EXTRA:-none}"
 # ENGINE_PYTHONPATH (optional): import sglang from a frozen copy of python/ instead of the working tree, so edits made
 # while a campaign runs do not reach its later arms (campaign 12: agent_cache/frozen/engine_<commit>/python)
 ENGINE=$(env ${ENGINE_PYTHONPATH:+PYTHONPATH=$ENGINE_PYTHONPATH} python3 -c 'import os, sglang; print(os.path.dirname(sglang.__file__))')
@@ -204,8 +208,8 @@ esac
 # setsid + nohup: the server survives the end of this docker exec session; SGLANG_LOG_MS=1 -> millisecond log timestamps
 env SGLANG_LOG_MS=1 "${ENVV[@]}" setsid nohup python3 -m sglang.launch_server "${ARGS[@]}" > "$RUN/server.log" 2>&1 < /dev/null &
 echo $! > "$RUN/server.pid"
-printf 'arm=%s\nlevel=%s\nL1=%s\nhost_gb=%s\nmodel=%s\nctx=%s\nkv_dtype=%s\ntemplate=%s\nprefetch_policy=%s\nnext_turn_prefetch=%s\nl3_cleaner_pct=%s\nengine=%s\nstarted_utc=%s\n' \
-  "$ARM" "$LEVEL" "${L1:-natural}" "$HSIZE" "$MODEL" "$CTX" "$KV_DTYPE" "$TEMPLATE" "$POLICY" "$NTP" "${L3_CLEANER_PCT:-default}" "$ENGINE" "$(date -u +%FT%TZ)" > "$RUN/run.txt"
+printf 'arm=%s\nlevel=%s\nL1=%s\nhost_gb=%s\nmodel=%s\nctx=%s\nkv_dtype=%s\ntemplate=%s\nprefetch_policy=%s\nnext_turn_prefetch=%s\nl3_cleaner_pct=%s\nengine=%s\nstarted_utc=%s\nserver_extra=%s\n' \
+  "$ARM" "$LEVEL" "${L1:-natural}" "$HSIZE" "$MODEL" "$CTX" "$KV_DTYPE" "$TEMPLATE" "$POLICY" "$NTP" "${L3_CLEANER_PCT:-default}" "$ENGINE" "$(date -u +%FT%TZ)" "${SERVER_EXTRA:-}" > "$RUN/run.txt"
 echo "launched $ARM: pid $(cat "$RUN/server.pid")   (watch: tail -f $RUN/server.log)"
 
 # wait up to 2400 s (JIT-cold boot ~633 s, warm 278-285 s, RUNBOOK 2.6): /health AND the 'fired up' log line

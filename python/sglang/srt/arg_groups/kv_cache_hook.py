@@ -406,6 +406,33 @@ def handle_cache_compatibility(server_args: Any) -> None:
                     f"in --radix-eviction-policy-config, got {value!r}."
                 )
 
+    if cfg.radix_eviction_policy == "return_chance":
+        if cfg.hicache_storage_next_turn_prefetch == "off":
+            raise ValueError(
+                "--radix-eviction-policy return_chance scores sessions by the gap "
+                "distribution of their next-turn hint, which only "
+                "--hicache-storage-next-turn-prefetch observe|on provides."
+            )
+        config = cfg.radix_eviction_policy_config or {}
+        unknown = sorted(set(config) - {"horizon_s", "score"})
+        if unknown:
+            raise ValueError(
+                "--radix-eviction-policy return_chance takes 'horizon_s' and 'score' "
+                f"in --radix-eviction-policy-config, got {unknown}."
+            )
+        horizon = config.get("horizon_s", 30.0)
+        if not isinstance(horizon, (int, float)) or horizon <= 0:
+            raise ValueError(
+                "--radix-eviction-policy return_chance needs a positive 'horizon_s' "
+                f"in --radix-eviction-policy-config, got {horizon!r}."
+            )
+        score = config.get("score", "entry")
+        if score not in ("entry", "samples", "lru", "queue"):
+            raise ValueError(
+                "--radix-eviction-policy return_chance takes 'score' entry, samples, "
+                f"lru or queue in --radix-eviction-policy-config, got {score!r}."
+            )
+
     if cfg.enable_hierarchical_cache and cfg.disable_radix_cache:
         raise ValueError(
             "The arguments enable-hierarchical-cache and disable-radix-cache are mutually exclusive "

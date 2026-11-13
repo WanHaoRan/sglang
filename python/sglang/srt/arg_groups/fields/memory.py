@@ -39,7 +39,17 @@ class Memory(msgspec.Struct):
                 "both in --radix-eviction-policy-config), then un-hinted nodes "
                 "by LRU, and last the sessions returning soonest; it needs "
                 "--hicache-storage-next-turn-prefetch observe|on and degrades to "
-                "finished-first LRU on un-hinted traffic. See "
+                "finished-first LRU on un-hinted traffic. 'return_chance' evicts "
+                "the session least likely to return within horizon_s (default 30, "
+                "in --radix-eviction-policy-config) given how long it has been "
+                "idle, from the gap distribution of its next-turn hint: ended "
+                "sessions first, then un-hinted nodes by LRU, then hinted sessions "
+                "by rising chance, and queued turns last; no forecast ends a "
+                "session. Its 'score' is 'entry' (the hint's distribution, default), "
+                "'samples' (the gaps the engine has seen for the entry's key), "
+                "'lru' (no forecast: only the end signal and the queue) or 'queue' "
+                "(the queue alone: ended sessions rank by LRU too). It needs "
+                "--hicache-storage-next-turn-prefetch observe|on. See "
                 "https://docs.sglang.io/docs/advanced_features/radix_eviction_policy "
                 "for what each policy optimizes for."
             ),
@@ -261,11 +271,63 @@ class Memory(msgspec.Struct):
                 "--hicache-storage-read-order deadline. 'horizon': as soon as the span "
                 "is missing and the predicted admission is near. 'just_in_time': only "
                 "when the load estimate says the read must start, which holds pinned "
-                "memory for less time but depends more on the forecast."
+                "memory for less time but depends more on the forecast. "
+                "'expected_cost': start the read where the expected stall equals the "
+                "expected rent of the host memory it pins, under the hint's gap "
+                "distribution and --hicache-storage-next-turn-memory-price, or leave "
+                "it to the turn's arrival when that costs less; a landed read gives "
+                "its pin back once holding it no longer pays, and no forecast ends a "
+                "plan. 'arrival': never read before the turn arrives; the plan only "
+                "serves the arrival gate, the arrival hold and the protection of "
+                "queued turns, so no gap forecast is used."
             ),
-            choices=["horizon", "just_in_time"],
+            choices=["horizon", "just_in_time", "expected_cost", "arrival"],
         ),
     ] = "horizon"
+    hicache_storage_next_turn_landing_quantile: A[
+        Optional[float],
+        (
+            "Under --hicache-storage-next-turn-read-timing just_in_time with a gap "
+            "table: the quantile of the entry's gap distribution a read is timed to "
+            "land at, for every read size. Unset keeps the entry's p10."
+        ),
+    ] = None
+    hicache_storage_next_turn_memory_price: A[
+        float,
+        (
+            "Price of host memory for --hicache-storage-next-turn-read-timing "
+            "expected_cost, in seconds of TTFT per token-second pinned. It is the "
+            "starting price under --hicache-storage-next-turn-price-learning on."
+        ),
+    ] = 5e-5
+    hicache_storage_next_turn_price_learning: A[
+        str,
+        Arg(
+            help=(
+                "'on': move --hicache-storage-next-turn-memory-price every few seconds, "
+                "up while reads are refused host memory and down while the host "
+                "memory beyond the device mirror sits idle. 'harm': set it to what "
+                "staged reads cost the turns that had arrived, per token-second they "
+                "were pinned: the recomputation left to reads refused the room a "
+                "staged read held, counted once for each turn in the queue. Needs "
+                "--hicache-storage-next-turn-read-timing expected_cost."
+            ),
+            choices=["off", "on", "harm"],
+        ),
+    ] = "off"
+    hicache_storage_next_turn_soft_pins: A[
+        str,
+        Arg(
+            help=(
+                "'on': when the read of a turn that has arrived finds no host memory, "
+                "take it from reads staged for turns that have not arrived, least "
+                "likely to return soon first, instead of cutting or dropping the "
+                "arrived turn's read. Needs --hicache-storage-next-turn-prefetch on "
+                "and --hicache-storage-read-order deadline."
+            ),
+            choices=["off", "on"],
+        ),
+    ] = "off"
     hicache_storage_next_turn_arrival_gate: A[
         str,
         Arg(

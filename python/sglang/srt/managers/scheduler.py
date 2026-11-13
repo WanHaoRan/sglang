@@ -1433,6 +1433,10 @@ class Scheduler(
             read_timing=get_memory().hicache_storage_next_turn_read_timing,
             arrival_gate=get_memory().hicache_storage_next_turn_arrival_gate,
             arrival_hold=get_memory().hicache_storage_next_turn_arrival_hold,
+            landing_quantile=get_memory().hicache_storage_next_turn_landing_quantile,
+            memory_price=get_memory().hicache_storage_next_turn_memory_price,
+            price_learning=get_memory().hicache_storage_next_turn_price_learning,
+            soft_pins=get_memory().hicache_storage_next_turn_soft_pins,
         )
         self.tree_cache.next_turn_prefetch = self.next_turn_prefetch
 

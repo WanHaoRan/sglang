@@ -27,6 +27,13 @@ A request may instead carry a table of gaps per reply key (action v2,
 agent_cache/DIST_HINT_DESIGN.md). The reply is not known when the request is sent, so
 the commit resolves it: the reply's key picks an entry, and that entry's p50 is the gap.
 
+Read timing expected_cost plans on the entry's whole distribution instead of its p50
+(agent_cache/PAPER_PLAN.md, "Formulation"; next_turn_policy.py). Host memory has a price:
+a read starts where the stall it risks equals the rent it would pay pinned, or is left
+to the turn's arrival; a landed read gives its pin back once its entry has passed;
+with soft pins the read of an arrived turn takes room from staged reads; and the price
+follows how much room reads were refused. No forecast ends such a plan.
+
 The decisions use this rank's wall clock, so create() refuses multi-rank setups.
 """
 
@@ -57,7 +64,20 @@ from sglang.srt.mem_cache.next_turn_estimators import (
     trigger_time,
     wait_at_arrival,
 )
-from sglang.srt.mem_cache.next_use_eviction import NextUseStrategy
+from sglang.srt.mem_cache.next_turn_policy import (
+    RECOMPUTE_S_PER_TOKEN,
+    GapDistribution,
+    GapSamples,
+    PriceController,
+    read_start,
+    remaining_gaps,
+)
+from sglang.srt.mem_cache.next_use_eviction import (
+    NextUseStrategy,
+    Registration,
+    ReturnChanceStrategy,
+    ReturnForecast,
+)
 from sglang.srt.mem_cache.radix_cache import RadixKey
 from sglang.srt.mem_cache.reply_key import KEY_SEP, reply_key
 
@@ -98,6 +118,19 @@ NTP_JIT_MARGIN_S = 1.0
 # Held reads of queued turns start this much before the load estimate requires. Arbitrary;
 # a late read costs only its own turn, which admission passes over until it lands.
 NTP_HOLD_MARGIN_S = 2.0
+# Expected-cost timing keeps a plan until its turn arrives or its session ends; past this
+# age it is dropped as bookkeeping. Arbitrary (the replay client caps a gap at 1200 s).
+NTP_PLAN_MAX_AGE_S = 1800.0
+# A landed staged read keeps its pin this long past the end of its entry: a turn reaches
+# the scheduler up to ARRIVAL_OFFSET_RANGE_S after its gap.
+NTP_RELEASE_GRACE_S = 5.0
+# A queued turn with no read of its own under way for this long is waiting for the GPU.
+# Arbitrary; an idle GPU admits such a turn within a pass or two (tens of ms).
+NTP_GPU_BOUND_S = 0.5
+# Staged reads per plan under expected-cost timing: one that was released, bumped or
+# refused room may be staged again. Each takes one of the turn's MAX_REFETCHES + 1
+# lookups at the arrival gate, so one is left for the turn's own read at arrival.
+NTP_MAX_STAGINGS = 2
 
 
 class NextTurnHint(msgspec.Struct, frozen=True):
@@ -111,11 +144,13 @@ class NextTurnHint(msgspec.Struct, frozen=True):
 
 
 class GapEntry(msgspec.Struct, frozen=True):
-    """One row of a v2 table; its p90 and n are not read yet."""
+    """One row of a v2 table; its n is not read."""
 
     key: str
     p10: Optional[Annotated[float, msgspec.Meta(ge=0)]] = None
     p50: Optional[Annotated[float, msgspec.Meta(ge=0)]] = None
+    # Unconstrained: a table with an odd p90 was read before this field was, and still is.
+    p90: Optional[float] = None
     ended: bool = False
 
 
@@ -175,6 +210,27 @@ def pick_gap_entry(table: NextTurnTable, key: Optional[str]) -> Optional[GapEntr
     return by_key.get(ANY_GAP_KEY)
 
 
+def entry_distribution(entry: GapEntry) -> GapDistribution:
+    """The entry's gap distribution; a point when it carries its median only."""
+    if entry.p10 is None or entry.p90 is None:
+        return GapDistribution.point(entry.p50)
+    return GapDistribution.from_quantiles(p10=entry.p10, p50=entry.p50, p90=entry.p90)
+
+
+class ResolvedHint(msgspec.Struct, frozen=True):
+    """A finished turn's hint once its reply picked the entry: the point the horizon
+    and just-in-time routines plan on, and the distribution it came from."""
+
+    session: str
+    next_rid: str
+    next_gap_s: float
+    # Negative when a landing quantile above the median times the read later.
+    early_s: float
+    dist: GapDistribution
+    # The table entry the reply picked; None for an exact hint.
+    entry_key: Optional[str] = None
+
+
 def _event_value(key: Optional[str]) -> str:
     """A key as a HICACHE_EVT value; a key can come from model output."""
     if key is None:
@@ -210,6 +266,9 @@ class TurnPlan(msgspec.Struct):
     last_probe_t: float = -math.inf
     # At the last probe: tokens of the key in neither device nor host memory.
     missing_tokens: int = 0
+    # At the last probe: tokens of the key not in device memory. A pinned tail keeps
+    # all of them in the host room, since host eviction takes childless nodes only.
+    room_tokens: int = 0
     # 0 until the trigger time passes with enough pages to read; then the case.
     due_case: int = 0
     trigger_at: Optional[float] = None
@@ -224,6 +283,13 @@ class TurnPlan(msgspec.Struct):
     lookups: int = 0
     # Handed to the Scheduler this tick; reported back by on_refetch_result.
     pending_refetch: Optional[RefetchDecision] = None
+    dist: Optional[GapDistribution] = None
+    entry_key: Optional[str] = None
+    # Expected-cost timing: the distribution's equal-weight gaps, seconds after the
+    # commit, ascending; reads staged so far; the last start decision logged.
+    support: tuple[float, ...] = ()
+    stagings: int = 0
+    decision: str = ""
 
 
 def _handle(plan: TurnPlan) -> CacheRequestHandle:
@@ -258,12 +324,30 @@ class NextTurnPrefetcher:
         read_timing: str = "horizon",
         arrival_gate: str = "off",
         arrival_hold: str = "off",
+        landing_quantile: Optional[float] = None,
+        memory_price: float = 5e-5,
+        price_learning: str = "off",
+        soft_pins: str = "off",
     ):
         self._mode = mode
         self._tree_cache = tree_cache
         self._page_size = page_size
         self._reply_key_source = reply_key_source
         self._just_in_time = read_timing == "just_in_time"
+        # "arrival" keeps expected-cost timing's plans but never stages a read: the
+        # plan then serves the arrival gate, the hold and the queued turn's protection.
+        self._expected_cost = read_timing in ("expected_cost", "arrival")
+        self._stages_reads = read_timing != "arrival"
+        self._landing_quantile = landing_quantile
+        self._price = PriceController(
+            price=memory_price,
+            rule={"off": "fixed", "on": "room", "harm": "harm"}[price_learning],
+        )
+        if self._expected_cost:
+            tree_cache.room_refusals = []
+        # Pins of turns not here yet at the last tick: what a refusal since then could
+        # have used.
+        self._staged_pin_tokens_seen = 0
         self._offset = ArrivalOffset()
         self._admissions = AdmissionRate()
         self._load = L3LoadModel()
@@ -290,11 +374,33 @@ class NextTurnPrefetcher:
         )
         if self._hold_arrived:
             tree_cache.read_not_before_fn = self.read_not_before
+        if mode == "on" and soft_pins == "on" and self._deadline_mode:
+            tree_cache.soft_pin_victims_fn = self.soft_pin_victims
+        # rid -> when the queued turn was first seen with no read of its own under way.
+        self._ready_since: dict[str, float] = {}
         # Requests with an ntp_hold event logged: one per request, not one per pass.
         self._hold_logged: set[str] = set()
-        # Next-use eviction: the strategy's registry, when that policy is on.
+        # Hint-driven eviction: the strategy's registry, when such a policy is on.
         strategy = tree_cache.tree_core.eviction_strategy
-        self._next_use = strategy.registry if isinstance(strategy, NextUseStrategy) else None
+        self._next_use = (
+            strategy.registry
+            if isinstance(strategy, (NextUseStrategy, ReturnChanceStrategy))
+            else None
+        )
+        self._scores_return_chance = isinstance(strategy, ReturnChanceStrategy)
+        self._return_chance = strategy if self._scores_return_chance else None
+        if self._scores_return_chance:
+            tree_cache.prefetch_landed_fn = self.on_read_landed
+        # Gaps seen per entry key, kept only when eviction scores from them.
+        self._scores_samples = (
+            isinstance(strategy, ReturnChanceStrategy) and strategy.score == "samples"
+        )
+        self._gap_samples = GapSamples()
+        # The horizon and just-in-time routines under next-use eviction end a session
+        # whose plan expires; a distribution keeps its tail instead.
+        self._forecast_ends_session = not (
+            self._expected_cost or self._scores_return_chance
+        )
         self._session_tail: dict[str, int] = {}
         self._rid_session: dict[str, str] = {}
 
@@ -314,6 +420,10 @@ class NextTurnPrefetcher:
         read_timing: str = "horizon",
         arrival_gate: str = "off",
         arrival_hold: str = "off",
+        landing_quantile: Optional[float] = None,
+        memory_price: float = 5e-5,
+        price_learning: str = "off",
+        soft_pins: str = "off",
     ) -> NextTurnPrefetcher:
         from sglang.srt.disaggregation.utils import DisaggregationMode
         from sglang.srt.mem_cache.unified_cache.unified_tree_core import (
@@ -343,6 +453,15 @@ class NextTurnPrefetcher:
                 f"--hicache-storage-next-turn-prefetch {mode} needs " + ", ".join(unmet)
             )
         logger.info("HiCache next-turn prefetch: mode=%s", mode)
+        if read_timing in ("expected_cost", "arrival") or soft_pins == "on":
+            logger.info(
+                "HiCache next-turn pricing: read_timing=%s memory_price=%g "
+                "price_learning=%s soft_pins=%s",
+                read_timing,
+                memory_price,
+                price_learning,
+                soft_pins,
+            )
         return cls(
             mode=mode,
             tree_cache=tree_cache,
@@ -351,6 +470,10 @@ class NextTurnPrefetcher:
             read_timing=read_timing,
             arrival_gate=arrival_gate,
             arrival_hold=arrival_hold,
+            landing_quantile=landing_quantile,
+            memory_price=memory_price,
+            price_learning=price_learning,
+            soft_pins=soft_pins,
         )
 
     def on_turn_committed(
@@ -394,7 +517,11 @@ class NextTurnPrefetcher:
             rid=req.rid,
             session=hint.session,
             tail_node_id=tail_node_id,
-            next_use=predicted + (wait or 0.0),
+            next_use=(
+                self._return_forecast(hint, now=now)
+                if self._scores_return_chance
+                else predicted + (wait or 0.0)
+            ),
             now=now,
         )
         self._rid_session[hint.next_rid] = hint.session
@@ -405,9 +532,19 @@ class NextTurnPrefetcher:
             t_commit=now,
             gap_s=hint.next_gap_s,
             predicted_arrival=predicted,
-            expires_at=predicted + max(MIN_EXPIRY_S, hint.next_gap_s),
+            expires_at=(
+                now + NTP_PLAN_MAX_AGE_S
+                if self._expected_cost
+                # A landing quantile above the median times the read past the p50.
+                else predicted
+                + max(0.0, -hint.early_s)
+                + max(MIN_EXPIRY_S, hint.next_gap_s)
+            ),
             next_check=now,
             early_s=hint.early_s,
+            dist=hint.dist,
+            entry_key=hint.entry_key,
+            support=hint.dist.support() if self._expected_cost else (),
         )
         self._plans[plan.next_rid] = plan
         heapq.heappush(self._pending, (now, next(self._seq), plan.next_rid))
@@ -420,12 +557,21 @@ class NextTurnPrefetcher:
             pred_arr_ms=_ms(predicted - now),
         )
 
-    def _resolve_hint(self, req: Req) -> Optional[NextTurnHint]:
+    def _resolve_hint(self, req: Req) -> Optional[ResolvedHint]:
         """The finished turn's hint. A v2 table wins: its v1 companion, if any, only
         serves engines that cannot read tables."""
         table = read_next_turn_table(req.kv_hints)
         if table is None:
-            return read_next_turn_hint(req.kv_hints)
+            hint = read_next_turn_hint(req.kv_hints)
+            if hint is None:
+                return None
+            return ResolvedHint(
+                session=hint.session,
+                next_rid=hint.next_rid,
+                next_gap_s=hint.next_gap_s,
+                early_s=hint.early_s,
+                dist=GapDistribution.point(hint.next_gap_s),
+            )
         if self._reply_key_source == "hint":
             key = table.replay_reply_key
         elif req.tokenizer is None:
@@ -441,11 +587,29 @@ class NextTurnPrefetcher:
         )
         if entry is None or entry.ended or entry.p50 is None:
             return None
-        return NextTurnHint(
+        dist = entry_distribution(entry)
+        if self._landing_quantile is not None:
+            early_s = entry.p50 - dist.quantile(self._landing_quantile)
+        else:
+            early_s = 0.0 if entry.p10 is None else max(0.0, entry.p50 - entry.p10)
+        return ResolvedHint(
             session=table.session,
             next_rid=table.next_rid,
             next_gap_s=entry.p50,
-            early_s=0.0 if entry.p10 is None else max(0.0, entry.p50 - entry.p10),
+            early_s=early_s,
+            dist=dist,
+            entry_key=entry.key,
+        )
+
+    def _return_forecast(self, hint: ResolvedHint, *, now: float) -> ReturnForecast:
+        idle_from = now + self._offset.seconds
+        if not self._scores_samples or hint.entry_key is None:
+            return ReturnForecast(dist=hint.dist, idle_from=idle_from)
+        return ReturnForecast(
+            dist=hint.dist,
+            idle_from=idle_from,
+            key_gaps=self._gap_samples.ascending(hint.entry_key),
+            all_gaps=self._gap_samples.ascending(ANY_GAP_KEY),
         )
 
     def tick(self, *, waiting_queue: list[Req], now: float) -> list[Req]:
@@ -466,6 +630,9 @@ class NextTurnPrefetcher:
 
         rate = self._admissions.rate(now)
         self._last_rate = rate
+        queue_ahead = self._queue_ahead(waiting_queue, now=now)
+        if self._expected_cost:
+            self._follow_room(queue_ahead=queue_ahead, now=now)
         backlog_pages = self._tree_cache.storage_read_backlog_pages()
         refetch = []
         for position, req in enumerate(waiting_queue):
@@ -491,12 +658,28 @@ class NextTurnPrefetcher:
             ):
                 refetch.append(req)
         self._advance_pending(
-            queue_len=len(waiting_queue),
+            queue_len=queue_ahead,
             rate=rate,
             backlog_pages=backlog_pages,
             now=now,
         )
         return refetch
+
+    def _queue_ahead(self, waiting_queue: list[Req], *, now: float) -> int:
+        """Queued turns that a turn arriving now would wait behind. Under expected-cost
+        timing the queue counts only while the GPU is what it waits for: turns waiting
+        on their own storage read are passed over by admission and delay no one, so
+        without a turn that has nothing to read and is still queued, the wait is none."""
+        if not self._expected_cost:
+            return len(waiting_queue)
+        cache = self._tree_cache
+        ready_since = {}
+        for req in waiting_queue:
+            if not cache.has_ongoing_prefetch(req.cache_request_handle):
+                ready_since[req.rid] = self._ready_since.get(req.rid, now)
+        self._ready_since = ready_since
+        gpu_bound = any(now - since >= NTP_GPU_BOUND_S for since in ready_since.values())
+        return len(waiting_queue) if gpu_bound else 0
 
     def on_refetch_result(self, *, req: Req, issued: bool) -> None:
         """The Scheduler re-issued the prefetch tick() asked for; `issued` says
@@ -576,6 +759,12 @@ class NextTurnPrefetcher:
     ) -> None:
         arrival = req.time_stats.wait_queue_entry_time or now
         offset = arrival - plan.t_commit - plan.gap_s
+        if self._scores_samples and plan.entry_key is not None:
+            # Net of the delivery offset, as the forecast's idle time is.
+            gap_s = max(0.0, arrival - plan.t_commit - self._offset.seconds)
+            self._gap_samples.add(key=plan.entry_key, gap_s=gap_s)
+            if plan.entry_key != ANY_GAP_KEY:
+                self._gap_samples.add(key=ANY_GAP_KEY, gap_s=gap_s)
         self._offset.observe(offset)
         plan.arrival_t = arrival
         self._register_next_use(
@@ -760,6 +949,15 @@ class NextTurnPrefetcher:
         wait, est = self._wait_after_arrival(queue_len=queue_len, rate=rate)
         if wait is None:
             return recheck
+        if self._expected_cost:
+            return self._check_pending_expected_cost(
+                plan,
+                wait=wait,
+                est=est,
+                backlog_pages=backlog_pages,
+                now=now,
+                recheck=recheck,
+            )
         admission_at = plan.predicted_arrival + wait
         if self._deadline_mode:
             return self._check_pending_deadline(
@@ -862,6 +1060,240 @@ class NextTurnPrefetcher:
         self._stage(plan)
         return recheck
 
+    def _check_pending_expected_cost(
+        self,
+        plan: TurnPlan,
+        *,
+        wait: float,
+        est: str,
+        backlog_pages: int,
+        now: float,
+        recheck: float,
+    ) -> float:
+        """Case 1 by expected cost: start the read where the stall it risks equals the
+        rent it would pay pinned, or leave it to the turn's arrival; a landed read
+        keeps its pin until its entry has passed."""
+        if not self._stages_reads:
+            return plan.expires_at
+        cache = self._tree_cache
+        handle = _handle(plan)
+        idle_s = now - plan.t_commit - self._offset.seconds
+        passed = self._mode == "on" and not remaining_gaps(
+            support=plan.support, idle_s=idle_s - NTP_RELEASE_GRACE_S
+        )
+        if plan.staged and cache.has_ongoing_prefetch(handle):
+            if passed and cache.read_scheduler.is_parked(handle):
+                # Still waiting for the window or the budget: dispatched now it would
+                # take room only to be released.
+                self._release_staged(plan, tokens=0, now=now)
+            return recheck
+        remaining = remaining_gaps(support=plan.support, idle_s=idle_s)
+        pinned_tokens = cache.pinned_prefetch_tokens_of(handle)
+        if pinned_tokens > 0:
+            # Pinned until admission, as the room model that set the price holds it;
+            # only an entry that has passed gives the pin back.
+            if passed:
+                self._release_staged(plan, tokens=pinned_tokens, now=now)
+            return recheck
+        if plan.staged:
+            # Over without a pin: refused room, a storage miss, or resident after all.
+            # Left to the turn's arrival, which keeps its lookups for that.
+            return recheck
+        if now - plan.last_probe_t >= PROBE_INTERVAL_S:
+            plan.last_probe_t = now
+            in_device, resident = cache.resident_prefix_len(plan.key)
+            plan.missing_tokens = len(plan.key) - resident
+            plan.room_tokens = len(plan.key) - in_device
+        if (
+            plan.missing_tokens < cache.prefetch_threshold
+            or plan.stagings >= NTP_MAX_STAGINGS
+        ):
+            return recheck
+        read_s = self._read_seconds(plan.missing_tokens, backlog_pages)
+        start_in = read_start(
+            remaining=remaining,
+            read_s=read_s,
+            wait_s=wait,
+            rent_per_s=self._price.price * plan.room_tokens,
+        )
+        self._log_start_decision(
+            plan, start_in=start_in, read_s=read_s, wait_s=wait, now=now
+        )
+        if start_in is None:
+            return recheck
+        if start_in > 0.0:
+            return min(now + start_in, recheck)
+        if plan.due_case == 0:
+            self._mark_due(
+                plan,
+                case=1,
+                backlog_pages=backlog_pages,
+                load_s=read_s - NTP_JIT_MARGIN_S,
+                wait_s=wait,
+                admission_at=now + read_s,
+                trigger_at=now,
+                est=est,
+                now=now,
+            )
+        if self._mode != "on":
+            return recheck
+        if (
+            cache.read_scheduler.parked_count() >= NTP_MAX_PARKED
+            or cache.cache_controller.prefetch_rate_limited()
+        ):
+            # Declining in the cache would arm a paced retry for a rid that is
+            # not queued; wait here instead.
+            return min(now + PROBE_INTERVAL_S, recheck)
+        plan.stagings += 1
+        self._stage(plan)
+        # No lookup went out (an unbacked anchor, less missing than the probe saw):
+        # the attempt counts, but the plan is not left as staged with nothing staged.
+        plan.staged = cache.has_ongoing_prefetch(handle)
+        return recheck
+
+    def on_read_landed(self, handle: CacheRequestHandle, node_id: int) -> None:
+        """A storage read's span was inserted as node_id. Under return_chance eviction
+        it belongs to the session of the plan it was read for; without this a span
+        read back under a prompt that sessions share ranks as un-hinted."""
+        plan = self._plans.get(handle.rid)
+        if plan is None:
+            return
+        tail_id = self._session_tail.get(plan.session)
+        if tail_id is not None:
+            self._return_chance.adopt(node_id, tail_id)
+
+    def _read_seconds(self, tokens: int, backlog_pages: int) -> float:
+        """From issuing a staged read to its pages being usable, margin included."""
+        return self._load_seconds(tokens, backlog_pages) + NTP_JIT_MARGIN_S
+
+    def _log_start_decision(
+        self,
+        plan: TurnPlan,
+        *,
+        start_in: Optional[float],
+        read_s: float,
+        wait_s: float,
+        now: float,
+    ) -> None:
+        """One ec_start event per change of decision, not one per probe."""
+        if start_in is None:
+            decision = "arrival"
+        else:
+            decision = "now" if start_in == 0.0 else "wait"
+        if decision == plan.decision:
+            return
+        plan.decision = decision
+        _log_event(
+            "ec_start",
+            plan.next_rid,
+            decision=decision,
+            tokens=plan.missing_tokens,
+            start_ms=_ms(start_in),
+            idle_ms=_ms(now - plan.t_commit),
+            read_ms=_ms(read_s),
+            wait_ms=_ms(wait_s),
+            price=f"{self._price.price:.3g}",
+        )
+
+    def _release_staged(self, plan: TurnPlan, *, tokens: int, now: float) -> None:
+        """Give a landed staged read's pin back; its pages stay cached until evicted."""
+        self._tree_cache.finish(_handle(plan), CacheRequestOutcome.ABORT)
+        plan.staged = False
+        plan.decision = ""
+        _log_event(
+            "ec_release", plan.next_rid, tokens=tokens, idle_ms=_ms(now - plan.t_commit)
+        )
+
+    def soft_pin_victims(
+        self, handle: CacheRequestHandle, tokens_needed: int
+    ) -> list[CacheRequestHandle]:
+        """Rule 2: the staged reads to give up so the read of a turn that has arrived
+        finds room, least likely back within their own read time first. Empty unless
+        the asking turn is queued."""
+        if handle.rid not in self._positions:
+            return []
+        now = self._last_now
+        staged = []
+        for plan in self._plans.values():
+            if plan.arrival_t is not None or plan.dist is None:
+                continue
+            # A turn that reached the scheduler since the last tick may already read
+            # under this handle; bumping it would revoke that read with the pin.
+            if self._tree_cache.has_ongoing_prefetch(_handle(plan)):
+                continue
+            tokens = self._tree_cache.pinned_prefetch_tokens_of(_handle(plan))
+            if tokens <= 0:
+                continue
+            chance = plan.dist.chance_within(
+                idle_s=now - plan.t_commit - self._offset.seconds,
+                horizon_s=self._read_seconds(tokens, 0),
+            )
+            staged.append((chance, tokens, plan))
+        staged.sort(key=lambda entry: entry[0])
+        victims, freed = [], 0
+        for chance, tokens, plan in staged:
+            if freed >= tokens_needed:
+                break
+            freed += tokens
+            plan.staged = False
+            plan.decision = ""
+            victims.append(_handle(plan))
+            # Rule 4: a bumped read was room refused, and it stalls its own turn by
+            # one read if the turn comes back before it is read again.
+            self._price.refuse(tokens)
+            self._price.charge(chance * self._read_seconds(tokens, 0))
+            _log_event(
+                "ec_bump",
+                plan.next_rid,
+                for_rid=handle.rid,
+                tokens=tokens,
+                chance=f"{chance:.3f}",
+            )
+        return victims
+
+    def _follow_room(self, *, queue_ahead: int, now: float) -> None:
+        """Rule 4: feed the price what the room refused, what it left idle, and what
+        staged pins cost the turns that had arrived."""
+        cache = self._tree_cache
+        room_tokens, held_tokens = cache.host_room_tokens()
+        staged_left = self._staged_pin_tokens_seen
+        for handle, tokens in cache.take_room_refusals():
+            self._price.refuse(tokens)
+            if handle.rid in self._queued:
+                # The part of the refused read that staged pins were holding is
+                # recomputed, while its own turn and those waiting for the GPU wait.
+                lost_tokens = min(tokens, staged_left)
+                staged_left -= lost_tokens
+                self._price.charge(
+                    lost_tokens * RECOMPUTE_S_PER_TOKEN * max(1, queue_ahead)
+                )
+        staged_tokens = sum(
+            cache.pinned_prefetch_tokens_of(_handle(plan))
+            for plan in self._plans.values()
+            if plan.arrival_t is None
+        )
+        self._staged_pin_tokens_seen = staged_tokens
+        self._price.observe(
+            now=now,
+            idle_tokens=max(0, room_tokens - held_tokens),
+            staged_tokens=staged_tokens,
+        )
+        update = self._price.step(room_tokens=cache.host_room_floor_tokens)
+        if update is None:
+            return
+        logger.info(
+            "HICACHE_EVT ec_price price=%.3g refused=%d idle=%d excess=%.3f room=%d "
+            "held=%d staged=%d harm_ms=%d",
+            update.price,
+            update.refused_tokens,
+            round(update.idle_tokens),
+            update.excess,
+            room_tokens,
+            held_tokens,
+            round(update.staged_tokens),
+            round(update.harm_s * 1000),
+        )
+
     def read_deadline(self, handle: CacheRequestHandle) -> Optional[float]:
         """Dispatch deadline of a parked read, for the cache; None = needed now."""
         plan = self._plans.get(handle.rid)
@@ -874,6 +1306,10 @@ class NextTurnPrefetcher:
                 queue_len=len(self._queued), rate=self._last_rate
             )
             deadline = plan.predicted_arrival + (wait or 0.0)
+            if self._expected_cost or plan.early_s < 0.0:
+                # Started on purpose past the p50, so it stays a timed read: "now"
+                # would lift the window and the budget for a turn not here yet.
+                return max(deadline - min(0.0, plan.early_s), now + NTP_JIT_MARGIN_S)
             return deadline if deadline > now else None
         position = self._positions.get(handle.rid)
         if position is None or position <= 1:
@@ -977,7 +1413,7 @@ class NextTurnPrefetcher:
         rid: str,
         session: Optional[str],
         tail_node_id: Optional[int],
-        next_use: Optional[float],
+        next_use: Registration,
         now: float,
     ) -> None:
         if self._next_use is None or tail_node_id is None:
@@ -985,15 +1421,16 @@ class NextTurnPrefetcher:
         if session is not None:
             previous = self._session_tail.get(session)
             if previous is not None and previous != tail_node_id:
-                self._next_use.forget(previous)
+                self._next_use.move(previous, tail_node_id)
             self._session_tail[session] = tail_node_id
         self._next_use.register(tail_node_id, next_use)
-        _log_event(
-            "nue_register",
-            rid,
-            node=tail_node_id,
-            next_use_ms="ended" if next_use is None else _ms(next_use - now),
-        )
+        if next_use is None:
+            due = "ended"
+        elif isinstance(next_use, ReturnForecast):
+            due = _ms(next_use.idle_from + next_use.dist.median_s - now)
+        else:
+            due = _ms(next_use - now)
+        _log_event("nue_register", rid, node=tail_node_id, next_use_ms=due)
 
     def _stage(self, plan: TurnPlan) -> None:
         """Case 1: read the evicted span under the next request's own handle; if the
@@ -1044,7 +1481,8 @@ class NextTurnPrefetcher:
             # Pops the loaded-span records and any paced retry left for the rid.
             self._tree_cache.finish(handle, CacheRequestOutcome.ABORT)
         self._rid_session.pop(plan.next_rid, None)
-        self._end_session(rid=plan.next_rid, session=plan.session, now=now)
+        if self._forecast_ends_session:
+            self._end_session(rid=plan.next_rid, session=plan.session, now=now)
         _log_event(
             "ntp_expire", plan.next_rid, staged=int(plan.staged), reason="timeout"
         )
