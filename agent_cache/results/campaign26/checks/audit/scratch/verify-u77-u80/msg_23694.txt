@@ -1,0 +1,45 @@
+=== idx0=23694 ts=2026-11-11T07:01:30.015Z assistant/text
+Your usage limit was reached, so I'm stopping here. The campaign keeps running by itself; the first new arm launched at 07:00Z but I had not yet confirmed it booted cleanly.
+
+## Done
+
+- **Design review**: delivered above, with weak spots and fixes.
+- **Build**: all four rules are in the engine behind flags, plus sample-based eviction scoring, a forecast-free rival, and a harm-based price rule as my proposed replacement for rule 4. Two code reviews found no crash paths; their logic findings are fixed with tests. Engine frozen as `agent_cache/frozen/engine_ec_20261111d`. Nothing is committed.
+- **Eviction replay** (CPU, two recorded timelines), share of returning turns that read from SSD:
+
+  | Eviction order | End signalled | Never signalled |
+  |---|---|---|
+  | LRU | 19.4 % | 19.4 % |
+  | LRU, ended sessions first | 16.9 % | 19.4 % |
+  | Today's order from the p50 | 17.7 % | 27.5 % |
+  | Rule 3, three quantiles, 30 s horizon | 16.2 % | 23.8 % |
+  | Rule 3, every sample of the key | 15.1 % | 18.0 % |
+  | Exact next use | 12.6 % | 12.6 % |
+
+  Most of rule 3's gain over LRU is the end signal; the deck's "rate order" got 29.8 %, worse than LRU.
+- **Two controls on today's GPU unit**, mean TTFT on the 6,715 returning turns all runs share:
+
+  | Arm | Earlier run | Today's control |
+  |---|---|---|
+  | Hint-free | 1.61 s | 1.89 s |
+  | JIT p50 | 1.60 s | 1.35 s |
+
+  Original HiCache's two earlier runs are 5.47 and 6.62 s; JIT exact has one run at 0.51 s. Both arms repeat only to about 0.25–0.3 s, so the deck's opening claim that p50 hints do no better than none (1.51 against 1.47 s) is inside the spread. The repeats lean about 0.27 s toward p50 hints, which is not separable either.
+
+## Running unattended
+
+| Arm | What it is | Window (UTC) |
+|---|---|---|
+| `ec_r13` | rules 1 and 3 at a fixed price | 07:00 to about 09:05 |
+| `nofc` | forecast-free rival | about 09:05 to 11:10 |
+| `ec_r1` | rule 1 alone | about 11:10 to 13:15 |
+
+## Left
+
+- Confirm `ec_r13` booted with the right settings and is logging `ec_start` / `ec_price` lines without tracebacks. If the host is preempted, relaunch with the line at the top of `c26.sh` after emptying `results/.current_run`.
+- Compare the three arms when they land: `python3 -I -B frozen/oracle_scripts_staging/c26_ec/compare_ec.py` from `agent_cache/`.
+- Queue the later arms: sample-based rule 3, the full policy with soft pins and the harm price, rule 3 under JIT timing, the fixed-quantile rival, then 128 users.
+- Write results into `results/campaign26/DECISIONS.md` (it has only the first control so far), `PAPER_PLAN.md` and `CAMPAIGN23_FINDINGS.md`, and draw a figure.
+
+The record so far is in `agent_cache/results/campaign26/DECISIONS.md`; the replay is in `agent_cache/frozen/ec_policy_20261111/evict_replay/FINDINGS.md`.
+

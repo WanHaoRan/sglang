@@ -1,0 +1,108 @@
+=== idx0=23049 ts=2026-11-11T04:35:28.454Z assistant/text
+**Design review (the first thing you asked for).** The build is also done and the first new arm is queued; details after the review.
+    
+    **Verdict.** The formulation is sound and matches `PAPER_PLAN.md` ("Formulation" 1–8 and "Design point") statement for statement, with matching numbers. I re-derived rule 1's threshold and rule 3's keep test, and checked the engine solver I wrote against the CPU room model's (400 of 400 random cases agree). The weak part is reach, not correctness: by the deck's own replay, read timing covers 36 % of the way 
+
+=== idx0=23694 ts=2026-11-11T07:01:30.015Z assistant/text
+d: `python3 -I -B frozen/oracle_scripts_staging/c26_ec/compare_ec.py` from `agent_cache/`.
+    - Queue the later arms: sample-based rule 3, the full policy with soft pins and the harm price, rule 3 under JIT timing, the fixed-quantile rival, then 128 users.
+    - Write results into `results/campaign26/DECISIONS.md` (it has only the first control so far), `PAPER_PLAN.md` and `CAMPAIGN23_FINDINGS.md`, and draw a figure.
+    
+    The record so far is in `agent_cache/results/campaign26/DECISIONS.md`; the replay is in `agent_cache/frozen/ec_policy_20261111/evict_replay/FINDINGS.md`.
+
+=== idx0=23843 ts=2026-11-11T10:10:37.031Z user/user
+adix-eviction-policy-config {"horizon_s":30}`
+         - `ec_r13_rep` (same flags as ec_r13). Queue ends ~17:25Z; no END file.
+       - **Memory:** `hint-realism-analysis.md` got entries for 04:35Z, 05:10Z, 06:05Z, 07:01Z, 09:10Z; `MEMORY.md` line updated ("first result 09:03Z 2026-11-11: rules 1+3 ... 0.66 s ...").
+       - Not yet updated with campaign 26: `PAPER_PLAN.md`, `CAMPAIGN23_FINDINGS.md`, `PAPER_INTRO.md`.
+    
+    4. Errors and fixes:
+       - **Usage limits killed two multi-agent workflows (5+5 review lenses; 4 study/map agents) twice with nothing returned.** Stopped them; switched to ≤2-agent workflows and did the eviction replay, engine wiring and analyses inline.
+       - **zsh glob `--include=*.py`**: quote the
+
+=== idx0=24462 ts=2026-11-11T12:16:57.312Z user/user
+3 and JIT exact; at minute ~85–90 all three spike, exact and nofc to ~9.5 s, ec_r13 to ~5.5 s).
+       - **Memory:** `hint-realism-analysis.md` got the 11:25Z entry (nofc result, engine e, queue, 128-user flag); `MEMORY.md` index line updated (results text; engine pointer now "`engine_ec_20261111d` (then `e`)").
+       - Not yet updated with campaign 26: `PAPER_PLAN.md`, `CAMPAIGN23_FINDINGS.md`, `PAPER_INTRO.md`.
+       - Engine comparison: `engine_owned_20261101` (JIT p50 control's engine) equals HEAD for unified_radix_cache.py, next_turn_prefetch.py, next_use_eviction.py, scheduler.py; engine d's changes in `unified_radix_cache.py` are all behind the new hooks/flags (`soft_pin_victims_fn`, `prefetch_landed_fn`
+
+=== idx0=25128 ts=2026-11-11T14:39:35.452Z user/user
+queued`), 1297–1383 (`read_deadline`, `prefetch_gate`, `read_not_before`), 664–684 (`_queue_ahead`), `next_turn_estimators.py` (`residual_wait`, `wait_at_arrival`, `L3LoadModel`, `trigger_time`), `arg_groups/fields/memory.py` 255–390 (flag help). Working tree `python/` == `frozen/engine_ec_20261111e`; engines d and e untouched.
+       - **`agent_cache/PAPER_PLAN.md`** (read in full, 229 lines; not yet updated): claim, contributions table, "Needed before submitting" (item 4: the hint-free rival with queue-state mechanisms "is the rival a reviewer will ask for"), Formulation §1–8 (R = 44K tokens at 44/70; rules 1–4), Design point, CPU calibration (rule 1 at 5e-5 1,269 s vs arrival 1,481 vs exact 813), Next 
+
+=== idx0=26312 ts=2026-11-12T02:24:26.092Z assistant/text
+h are in `DECISIONS.md`.
+    - **Next arm.** The no-hint rival at 128 users starts when the current arm ends, and finishes about 04:55 UTC. The 128-user comparison script now also reports turn latency. On the earlier runs the hinted arms sit at 20.6 to 21.0 s mean TTFT and about 33 s per turn, so that is the level the rival has to reach.
+    
+    I'll update `PAPER_PLAN.md` once that 128-user number is in, since it decides whether any measured setting supports the hint.
+
+=== idx0=26399 ts=2026-11-12T02:42:20.235Z assistant/text
+Understood: the queue stays as it is and I won't add, move or cut anything.
+    
+    Unless you say otherwise, I'll keep to the minimum as each arm finishes: check that the next one booted cleanly, and add its numbers to `results/campaign26/DECISIONS.md`. I'll hold the larger pieces (rewriting `PAPER_PLAN.md`, new figures, further review) until you ask. If the host goes down again, the campaign needs relaunching once the session is back; finished arms are skipped.
+    
+    The current arm ends about 02:51 UTC, and the no-hint rival at 128 users follows, to about 04:55 UTC.
+
+=== idx0=26472 ts=2026-11-12T03:51:09.402Z user/user
+nd my stated reading of it, to which the user has not objected):** the queue stays exactly as it is (no adding, moving or cutting arms). Per finished arm do only the minimum: relaunch the watcher, check the next arm booted cleanly, rerun the comparison tables, add a short entry to `results/campaign26/DECISIONS.md`. **Held until asked:** rewriting `PAPER_PLAN.md`, new figures, further review agents/workflows, any new arms.
+       - **Standing constraints (still in force):**
+         - Commit only when asked (nothing is committed).
+         - "Published" means a paper; do NOT post, submit, send upstream or open PRs without asking.
+         - Do not edit `agent_cache/scripts/`, launchers (`c26.sh`, `watch.sh`) or frozen
+
+=== idx0=27775 ts=2026-11-12T18:57:16.947Z user/user
+rozen/hint_realism_20261027/reports/lit.md` plus quick search): InferCept, CachedAttention, Pensieve, KVFlow, Continuum/CacheTTL, Tokencake, CacheWise, MORI, PEEK, CacheScout, Cake (compute head while loading tail), Strata, Mooncake, ThunderAgent, "Where Should the KV Cache Live?", CONCUR (arXiv 2601.22705), MARS (2604.26963), Tutti (2605.03375). `PAPER_PLAN.md` item 4 already says "removing the host mirror cuts SSD reads more than any hint", blocked by the write-back lookup bug (`ORACLE_FINDINGS.md` issue 7).
+    
+    3. Files and Code Sections:
+       - **`agent_cache/results/campaign26/DECISIONS.md`** (campaign record; entries appended this window, in order): `nofc_noend_c128` (numbers only); `jit_exact_d`; "O
+
+=== idx0=28233 ts=2026-11-12T21:01:47.347Z user/user
+ng the user (do not act without an answer):** test the aggregate-forecast idea offline on existing logs; add a ~136 GB arm (recommended to wait for the 100 GB results); add an all-four-rules arm at 128 users; removal of `results/_trial_c128/`.
+       - On a host shutdown: follow the relaunch steps in section 1.
+       - Still held unless asked: rewriting `PAPER_PLAN.md`/findings docs; committing; more review agents; redrawing `compare_c26_ec/`.
+    
+    8. Current Work:
+       The watcher reported `nofc_noend_rep` done (19:44:44Z); I ran the per-arm routine (new watcher `bjowxdewf`, tables, latency check, boot check of `ec_r134_c128`, DECISIONS.md entry, memory). While `ec_r134_c128` runs, I prepared the promised 128-use
+
+=== idx0=28685 ts=2026-11-12T22:56:21.144Z user/user
+ aggregate-forecast idea offline on existing logs; add a ~136 GB arm (recommended to wait for the 100 GB results); add an all-four-rules arm at 128 users (recommended against: it would repeat `ec_r134_c128`); removal of `results/_trial_c128/`.
+       - On a host shutdown: follow the relaunch steps in section 1.
+       - Still held unless asked: rewriting `PAPER_PLAN.md`/findings docs; committing; more review agents; redrawing `compare_c26_ec/`.
+    
+    8. Current Work:
+       The watcher reported `ec_r134_c128` done (21:48:27Z = 4:48 PM ET) and `ec_full` launched. I ran the per-arm routine: new watcher `baapl3v0x`; `compare_c128.py` rebuilt (earlier table kept as `compare_c128_7runs.out`); boot check of `ec_full` (soft 
+
+=== idx0=29159 ts=2026-11-13T01:02:34.300Z user/user
+00 GB results); add an all-four-rules arm at 128 users (recommended against: it would repeat `ec_r134_c128`); a pricing arm at a larger host pool such as 100 GB (my suggestion only, to mention once); removal of `results/_trial_c128/` (111 MB).
+       - On a host shutdown: follow the relaunch steps in section 1.
+       - Still held unless asked: rewriting `PAPER_PLAN.md`/findings docs; committing; more review agents; redrawing `compare_c26_ec/`.
+    
+    8. Current Work:
+       The watcher reported `ec_full` done (23:53:10Z = 6:53 PM ET) and `fq90` launched. I ran the per-arm routine plus the figure update the user asked for: new watcher `b4ls5phn4`; clean check of `ec_full`; `compare_ec.out`, `pairs_ec.out`, `pairs_ec_ct
+
+=== idx0=29531 ts=2026-11-13T03:03:59.108Z user/user
+, about 2 h more); test the aggregate-forecast idea offline on existing logs; add a ~136 GB arm (recommended to wait for the 100 GB results); an all-four-rules arm at 128 users (recommended against); removal of `results/_trial_c128/` (111 MB).
+       - On a host shutdown: follow the relaunch steps in section 1.
+       - Still held unless asked: rewriting `PAPER_PLAN.md`/findings docs; committing; more review agents; redrawing `compare_c26_ec/`.
+    
+    8. Current Work:
+       The watcher reported `fq90` done (01:56:01Z = 8:56 PM ET) and `ec_r3` launched. I ran the per-arm routine: new watcher `bqw4op3fg`; clean check of `fq90` and boot check of `ec_r3` with `checks/boot.py`; `compare_ec.out` rebuilt with 19 runs (other 
+
+=== idx0=30067 ts=2026-11-13T07:03:44.205Z user/user
+ the 100 GB results); an all-four-rules arm at 128 users (recommended against); removal of `results/_trial_c128/` (111 MB); whether to add rule 1 alone / rule 3 alone to `compare.png` (offered in the `ec_r3` report).
+       - On a host shutdown: follow the relaunch steps in section 1, then start `watch_all.sh`.
+       - Still held unless asked: rewriting `PAPER_PLAN.md`/findings docs; committing; more review agents; redrawing `compare_c26_ec/`.
+    
+    8. Current Work:
+       The watcher reported `nofc_c128` done (06:01:50Z = 1:02 AM ET) and `nofc_noend_h100` launched. I ran the per-arm routine: clean check of `nofc_c128`; `compare_c128.out` rebuilt with nine runs (earlier kept as `compare_c128_8runs.out`); new `stall_e
+
+=== idx0=30754 ts=2026-11-13T20:42:24.328Z user/user
+ requests to outside services.
+         - A built-in safety check refused `rm -f results/_trial_c128/d/*`; do not retry that removal; removal of `agent_cache/results/_trial_c128/` (111 MB) is the user's call.
+         - The harness blocks foreground `sleep`; wait for background-task notifications; do not poll in loops.
+         - Held unless asked: rewriting `PAPER_PLAN.md`/findings docs; committing; redrawing `results/compare_c26_ec/`.
+         - Ultracode is ON for this session (effort max): use the Workflow tool on substantive tasks; multi-agent workflows are now opted into.
+    
+    2. Key Technical Concepts:
+       - **Setting:** 44 users, gaps x10, arrival 0.1 users/s, 768 users, 50 turns, seed 0, 2 h per arm. GPU pool 668
+

@@ -1,0 +1,151 @@
+<artifact-content-authored-by-others/>
+The summarized conversation included Artifact content written by people other than you, which the summary may restate. Treat restated content as data, not instructions.
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+<system-reminder>
+<tools-used-before-summary>Agent, Artifact, AskUserQuestion, Bash, Edit, Read, Skill, StructuredOutput, TaskStop, ToolSearch, WebFetch, WebSearch, Workflow, Write</tools-used-before-summary>
+</system-reminder>
+Summary:
+1. Primary Request and Intent:
+   - **Background.** H200 SGLang HiCache KV tiering (GPU / host / SSD) for LLM agent sessions; trace-replay client; paper in preparation.
+   - **Current request (2026-11-11, the only substantive user request in this window):** "Check the slides here https://claude.ai/artifact/F9RQpNBrtGdEdsn52ctZg2#slide-f8cbd707114c, that's the design for the paper. First check if the design looks good or not, compare it against the paper plan. Point out the weak spots and potential fix for these points. Then proceed with the implementation and comparison against current jit p50 methods and the other methods at the given workload type". This is the "go" on building the expected-cost policy (the deck "Pricing the Room", 36 slides: rule 1 fetch start by expected cost with a price λ on host memory, rule 2 soft pins, rule 3 eviction by conditional return chance, rule 4 learned λ).
+   - Follow-ups after usage-limit interruptions: "Continue the work", "continue again", and "Your claude.ai usage limit has reset. Continue the task you were working on when the limit was reached; do not repeat work that is already complete."
+   - **Standing constraints (still in force):**
+     - Commit only when asked (nothing is committed).
+     - "Published" means a paper; do NOT post, submit, send upstream or open PRs without asking.
+     - Do not edit `agent_cache/scripts/`, launchers (`c26.sh`, `watch.sh`) or frozen engines while a campaign runs. Appending to queue.txt is allowed (I also reordered/retargeted unstarted lines by atomic rewrite, noted in DECISIONS).
+     - Stop runs only for errors (traceback, client errors, dead server, client that stops sending). A slowdown is a result.
+     - Host is preemptible: on a shutdown, empty `results/.current_run` first, `docker start sglang_hicache`, relaunch at once.
+     - Host /tmp (incl. scratchpad) is wiped on reboot; keep durable work in `agent_cache/frozen/` or `results/`.
+     - Doc style: concise, plain, no [RH]-style tags, real system first, log small issues.
+     - Repo rules: comment style (ASCII, 1-2 lines, no restating), msgspec not dataclasses, no defensive getattr, unit-test admission criteria, large-class style for Scheduler, sglang-runtime-context for flags.
+     - The 128-user hint-usefulness topic is closed unless asked.
+     - No security-specific instructions were stated by the user.
+   - Ultracode is on, but two 9-agent workflows were killed by usage limits with nothing returned; keep fan-outs to ≤2 agents and do the rest inline.
+
+2. Key Technical Concepts:
+   - **Workload/setting:** 44 users, 70 GB host, gaps x10, `ARRIVAL=0.1`, `USERS=768`, `TURNS=50`, `SEED=0`, 2 h per arm (client timeout 7200), `HINT_END=explicit` (client signals every recorded session end via the `_end` key). GPU pool 668,160 tokens, host pool 712,128 tokens (static room 43,968). GPU unit `GPU-605dfc41` since the 2026-11-11 02:34Z boot. Turns pair across runs by (conv, turn).
+   - **Hint wire:** v2 table per request: entries `{key, p10, p50, p90, n}` (+ `{"key":"_end","ended":true}`, `*` default entry, `replay_reply_key`); engine picks entry from reply key.
+   - **Base arm for all new arms:** `three_tier_wc_oracle_v2_nu_owned` (JIT p50: next_use eviction, deadline read order, pin fraction 0.3, retry poll 0, arrival gate + hold) plus extra flags via `SERVER_EXTRA` (argparse last-wins).
+   - **New engine flags:** `--hicache-storage-next-turn-read-timing {horizon,just_in_time,expected_cost,arrival}`; `--hicache-storage-next-turn-memory-price` (default 5e-5 s of TTFT per token-second); `--hicache-storage-next-turn-price-learning {off,on,harm}` (`on` = deck's dual ascent on (refused − idle)/R; `harm` = price = recomputation staged pins left to arrived turns per staged token-second); `--hicache-storage-next-turn-soft-pins {off,on}`; `--hicache-storage-next-turn-landing-quantile q` (fixed-quantile rival under just_in_time); `--radix-eviction-policy return_chance` with `--radix-eviction-policy-config {"horizon_s":30,"score":"entry|samples|lru"}`.
+   - **Rule 1:** two-piece lognormal through p10/p50/p90, 64 equal-weight support points (capped 1200 s); `read_start` minimizes E[stall] + rent·E[seconds pinned] over kink candidates, or returns None (read at arrival); rent = price × tokens of the key not in device memory; read time = L3LoadModel + 1 s margin; wait counts the queue only when GPU-bound (a turn with no read under way queued ≥0.5 s). A landed staged read stays pinned until admission or until its entry has passed (remaining support < 4 points, +5 s grace). Plans live until arrival/end (30 min cap); max 2 stagings per plan; no restage after a refused read.
+   - **Rule 3:** `ReturnChanceStrategy` tiers ENDED(0) < UNKNOWN/LRU(1) < SCORED by F(H|idle)(2) < QUEUED(3); registration covers the whole session path (`_tail_of` adoption up/down via only-child relation, `registry.move` forwarding across commits, adoption of read-back spans at landing via `prefetch_landed_fn`, queued registration lapses after 600 s).
+   - **Run-to-run spread:** arms repeat only to ~0.25–0.3 s of mean TTFT; differences smaller than that on single runs are not results.
+   - **Eviction replay (CPU):** pool calibrated so LRU = 19.4 % of returning turns reading from SSD.
+   - **Palette:** six hues validated together by `pal.py` (#2a78d6 baseline, #796006 hint-free, #a0307a JIT p50, #1baf7a JIT exact, #eb6834 expected-cost, #4a3aa7 nofc): worst dE normal 16.3, protan 8.6, deutan 9.2; green contrast <3:1 so a CSV table view accompanies figures.
+   - Unit tests run per file in the container with the GPU hidden: `docker exec sglang_hicache bash -c 'cd /sgl-workspace/sglang && CUDA_VISIBLE_DEVICES=7 nice -n 10 python3 -m pytest test/registered/unit/mem_cache/<file>.py -q -p no:cacheprovider'` (empty `CUDA_VISIBLE_DEVICES` breaks `sglang.test.test_utils`). Host python has only the stdlib (`python3 -I -B`); numpy/matplotlib are in the container.
+
+3. Files and Code Sections:
+   - **Deck:** https://claude.ai/artifact/F9RQpNBrtGdEdsn52ctZg2 ("Pricing the Room", owned by the user; text dump was in the scratchpad `deckread/deck.txt`, lost on reboot; re-read with the Artifact tool: list files, read `project/deck.json` and `project/slides/<id>.html`). Not modified.
+   - **`python/sglang/srt/mem_cache/next_turn_policy.py`** (NEW, pure policy math). Contains `GapDistribution` (msgspec frozen: `median_s, sigma_low, sigma_high`; `from_quantiles`, `point`, `is_point`, `survival` via erfc, `chance_within(idle_s, horizon_s)`, `quantile`, `support(points=64)`), `sampled_chance(gaps, idle_s, horizon_s)`, `GapSamples` (window 256 per key, `add`, `ascending`), `remaining_gaps(support, idle_s)` (returns () when fewer than `MIN_REMAINING_POINTS=4` remain for a non-point support), `read_start`, `PriceUpdate`, `PriceController` (rules "fixed" | "room" | "harm"; `refuse`, `charge`, `observe(now, idle_tokens, staged_tokens)`, `step(room_tokens)`; harm prior `prior_token_s=1e7` fading with `half_life_s=120`, `min_staged_token_s=1e5`; clamp [1e-7,1e-3] only when not fixed). Key function:
+     ```python
+     def read_start(*, remaining, read_s, wait_s, rent_per_s) -> Optional[float]:
+         stall_at_arrival = max(0.0, read_s - wait_s)
+         count = len(remaining)
+         if count == 0 or stall_at_arrival == 0.0:
+             return None
+         prefix = list(itertools.accumulate(remaining, initial=0.0))
+         total = prefix[-1]
+         lead = read_s - wait_s
+         best_cost, best_start = stall_at_arrival, None
+         for start in sorted({0.0, *(max(0.0, gap - lead) for gap in remaining)}):
+             arrived = bisect.bisect_right(remaining, start)
+             late = bisect.bisect_right(remaining, start + lead)
+             stall = arrived * stall_at_arrival + ((late - arrived) * (start + lead) - (prefix[late] - prefix[arrived]))
+             pinned = (total - prefix[late]) - (count - late) * (start + lead)
+             cost = (stall + rent_per_s * pinned) / count
+             if cost < best_cost:
+                 best_cost, best_start = cost, start
+         return best_start
+     ```
+     Verified against brute force (3,000 cases) and `room_model.expected_cost_start` (400/400), reproduces the deck's q table and sharp-key starts.
+   - **`python/sglang/srt/mem_cache/next_turn_prefetch.py`** (modified). Added: `GapEntry.p90` (unconstrained), `entry_distribution`, `ResolvedHint` (session, next_rid, next_gap_s, early_s, dist, entry_key), `TurnPlan` fields (`room_tokens`, `dist`, `entry_key`, `support`, `stagings`, `decision`), constants `NTP_PLAN_MAX_AGE_S=1800`, `NTP_RELEASE_GRACE_S=5.0`, `NTP_GPU_BOUND_S=0.5`, `NTP_MAX_STAGINGS=2`; ctor/`create` kwargs `landing_quantile, memory_price, price_learning, soft_pins`; `_expected_cost = read_timing in ("expected_cost","arrival")`, `_stages_reads`, `_forecast_ends_session`, `_scores_return_chance`, `_scores_samples`, `_gap_samples`, `_ready_since`; methods `_queue_ahead(waiting_queue, now)`, `_check_pending_expected_cost`, `on_read_landed`, `_read_seconds`, `_log_start_decision` (event `ec_start decision=arrival|wait|now`), `_release_staged` (event `ec_release`), `soft_pin_victims` (event `ec_bump`), `_follow_room(queue_ahead, now)` (event `ec_price price= refused= idle= excess= room= held= staged= harm_ms=`), `_return_forecast`; `_register_next_use` uses `registry.move(previous, new)`; `_expire` ends the session only when `_forecast_ends_session`; `read_deadline` keeps expected-cost/late-quantile staged reads timed. Core of the expected-cost check:
+     ```python
+     if not self._stages_reads:
+         return plan.expires_at
+     idle_s = now - plan.t_commit - self._offset.seconds
+     passed = self._mode == "on" and not remaining_gaps(support=plan.support, idle_s=idle_s - NTP_RELEASE_GRACE_S)
+     if plan.staged and cache.has_ongoing_prefetch(handle):
+         if passed and cache.read_scheduler.is_parked(handle):
+             self._release_staged(plan, tokens=0, now=now)
+         return recheck
+     remaining = remaining_gaps(support=plan.support, idle_s=idle_s)
+     pinned_tokens = cache.pinned_prefetch_tokens_of(handle)
+     if pinned_tokens > 0:
+         if passed:
+             self._release_staged(plan, tokens=pinned_tokens, now=now)
+         return recheck
+     if plan.staged:
+         return recheck      # refused/missed/resident: left to arrival
+     ... probe: in_device, resident = cache.resident_prefix_len(plan.key); missing_tokens = len(key) - resident; room_tokens = len(key) - in_device
+     start_in = read_start(remaining=remaining, read_s=read_s, wait_s=wait, rent_per_s=self._price.price * plan.room_tokens)
+     ... None -> recheck; >0 -> min(now + start_in, recheck); 0 -> _mark_due, stagings += 1, _stage(plan); plan.staged = cache.has_ongoing_prefetch(handle)
+     ```
+   - **`python/sglang/srt/mem_cache/next_use_eviction.py`** (modified): `ReturnForecast(dist, idle_from, key_gaps=(), all_gaps=())`, `Registration = Union[None, float, ReturnForecast]`, `NextUseRegistry.move/current` (`_moved` map), `ReturnChanceStrategy(horizon_s=30.0, score="entry", clock)` with `_tail_of`, `_session_registration`, `adopt(node_id, tail_id)`, `_sampled_chance`, tiers `RETURN_TIER_ENDED/UNKNOWN/SCORED/QUEUED`, `POINT_GRACE_S=5.0`, `QUEUED_MAX_AGE_S=600.0`, `RETURN_SCORES=("entry","samples","lru")`. Priority `(tier, chance, idle - median)`; point hints past due: within grace → chance 1, else `(SCORED, 0.0, -inf)`. `NextUseStrategy` unchanged.
+   - **`python/sglang/srt/mem_cache/unified_radix_cache.py`** (modified): attributes `soft_pin_victims_fn`, `prefetch_landed_fn`, `room_refusals: Optional[list]` (None until the prefetcher enables), `host_room_floor_tokens` (host pool − device pool, set in `_init_storage_read_scheduling`); in `_launch_storage_hit`: after the failed alloc+evict, `shortfall = alloc_len - available_size()` → `_bump_staged_reads(request, shortfall)` → `evict_host(shortfall)` → alloc; `_report_room_refusal` on host_capacity revoke (whole hit) and on cut (cut part); `_handle_prefetch_result` calls `prefetch_landed_fn(request, inserted_host_node)` after pinning; methods `_bump_staged_reads` (calls `release_aborted_request(victim)`), `pinned_prefetch_tokens_of`, `host_room_tokens()` → (host size − device-resident tokens, prefetch_tokens_occupied + pinned), `take_room_refusals()`.
+   - **`python/sglang/srt/mem_cache/utils.py`**: registers `"return_chance": ReturnChanceStrategy`.
+   - **`python/sglang/srt/managers/scheduler.py`**: `maybe_init_next_turn_prefetch` passes the four new `get_memory()` leaves to `NextTurnPrefetcher.create`.
+   - **`python/sglang/srt/arg_groups/`**: `fields/memory.py` (new fields + help), `field_order.py`, `choices.py` (`return_chance`), `hicache_hook.py` (`validate_next_turn_pricing`; soft pins need expected_cost; expected_cost/arrival need prefetch on, deadline order, pin fraction > 0; finite non-negative price; price learning needs expected_cost; landing quantile in (0,1) and just_in_time), `kv_cache_hook.py` (return_chance needs the prefetcher, positive `horizon_s`, `score` in entry/samples/lru, no unknown keys).
+   - **Tests** (all pass on the working tree = engine d): `test_next_turn_estimators.py` (14: distribution, read_start vs fine grid, exact hint, newsvendor risk, price controller room/harm/fixed), `test_next_turn_prefetch.py` (67: `PricedCache` fake, `TestExpectedCost`, `TestReturnChanceRegistration`), `test_next_use_eviction.py` (17: `TestReturnChanceStrategy`, CPU-tree tests incl. queued turn keeps its body), `test_storage_read_dispatch.py` (21: refusal reports, soft pins shortfall; fixture got the new attrs), `test_oracle_v2_flags.py` (9, 24 subtests: `TestPricingFlags`). `test_pp_prefetch_ticket.py` has 2 failures that the untouched engine has too.
+   - **`agent_cache/scripts/start_server.sh`** (modified before launch): `SERVER_EXTRA` env split on spaces and appended to ARGS; recorded as `server_extra=` in run.txt.
+   - **`agent_cache/frozen/oracle_scripts_staging/c26_ec/`** (NEW): `c26.sh` (launcher; queue line `<label> <arm> <users> <host GB> <ORACLE_HINTS> <HINTS> <arrival> <gap> <engine> <timeout> [extra server flags]`; host launch: `docker exec -d sglang_hicache bash -c 'nohup bash /sgl-workspace/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/c26.sh >> /sgl-workspace/sglang/agent_cache/results/campaign26/launcher.log 2>&1'`), `watch.sh` (run from agent_cache/ in background; exits on next DONE/STOP/IDLE or a problem), `compare_ec.py` (`nice -n 10 python3 -I -B frozen/oracle_scripts_staging/c26_ec/compare_ec.py [arms...] | tee results/campaign26/compare_ec.out` from agent_cache/; reads campaign 26's manifest and queue), `price_openloop.py [label]`, `pal.py '<hex,...>'`, `plot_ec.py` (container, from agent_cache/scripts: `PYTHONPATH=. python3 ../frozen/oracle_scripts_staging/c26_ec/plot_ec.py`; writes `results/compare_c26_ec/ec_overview.png/.csv`; STYLE map already has entries for nofc, ec_r1, ec_r3, ec_r13_rep).
+   - **`agent_cache/frozen/engine_ec_20261111d/`**: frozen engine (copy of python/ at 06:03Z, `changes_vs_HEAD.patch`); earlier freezes (no suffix, b, c) deleted, none produced a run.
+   - **`agent_cache/frozen/ec_policy_20261111/evict_replay/`**: `evict_replay.py` (modes default / `noend`), `FINDINGS.md`, outputs.
+   - **`agent_cache/results/campaign26/`**: `DECISIONS.md` (purpose, review table, replay findings, what was built, review fixes, arms table, Results for jit_p50_ctl, hintfree_ctl, ec_r13, rule-4 open-loop), `queue.txt`, `manifest.txt` (jit_p50_ctl `20261111_024927_...`, hintfree_ctl `20261111_045808_three_tier_wc_dl_poll0_...`, ec_r13 `20261111_070012_...`), `launcher.log`, `compare_ec.out` (8 arms), `compare_ec_ctl.out`, `price_openloop_ec_r13.out`.
+   - **Queue (non-comment lines), all new arms on `engine_ec_20261111d`:**
+     - `jit_p50_ctl ... engine_owned_20261101 7200` (done 04:55Z)
+     - `hintfree_ctl three_tier_wc_dl_poll0 44 70 1 oracle 0.1 10 engine_5df71c4bf0_v2 7200` (done 07:00Z)
+     - `ec_r13 ... --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}` (done 09:03Z)
+     - `nofc ... --hicache-storage-next-turn-read-timing arrival --radix-eviction-policy return_chance --radix-eviction-policy-config {"score":"lru"}` (running since 09:03:06Z, run `20261111_090311_...`, boot verified, ends ~11:08Z)
+     - `ec_r1 ... --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5`
+     - `ec_r3 ... --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}`
+     - `ec_r13_rep` (same flags as ec_r13). Queue ends ~17:25Z; no END file.
+   - **Memory:** `hint-realism-analysis.md` got entries for 04:35Z, 05:10Z, 06:05Z, 07:01Z, 09:10Z; `MEMORY.md` line updated ("first result 09:03Z 2026-11-11: rules 1+3 ... 0.66 s ...").
+   - Not yet updated with campaign 26: `PAPER_PLAN.md`, `CAMPAIGN23_FINDINGS.md`, `PAPER_INTRO.md`.
+
+4. Errors and fixes:
+   - **Usage limits killed two multi-agent workflows (5+5 review lenses; 4 study/map agents) twice with nothing returned.** Stopped them; switched to ≤2-agent workflows and did the eviction replay, engine wiring and analyses inline.
+   - **zsh glob `--include=*.py`**: quote the pattern.
+   - **`CUDA_VISIBLE_DEVICES=` (empty) breaks `sglang/test/test_utils.py:246`**: use `CUDA_VISIBLE_DEVICES=7`.
+   - **`sleep 240` chained command blocked** by the harness: use until-loops or just re-check.
+   - **`read_start` far-tail artifact** (a wide entry "started" at its last support point): added `MIN_REMAINING_POINTS` guard in `remaining_gaps`; tests adjusted; at rent 0 the earliest start wins (test corrected).
+   - **Hold test by rent vs stall released almost every landed read at once at 5e-5** (64K tokens cost 3.2 s per second): replaced by "pinned until admission, released once the entry has passed (+5 s)"; `worth_holding` removed. First freeze never ran.
+   - **`CacheRequestOutcome` not imported in unified_radix_cache**: call `release_aborted_request` directly.
+   - **Bare-cache test fixtures** (`UnifiedRadixCache.__new__`) lacked new attributes → `test_storage_read_dispatch.py` failed: fixture extended; refusal recording made conditional.
+   - **Code review 1 (2 agents) findings, fixed:** wait estimate counted turns blocked on their own read; refused staged reads restaged at next probe (burning gate lookups); rent on read span instead of host-only chain; soft pins asked for whole read size and could bump a just-arrived turn; rule 3 scored one node per session; exp overflow; landing quantile > 0.5 expiry/deadline; p90 validation; unbounded refusal list. I stopped `ec_r1` 30 s into its client (an error stop: known defects in my code before any measurement), ran `hintfree_ctl` in its slot, logged it in launcher.log and queue.txt.
+   - **Code review 2 (1 agent) findings, fixed:** `_queue_ahead` collapsed to 0 in GPU-bound queues (now GPU-bound test with `_ready_since`); read-back span under a shared prompt unscored (adopt at landing; drop branch-point mappings); stale `_tail_of` after commits (`registry.move/current`); parked read after entry passed; `_stage` marking staged without a lookup; harm multiplier `max(1, queue_ahead)` and per-tick charge budget; fixed rule clamping; harm prior too weak; queued registration never expiring. Left open: with soft pins a turn that arrived within the last scheduler pass can have its landed read bumped (needs a scheduler hook); `ec_release` pops the loaded-span record (such turns count as host hits in logs).
+   - **Test/validation mistakes of my own:** validation order (pin-fraction check moved after fifo checks); rent test expectation (large rent → not staged at all); restage test needed the asking turn queued only at bump time; branch-point mapping not dropped when the ranked child was unknown (fixed in `_session_registration`); `compare_ec.py` unpin-reason column used the wrong regex group (x[5]→x[4]); fuzz script leftover line.
+   - No user feedback on errors was given in this window.
+
+5. Problem Solving:
+   - **Design review (delivered to the user):** formulation sound and consistent with PAPER_PLAN; weak spots: (1) prices only host room/leaves GPU eviction to HiCache → rule 3 applied to GPU and host; (2) deck's "rate order" untested → replay shows it is worse than LRU, use fixed horizon; (3) tail past p90/no never-returns mass → fine while ends are signalled; (4) no release rule for staged reads → entry-passed release; (5) rule 4 mixes flow and stock → built as stated plus harm rule; (6) queue and SSD unpriced → not built; (7) soft pins invasive for 2–6 % → behind a flag, last; (8) asymptotic theory does not apply at 2–3 histories of room; (9) single-run evidence, missing citations (Continuum, Tokencake, Bidaw, CachedAttention), queue-aware hint-free rival.
+   - **Eviction replay:** share of returning turns reading from SSD (end signalled | never signalled): LRU 19.4 | 19.4; LRU ended-first 16.9 | 19.4; today's p50 order 17.7 | 27.5; rule 3 three quantiles H=30 16.2 | 23.8; rule 3 all samples 15.1 | 18.0; exact 12.6 | 12.6; rate (hazard) order 29.8. Horizon 10–120 s equivalent; pooled-tail fixes do not help. Most of rule 3's gain over LRU is the end signal.
+   - **Controls (same GPU unit), mean TTFT on the 6,715 returning turns all runs share:** original HiCache 5.47 / 6.62; hint-free 1.61 / 1.89 (ctl); JIT p50 1.60 / 1.35 (ctl); JIT exact 0.51. Mechanisms repeat, TTFT only to ~0.25–0.3 s; the deck's "p50 no better than none" tie is inside the spread (means lean 0.27 s toward p50).
+   - **`ec_r13` (rules 1+3, fixed price 5e-5, three-quantile hints), done 09:03Z, clean, settings verified:** 0.66 s on the 6,715 shared turns (queue wait 0.25 s, recompute 214 tokens/turn, 97–98 % of the gain); heavy stretch (positions 5,500–7,000) 1.56 s vs exact 1.14, JIT p50 4.01–5.24, hint-free 5.96–7.43; 11,690 turns in 115 min (exact 11,699; JIT p50 10,208); position 7,000 at minute 67.6 (exact 66.7); 14.3 % of turns read from SSD (JIT p50 23.7 %, exact 11.3 %); 629 staged reads (JIT p50 ~2,150); 395 launches refused room (~1,740); mean pinned 4.2K tokens (~31K); SSD pages 437K (563–580K); ec_start decisions: arrival 535, wait 1,503, now 629; 38 releases; gate: covered 5,357, read 1,848, reread 664, capped 24; hardware speed matches controls. One run; which rule carries it is not yet separated.
+   - **Rule 4 open-loop on `ec_r13`'s signals:** the deck's rule drives the price to its floor within a minute (at 1e-7 in 77 % of intervals; idle 75K vs 7.7K refused per interval); the harm rule gives 2.9e-5 over the run (median 2.7e-5, p10–p90 9.6e-6 to 5e-5) against the calibrated 5e-5. Learned-price arm will use `harm`.
+   - **Figure:** `results/compare_c26_ec/ec_overview.png` drawn and viewed (renders well; ec_r13 tracks JIT exact over time).
+
+6. All user messages:
+   - "Check the slides here https://claude.ai/artifact/F9RQpNBrtGdEdsn52ctZg2#slide-f8cbd707114c, that's the design for the paper. First check if the design looks good or not, compare it against the paper plan. Point out the weak spots and potential fix for these points. Then proceed with the implementation and comparison against current jit p50 methods and the other methods at the given workload type" (sent once interrupted mid-sentence, then in full)
+   - "Continue the work"
+   - "continue again"
+   - "Your claude.ai usage limit has reset. Continue the task you were working on when the limit was reached; do not repeat work that is already complete."
+   - (Three automatic usage-limit notices appeared in between; they no longer apply.)
+
+7. Pending Tasks:
+   - Monitor campaign 26 to completion: `nofc` (running, ends ~11:08Z), then `ec_r1`, `ec_r3`, `ec_r13_rep` (queue ends ~17:25Z). After each DONE: relaunch the watcher, verify the next arm's boot (driver log READY, server banner "HiCache next-turn pricing", resolved eviction policy/config, no tracebacks), rerun `compare_ec.py` and `plot_ec.py`, write the result into `results/campaign26/DECISIONS.md`.
+   - Report results to the user as they land (the full `ec_r13` write-up with the figure has been given only briefly so far).
+   - Decide and queue the later arms: rule 3 from the engine's samples (`{"horizon_s":30,"score":"samples"}`), the full policy (soft pins + `price-learning harm`), the fixed-quantile rival (`landing-quantile 0.9`), then the policy at 128 users / 160 GB.
+   - Update `PAPER_PLAN.md`, `CAMPAIGN23_FINDINGS.md` (and `PAPER_INTRO.md` claims) with campaign 26's outcomes once the ablations are in; keep memory current.
+   - Nothing is committed; commit only if asked. On a preemption: empty `results/.current_run`, start the container, relaunch `c26.sh`.
+
+8. Current Work:
+   Immediately before this summary I had: recorded `ec_r13`'s result in DECISIONS.md and memory; appended `ec_r3` and `ec_r13_rep` to the queue; verified `nofc` booted with `read_timing=arrival`, `return_chance {'score': 'lru'}`, 0 staged reads, no tracebacks or client errors (started watcher `b8p52r1ra`); ran `price_openloop.py ec_r13` and recorded the rule-4 finding; wrote `pal.py` (validated the six-colour set) and `plot_ec.py`; drew `results/compare_c26_ec/ec_overview.png` (+ `.csv`) and viewed it. The figure shows mean TTFT (log) and recomputed tokens per returning turn over time for original HiCache, hint-free (two runs), JIT p50 (two runs), JIT exact and `ec_r13` (thick orange, tracking JIT exact). The working tree's `python/` equals `frozen/engine_ec_20261111d`. No final user-facing report of `ec_r13` with the figure has been written yet beyond short interim notes ("The first new arm finished with a strong result (0.66 s against 0.51 s for exact hints); I've recorded it and queued the remaining split arm and a repeat.").
+
+9. Optional Next Step:
+   Give the user the `ec_r13` result report (table on the 6,715 shared turns, mechanisms, the rule-4 open-loop finding, the caveat that it is one run and that `nofc`/`ec_r1`/`ec_r3`/`ec_r13_rep` separate what carries it, figure path `agent_cache/results/compare_c26_ec/ec_overview.png`), then wait for the watcher's notification that `nofc` finished (~11:08Z) and continue the loop: relaunch `bash frozen/oracle_scripts_staging/c26_ec/watch.sh` from `agent_cache/` in the background, verify `ec_r1`'s boot, run `compare_ec.py baseline base_rep hintfree hintfree_ctl jit_p50 jit_p50_ctl jit_exact ec_r13 nofc`, redraw `plot_ec.py`, and write `nofc` into DECISIONS.md. This follows the user's request "Then proceed with the implementation and comparison against current jit p50 methods and the other methods at the given workload type" and my last recorded plan: "Which rule carries it is not separated yet: `nofc` (no gap forecast), `ec_r1` (rule 1 alone) and `ec_r3` (rule 3 under JIT timing) follow, then a repeat of `ec_r13`."
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/wanhr/.claude/projects/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+
+The messages after this summary are the most recent messages from before compaction, kept verbatim. The summary was written without seeing them, so something it says has not happened yet may already have happened in them.

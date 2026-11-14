@@ -1,0 +1,127 @@
+[27426] 2026-11-12T17:17:39.270Z ASSISTANT TEXT:
+Noted: I'll redraw the figure set when the all-four-rules arm finishes, about 6:51 PM ET, with it as the fifth series.
+
+On the 128-user cases, you're right that they are queued, but only partly:
+
+| 128-user arm | Status |
+|---|---|
+| Baseline HiCache, old Oracle (v2), JIT p50, JIT exact | already exist from earlier campaigns |
+| No hints | finished last night |
+| Rules 1, 3 and 4 with the learned price (`ec_r134_c128`) | queued, about 2:44–4:47 PM ET |
+| No gap forecast, with the end signal (`nofc_c128`) | queued, about 10:58 PM–1:02 AM ET |
+| All four rules | not queued |
+
+Two caveats on the existing 128-user runs: the JIT ones are on the earlier JIT build, and the baseline and old Oracle ran five hours, so comparisons use the first two hours of each.
+
+When the 128-user rules arm finishes this afternoon, I'll draw the same five-series figure set for 128 users in a sibling directory, `agent_cache/results/compare_c26_designs_c128/`.
+
+Decision for you: do you want an all-four-rules arm at 128 users added to the queue? It costs about two hours; at the end of the queue it would finish around 9:15 AM ET Friday. I'd wait until 4:47 PM ET to decide. Rule 2 only acts when a read is refused host room, and in every hinted arm at 128 users so far that happened zero times. If the rules arm also shows zero, an all-four-rules run there would behave the same as rules 1, 3 and 4. I'll report that count when the arm lands and leave the queue as it is unless you say otherwise.
+
+[27431] 2026-11-12T17:22:57.343Z USER(str): Based on the current design and results, is there anything we still missed in terms of performance optimization? Or is there an even better and more noval design for this topic?
+
+[27433] 2026-11-12T17:27:35.070Z TOOL_USE Bash: {"command": "cd /home/wanhr/sglang/agent_cache; python3 -I -B - <<'EOF'\nimport ast, re\nrun = \"20261112_045511_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70\"\nd = ast.literal_eval(re.search(r\"server_args=(\\{.*\\})\", open(f\"results/{run}/server_args.txt\").read()).group(1))\nfor k, v in d.items():\n    if any(s in k for s in (\"hicache\", \"kv_cache\", \"max_total\", \"mem_fraction\", \"max_running\", \"schedule\", \"radix\", \"chunked\", \"max_prefill\", \"page_size\", \"disable_radix\", \"num_continuous\", \"max_queued\", \"kv_dtype\")):\n        print(f\"  {k} = {v!r}\")\nEOF\ngrep -n 'write_policy\\|write-policy' scripts/start_server.sh | cut -c1-200; cd /home/wanhr/sglang; grep -rn '\"write_back\"\\|write_through_selective\\|WRITE_POLICY\\|write_policy ==' python/sglang/srt/mem_cache/*.py python/sglang/srt/arg_groups/*.py 2>/dev/null | cut -c1-190 | head -24", "description": "Check the cache write policy and related engine settings the runs use"}
+
+[27445] 2026-11-12T17:27:39.135Z ASSISTANT TEXT:
+Thinking this through against the data: I'm checking a few numbers (where the remaining time goes, and how the host pool is used) before answering.
+
+[27446] 2026-11-12T17:27:41.312Z TOOL_USE Bash: {"command": "cd /home/wanhr/sglang; sed -n '345,362p' python/sglang/srt/arg_groups/hicache_hook.py; sed -n '98,124p' agent_cache/scripts/start_server.sh | cut -c1-230; ls -d agent_cache/results/*_wb_* agent_cache/results/*wc_wb* 2>/dev/null | head; grep -rn -i 'write_back\\|write-back\\|wc_wb' agent_cache/*.md agent_cache/results/campaign*/DECISIONS.md 2>/dev/null | cut -c1-260 | head -12", "description": "Check whether a write-back (non-mirrored) host tier was ever run"}
+
+[27450] 2026-11-12T17:27:47.930Z TOOL_USE Bash: {"command": "cd /home/wanhr/sglang/agent_cache; sed -n '1,40p' PAPER_PLAN.md | cut -c1-900", "description": "Read the paper plan's claim, contributions and open items"}
+
+[27461] 2026-11-12T17:27:53.923Z TOOL_USE Bash: {"command": "cd /home/wanhr/sglang/agent_cache; wc -l frozen/hint_realism_20261027/reports/lit.md; grep -n '^#\\|^##' frozen/hint_realism_20261027/reports/lit.md | cut -c1-140; grep -n -i -o 'infercept\\|kvflow\\|continuum\\|cachedattention\\|attentionstore\\|pensieve\\|mooncake\\|autellix\\|parrot\\|lmcache\\|cachegen\\|tracelab\\|ayo\\|tempo\\|dynamo\\|concur\\|sagaLLM\\|helium\\|agentix' frozen/hint_realism_20261027/reports/lit.md | sed 's/^[0-9]*://' | tr 'A-Z' 'a-z' | sort | uniq -c | sort -rn", "description": "See what prior work the project's literature report already covers"}
+
+[27464] 2026-11-12T17:27:56.142Z TOOL_USE Bash: {"command": "cd /home/wanhr/sglang/agent_cache; sed -n '27,62p;100,107p;173,244p' frozen/hint_realism_20261027/reports/lit.md | cut -c1-700", "description": "Read the literature report's verified items and takeaways"}
+
+[27474] 2026-11-12T17:28:07.056Z TOOL_USE Bash: {"command": "cd /home/wanhr/sglang/agent_cache; sed -n '655,712p' REALISTIC_HINTS.md | cut -c1-520; echo ----; grep -n -i 'issue 7\\|^7\\. \\|write.back' ORACLE_FINDINGS.md | cut -c1-300 | head -20", "description": "Read the earlier notes on the host mirror and the write-back bug"}
+
+[27478] 2026-11-12T17:28:38.384Z TOOL_USE Bash: {"command": "cd /home/wanhr/sglang/agent_cache; R=results/20261111_130801_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70; RID=$(grep -m1 -o 'HICACHE_EVT s2h_io rid=[^ ]*-c1[0-9][0-9]-t[0-9]*' $R/server.log | sed 's/.*rid=//'); echo $RID; grep -n -F \"$RID\" $R/server.log | grep -v 'd2h\\|h2s' | cut -c1-330 | head -24", "description": "Look at one reading turn's event sequence in the no-hint run"}
+
+[27488] 2026-11-12T17:29:29.287Z TOOL_USE Bash: {"command": "mkdir -p /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad && cat > /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/floor.py <<'EOF'\n\"\"\"Where a returning turn's TTFT goes once the cache policy has done its part: before the scheduler sees the request, in its queue, after admission.\"\"\"\nimport glob, json, os, re, statistics as st, sys\n\nRES = \"results\"\nRTS = re.compile(r\"ReqTimeStats\\(rid=\\S+?-c(\\d+)-t(\\d+), input_len=(\\d+), cached_input_len=(\\d+), output_len=(\\d+).*queue_duration=([\\d.]+)ms, forward_duration=([\\d.]+)ms, entry_time=([\\d.]+)\")\npct = lambda v, q: sorted(v)[min(len(v) - 1, int(q * len(v)))] if v else float(\"nan\")\nfor run in sys.argv[1:]:\n    path = sorted(glob.glob(os.path.join(RES, run, \"client_*\", \"client.jsonl\")))[-1]\n    rows = [json.loads(l) for l in open(path) if l.strip()]\n    t0 = next(r[\"t_start\"] for r in rows if r[\"kind\"] == \"run\")\n    turns = {(r[\"conv\"], r[\"turn\"]): r for r in rows if r[\"kind\"] == \"turn\" and r.get(\"ttft\") is not None}\n    srv = {}\n    for line in open(os.path.join(RES, run, \"server.log\"), errors=\"replace\"):\n        if \"ReqTimeStats(\" in line and (m := RTS.search(line)):\n            srv[(int(m[1]), int(m[2]))] = dict(inp=int(m[3]), cached=int(m[4]), out=int(m[5]), queue=float(m[6]) / 1000, fwd=float(m[7]) / 1000, entry=float(m[8]))\n    rec = []\n    for k, r in turns.items():\n        if k[1]  ...[+3187 chars]
+
+[27493] 2026-11-12T17:30:07.938Z ASSISTANT TEXT:
+Digging into what actually limits the best arm now (it's not the SSD reads); a couple more measurements and I'll answer.
+
+[27494] 2026-11-12T17:30:26.380Z TOOL_USE Bash: {"command": "cat > /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/episode.py <<'EOF'\n\"\"\"What the scheduler queue waits for in a run: per minute, queue seconds accrued, GPU pool use, prefill load, first turns.\"\"\"\nimport collections, datetime as dt, glob, json, os, re, statistics as st, sys\n\nRES = \"results\"\nTS = re.compile(r\"^\\[(.{23})\\] \")\nDEC = re.compile(r\"Decode batch, #running-req: (\\d+), #token: (\\d+), token usage: ([\\d.]+), .*#queue-req: (\\d+)\")\nPRE = re.compile(r\"Prefill batch, #new-seq: (\\d+), #new-token: (\\d+), #cached-token: (\\d+), token usage: ([\\d.]+), #running-req: (\\d+), #queue-req: (\\d+)\")\nRTS = re.compile(r\"ReqTimeStats\\(rid=\\S+?-c(\\d+)-t(\\d+), input_len=(\\d+), cached_input_len=(\\d+), output_len=(\\d+).*queue_duration=([\\d.]+)ms, forward_duration=([\\d.]+)ms, entry_time=([\\d.]+)\")\nstamp = lambda s: dt.datetime.strptime(s, \"%Y-%m-%d %H:%M:%S.%f\").replace(tzinfo=dt.timezone.utc).timestamp()\nrun = sys.argv[1]\npath = sorted(glob.glob(os.path.join(RES, run, \"client_*\", \"client.jsonl\")))[-1]\nrows = [json.loads(l) for l in open(path) if l.strip()]\nt0 = next(r[\"t_start\"] for r in rows if r[\"kind\"] == \"run\")\nfirst = {(r[\"conv\"], r[\"turn\"]) for r in rows if r[\"kind\"] == \"turn\" and (r[\"turn\"] == 0 or r.get(\"mid_start\"))}\nB = 60\nuse, queue_len, pre_tok, pre_n, qsec, big, qsec_first, newtok_first, n_first, running = (collections.defaultdict(list), collections.def ...[+3008 chars]
+
+[27504] 2026-11-12T17:31:21.377Z TOOL_USE Bash: {"command": "cat > /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/recompute.py <<'EOF'\n\"\"\"How much of a run's prefill is history computed again, when, and what refused the read.\"\"\"\nimport collections, glob, json, os, re, statistics as st, sys\n\nRES = \"results\"\nfor run in sys.argv[1:]:\n    path = sorted(glob.glob(os.path.join(RES, run, \"client_*\", \"client.jsonl\")))[-1]\n    rows = [json.loads(l) for l in open(path) if l.strip()]\n    turns = [r for r in rows if r[\"kind\"] == \"turn\" and r.get(\"ttft\") is not None]\n    ret = [r for r in turns if r[\"turn\"] > 0 and not r.get(\"mid_start\")]\n    rec = lambda r: max(r.get(\"reply_reprefilled\") or 0, 0)\n    unc = lambda r: int(r.get(\"prompt_tokens\") or 0) - int(r.get(\"cached_tokens\") or 0)\n    total_unc = sum(unc(r) for r in turns)\n    total_rec = sum(rec(r) for r in ret)\n    first_unc = sum(unc(r) for r in turns if r[\"turn\"] == 0 or r.get(\"mid_start\"))\n    big = [r for r in ret if rec(r) >= 4096]\n    print(f\"\\n{run}: {len(turns)} turns; prefill tokens {total_unc / 1e6:.2f}M = first turns {first_unc / 1e6:.2f}M + new text of returning turns {(total_unc - first_unc - total_rec) / 1e6:.2f}M \"\n          f\"+ history computed again {total_rec / 1e6:.2f}M ({total_rec / total_unc:.0%})\")\n    print(f\"  returning turns recomputing 4K+ tokens: {len(big)} ({len(big) / len(ret):.1%}); they hold {sum(rec(r) for r in big) / max(1, total_rec):.0%} of the recompute; ...[+1554 chars]
+
+[27508] 2026-11-12T17:32:34.402Z TOOL_USE Bash: {"command": "cat > /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/why_recompute.py <<'EOF'\n\"\"\"For the returning turns that computed 4K+ tokens of history again: what the server did for them before admission.\"\"\"\nimport collections, glob, json, os, re, statistics as st, sys\n\nRES = \"results\"\nRID = r\"(?:rid|req)=\\S+?-c(\\d+)-t(\\d+)\"\nPATS = {\"query\": re.compile(r\"HICACHE_EVT s2h_query \" + RID + r\" tokens_req=(\\d+) storage_hit=(\\d+)\"),\n        \"dispatch\": re.compile(r\"HICACHE_EVT srs_dispatch \" + RID + r\" pages=(\\d+) .*launched=(\\d)\"),\n        \"io\": re.compile(r\"HICACHE_EVT s2h_io \" + RID + r\" pages=(\\d+)\"),\n        \"success\": re.compile(r\"HiCache prefetch success \" + RID + r\" completed=(\\d+) matched=(\\d+) loaded=(\\d+)\"),\n        \"shrank\": re.compile(r\"device prefix shrank before admission \" + RID + r\" lookup_match=(\\d+) current_match=(\\d+)\"),\n        \"start\": re.compile(r\"HICACHE_EVT prefetch_start \" + RID + r\" tokens=(\\d+)\"),\n        \"unpin\": re.compile(r\"HICACHE_EVT srs_unpin \" + RID + r\" tokens=(\\d+) reason=(\\w+)\")}\nfor run in sys.argv[1:]:\n    path = sorted(glob.glob(os.path.join(RES, run, \"client_*\", \"client.jsonl\")))[-1]\n    rows = [json.loads(l) for l in open(path) if l.strip()]\n    rec = lambda r: max(r.get(\"reply_reprefilled\") or 0, 0)\n    big = {(r[\"conv\"], r[\"turn\"]): r for r in rows if r[\"kind\"] == \"turn\" and r.get(\"ttft\") is not None ...[+2622 chars]
+
+[27522] 2026-11-12T17:34:02.009Z ASSISTANT TEXT:
+Nearly done: the logs show what limits the best arm. One quick literature check on the two directions I'm about to suggest, then the answer.
+
+[27523] 2026-11-12T17:34:02.397Z TOOL_USE ToolSearch: {"query": "select:WebSearch", "max_results": 3}
+
+[27531] 2026-11-12T17:34:04.777Z TOOL_USE WebSearch: {"query": "LLM KV cache tiering GPU host memory SSD exclusive placement no mirror write-back \"write-through\" duplicate copies host memory capacity", "mode": "standard"}
+
+[27532] 2026-11-12T17:34:05.458Z TOOL_USE WebSearch: {"query": "LLM agent serving admission control KV cache memory pressure working set forecast tool call durations aggregate occupancy thrashing", "mode": "standard"}
+
+[27533] 2026-11-12T17:34:06.333Z TOOL_USE WebSearch: {"query": "KV cache restore from SSD recompute fallback host memory full \"prefix cache\" tiered LLM serving restore directly to GPU streaming load bypass DRAM", "mode": "standard"}
+
+[27545] 2026-11-12T17:35:08.617Z TOOL_USE Bash: {"command": "cd /home/wanhr/sglang/agent_cache; SP=/tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad; mkdir -p results/campaign26/checks/limits; cp $SP/floor.py $SP/episode.py $SP/recompute.py $SP/why_recompute.py results/campaign26/checks/limits/; cd /home/wanhr/sglang/agent_cache; E=20261112_045511_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70; N=20261111_130801_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70; B=20261101_082229_three_tier_wc_custom_L1nat_H70; D=results/campaign26/checks/limits; (nice -n 10 python3 -I -B $D/floor.py $E $N > $D/floor.out; nice -n 10 python3 -I -B $D/episode.py $E > $D/episode.out; nice -n 10 python3 -I -B $D/episode.py $N >> $D/episode.out; nice -n 10 python3 -I -B $D/recompute.py $E $N $B > $D/recompute.out; nice -n 10 python3 -I -B $D/why_recompute.py $E $N > $D/why_recompute.out) 2>&1 | tail -3; ls -la $D | awk '{print $5, $9}'; sed -n '/20261111_130801/,$p' $D/episode.out | head -8 | cut -c1-200; TZ=America/New_York date '+%H:%M %Z'; tail -1 results/campaign26/launcher.log | cut -c1-90", "description": "Keep the limit analyses and their outputs with the campaign checks", "timeout": 900000}
+
+[27550] 2026-11-12T17:35:17.357Z TOOL_USE Bash: {"command": "cd /home/wanhr/sglang/agent_cache; sed -n '/20261111_130801/,$p' results/campaign26/checks/limits/episode.out | cut -c1-170", "description": "Read the no-hint arm's worst minutes"}
+
+[27560] 2026-11-12T17:35:22.161Z ASSISTANT TEXT:
+Writing the findings into the campaign notes, then the answer.
+
+[27561] 2026-11-12T17:35:33.868Z TOOL_USE Bash: {"command": "cd /home/wanhr/sglang/agent_cache; NOW=$(date -u +%H:%MZ); cat >> results/campaign26/DECISIONS.md <<EOF\n\n**What still limits the best arms (${NOW} on 2026-11-12, asked for; scripts and outputs in \\`checks/limits/\\`).** Whole\nruns of \\`jit_exact_d\\` and \\`nofc_noend\\`, returning turns. Mean TTFT of \\`jit_exact_d\\` 0.82 s (median 0.27 s) = 0.14 s\nbefore the scheduler has the request + 0.38 s in its queue + 0.29 s after admission.\n\n- **One turn in a hundred computes its history again, and that is the largest loss left.** 123 returning turns (1.0 %)\n  recompute 4K tokens or more: 11.1 s mean TTFT against 0.71 s for the rest, 14 % of all TTFT seconds, and 2.6M\n  tokens, 23 % of the run's prefill work, 72 % of them in the fourteen worst minutes. \\`nofc_noend\\`: 113 turns, 2.4M\n  tokens, 22 %.\n- **Their history was on SSD and host memory had no room for it.** Of the 123: 58 had the read refused room and read\n  nothing (58 % of the tokens; median 20K tokens on SSD, 2.1 refusals), 25 read it and lost it before admission\n  (21 %), 31 read less than the history (11 %). \\`nofc_noend\\`: 50, 22 and 34. The room beyond the GPU's copy is 44K\n  tokens, about two such histories. No staged read is involved in \\`nofc_noend\\`, so rule 2 cannot be what frees it:\n  staged pins hold 2-6K tokens on average.\n- **The queue is fourteen minutes.** They hold 89 % of \\`jit_exact_d\\`'s queue seconds (65 % of \\`nofc_noend\\`'s): minutes\n  53-62, 86-91 and 116-119 ...[+1317 chars]
+
+[27565] 2026-11-12T17:35:43.177Z TOOL_USE Edit: {"replace_all": false, "file_path": "/home/wanhr/sglang/agent_cache/results/campaign26/DECISIONS.md", "old_string": "  tokens, 23 % of the run's prefill work, 72 % of them in the fourteen worst minutes. `nofc_noend`: 113 turns, 2.4M\n  tokens, 22 %.", "new_string": "  tokens, 23 % of the run's prefill work. 72 % of them fall in fourteen minutes, eleven of which are among the\n  fourteen with the most queue seconds. `nofc_noend`: 113 turns, 2.4M tokens, 22 %."}
+
+[27567] 2026-11-12T17:35:45.021Z TOOL_USE Edit: {"replace_all": false, "file_path": "/home/wanhr/sglang/agent_cache/results/campaign26/DECISIONS.md", "old_string": "  53-62, 86-91 and 116-119, GPU pool 0.8-0.96 full, 3-9 turns a minute with 8K or more tokens to prefill against\n  0.7 otherwise.", "new_string": "  53-62, 86-91 and 116-119, GPU pool 0.8-0.96 full, in most of them 3-9 turns a minute with 8K or more tokens to\n  prefill against 0.7 otherwise."}
+
+[27569] 2026-11-12T17:35:52.057Z TOOL_USE Bash: {"command": "cd /home/wanhr/.claude/projects/-home-wanhr-sglang/memory && cat >> hint-realism-analysis.md <<'EOF'\n- 2026-11-12 ~12:40 PM ET, user asked what performance is still missed and whether a better, more novel design exists. Answer from the logs (`results/campaign26/checks/limits/`, entry \"What still limits the best arms\" in DECISIONS.md): in the best arms 1 % of returning turns (123 in `jit_exact_d`, 113 in `nofc_noend`) recompute 4K+ tokens of history that was on SSD, at ~11 s TTFT each, 14 % of all TTFT seconds and 22-23 % of all prefill work, mostly in the load episodes; 79 % of it is host-room shortage (read refused room, or read then lost), because the write-through host pool mirrors the GPU (room 44K of 712K tokens); rule 2 cannot fix it (no staged reads in the no-hint arm; pins hold 2-6K). Other parts: 0.14 s mean (0.08 median) before the scheduler, growing with prompt length (full-history tokenization, one tokenizer worker; not profiled); GPU pool 0.8-0.96 full in the 14 minutes holding 89 % of queue seconds; h2d costs only 5-45 ms. Directions I gave: (A) single-copy tiers: drop host copies of pages that are on the GPU and already on SSD, restore passes through to the GPU (capacity 712K -> 1,380K vs live median 1,176K); `PAPER_PLAN.md` item 4 already names the mirror, blocked by the write-back lookup bug (ORACLE_FINDINGS issue 7); the queued 100 GB arms are the first test; (B) use forecasts in aggregate (predicted occupancy -> predictive price/admission) s ...[+344 chars]
+
+[27583] 2026-11-12T17:36:18.368Z ASSISTANT TEXT:
+Yes: the logs show the largest remaining loss is not about when to fetch, and I think the stronger design follows from that rather than from more rules.
+
+**Where the best arm's time still goes** (exact hints on the new build, whole run, returning turns; mean TTFT 0.82 s, median 0.27 s):
+
+| Part | Mean | Share |
+|---|---|---|
+| Before the scheduler has the request | 0.14 s | 17 % |
+| Scheduler queue | 0.38 s | 47 % |
+| After admission | 0.29 s | 36 % |
+
+**What we still miss**
+
+1. **Recompute of history that was on SSD.** About 1 % of returning turns (123) recompute their history at about 11 s each. That is 14 % of all TTFT seconds and 23 % of all prefill work, mostly inside the load episodes.
+   - **Cause:** in 58 of them the read was refused host room, and in 25 the data was read and then lost before admission.
+   - **Why room is short:** the host pool keeps a copy of everything on the GPU, so only 44K of its 712K tokens are free, while a refused read needs about 20K.
+   - **Hints don't change it:** the no-hint arm shows the same pattern (113 turns).
+   - **Rule 2 likely won't either:** the no-hint arm has no early reads to release, yet 50 of its turns were refused.
+2. **Per-turn overhead before the scheduler.** It grows with prompt length, from 0.04 s under 8K tokens to 0.17 s over 64K. I have not profiled it, but the server re-tokenizes the whole history each turn with one tokenizer worker.
+3. **GPU memory in the episodes.** Fourteen minutes hold 89 % of the queue seconds, with the GPU pool 80–96 % full. Going from about 20 to 28 running requests adds about 11 % throughput while holding 40 % more of the pool.
+
+**A better design**
+
+- **One copy per page (my recommendation).** A page that is on the GPU and already saved to SSD needs no host copy; host memory then holds only sessions that are off the GPU, and a restore passes straight through to the GPU. In-memory capacity goes from 712K to 1,380K tokens, against a median live context of 1,176K. The forecasts would then decide which sessions get 712K of host memory instead of 44K. Your paper plan already lists the mirror as open item 4, blocked by the write-back lookup bug. The 100 GB arms (about 1–7 AM ET tomorrow) are the first test.
+- **Use forecasts in aggregate (more novel, unproven).** Per-session gap forecasts bought at most 0.2 s, but their sum across sessions is much steadier, and the episodes hit every arm at the same minutes. Predicting occupancy 30–60 s ahead would let the engine act before the room fills, making rule 4 predictive rather than reactive. Agent-level admission that reacts to cache pressure already exists (CONCUR, MARS, ThunderAgent), so the novelty needs a proper check; I only ran a quick search and read snippets.
+- **What I would not pursue:** finer fetch timing. Its ceiling here is about 0.2 s and the literature on it is crowded.
+
+These breakdowns come from one run per arm on one workload, and the capacity gain is arithmetic, not a measurement. Details are in the last entry of `agent_cache/results/campaign26/DECISIONS.md`.
+
+Decisions for you:
+- Should I test the aggregate-forecast idea offline on the existing logs? It needs no GPU and does not touch the queue.
+- Do you want an arm at about 136 GB, which equals the no-mirror capacity? I'd wait for the 100 GB results first.
+
+Sources:
+- [CONCUR (arXiv 2601.22705)](https://arxiv.org/pdf/2601.22705)
+- [MARS (arXiv 2604.26963)](https://arxiv.org/pdf/2604.26963)
+- [ThunderAgent (arXiv 2602.13692)](https://arxiv.org/html/2602.13692)
+
+[27589] 2026-11-12T17:42:15.702Z USER(str): <task-notification>
+<task-id>b82furm9a</task-id>
+<tool-use-id>toolu_01WBCkK7UXNkid4QCieSm1Zy</tool-use-id>
+<output-file>/tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/tasks/b82furm9a.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch campaign 26 until the relaunched learned-price arm ends or a problem appears" completed (exit code 0)</summary>
+</task-notification>
+
+[27594] 2026-11-12T17:42:21.901Z TOOL_USE Bash: {"command": "cd /home/wanhr/sglang/agent_cache; TZ=America/New_York date '+%a %H:%M %Z'; date -u +%H:%M:%SZ; tail -3 /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/tasks/b82furm9a.output | cut -c1-200; echo ---manifest; tail -2 results/campaign26/manifest.txt | awk '{print $1, $2}'; echo ---current; cat results/.current_run; echo; tail -2 results/campaign26/launcher.log | cut -c1-330", "description": "Read the watcher's report and the campaign state"}
+
+[27597] 2026-11-12T17:42:24.783Z TOOL_USE Bash: {"command": "cd /home/wanhr/sglang/agent_cache; bash frozen/oracle_scripts_staging/c26_ec/watch.sh", "description": "Watch campaign 26 until the repeat of the no-hint arm ends or a problem appears", "run_in_background": true}
+
+[27599] 2026-11-12T17:42:27.978Z TOOL_USE Bash: {"command": "cd /home/wanhr/sglang/agent_cache; nice -n 10 python3 -I -B results/campaign26/checks/boot.py 20261112_153600_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70 | grep -v 'server_extra\\|engine=\\|KV Cache\\|Engine startup' | cut -c1-200; tail -1 results/20261112_153600_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70/client_*/client.log | cut -c1-330; (nice -n 10 python3 -I -B frozen/oracle_scripts_staging/c26_ec/compare_ec.py > results/campaign26/compare_ec.out.new 2> results/campaign26/compare_ec.err) ; echo rc=$?; wc -l results/campaign26/compare_ec.out.new results/campaign26/compare_ec.err | head -2; grep -n 'ec_r134\\|ec_r13 \\|jit_exact_d\\|nofc_noend ' results/campaign26/compare_ec.out.new | cut -c1-260", "description": "Check how the learned-price arm ended and rerun the 44-user comparison with it", "timeout": 900000}
+

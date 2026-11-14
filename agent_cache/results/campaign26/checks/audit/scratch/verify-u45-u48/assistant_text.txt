@@ -1,0 +1,1310 @@
+=== line 22357 @ 2026-11-11T03:01:25.447Z MAIN len=183 ===
+Both background jobs are still running (design review; CPU pre-checks and code maps), and the first control arm is healthy. I'm using the wait to write unit tests for the policy math.
+
+=== line 22407 @ 2026-11-11T03:04:11.518Z MAIN len=97 ===
+Usage limit reached — stopping the background agents and saving state so this can resume cleanly.
+
+=== line 22425 @ 2026-11-11T03:04:29.982Z MAIN len=50 ===
+You've hit your 5-hour limit · resets 7:30am (UTC)
+
+=== line 22534 @ 2026-11-11T03:59:10.166Z MAIN len=165 ===
+I'm now writing the engine changes myself, starting with the new flags and the eviction strategy; the two background jobs (review, CPU pre-checks) are still running.
+
+=== line 22572 @ 2026-11-11T04:01:02.911Z MAIN len=168 ===
+Flags and the eviction strategy are in; I'm now wiring rule 1 (expected-cost start and release), soft-pin victim selection and the price controller into the prefetcher.
+
+=== line 22617 @ 2026-11-11T04:03:25.423Z MAIN len=145 ===
+Prefetcher and cache hooks are written; fixing a small import detail, then wiring the scheduler and writing tests. Background jobs still running.
+
+=== line 22689 @ 2026-11-11T04:06:25.337Z MAIN len=169 ===
+Engine wiring for all four rules is written and its new unit tests pass (59 in the prefetcher suite). Checking on the background review and studies, and the control run.
+
+=== line 22720 @ 2026-11-11T04:08:12.060Z MAIN len=50 ===
+You've hit your 5-hour limit · resets 8:50am (UTC)
+
+=== line 22729 @ 2026-11-11T04:19:52.509Z MAIN len=163 ===
+Picking up where I left off: checking the control run and whether the background review and studies survived, then on to freezing and smoke-testing the new engine.
+
+=== line 22838 @ 2026-11-11T04:23:26.581Z MAIN len=127 ===
+One neighbouring test file shows two failures; checking whether my change caused them or they fail on the untouched engine too.
+
+=== line 22872 @ 2026-11-11T04:24:48.534Z MAIN len=169 ===
+Argument resolution accepts the new flags end to end. Running the config guard tests, then freezing the engine and queueing the first new arm behind the running control.
+
+=== line 22890 @ 2026-11-11T04:26:47.189Z MAIN len=196 ===
+Engine frozen and importable. Queueing the first new arm (rule 1 with a fixed price) to start as soon as the running control ends, then getting an independent check of the new code while it waits.
+
+=== line 22912 @ 2026-11-11T04:28:33.897Z MAIN len=165 ===
+Recorded the review and the build in the campaign's decisions file. While the two-reviewer code check runs, I'm preparing the comparison script for when arms finish.
+
+=== line 23039 @ 2026-11-11T04:34:51.702Z MAIN len=135 ===
+Double-checked the new code path by hand for crash risks while two independent reviewers work on it; checking whether they've reported.
+
+=== line 23049 @ 2026-11-11T04:35:28.454Z MAIN len=3618 ===
+**Design review (the first thing you asked for).** The build is also done and the first new arm is queued; details after the review.
+
+**Verdict.** The formulation is sound and matches `PAPER_PLAN.md` ("Formulation" 1–8 and "Design point") statement for statement, with matching numbers. I re-derived rule 1's threshold and rule 3's keep test, and checked the engine solver I wrote against the CPU room model's (400 of 400 random cases agree). The weak part is reach, not correctness: by the deck's own replay, read timing covers 36 % of the way to exact hints and only ties reading-at-arrival once recomputation is weighted ×10, so as specified the design is likely to land near the hint-free arm at 44 users unless eviction (rule 3) carries it.
+
+| # | Weak spot | Fix |
+|---|---|---|
+| 1 | The model prices only the host-only room (44K of 712K tokens) and says GPU eviction stays HiCache's. But most of the p50's cost is in eviction, and today's hinted arms already order GPU and host eviction by next use. | Rule 3 scores every session in GPU and host memory. Built that way; the "problem" slide should say so. |
+| 2 | The deck's "exact order" for rule 3 (rank by return rate, no horizon) was never run. | I ran an eviction replay on two recorded timelines: it reads from SSD on 29.8 % of returning turns, worse than LRU (19.4 %), because right after a turn ends the rate is near zero. The fixed horizon gets 16.2 % (today's p50 order 17.7 %, exact 12.6 %); any horizon from 10 to 120 s works. Use the fixed horizon; drop the rate order. |
+| 3 | Past the p90 the hint says nothing, and there is no "never returns" mass. | The same replay shows the plain lognormal tail is as good as a pooled-tail fix, so nothing needs adding. This relies on the client signalling every session end, which the replay does and a real agent may not; state that assumption. |
+| 4 | Once no forecast ends a session, a staged read's pin has no release (only a 600 s backstop). | Added a hold test: release the pin when holding costs more rent than the stall it saves. |
+| 5 | Rule 4 compares a flow (tokens refused per interval) with a stock (idle tokens). By my arithmetic it settles where refusals are as large as idle room, close to JIT p50's regime, not at the cost-minimising price (pins at about 15 % of the room in the replay). | Built as the deck states so it can be tested, but I would not trust it yet. The rule-1 arm logs both signals every 5 s, so I can check the controller on real data before spending a GPU arm on it. |
+| 6 | The cost model leaves out the queue (a recomputed token costs 6–8× its prefill) and SSD bandwidth. | Not built. Would mean pricing recomputation by queue length, so a turn waits for room rather than recomputes. |
+| 7 | Soft pins change the host allocation path for a 2–6 % replay gain. | Built behind a flag; last in the queue. |
+| 8 | The "approaches the best possible" claim needs many sessions each small against the room; at 70 GB the room holds two or three histories. | Present the theory as where the rules come from, and add a setting where the room holds ten or more. |
+| 9 | Evidence is single runs plus a replay of costs, not TTFT; the reference slide omits Continuum, Tokencake, Bidaw and CachedAttention, which `PAPER_INTRO.md` says must be cited; the queue-aware hint-free rival is not built. | Same-GPU controls are running now; the fixed-quantile rival is now a flag; the rest is open. |
+
+One smaller finding from the replay: using every past sample of a key instead of three quantiles gets 15.1 % against 16.2 %, which is the histogram's case for eviction that the deck left open.
+
+=== line 23212 @ 2026-11-11T04:47:43.034Z MAIN len=174 ===
+Added the forecast-free rival mode as well (reads only at arrival, eviction by end signal and queue). Checking the reviewers now, six minutes before the first new arm starts.
+
+=== line 23430 @ 2026-11-11T05:03:27.387Z MAIN len=136 ===
+Two of my new tests and one validation-order check fail; debugging them before re-freezing (the hint-free control is running meanwhile).
+
+=== line 23475 @ 2026-11-11T05:07:01.973Z MAIN len=146 ===
+All fixes are in and tested (unit suites and the fuzz pass). Freezing the corrected engine and queueing the rule-1 arm behind the running control.
+
+=== line 23540 @ 2026-11-11T05:12:00.866Z MAIN len=2598 ===
+The first GPU result is in, the engine is fixed and re-frozen, and the campaign is running unattended. Status:
+
+**Control result.** Today's JIT p50 rerun finished cleanly at 04:55Z. Its mechanisms repeat (staged reads, launches refused room, pinned tokens, share of turns reading from SSD all within a few percent of the campaign-23 run), but mean TTFT does not repeat to better than about 0.15–0.25 s: 1.46 s against 1.60 s on the 9,660 returning turns the runs share. So on one run each, a difference between arms under about 0.25 s is not a result.
+
+**The build.** All four rules are in the engine behind flags, plus three things the review led me to add:
+- eviction scored from gaps the engine collects per key (the replay's best realistic score);
+- a forecast-free rival: reads only at arrival, eviction by end signal and queue alone;
+- a second price rule that sets the price to the recomputation staged pins actually caused arrived turns (my proposed replacement for rule 4 as the deck states it).
+
+**One stop you should know about.** A two-reviewer code check of my change came back just as the first new arm booted. It found no crash paths but real logic defects in my code (the wait estimate counted turns blocked on their own SSD read; a refused staged read was retried at once and used up the turn's lookups; rent was charged on too few tokens; rule 3 scored one node per session). I stopped that arm 30 seconds into its client, ran the hint-free control in its slot, fixed the defects with tests, and froze the result as `engine_ec_20261111c`. The fix that makes a registration follow the whole session also covers the queued-turn protection that mattered at 128 users.
+
+**Queue from here** (2 h each, 44 users, 70 GB):
+
+| Arm | What it is | Starts about |
+|---|---|---|
+| `hintfree_ctl` | hint-free control on this GPU unit | running, ends 07:03Z |
+| `ec_r13` | rules 1 and 3 at a fixed price | 07:03Z |
+| `nofc` | forecast-free rival | 09:08Z |
+| `ec_r1` | rule 1 alone | 11:13Z |
+
+After those, in this order unless results say otherwise: rule 3 from the engine's own samples, the full policy (soft pins and the harm price), rule 3 under JIT timing, the fixed-quantile rival, then 128 users. A second review of the post-fix changes is running now; if it finds anything that affects `ec_r13` I will re-freeze before 07:03Z.
+
+Nothing is committed. `test_pp_prefetch_ticket.py` has two failures that the untouched engine has too. The record is in `agent_cache/results/campaign26/DECISIONS.md`; the replay findings are in `agent_cache/frozen/ec_policy_20261111/evict_replay/FINDINGS.md`.
+
+=== line 23608 @ 2026-11-11T05:59:27.453Z MAIN len=191 ===
+Two of the new tests fail: one is a real gap in my fix (a branch point kept a stale session mapping when the ranked child was itself unknown), the other is the test's own timing. Fixing both.
+
+=== line 23626 @ 2026-11-11T06:03:07.539Z MAIN len=164 ===
+All suites and the fuzz pass with the second round of fixes. Freezing the engine again and repointing the three queued arms before the control ends at about 07:03Z.
+
+=== line 23647 @ 2026-11-11T06:03:48.825Z MAIN len=1568 ===
+The second review is handled. It cleared all three queued arms to run as they were and found rarer defects; I fixed them anyway because two could bias the results:
+
+- **Wait estimate in a GPU-bound queue.** My first fix stopped counting turns blocked on their own read, but that made the estimate collapse to zero when the GPU really is the bottleneck (the heavy stretch at 44 users, and all of 128 users). The queue now counts only while some turn with nothing to read has stayed queued for 0.5 s.
+- **Rule 3 under a shared prompt.** A span read back from SSD under a prompt that many sessions share ranked as un-hinted, which is the usual shape (about half of reads in the control's log). It is now adopted into its session when it lands, and a session's nodes follow its tail from turn to turn.
+- **Smaller ones:** a read still parked when its entry passes is given up; the harm price's prior was too weak and now fades; a fixed price is no longer clamped; a stale "queued" registration lapses after 600 s.
+
+The engine is re-frozen as `engine_ec_20261111d` and the three queued arms point to it; the earlier copies never produced a run and are deleted. Unit suites and a fuzz over all modes pass.
+
+One known gap is left open: with soft pins on, a turn that reached the scheduler within the last pass can have its landed read bumped. It is one scheduler pass wide and needs a scheduler hook to close; it only affects the later soft-pin arm.
+
+The hint-free control ends at about 07:03Z and `ec_r13` starts after it; I'll check its boot and first minutes of logs then.
+
+=== line 23694 @ 2026-11-11T07:01:30.015Z MAIN len=2795 ===
+Your usage limit was reached, so I'm stopping here. The campaign keeps running by itself; the first new arm launched at 07:00Z but I had not yet confirmed it booted cleanly.
+
+## Done
+
+- **Design review**: delivered above, with weak spots and fixes.
+- **Build**: all four rules are in the engine behind flags, plus sample-based eviction scoring, a forecast-free rival, and a harm-based price rule as my proposed replacement for rule 4. Two code reviews found no crash paths; their logic findings are fixed with tests. Engine frozen as `agent_cache/frozen/engine_ec_20261111d`. Nothing is committed.
+- **Eviction replay** (CPU, two recorded timelines), share of returning turns that read from SSD:
+
+  | Eviction order | End signalled | Never signalled |
+  |---|---|---|
+  | LRU | 19.4 % | 19.4 % |
+  | LRU, ended sessions first | 16.9 % | 19.4 % |
+  | Today's order from the p50 | 17.7 % | 27.5 % |
+  | Rule 3, three quantiles, 30 s horizon | 16.2 % | 23.8 % |
+  | Rule 3, every sample of the key | 15.1 % | 18.0 % |
+  | Exact next use | 12.6 % | 12.6 % |
+
+  Most of rule 3's gain over LRU is the end signal; the deck's "rate order" got 29.8 %, worse than LRU.
+- **Two controls on today's GPU unit**, mean TTFT on the 6,715 returning turns all runs share:
+
+  | Arm | Earlier run | Today's control |
+  |---|---|---|
+  | Hint-free | 1.61 s | 1.89 s |
+  | JIT p50 | 1.60 s | 1.35 s |
+
+  Original HiCache's two earlier runs are 5.47 and 6.62 s; JIT exact has one run at 0.51 s. Both arms repeat only to about 0.25–0.3 s, so the deck's opening claim that p50 hints do no better than none (1.51 against 1.47 s) is inside the spread. The repeats lean about 0.27 s toward p50 hints, which is not separable either.
+
+## Running unattended
+
+| Arm | What it is | Window (UTC) |
+|---|---|---|
+| `ec_r13` | rules 1 and 3 at a fixed price | 07:00 to about 09:05 |
+| `nofc` | forecast-free rival | about 09:05 to 11:10 |
+| `ec_r1` | rule 1 alone | about 11:10 to 13:15 |
+
+## Left
+
+- Confirm `ec_r13` booted with the right settings and is logging `ec_start` / `ec_price` lines without tracebacks. If the host is preempted, relaunch with the line at the top of `c26.sh` after emptying `results/.current_run`.
+- Compare the three arms when they land: `python3 -I -B frozen/oracle_scripts_staging/c26_ec/compare_ec.py` from `agent_cache/`.
+- Queue the later arms: sample-based rule 3, the full policy with soft pins and the harm price, rule 3 under JIT timing, the fixed-quantile rival, then 128 users.
+- Write results into `results/campaign26/DECISIONS.md` (it has only the first control so far), `PAPER_PLAN.md` and `CAMPAIGN23_FINDINGS.md`, and draw a figure.
+
+The record so far is in `agent_cache/results/campaign26/DECISIONS.md`; the replay is in `agent_cache/frozen/ec_policy_20261111/evict_replay/FINDINGS.md`.
+
+=== line 23714 @ 2026-11-11T09:03:58.061Z MAIN len=50 ===
+You've hit your 5-hour limit · resets 9:10am (UTC)
+
+=== line 23834 @ 2026-11-11T09:14:26.294Z MAIN len=2664 ===
+**First result from the new policy: rules 1 and 3 on realistic three-quantile hints reach 0.66 s mean TTFT, close to the 0.51 s of exact hints.** It is one run, but the gap to today's arms is two to three times their run-to-run spread.
+
+Mean TTFT on the 6,715 returning turns that all eight runs share (44 users, 70 GB, 2 h):
+
+| Arm | Mean TTFT | Recomputed tokens per turn | Turns reading from SSD |
+|---|---|---|---|
+| Original HiCache (two runs) | 5.47, 6.62 s | 2,962, 3,814 | 27.6 %, 30.3 % |
+| Hint-free (two runs) | 1.61, 1.89 s | 750, 903 | 19.2 %, 20.6 % |
+| JIT p50 (two runs) | 1.60, 1.35 s | 970, 928 | 23.8 %, 23.7 % |
+| **Rules 1 and 3, p10/p50/p90 hints** | **0.66 s** | **214** | **14.3 %** |
+| JIT exact | 0.51 s | 120 | 11.3 % |
+
+- **It keeps pace with exact hints through the whole run.** It served 11,690 turns in 115 minutes (exact 11,699, JIT p50 about 10,100), and in the heavy stretch it is at 1.56 s against 1.14 s for exact and 4–7 s for the others.
+- **It gets there by reading less and pinning almost nothing.** It staged 629 reads against about 2,150 for JIT p50, held 4.2K pinned tokens on average against about 31K, and had 395 read launches refused room against about 1,740.
+- **The run was clean.** Settings were confirmed in the server log, with no tracebacks or client errors, at the same hardware speed as the controls.
+- **Which rule carries it is not known yet.** The forecast-free rival is running now and decides whether the gap forecast matters at all, or whether the end signal, queue protection and not pinning early are enough.
+
+Two other things came out of this arm's logs:
+
+- **Rule 4 as the deck states it would fail here.** Replayed on the arm's own room signals, its price falls to the floor within a minute and stays there 77 % of the time, because idle room (75K tokens on average) dwarfs refused tokens (7.7K per interval).
+- **The harm-based price I proposed lands near the calibrated one unprompted.** Measured harm per staged token-second is 2.9e-5 over the run, against 5e-5 from the CPU model. The learned-price arm will use that rule.
+
+Queue from here, 2 h each:
+
+| Arm | What it is | Ends about (UTC) |
+|---|---|---|
+| `nofc` | forecast-free rival, running, settings verified | 11:08 |
+| `ec_r1` | rule 1 alone | 13:13 |
+| `ec_r3` | rule 3 alone | 15:18 |
+| `ec_r13_rep` | repeat of the result above | 17:23 |
+
+The sample-based score, the full policy with soft pins and the harm price, and 128 users are not queued yet. Nothing is committed.
+
+Files are in `agent_cache/results/`:
+- campaign26/DECISIONS.md
+- campaign26/compare_ec.out
+- campaign26/price_openloop_ec_r13.out
+- compare_c26_ec/ec_overview.png
+
+=== line 24014 @ 2026-11-11T11:09:49.182Z MAIN len=146 ===
+Deciding the next arms: the deck plans both settings, so I'm checking how the earlier 128-user arms were launched before adding them to the queue.
+
+=== line 24038 @ 2026-11-11T11:10:59.715Z MAIN len=114 ===
+Still on the same step: working out which slide your link points to, so the next arms match the setting you meant.
+
+=== line 24214 @ 2026-11-11T11:13:56.683Z MAIN len=105 ===
+Tests pass with the new switch. Freezing it as a new engine copy now, then I'll queue the remaining arms.
+
+=== line 24268 @ 2026-11-11T11:15:05.645Z MAIN len=134 ===
+Checking that every newly queued arm's flags pass the server's own validation, so a bad combination can't stop the campaign overnight.
+
+=== line 24291 @ 2026-11-11T11:16:31.425Z MAIN len=175 ===
+Running: rule 1 alone (ends about 13:10 UTC). Meanwhile I'm writing a per-turn split of where the remaining gap to exact hints sits, before recording the forecast-free result.
+
+=== line 24351 @ 2026-11-11T11:18:01.522Z MAIN len=91 ===
+Recording the forecast-free result and the new queue in the campaign log, then I'll report.
+
+=== line 24418 @ 2026-11-11T11:19:28.135Z MAIN len=150 ===
+Adding one more control (today's JIT p50 on the new engine build, flags off) so the comparison can't be blamed on the engine version; then the report.
+
+=== line 24453 @ 2026-11-11T11:21:20.980Z MAIN len=3436 ===
+**The rival that uses no gap forecast finished level with rules 1 and 3 on the first set of turns (0.69 s against 0.66 s) and 0.12 s behind over the whole run.** That 0.12 s is inside one run's noise, so what rule 1 adds on top is not established yet.
+
+The rival reads only at arrival and evicts ended sessions first and queued turns last, by LRU in between. From the hint it takes only the end signal and which request continues which session.
+
+Mean TTFT on shared returning turns (44 users, 70 GB, 2 h):
+
+| Turn set | Turns | JIT exact | Rules 1 and 3 | No-forecast rival | JIT p50 | Hint-free |
+|---|---|---|---|---|---|---|
+| Shared with original HiCache | 6,715 | 0.51 s | 0.66 s | 0.69 s | 1.35 s | 1.89 s |
+| Shared by the three leading arms | 11,299 | 0.70 s | 0.76 s | 0.88 s | – | – |
+| p99 on the 11,299 | | 10.4 s | 9.2 s | 13.3 s | – | – |
+
+JIT p50 and hint-free are this morning's control runs; the earlier runs gave 1.60 and 1.61 s. My last message gave only the first row, which stops where original HiCache's runs stop; the second row is the fairer one for the leading arms.
+
+- **JIT p50's early reads are a net loss here.** It has every mechanism the rival has, plus reads timed for the p10 and eviction by the p50, and is 0.66–0.91 s slower. The rule-1-alone arm (running) and the rule-3-alone arm say which of the two costs it.
+- **Rule 1's lead over the rival sits in the second load episode and the tail.** It has 97 turns over 10 s against 197. The slowest 1 % of turns carry 23 % of the summed TTFT in each leading arm, so I queued repeats of both.
+- **Exact hints are 0.06 s ahead of the policy and 0.18 s ahead of the rival.** That is all a gap forecast can still win at this load. The deck's replay had already put rule 1 level with reading at arrival once recomputation is charged for the queue it causes.
+
+## Queue changes
+I rewrote the unstarted part of the queue; every line's flags pass the server's validation on its own engine.
+
+| Arm | What it is | Ends about (UTC) |
+|---|---|---|
+| `ec_r1` | rule 1 alone, running, boot verified | 13:10 |
+| `nofc_noend` | the rival with the end signal ignored too: the hint-free rival the deck lists | 15:10 |
+| `ec_r3` | rule 3 alone | 17:15 |
+| `ec_r13_rep`, `nofc_rep` | repeats of the two leading arms | 21:20 |
+| `jit_p50_d` | today's JIT p50 on the new engine build, new flags off | 23:25 |
+| `ec_r134` | rules 1 and 3 with the price learned from harm | 01:25 |
+| `fq90` | the deck's fixed-quantile rival (lands at the p90) | 03:30 |
+| `ec_full` | all four rules, with soft pins | 05:35 |
+| `nofc_c128`, `ec_r134_c128` | 128 users, 160 GB: the rival, then rules 1, 3 and 4 | 09:45 |
+
+- **One small engine addition.** `nofc_noend` needed an eviction score that ranks ended sessions by LRU. It is frozen as a new engine copy (`engine_ec_20261111e`); the earlier copies are untouched and the unit tests pass.
+- **Dropped for now:** rule 3 scored from the engine's own gap samples. With the rival level with the policy, that score is worth less than one run can show.
+- **The 128-user pair is your call.** The deck plans both settings, but these arms touch the 128-user hint question you closed. I put them last and will only report their numbers; say so if you'd rather I remove them.
+
+Nothing is committed. Files are in `agent_cache/results/`:
+- campaign26/DECISIONS.md
+- campaign26/compare_ec.out
+- campaign26/split_ec_trio.out
+- compare_c26_ec/ec_overview.png
+
+=== line 24573 @ 2026-11-11T13:09:25.703Z MAIN len=198 ===
+Rule 1 alone finished cleanly (0.67 s on the shared turns, the same as rules 1+3 and the no-forecast rival); the hint-free rival is booting. Recording the result and checking the new arm's boot now.
+
+=== line 24618 @ 2026-11-11T13:10:39.105Z MAIN len=142 ===
+Writing the rule-1 result into the decision log, then redrawing the figure; the hint-free rival booted with the right settings and is running.
+
+=== line 24643 @ 2026-11-11T13:11:58.473Z MAIN len=179 ===
+Measuring how much SSD read time each arm puts inside a turn's wait (to test whether the 0.12 s gap is the read stall or noise); the hint-free rival is running until about 15:10Z.
+
+=== line 24782 @ 2026-11-11T13:17:35.625Z MAIN len=152 ===
+Reading how the arrival hold estimates a turn's wait, to see whether a fairer "read at arrival" rival needs a new arm; the campaign is running normally.
+
+=== line 24838 @ 2026-11-11T13:20:40.726Z MAIN len=170 ===
+Queue reordered (same-build JIT p50 control next, then the repeats); fixing a timestamp in its note, then validating the queue and writing the wait analysis into the log.
+
+=== line 24857 @ 2026-11-11T13:22:01.991Z MAIN len=132 ===
+Writing the wait analysis and the new queue order into the decision log; the hint-free rival is running cleanly (ends about 15:10Z).
+
+=== line 24899 @ 2026-11-11T13:23:21.879Z MAIN len=136 ===
+While the hint-free rival runs (to about 15:10Z), I'm preparing the comparison script for the two 128-user arms at the end of the queue.
+
+=== line 24930 @ 2026-11-11T13:24:27.809Z MAIN len=158 ===
+The 128-user comparison script is ready and tested on the earlier runs. Next: figure support for the new arms, then waiting on the running arm (about 15:10Z).
+
+=== line 24998 @ 2026-11-11T13:25:39.092Z MAIN len=120 ===
+Drawing a per-arm figure of where the wait goes (one stacked bar per run); the campaign is still on the hint-free rival.
+
+=== line 25017 @ 2026-11-11T13:26:46.762Z MAIN len=145 ===
+Reading the paper plan so I can fold campaign 26's results into it once the control and the repeats are in (tonight); the running arm is healthy.
+
+=== line 25039 @ 2026-11-11T13:28:20.427Z MAIN len=190 ===
+Measured the room staging has to work with at this setting: about 54K tokens (two or three histories), 40–46K in the load episodes. Adding that to the log; the running arm ends about 15:10Z.
+
+=== line 25075 @ 2026-11-11T13:30:22.852Z MAIN len=2940 ===
+**Rule 1 alone finished level with rules 1 and 3 and with the no-forecast rival.** So JIT p50's loss comes from when its reads start, not from its eviction order. All of this is one run per arm.
+
+Mean TTFT on shared returning turns (44 users, 70 GB, 2 h):
+
+| Turn set | Turns | JIT exact | Rules 1 and 3 | Rule 1 alone | No-forecast rival | JIT p50 |
+|---|---|---|---|---|---|---|
+| Shared with original HiCache | 6,715 | 0.51 s | 0.66 s | 0.67 s | 0.69 s | 1.35, 1.60 s |
+| Shared by the four leading arms | 11,198 | 0.70 s | 0.76 s | 0.86 s | 0.88 s | – |
+
+## Where the wait is
+I split each turn's TTFT on the 11,198 turns by what it was waiting for:
+
+| Per turn | JIT exact | Rules 1 and 3 | Rule 1 alone | No-forecast rival |
+|---|---|---|---|---|
+| Waiting only for its own SSD read | 0.05 s | 0.13 s | 0.12 s | 0.17 s |
+| Waiting for its read, then for the GPU as well | 0.13 s | 0.11 s | 0.15 s | 0.17 s |
+| Other queue wait | 0.11 s | 0.11 s | 0.15 s | 0.13 s |
+| After admission | 0.41 s | 0.41 s | 0.44 s | 0.41 s |
+
+- **Read timing can win at most 0.17 s per turn here, a fifth of TTFT.** Rule 1 on three-quantile hints removes 0.045 s of it under either eviction order; exact hints remove 0.12 s. That is about a third of the way from reading at arrival to exact hints, which is what the deck's replay predicted.
+- **The limit is room, not the SSD.** Host memory beyond the GPU's mirror is 54K tokens at the median and 40–46K in the two load episodes, which is two or three histories. The SSD read thread is busy 16–20 % of a run.
+- **JIT p50's staged reads do land; the room they hold is what costs.** Its wait for its own reads equals rule 1's, but 70 % more of its turns read from SSD, and it loses 0.27 s after admission and 0.25 s in the queue.
+- **Correction to two earlier notes:** I suspected the arrival hold of causing most of the read wait. It does not: held turns mostly waited for the GPU anyway, and the hold costs at most 0.02 s per turn.
+
+## What happens next
+- **The hint-free rival is running** (no end signal either), until about 15:10 UTC.
+- **I moved the same-build JIT p50 control up**, to about 17:15 UTC. Every reading above assumes the new engine build behaves like the old one with the new flags off, and that run tests it. A separate reviewer is comparing the two builds' code on that path now.
+- **Then the two repeats** (about 21:20 UTC), the fixed-quantile rival, the learned price, soft pins, rule 3 alone, and the two 128-user arms. The queue still ends about 10:00 UTC tomorrow.
+
+The setting may be the weak spot for the paper's main rule: with room for two or three histories, no forecast has much to stage. I have not queued another setting; the deck's planned third one is where rule 1 would have to show its worth.
+
+Nothing is committed. Files are in `agent_cache/results/`:
+- campaign26/DECISIONS.md
+- campaign26/stall_ec.out
+- campaign26/stall_ec_ctl.out
+- compare_c26_ec/ec_wait_split.png
+
+=== line 25119 @ 2026-11-11T13:43:32.676Z MAIN len=594 ===
+The independent code comparison is back: with the new flags off, the new engine build behaves the same as the one the JIT p50 control ran on. The reviewer traced both copies statically and found no reachable difference; I spot-checked three of its claims in the code. So the earlier comparisons against JIT p50 do not hinge on the build, and the same-build run at about 17:15 UTC now serves mainly as a third JIT p50 sample.
+
+The hint-free rival is at minute 34 with no errors and no tracebacks; it ends about 15:10 UTC. The watcher will wake me then to record it and check the next arm's boot.
+
+=== line 25222 @ 2026-11-11T15:12:48.210Z MAIN len=100 ===
+The hint-free rival finished clean; I'm analysing it now while the same-build JIT p50 control boots.
+
+=== line 25267 @ 2026-11-11T15:13:53.175Z MAIN len=125 ===
+Writing the hint-free rival's result into the decisions file; the same-build JIT p50 control is running with the right flags.
+
+=== line 25307 @ 2026-11-11T15:15:42.147Z MAIN len=98 ===
+Recording the hint-free rival's result, then fixing the 128-user arm set before those lines start.
+
+=== line 25323 @ 2026-11-11T15:16:53.947Z MAIN len=76 ===
+Queue updated and validated; now writing the result into the decisions file.
+
+=== line 25364 @ 2026-11-11T15:18:01.930Z MAIN len=101 ===
+Result recorded; updating the memory index, then I wait for the same-build control (about 17:14 UTC).
+
+=== line 25408 @ 2026-11-11T15:19:28.069Z MAIN len=111 ===
+Built a pairwise comparison for the repeats (with within-run intervals); testing it on the control repeats now.
+
+=== line 25440 @ 2026-11-11T15:20:39.214Z MAIN len=165 ===
+The same-build control is healthy at minute 9; I'm confirming that its staged reads begin (the earlier control's began at minute 10) before I go quiet until it ends.
+
+=== line 25449 @ 2026-11-11T15:21:27.639Z MAIN len=2145 ===
+The rival with no hints at all finished clean, and it lands level with the rival that has the end signal. One run each so far, so the small differences below are not yet confirmed.
+
+| Arm | Mean TTFT, 6,715 shared turns | Mean TTFT, 11,198 turns the leading arms share | In the two load episodes | SSD pages read |
+|---|---|---|---|---|
+| JIT, exact hints | 0.51 s | 0.70 s | 1.53 s | 388K |
+| Rules 1 and 3 | 0.66 s | 0.76 s | 1.66 s | 437K |
+| Rule 1 alone | 0.67 s | 0.86 s | 2.02 s | 448K |
+| Rival with the end signal (`nofc`) | 0.69 s | 0.88 s | 2.12 s | 469K |
+| Rival with no hints (`nofc_noend`) | 0.71 s | 0.91 s | 2.14 s | 562K |
+| JIT p50, two runs | 1.35, 1.60 s | | | |
+| Earlier hint-free arm, two runs | 1.61, 1.89 s | | | |
+
+- **No hints gets 96 % of the way:** from original HiCache (5.47 and 6.62 s) to exact hints, the no-hint rival covers 96 %. The earlier hint-free arm's 72-82 % lacked the queue-state mechanisms (queued turns' history kept, arrival gate and hold, re-reads), which are worth about 1.0 s here.
+- **The end signal:** it is worth 0.03 s of TTFT, which is inside noise, and about a sixth of the SSD traffic.
+- **What hints add over no hints:** three-quantile hints under rules 1 and 3 give 0.05 to 0.15 s overall and 22 % fewer SSD pages. All of the TTFT gain sits in the two load episodes; elsewhere the five leading arms are within 0.06 s of each other.
+- **Repeats decide:** the repeats of rules 1+3 and `nofc` end about 19:17 and 21:20 UTC. I wrote the rule for reading them into `DECISIONS.md` before they run.
+
+I changed the 128-user arms, which you may want to veto. The first one is now the rival with no hints, since that is the one the paper plan says a reviewer will ask for. The rival with the end signal moved to the very end as a third 128-user arm. That adds 2 h, so the queue now ends about 11:41 UTC tomorrow; it is the line to drop if you want the time back.
+
+The same-build JIT p50 control is running and healthy, until about 17:14 UTC. Everything is written up in `results/campaign26/DECISIONS.md`, and the wait-split figure now has seven runs (`results/compare_c26_ec/ec_wait_split.png`).
+
+=== line 25466 @ 2026-11-11T15:24:03.782Z MAIN len=230 ===
+The same-build JIT p50 control has started staging reads, on the same turn and at the same 9 min 54 s after the first arrival as the earlier control. No tracebacks; it runs until about 17:14 UTC, and the watcher will wake me then.
+
+=== line 25605 @ 2026-11-11T20:44:39.559Z MAIN len=75 ===
+Recorded the outage and the cut-run result; verifying the rerun's boot now.
+
+=== line 25659 @ 2026-11-11T20:49:34.170Z MAIN len=1575 ===
+The campaign is running again. Status after the outage:
+
+- **Outage:** the host went down at 16:32 UTC, 80 minutes into the same-build JIT p50 control, and came back at 20:39 UTC on a different GPU unit. I relaunched at 20:41 UTC; that arm is rerunning from its first turn (resolved flags checked, no errors) and ends about 22:47 UTC.
+- **The cut run is usable:** its 80 minutes are intact and cover the first load episode. On the 6,579 returning turns it shares with the other runs, JIT p50 on the new build is at 1.39 s, against 1.35 s and 1.53 s for the two old-build runs. Outside the load episode all three are at 0.66 s.
+- **What that settles:** the new build does not move JIT p50, so the new arms' lead over it (0.64 to 1.02 s) is not the build. Hardware numbers match over the same minutes.
+- **Queue:** unchanged in order, now ending about 17:15 UTC tomorrow. Next are the repeats of rules 1+3 and of `nofc` (about 00:50 and 02:53 UTC), then the fixed-quantile rival, the learned price, soft pins, rule 3 alone, and the three 128-user arms.
+- **Independent check started:** since you turned Ultracode on, a workflow of five agents (up to nine with verifiers) is running. Two recompute the key numbers from the raw logs with their own parsers, one audits my scripts and the write-up, one tests alternative explanations, and one reads the evidence as a sceptical reviewer. They are read-only and run at low priority so the benchmark is not disturbed.
+
+I'll fold their findings into `results/campaign26/DECISIONS.md` when they report, and pick up each arm as it lands.
+
+=== line 25735 @ 2026-11-11T21:06:24.172Z MAIN len=167 ===
+Found how the earlier timeline figures were made (`scripts/timeline.py` driven from a per-campaign plot script); I'm producing the same set for campaign 26's arms now.
+
+=== line 25778 @ 2026-11-11T21:07:45.969Z MAIN len=170 ===
+Writing a small driver that feeds campaign 26's runs to the same `timeline.py` used for the earlier figure sets (no edits to it), so the output matches the earlier style.
+
+=== line 25819 @ 2026-11-11T21:09:10.361Z MAIN len=134 ===
+Driver written; running it now over the nine runs that exist (takes a few minutes, at low priority so the benchmark is not disturbed).
+
+=== line 25884 @ 2026-11-11T21:10:20.628Z MAIN len=193 ===
+The per-run timeline set (request lanes, pools, queue, tier events) is drawn; I'm checking it, then making the over-time comparison figure in the same style as the earlier `hicache_vs_jit.png`.
+
+=== line 25929 @ 2026-11-11T21:14:59.955Z MAIN len=77 ===
+Writing the comparison figure script now; a first render follows in a minute.
+
+=== line 25984 @ 2026-11-11T21:16:35.250Z MAIN len=111 ===
+Both figure sets are done and checked; noting them in the decisions file and then I'll show you where they are.
+
+=== line 25995 @ 2026-11-11T21:17:07.927Z MAIN len=2171 ===
+The figure is done, in the same style as the earlier `hicache_vs_jit.png` (it reuses that script's helpers):
+
+- `results/compare_c26_ec/pricing_vs_jit.png`, with `.pdf` and a `.csv` table view
+
+It shows five runs in 5-minute bins: original HiCache, JIT p50 (this campaign's control), the no-hint rival, rules 1 and 3, and JIT exact. The four panels are mean TTFT, turns per second, history recomputed per returning turn, and host memory needed to hold SSD-loaded KV until admission.
+
+- **Fourth panel differs from the earlier figure:** I used the host-memory panel, with the 44K-token line for what is free beyond the GPU's copy, instead of "history read from SSD but not used", because it shows the room directly. The earlier panel set is one flag away if you prefer it (command below).
+- **What the room panel shows (minutes 45-120):** reads waiting for admission need 91K tokens under JIT p50 and 80K under HiCache, against 17K under rules 1 and 3, 10K with exact hints and 6K with no hints.
+- **Footnote numbers:** over the 7,283 returning turns the five runs share, mean TTFT is 5.48, 1.33, 0.69, 0.64 and 0.51 s (HiCache, JIT p50, no hints, rules 1 and 3, JIT exact). One run per arm; HiCache and JIT exact are the same runs as in the earlier figure.
+
+I also drew the other "timeline" family, `scripts/timeline.py`'s standard set, unchanged, in the same folder:
+
+- `timeline_<label>.png` for each of the nine runs (request lanes, pool usage, queue, tier events)
+- `compare.png`, `compare_steady_1800s.png`, `ttft_over_time_60s.png`
+- `paired_cdf_<label>.png` against JIT p50
+
+To redraw with other arms or panels, from `agent_cache/scripts` in the container:
+
+```
+PYTHONPATH=. python3 -B ../frozen/oracle_scripts_staging/c26_ec/plot_pricing_vs_jit.py --arms baseline jit_p50_ctl nofc_noend ec_r13 jit_exact --panels ttft tps recomputed unused
+```
+
+I'll redraw both sets as the remaining arms land. The rerun of the same-build control is healthy and ends about 22:47 UTC; the independent check of the analysis is still running.
+
+If you want the two companion figures in the same style (TTFT CDF with KV sources, and the host-memory figure), say so and I'll make them.
+
+=== line 26003 @ 2026-11-11T22:46:22.970Z MAIN len=50 ===
+You've hit your 5-hour limit · resets 1:30am (UTC)
+
+=== line 26133 @ 2026-11-12T01:39:03.369Z MAIN len=109 ===
+Queue reordered and validated. Writing the two results and the reviewer's points into the decisions file now.
+
+=== line 26168 @ 2026-11-12T01:40:45.509Z MAIN len=192 ===
+Redrew the comparison figure with the repeat as a dotted line (0.64 and 0.76 s for the two runs, 0.69 s with no hints). Drawing the per-run timelines for the two new arms and then I'll report.
+
+=== line 26176 @ 2026-11-12T01:42:00.569Z MAIN len=3369 ===
+Two arms landed while I was out, and the repeat changes the reading: **the lead of rules 1 and 3 over the no-hint rivals did not repeat.** One run of the no-forecast rival's repeat is still in progress.
+
+| Mean TTFT, returning turns | JIT exact | Rules 1+3 | Rules 1+3, repeat | No forecast (`nofc`) | No hints (`nofc_noend`) | JIT p50, three runs |
+|---|---|---|---|---|---|---|
+| 6,715 turns all runs share | 0.51 s | 0.66 s | 0.78 s | 0.69 s | 0.71 s | 1.35, 1.48, 1.60 s |
+| 11,145 turns the leading runs share | 0.70 s | 0.76 s | 0.86 s | 0.88 s | 0.91 s | |
+| of those, in the two load episodes | 1.53 s | 1.66 s | 2.10 s | 2.12 s | 2.14 s | |
+
+- **Rules 1 and 3 are not separated from no hints.** The arm moved 0.10 to 0.12 s between its two runs, which is more than its lead over either rival. By the rule I wrote down before the repeats ran, the lead is not shown.
+- **What moved is the GPU queue, not the policy.** Staged reads, refusals and pins repeat closely between the two runs; the extra wait in the repeat is queueing inside the load episodes.
+- **The SSD saving does repeat.** Both runs read 23 to 25 % fewer pages than the no-hint arm.
+- **Latency and throughput do not move with hints.** Among the leading arms, mean turn latency is 12.0 to 12.5 s and 11,500 to 11,700 turns are served, with no arm more than 0.1 s ahead of the no-hint rival. The reviewer agent raised this and I recomputed it.
+- **JIT p50 is unchanged by build or GPU unit.** The full same-build rerun on the new unit gives 1.48 s, inside its own spread, and hardware timings match.
+- **What is firmly shown at this setting:**
+  - every arm beats original HiCache;
+  - the arms that stage little or nothing beat both JIT p50 and the old hint-free arm, by 0.6 to 1.4 s against a rerun spread of about 0.25 s;
+  - today's arms lose even more at the end of the turn, 3.7 to 4.3 s of latency for JIT p50.
+
+The independent review was interrupted; only the reviewer agent finished, and the other four are running again. Its main objections are in `DECISIONS.md`. The ones that bear on the paper's claim:
+
+- The no-hint engine should be the baseline of record; against it, "2.9x from exact hints" becomes 1.4x.
+- The 44K-token room exists only because the 70 GB pool is the GPU's mirror plus a little.
+- The setting where read timing and eviction order should matter (x70 gaps at 128 users) has not been run.
+
+I changed the unstarted queue; say if you want any of it undone:
+
+- **Moved up:** the no-hint rival at 128 users runs next (about 02:51 to 04:55 UTC). It is the fair rival for the one setting where hints looked decisive.
+- **Added:** a rerun of JIT exact on this build and unit (the reference is a single run from 1 November), and a repeat of the no-hint rival.
+- **Kept, in this order after those:** learned price, rules 1+3+4 at 128 users, all four rules, the fixed-quantile rival, rule 3 alone, and the end-signal rival at 128 users. The queue now ends about 21:20 UTC.
+
+The comparison figure now shows the repeat as a dotted line (`results/compare_c26_ec/pricing_vs_jit.png`), and the two new runs have their timelines.
+
+Decisions for you — none of these is queued:
+
+1. A host-pool sweep at 44 users (100 and 160 GB), to show where the room binds.
+2. x70 gaps at 128 users, with the no-hint rival, rules 1+3, JIT exact and original HiCache.
+3. Other seeds.
+
+Each arm is 2 h.
+
+=== line 26284 @ 2026-11-12T02:23:07.123Z MAIN len=194 ===
+Applying the small corrections the recomputation turned up (three column labels, late turns in the bootstrap) and recording the check in the decisions file; the running arm ends about 02:51 UTC.
+
+=== line 26312 @ 2026-11-12T02:24:26.092Z MAIN len=1442 ===
+Status while the repeat of the no-forecast rival finishes (about 02:51 UTC):
+
+- **The independent recomputation agrees with my tables.** Two agents re-derived them from the raw logs with their own parsers, without opening my outputs first. All 157 client-side and 1,946 server-side numbers they could compare match.
+- **Their sanity checks came out clean.** The runs are comparable turn by turn: same prompts, same offered load in the load episodes, no hardware drift over the day, no censored turns.
+- **The other two review agents never finished.** They were cut off twice by the usage limit, so I stopped that workflow and read what they had left on disk; nothing in it overturns a result.
+- **Small corrections from the check.** Three column headings in the comparison output understated what the column holds. The split of read stall by "admitted within 0.1 s" moves with that threshold, so "what read timing can win" is 0.14 to 0.20 s per turn rather than a flat 0.17 s. Both are in `DECISIONS.md`.
+- **Next arm.** The no-hint rival at 128 users starts when the current arm ends, and finishes about 04:55 UTC. The 128-user comparison script now also reports turn latency. On the earlier runs the hinted arms sit at 20.6 to 21.0 s mean TTFT and about 33 s per turn, so that is the level the rival has to reach.
+
+I'll update `PAPER_PLAN.md` once that 128-user number is in, since it decides whether any measured setting supports the hint.
+
+=== line 26329 @ 2026-11-12T02:33:03.229Z MAIN len=2972 ===
+**Running now:** `nofc_rep`, the repeat of the rival that uses no gap forecast (it reads from SSD only when a turn arrives and evicts ended sessions first, queued turns last), at 44 users and 70 GB. It is at minute 102 of 120 with about 10,300 turns served, mean TTFT 0.88 s so far and no errors, and ends about 02:51 UTC. The no-hint rival at 128 users and 160 GB starts right after and runs to about 04:55 UTC.
+
+**What the results say so far (44 users, 70 GB, x10 gaps):**
+
+| Arm | Mean TTFT, 6,715 shared returning turns | Mean turn latency |
+|---|---|---|
+| Original HiCache (two runs) | 5.47, 6.62 s | 25.8, 29.9 s |
+| Old hint-free arm, read pins only (two runs) | 1.61, 1.89 s | 15.8 s (one run) |
+| JIT p50, today's method (three full runs) | 1.35, 1.48, 1.60 s | 15.3, 15.9 s (two runs) |
+| No hints, queue state only | 0.71 s | 11.6 s |
+| Rules 1 and 3, three-quantile hints (two runs) | 0.66, 0.78 s | 11.8, 12.2 s |
+| JIT, exact hints (one run from 1 November) | 0.51 s | 11.5 s |
+
+1. **Most of the gain needs no hint.** An engine that only uses queue state covers 96 % of the way from original HiCache to exact hints. "Queue state" here means reading at arrival, keeping queued turns' history, the arrival gate and hold, and re-reads. Those mechanisms are worth about 1.0 s over the old hint-free arm.
+2. **JIT p50 loses because of when it reads, not what it evicts.** Its early reads sit in host memory waiting for their turn: they need about 91K tokens where only 44K is free. Changing only the read start (rule 1 alone) brings it to 0.67 s (one run).
+3. **Rules 1 and 3 are not separated from no hints.** The arm moved 0.12 s between its two runs, more than its lead. What does repeat is 23 to 25 % fewer SSD pages read.
+4. **Exact hints are about 0.2 s ahead on TTFT, but not on latency or throughput.** Among the leading arms a turn takes 12.0 to 12.5 s and 11,500 to 11,700 turns are served; neither moves with hints. The exact-hint number is a single old run; a rerun on this build is queued.
+5. **Why hints have little to win here.** The free host room holds two or three histories and the SSD read thread is busy only 16 to 21 % of the time. All differences between the leading arms sit in two load episodes, where the GPU queue decides and a rerun of the same arm moves 0.1 to 0.25 s.
+6. **The measurements hold up.** An independent recomputation from the raw logs matches every table, and neither the new engine build nor the new GPU unit moves JIT p50.
+
+**What this means for the paper:** at this setting the forecast buys SSD traffic, not latency, so "forecasts drive the gain" does not hold here. The baseline of record should be the no-hint, queue-aware engine. Still open are the learned price and soft pins (queued) and the 128-user rival (next); the 128-user rival decides whether any measured setting supports the hint. Two settings where the design could matter have not been run: x70 gaps at 128 users, and a larger host pool at 44 users.
+
+=== line 26347 @ 2026-11-12T02:37:37.047Z MAIN len=133 ===
+Computing what a read costs when the queue is short, to answer your question with numbers; the current arm has about 14 minutes left.
+
+=== line 26365 @ 2026-11-12T02:39:24.289Z MAIN len=142 ===
+Numbers are in and three 100 GB arms are appended at the end of the queue to test your point; noting it in the decisions file, then answering.
+
+=== line 26376 @ 2026-11-12T02:39:54.105Z MAIN len=2152 ===
+Half right: the mechanism is as you say, but a larger pool does not give *more* gain, because it also removes most of the reads there are to start early.
+
+- **Short queue, read at arrival:** outside the load episodes a turn that has to read from SSD has a median TTFT of 1.18 s with no hints, against 0.34 s for a turn that reads nothing. So the read costs about 1 s when nothing else is in the way.
+- **Short queue, early read timed right:** with exact hints the median reading turn is at 0.34 s, the same as a turn that read nothing. So starting the load early does remove the cost.
+- **But few turns read:** only 5 to 10 % of turns read there, so the gain is about 0.06 s per turn on average. It shows in the tail of TTFT, not in the mean or in throughput.
+- **A larger pool cuts the reads:** live sessions hold a median of 1,176K tokens (1,443K at most).
+  - A 70 GB pool holds 712K, with 44K free beyond the GPU's copy.
+  - A 100 GB pool holds 1,017K, with 349K free. About a third as much history sits on SSD, and there is room to start all of those reads early.
+  - A 160 GB pool holds 1,628K, more than the sessions ever hold, so nothing is on SSD and there is nothing to load early.
+
+So more room makes early loading safe, but the total gain is roughly the number of reads times that 1 s, and the number of reads falls as the pool grows. The setting where early loading should pay most is one with many reads, a short queue and room all at once: x70 gaps at 128 users and 160 GB. That one is not queued.
+
+I appended three arms at 100 GB and 44 users to the end of the queue to test your point directly: no early reads, early reads from the p50 (today's JIT p50), and early reads from exact hints. If room is what JIT p50 lacks, it should close on exact hints there. They would start late tonight; tell me if you want them moved up to run right after the 128-user rival, or dropped.
+
+**Timing:**
+- The current arm (`nofc_rep`) ends about 02:51 UTC, roughly 10 minutes from now.
+- The no-hint rival at 128 users then runs 2 h, to about 04:55 UTC.
+- The whole queue, 12 more arms including the three new ones, ends about 03:30 UTC on 13 November.
+
+=== line 26386 @ 2026-11-12T02:41:15.783Z MAIN len=2265 ===
+Yes, twelve after the one running now. Each takes about 2 h. Six come from the deck's own plan and six are ones I added along the way.
+
+| # | Label | Setting | What it is | Source | Ends (UTC) |
+|---|---|---|---|---|---|
+| 1 | `nofc_noend_c128` | 128 users, 160 GB | The no-hint rival at the deck's second setting | deck (the rival) | 04:55 |
+| 2 | `jit_exact_d` | 44 users, 70 GB | JIT on exact hints, rerun on this build and GPU unit | added: the reference is one run from 1 November | 06:58 |
+| 3 | `ec_r134` | 44 users, 70 GB | Rules 1, 3 and 4 (learned price) | deck | 09:01 |
+| 4 | `nofc_noend_rep` | 44 users, 70 GB | The no-hint rival again | added: it is the baseline everything is read against and has one run | 11:04 |
+| 5 | `ec_r134_c128` | 128 users, 160 GB | Rules 1, 3 and 4 at the second setting | deck | 13:08 |
+| 6 | `ec_full` | 44 users, 70 GB | All four rules (learned price and soft pins) | deck | 15:11 |
+| 7 | `fq90` | 44 users, 70 GB | Fixed-quantile rival: JIT timed to land at the p90 | deck | 17:14 |
+| 8 | `ec_r3` | 44 users, 70 GB | Rule 3 alone, under JIT p50's read timing | deck (the rule-by-rule split) | 19:17 |
+| 9 | `nofc_c128` | 128 users, 160 GB | The rival that keeps the end signal, at the second setting | added: splits the end signal from the forecast there | 21:20 |
+| 10 | `nofc_noend_h100` | 44 users, 100 GB | No early reads, with room | added an hour ago, for your question | 23:24 |
+| 11 | `jit_p50_h100` | 44 users, 100 GB | Early reads from the p50, with room | added an hour ago | 01:27, 13 Nov |
+| 12 | `jit_exact_h100` | 44 users, 100 GB | Early reads from exact hints, with room | added an hour ago | 03:30, 13 Nov |
+
+The order puts first the arms that decide the most:
+
+- #1 tells us whether hints matter at 128 users, the one setting where they looked decisive.
+- #2 and #4 firm up the two ends of the 44-user comparison.
+- #3 is the first run of the deck's learned price.
+
+If you want it shorter, I would drop from the bottom of the value list: #9 (`nofc_c128`) first, then #8 (`ec_r3`) and #7 (`fq90`). That saves 6 h. If the 100 GB test matters more to you than the remaining deck arms, I can instead move #10 to #12 up to run right after #2. Tell me which lines to cut or move; nothing unstarted is fixed.
+
+=== line 26399 @ 2026-11-12T02:42:20.235Z MAIN len=563 ===
+Understood: the queue stays as it is and I won't add, move or cut anything.
+
+Unless you say otherwise, I'll keep to the minimum as each arm finishes: check that the next one booted cleanly, and add its numbers to `results/campaign26/DECISIONS.md`. I'll hold the larger pieces (rewriting `PAPER_PLAN.md`, new figures, further review) until you ask. If the host goes down again, the campaign needs relaunching once the session is back; finished arms are skipped.
+
+The current arm ends about 02:51 UTC, and the no-hint rival at 128 users follows, to about 04:55 UTC.
+
+=== line 26453 @ 2026-11-12T02:53:26.785Z MAIN len=778 ===
+The repeat of the no-forecast rival finished clean and is recorded; nothing in the queue was touched.
+
+- **Result:** 0.80 s on the first set of turns (0.69 s the first time) and 0.86 s on the whole run (0.88 s). Its read and pin counts repeat closely.
+- **Reading:** two runs of the same arm now span as much as the leading arms differ (rules 1+3 at 0.66 and 0.78 s, this rival at 0.69 and 0.80 s). The verdict is unchanged: nothing among the no-hint rival, the no-forecast rival, rule 1 alone and rules 1+3 is separated in TTFT here. The lower SSD traffic under rules 1+3 does repeat.
+
+The no-hint rival at 128 users started at 02:51 UTC. Its server was still allocating the 160 GB pool when I looked; a background check will confirm the boot, and the arm ends about 04:55 UTC.
+
+=== line 26463 @ 2026-11-12T02:54:55.298Z MAIN len=279 ===
+The no-hint rival at 128 users booted cleanly and is serving requests. It runs with the intended settings (reads at arrival, queue-only eviction, 160 GB host pool), with no errors so far. Its client started at 02:53 UTC, so it ends about 04:55 UTC; the watcher will wake me then.
+
+=== line 26553 @ 2026-11-12T04:57:09.861Z MAIN len=122 ===
+Recording the 128-user no-hint arm's numbers and checking that the next arm (exact hints on the new build) booted cleanly.
+
+=== line 26612 @ 2026-11-12T04:58:28.248Z MAIN len=152 ===
+Still on the per-arm routine: the 128-user numbers are recorded; now fixing one sentence in that entry and confirming the next arm's client has started.
+
+=== line 26640 @ 2026-11-12T04:58:58.939Z MAIN len=1188 ===
+The no-hint arm at 128 users (`nofc_noend_c128`) finished cleanly at 04:55 UTC, and its numbers fall inside the range of the four hinted arms.
+
+| First 6,900 s | Turns | Mean TTFT | Turn latency | SSD pages |
+|---|---|---|---|---|
+| Original HiCache | 8,334 | 50.20 s | 73.96 s | 433K |
+| Old hint-free arm | 10,223 | 38.79 s | 57.45 s | 1,063K |
+| Four hinted arms | 15,366–15,525 | 20.58–20.98 s | 32.85–33.39 s | 998K–1,441K |
+| No hints (new) | 15,418 | 20.84 s | 33.19 s | 1,153K |
+
+This is one run, and the other rows come from earlier campaigns on earlier builds and GPU units. As agreed for 128-user arms, I recorded the numbers only, in the last entry of `agent_cache/results/campaign26/DECISIONS.md`; the full table is in `agent_cache/results/campaign26/compare_c128.out`.
+
+The next arm, `jit_exact_d` (exact hints on the new build), booted with the intended settings and no errors. Its client started at 04:58 UTC, so it ends about 07:00 UTC, and the watcher will wake me then. The queue is unchanged.
+
+I also added a small helper, `agent_cache/results/campaign26/checks/boot.py`, that prints an arm's boot settings and error counts in one call; it does not touch the launcher.
+
+=== line 26679 @ 2026-11-12T07:00:18.017Z MAIN len=125 ===
+The exact-hint arm on the new build finished cleanly; I'm reading its comparison tables now and checking the next arm's boot.
+
+=== line 26719 @ 2026-11-12T07:01:23.686Z MAIN len=99 ===
+Reading the exact-hint repeat against the other arms on both shared turn sets, then I'll record it.
+
+=== line 26735 @ 2026-11-12T07:02:31.716Z MAIN len=117 ===
+One more quick table (turn latency with the repeat included), then I record the result and check the next arm's boot.
+
+=== line 26763 @ 2026-11-12T07:03:40.895Z MAIN len=79 ===
+Record is updated and intact; saving the result to memory, then I'll summarise.
+
+=== line 26768 @ 2026-11-12T07:03:54.168Z MAIN len=1470 ===
+The exact-hint arm on the new build (`jit_exact_d`) finished cleanly at 06:59 UTC and repeats the 1 November run closely.
+
+| Mean TTFT (first run, repeat) | Exact hints | Rules 1+3 | No gap forecast | No hints |
+|---|---|---|---|---|
+| 6,715 turns all runs share | 0.51, 0.54 s | 0.66, 0.78 s | 0.69, 0.80 s | 0.71 s |
+| 11,145 turns the leading runs share | 0.70, 0.77 s | 0.76, 0.86 s | 0.88, 0.86 s | 0.91 s |
+
+- **Exact hints against the rivals without a forecast:** the lead now counts as shown by the rule written before the repeats. Exact hints are ahead in every pair of runs, by 0.09–0.29 s over the no-forecast arm and 0.14–0.21 s over the no-hint arm. The no-hint arm still has only one run; its repeat is queued.
+- **Exact hints against rules 1+3 on three-quantile hints:** not separated. On the 6,715 turns the gap is 0.11–0.27 s while rules 1+3 moved 0.12 s between their own two runs, and on the 11,145 turns one pair reverses.
+- **Latency and throughput:** unchanged among the leading arms, at 12.04 s mean turn latency for the repeat against 12.10 s with no hints.
+
+The next arm, `ec_r134` (rules 1 and 3 with the learned price), booted with the intended settings and no errors. Its client started at 07:00 UTC, so it ends about 09:02 UTC, and the watcher will wake me then. The queue is unchanged.
+
+The entry is the last one in `agent_cache/results/campaign26/DECISIONS.md`; the pair tables are `pairs_ec.out` and `pairs_ec_ctl.out` in the same folder.
+
+=== line 26843 @ 2026-11-12T15:36:41.978Z MAIN len=132 ===
+The host was down from 07:07 to 15:31 UTC; I relaunched the campaign at 15:36 UTC and am waiting for the restarted arm's boot check.
+
+=== line 26862 @ 2026-11-12T15:36:58.420Z MAIN len=930 ===
+The host was down from 07:07 to 15:31 UTC, and I relaunched the campaign at 15:36 UTC with the queue unchanged.
+
+- **What the outage cut:** `ec_r134` (rules 1 and 3 with the learned price) was only 6.5 minutes in, so nothing usable was lost; it is rerunning from its first turn. The host came back on a different GPU unit, the third of this campaign.
+- **What is left:** ten arms, each about two hours, so the queue now ends about 12:10 UTC on 13 November instead of 03:30 UTC.
+- **Boot of the restarted arm:** it resolved the intended settings and shows no errors, but the server is still loading the model, so the client has not started yet. A background check will report when it does.
+
+The two arms that finished before the outage are the ones I already reported (no hints at 128 users, and exact hints on the new build). The outage and relaunch are recorded as the last entry of `agent_cache/results/campaign26/DECISIONS.md`.
+
+=== line 26872 @ 2026-11-12T15:38:34.155Z MAIN len=1262 ===
+About 20.5 hours: the queue should end around 12:10 UTC on 13 November, if the host stays up.
+
+Ten arms are left, each taking about 2 hours 4 minutes including server start:
+
+| Arm | What it tests | Ends about (UTC) |
+|---|---|---|
+| `ec_r134` | rules 1 and 3 with the learned price (restarted 15:36) | 17:40 |
+| `nofc_noend_rep` | repeat of the no-hint arm | 19:44 |
+| `ec_r134_c128` | rules 1, 3 and 4 at 128 users | 21:47 |
+| `ec_full` | all four rules | 23:51 |
+| `fq90` | JIT landing at the p90 | 01:55 (13 Nov) |
+| `ec_r3` | rule 3 alone | 03:58 |
+| `nofc_c128` | no-forecast arm at 128 users | 06:02 |
+| `nofc_noend_h100` | no hints, 100 GB pool | 08:06 |
+| `jit_p50_h100` | JIT p50, 100 GB pool | 10:09 |
+| `jit_exact_h100` | JIT exact, 100 GB pool | 12:13 |
+
+The main risk to that estimate is another outage. The host has gone down twice in the last 24 hours (about 4 and 8.5 hours), and each one adds the downtime plus a rerun of the interrupted arm.
+
+The restarted arm's server is still loading the model, so its client has not started yet; I'll confirm the boot when the background check reports.
+
+If you want it sooner, dropping the three 100 GB arms at the end would finish it around 06:00 UTC, but I'm leaving the queue as it is unless you say so.
+
+=== line 26904 @ 2026-11-12T15:39:26.061Z MAIN len=958 ===
+The queue stays as it is. In Eastern time (EST, 5 hours behind UTC), it should finish around 7:15 AM on Friday 13 November, about 20.5 hours from now.
+
+| Arm | Ends about (ET) |
+|---|---|
+| `ec_r134` (restarted 10:36 AM) | 12:40 PM Thu |
+| `nofc_noend_rep` | 2:44 PM |
+| `ec_r134_c128` | 4:47 PM |
+| `ec_full` | 6:51 PM |
+| `fq90` | 8:55 PM |
+| `ec_r3` | 10:58 PM |
+| `nofc_c128` | 1:02 AM Fri |
+| `nofc_noend_h100` | 3:06 AM |
+| `jit_p50_h100` | 5:09 AM |
+| `jit_exact_h100` | 7:13 AM Fri |
+
+For reference, the two outages were 11:32 AM–3:39 PM ET on Wednesday and 2:07 AM–10:31 AM ET today; another one would push these times back.
+
+As of 10:39 AM ET the restarted arm's server was still loading the model, with the intended settings and no errors. A background check will report when its client starts.
+
+I'll report times to you in ET from now on. The campaign record and logs stay in UTC so they match the server logs, unless you want those switched too.
+
+=== line 26916 @ 2026-11-12T15:41:36.057Z MAIN len=191 ===
+The restarted arm (`ec_r134`) booted cleanly: its client started at 10:40 AM ET with the intended settings and no errors, so it should finish about 12:42 PM ET. The watcher will wake me then.
+
+=== line 26944 @ 2026-11-12T16:54:35.924Z MAIN len=137 ===
+Setting up the new figure set: I'm reading the existing plotting scripts and the colour rules first, then I'll draw into a new directory.
+
+=== line 27004 @ 2026-11-12T16:55:46.778Z MAIN len=134 ===
+Still preparing: I've read the plotting helpers; now identifying the old Oracle run and checking that every figure script can read it.
+
+=== line 27039 @ 2026-11-12T16:57:55.251Z MAIN len=106 ===
+Still on it: wiring the old Oracle run into the figure scripts, then drawing the set into a new directory.
+
+=== line 27079 @ 2026-11-12T16:59:37.605Z MAIN len=91 ===
+Writing the set definition into the plotting scripts now; the first figures follow shortly.
+
+=== line 27115 @ 2026-11-12T17:00:57.500Z MAIN len=109 ===
+The timeline set is drawing in the background; I'm now adapting the deck-style figure script for the new set.
+
+=== line 27171 @ 2026-11-12T17:02:52.086Z MAIN len=171 ===
+The main figures render correctly for the new set. Now adding the remaining pieces: other runs of each arm in the footnote, the all-runs overview, and the wait-split bars.
+
+=== line 27213 @ 2026-11-12T17:04:38.803Z MAIN len=90 ===
+Checking the redrawn overview's legend, then the last figure (where each arm's wait goes).
+
+=== line 27241 @ 2026-11-12T17:05:45.953Z MAIN len=109 ===
+Nearly there: rendering the last figure (the wait split), then I'll check everything once more and summarise.
+
+=== line 27281 @ 2026-11-12T17:07:17.277Z MAIN len=112 ===
+Figures are done; running the one-command redraw script once end to end to confirm it works, then I'll write up.
+
+=== line 27297 @ 2026-11-12T17:08:43.125Z MAIN len=73 ===
+Recording the new set in the campaign notes and memory, then the summary.
+
+=== line 27313 @ 2026-11-12T17:09:19.908Z MAIN len=2141 ===
+The new figure set is in `agent_cache/results/compare_c26_designs/`, with the same kinds of figures and file names as `compare_c26_ec`.
+
+| Series | Run used | Mean TTFT on the 6,715 shared turns | Other runs of the same arm |
+|---|---|---|---|
+| Baseline HiCache | campaign 21 | 5.47 s | 6.62 s |
+| Old Oracle (v2), exact hints | campaign 21 | 1.53 s | none |
+| JIT p50 | campaign 26, new build | 1.48 s | 1.35, 1.60 s |
+| JIT exact | campaign 26, new build | 0.54 s | 0.51 s |
+| Rules 1 and 3 | campaign 26, first run | 0.66 s | 0.78 s |
+
+What is in the directory:
+- **Timelines:** `timeline_<label>.png` for each of the five runs, plus rule 1 alone (`ec_r1`) and the repeat of rules 1 and 3 (`ec_r13_rep`).
+- **Comparisons over the five:** `compare.png`, `compare_steady_1800s.png`, `ttft_over_time_60s.png`, and `paired_cdf_<label>.png` against JIT p50.
+- **Deck-style panels:** `pricing_vs_jit.png` and `.pdf`; its footnote carries the numbers above.
+- **All runs of the five arms:** `ec_overview.png`, with repeats dashed.
+- **Where the wait goes:** `ec_wait_split.png`, one bar per run including the extra rule runs.
+- **Tables:** a CSV beside each figure, and `manifest.txt` mapping labels to run folders.
+
+Choices I made that you may want changed:
+- **Rules series:** the fifth series is rules 1 and 3, the only combination that has finished. Rules 1, 3 and 4 finish about 12:42 PM ET and all four rules about 6:53 PM ET. I plan to add each rule arm's timeline and wait-split bar as it lands, and switch the fifth series to the all-four-rules arm once it exists.
+- **Which JIT runs:** I used the JIT runs on the same build as the rules, so those three differ only in settings.
+- **One run per line:** the comparisons draw one run per arm. Rules 1 and 3 moved from 0.66 to 0.78 s between its two runs, so its gap to JIT exact is not established.
+
+To redraw everything (about a minute), run `docker exec sglang_hicache bash /sgl-workspace/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/figs_designs.sh`. I spot-checked that the changed scripts still reproduce the earlier set (its `pricing_vs_jit` figure comes out identical).
+
+=== line 27371 @ 2026-11-12T17:12:12.173Z MAIN len=2116 ===
+Yes, both are implemented, and both are in the frozen build the campaign is running; neither has a finished two-hour run yet.
+
+**Rule 2 (soft pins)**
+- **What it does:** when a turn that has already arrived cannot find host room for its read, the engine releases early reads' pins, least likely to return first, until the shortfall is covered.
+- **Where:** `--hicache-storage-next-turn-soft-pins on`; the logic is `soft_pin_victims` at `python/sglang/srt/mem_cache/next_turn_prefetch.py:1207`, called from `python/sglang/srt/mem_cache/unified_radix_cache.py:2997`.
+- **Status:** unit-tested only so far. Its first full run is the all-four-rules arm, due about 6:53 PM ET.
+- **Known gap:** a turn that reached the scheduler within the last scheduling pass can have its already-landed early read released. Closing that needs a scheduler hook, which I have not added.
+
+**Rule 4 (learned price)**
+- **What it does:** updates the price of host memory every 5 seconds from what the room showed.
+- **Where:** `--hicache-storage-next-turn-price-learning on|harm`; the controller is `PriceController` at `python/sglang/srt/mem_cache/next_turn_policy.py:218`.
+- **Two variants:** `on` is the rule as the deck states it (price follows refused room minus idle room). `harm` sets the price to the delay early reads caused other turns, per token-second held.
+- **Which one the arms use:** `harm`. Replaying the deck's rule on the logged signals of the rules-1-and-3 run sent the price to its floor within a minute, and it sat there for 77 % of the run. The deck's rule is still in the engine for comparison.
+- **Status:** running now for the first time in a full arm (`ec_r134`, ends about 12:42 PM ET). The price has updated 1,070 times so far, starting at 5e-5 and ranging from 5.7e-7 to 7.5e-5.
+- **Not built:** the per-key recalibration part of rule 4. The closest thing is an eviction option that learns each key's gaps from the gaps the engine has seen, and no queued arm uses it.
+
+The code is uncommitted, as before. So the "rules 1 to 4" series for the new figures exists once the all-four-rules arm finishes this evening.
+
+=== line 27426 @ 2026-11-12T17:17:39.270Z MAIN len=1483 ===
+Noted: I'll redraw the figure set when the all-four-rules arm finishes, about 6:51 PM ET, with it as the fifth series.
+
+On the 128-user cases, you're right that they are queued, but only partly:
+
+| 128-user arm | Status |
+|---|---|
+| Baseline HiCache, old Oracle (v2), JIT p50, JIT exact | already exist from earlier campaigns |
+| No hints | finished last night |
+| Rules 1, 3 and 4 with the learned price (`ec_r134_c128`) | queued, about 2:44–4:47 PM ET |
+| No gap forecast, with the end signal (`nofc_c128`) | queued, about 10:58 PM–1:02 AM ET |
+| All four rules | not queued |
+
+Two caveats on the existing 128-user runs: the JIT ones are on the earlier JIT build, and the baseline and old Oracle ran five hours, so comparisons use the first two hours of each.
+
+When the 128-user rules arm finishes this afternoon, I'll draw the same five-series figure set for 128 users in a sibling directory, `agent_cache/results/compare_c26_designs_c128/`.
+
+Decision for you: do you want an all-four-rules arm at 128 users added to the queue? It costs about two hours; at the end of the queue it would finish around 9:15 AM ET Friday. I'd wait until 4:47 PM ET to decide. Rule 2 only acts when a read is refused host room, and in every hinted arm at 128 users so far that happened zero times. If the rules arm also shows zero, an all-four-rules run there would behave the same as rules 1, 3 and 4. I'll report that count when the arm lands and leave the queue as it is unless you say otherwise.
+
+=== line 27445 @ 2026-11-12T17:27:39.135Z MAIN len=147 ===
+Thinking this through against the data: I'm checking a few numbers (where the remaining time goes, and how the host pool is used) before answering.
+
+=== line 27493 @ 2026-11-12T17:30:07.938Z MAIN len=120 ===
+Digging into what actually limits the best arm now (it's not the SSD reads); a couple more measurements and I'll answer.
+
+=== line 27522 @ 2026-11-12T17:34:02.009Z MAIN len=140 ===
+Nearly done: the logs show what limits the best arm. One quick literature check on the two directions I'm about to suggest, then the answer.
+
+=== line 27560 @ 2026-11-12T17:35:22.161Z MAIN len=62 ===
+Writing the findings into the campaign notes, then the answer.
+
+=== line 27583 @ 2026-11-12T17:36:18.368Z MAIN len=3515 ===
+Yes: the logs show the largest remaining loss is not about when to fetch, and I think the stronger design follows from that rather than from more rules.
+
+**Where the best arm's time still goes** (exact hints on the new build, whole run, returning turns; mean TTFT 0.82 s, median 0.27 s):
+
+| Part | Mean | Share |
+|---|---|---|
+| Before the scheduler has the request | 0.14 s | 17 % |
+| Scheduler queue | 0.38 s | 47 % |
+| After admission | 0.29 s | 36 % |
+
+**What we still miss**
+
+1. **Recompute of history that was on SSD.** About 1 % of returning turns (123) recompute their history at about 11 s each. That is 14 % of all TTFT seconds and 23 % of all prefill work, mostly inside the load episodes.
+   - **Cause:** in 58 of them the read was refused host room, and in 25 the data was read and then lost before admission.
+   - **Why room is short:** the host pool keeps a copy of everything on the GPU, so only 44K of its 712K tokens are free, while a refused read needs about 20K.
+   - **Hints don't change it:** the no-hint arm shows the same pattern (113 turns).
+   - **Rule 2 likely won't either:** the no-hint arm has no early reads to release, yet 50 of its turns were refused.
+2. **Per-turn overhead before the scheduler.** It grows with prompt length, from 0.04 s under 8K tokens to 0.17 s over 64K. I have not profiled it, but the server re-tokenizes the whole history each turn with one tokenizer worker.
+3. **GPU memory in the episodes.** Fourteen minutes hold 89 % of the queue seconds, with the GPU pool 80–96 % full. Going from about 20 to 28 running requests adds about 11 % throughput while holding 40 % more of the pool.
+
+**A better design**
+
+- **One copy per page (my recommendation).** A page that is on the GPU and already saved to SSD needs no host copy; host memory then holds only sessions that are off the GPU, and a restore passes straight through to the GPU. In-memory capacity goes from 712K to 1,380K tokens, against a median live context of 1,176K. The forecasts would then decide which sessions get 712K of host memory instead of 44K. Your paper plan already lists the mirror as open item 4, blocked by the write-back lookup bug. The 100 GB arms (about 1–7 AM ET tomorrow) are the first test.
+- **Use forecasts in aggregate (more novel, unproven).** Per-session gap forecasts bought at most 0.2 s, but their sum across sessions is much steadier, and the episodes hit every arm at the same minutes. Predicting occupancy 30–60 s ahead would let the engine act before the room fills, making rule 4 predictive rather than reactive. Agent-level admission that reacts to cache pressure already exists (CONCUR, MARS, ThunderAgent), so the novelty needs a proper check; I only ran a quick search and read snippets.
+- **What I would not pursue:** finer fetch timing. Its ceiling here is about 0.2 s and the literature on it is crowded.
+
+These breakdowns come from one run per arm on one workload, and the capacity gain is arithmetic, not a measurement. Details are in the last entry of `agent_cache/results/campaign26/DECISIONS.md`.
+
+Decisions for you:
+- Should I test the aggregate-forecast idea offline on the existing logs? It needs no GPU and does not touch the queue.
+- Do you want an arm at about 136 GB, which equals the no-mirror capacity? I'd wait for the 100 GB results first.
+
+Sources:
+- [CONCUR (arXiv 2601.22705)](https://arxiv.org/pdf/2601.22705)
+- [MARS (arXiv 2604.26963)](https://arxiv.org/pdf/2604.26963)
+- [ThunderAgent (arXiv 2602.13692)](https://arxiv.org/html/2602.13692)
+
+=== line 27622 @ 2026-11-12T17:44:41.507Z MAIN len=110 ===
+`ec_r134` finished cleanly; adding it to the tables and the new figure set, then checking the next arm's boot.
+
+=== line 27638 @ 2026-11-12T17:46:10.186Z MAIN len=98 ===
+Figures updated with the new arm; writing its result into the campaign notes, then a short report.
+
+=== line 27658 @ 2026-11-12T17:46:40.441Z MAIN len=1544 ===
+The learned-price arm (`ec_r134`: rules 1 and 3 with rule 4) finished cleanly at 12:42 PM ET, and the learned price bought nothing over the fixed one.
+
+| Mean TTFT | Exact hints | Rules 1+3, fixed price | Rules 1+3+4, learned price | No hints |
+|---|---|---|---|---|
+| 6,715 shared turns | 0.51, 0.54 s | 0.66, 0.78 s | 0.80 s | 0.71 s |
+| 11,067 turns the leading runs share | 0.70, 0.77 s | 0.77, 0.86 s | 0.89 s | 0.91 s |
+
+- **Not separated from the fixed price or from no hints.** It is behind both fixed-price runs, but the smaller gap (0.02 s) is inside that arm's own run-to-run move. Exact hints stay ahead of it in every pair. This is one run.
+- **Why it did not help:** the learned price sat below the fixed one in 76 % of its updates, so the engine started more early reads. Against the two fixed-price runs:
+  - 838 early reads (629 and 560);
+  - about twice the pinned memory;
+  - 654 reads refused room (395 and 420).
+- **This fits my last answer:** room for a turn that has already arrived is what is short, and a lower price hands more of it to reads nobody has asked for yet.
+
+The new figure set now includes this arm's timeline and its bar in the wait split. The fifth series in the comparisons is still rules 1 and 3 until the all-four-rules arm finishes (about 6:52 PM ET).
+
+The repeat of the no-hint arm booted cleanly and ends about 2:45 PM ET. The 128-user rules arm follows, ending about 4:48 PM ET.
+
+Still open from my last message: whether to test the aggregate-forecast idea offline, and whether to add a 136 GB arm.
+
+=== line 27681 @ 2026-11-12T17:55:59.397Z MAIN len=96 ===
+Adding the rules 1, 3 and 4 arm as a sixth series to the comparison figures now; redraw follows.
+
+=== line 27709 @ 2026-11-12T17:57:44.372Z MAIN len=56 ===
+Checking the last two redrawn figures, then I'll report.
+
+=== line 27732 @ 2026-11-12T17:58:13.428Z MAIN len=843 ===
+The figures in `agent_cache/results/compare_c26_designs/` now show rules 1, 3 and 4 as a sixth series.
+
+- **Where it appears:** `compare.png`, `compare_steady_1800s.png`, `ttft_over_time_60s.png`, `pricing_vs_jit.png` (and `.pdf`), and `ec_overview.png`. There is also a new `paired_cdf_ec_r134.png` against JIT p50; the timeline and wait-split bar were already there.
+- **How it is drawn:** the pricing arms share the orange and differ by line style. Rules 1 and 3 stay solid, as before; rules 1, 3 and 4 are dash-dot.
+- **Its numbers in the footnote:** 0.80 s mean TTFT on the 6,715 shared turns, against 0.66 s for rules 1 and 3 (0.78 s in its repeat) and 0.54 s for JIT exact.
+
+The all-four-rules arm is already wired in as a dotted orange line, so it will be added when it finishes, about 6:52 PM ET. I checked each redrawn figure by eye.
+
+=== line 27761 @ 2026-11-12T18:00:36.835Z MAIN len=68 ===
+Found the mechanism in the price log; writing it down and answering.
+
+=== line 27766 @ 2026-11-12T18:00:59.338Z MAIN len=2517 ===
+On TTFT it is not established that it is worse: 0.80 s equals the repeat of rules 1 and 3 (0.78 s), and only the first run of rules 1 and 3 (0.66 s) is clearly ahead. Its behaviour does differ from both fixed-price runs, though, and in the harmful direction, because the learned price is lowest exactly when room is about to run out.
+
+**What happened**
+
+- **The price falls during calm stretches.** With no harm to charge, it decayed to about 3e-6 just before the first load episode and to 2e-6–6e-6 before the second, roughly a fifteenth of the fixed 5e-5.
+- **So the engine filled the room with early reads going into each episode.** In the six minutes before the first episode it held 17–35K tokens of early reads, against 0–2.5K under the fixed price. Refusals started in those minutes, before the episode proper.
+- **The price recovered only after the damage.** It was back near 5e-5 a few minutes into each episode, once reads had already been refused.
+
+**Net effect over the run, against the two fixed-price runs**
+
+| | Rules 1+3, fixed price | Rules 1+3+4, learned price |
+|---|---|---|
+| Turns recomputing 4K+ tokens of history | 136, 148 | 215 |
+| Of those, read refused room | 72, 74 | 111 |
+| History recomputed | 2.8M, 3.1M tokens | 4.0M tokens |
+| Reads landed before arrival | 130, 134 | 206 |
+| Wait for the SSD read alone, per turn | 0.09, 0.10 s | 0.07 s |
+
+It bought about 75 more reads landing early, and paid with about 70 more turns recomputing roughly 18K tokens each.
+
+**Why the rule behaves this way**
+
+- **It prices the average, not the margin.** The price is set to the measured harm per token-second that early reads hold. That ratio stayed about the same (2.7e-5) even though harm doubled and held memory nearly tripled, so nothing pushes the price back up when the engine over-stages.
+- **The room's value is two-sided.** Outside the episodes about 80K tokens are free and room is nearly worthless; inside them about 25K are free and it is very expensive. A two-minute average sits between the two and lags both.
+- **The deck's own form of rule 4 would go further the same way.** Replayed on the fixed-price run's log, it dropped to its floor within a minute.
+
+The price for this room should follow its current or forecast state, not the recent past. That is the aggregate-forecast idea from my earlier answer, and it is now the specific fix I would try for rule 4. This is one run of the learned-price arm; details are in the last entry of `agent_cache/results/campaign26/DECISIONS.md`.
+
+=== line 27865 @ 2026-11-12T19:48:00.210Z MAIN len=192 ===
+The repeat of the no-hint arm finished at 2:44 PM ET, and the learned-price arm at 128 users started right after. I've relaunched the watcher and rerun the comparison tables; reading them now.
+
+=== line 27926 @ 2026-11-12T19:49:57.352Z MAIN len=132 ===
+Still on the same step: the new 128-user arm booted clean, and I'm writing the record entry for the no-hint repeat before reporting.
+
+=== line 27983 @ 2026-11-12T19:51:47.248Z MAIN len=188 ===
+Preparing the 128-user figure scripts now so that set can be drawn as soon as the learned-price arm at 128 users lands (about 4:48 PM ET). Reading the existing plot scripts to extend them.
+
+=== line 28019 @ 2026-11-12T19:52:59.944Z MAIN len=125 ===
+Still preparing the 128-user figure set while the arm runs; checking two data details first, then extending the plot scripts.
+
+=== line 28061 @ 2026-11-12T19:55:31.895Z MAIN len=100 ===
+Timeline script extended for the 128-user set; running a trial on the four older 128-user runs next.
+
+=== line 28086 @ 2026-11-12T19:57:13.124Z MAIN len=132 ===
+Deck-style script extended; now checking that the two existing 44-user figures still come out byte-identical, then a 128-user trial.
+
+=== line 28120 @ 2026-11-12T19:58:26.951Z MAIN len=166 ===
+Checked the new SSD panel against the disk monitor's numbers (agrees within 3 %). Now fixing an axis-label rounding and extending the overview and wait-split scripts.
+
+=== line 28158 @ 2026-11-12T20:00:24.150Z MAIN len=106 ===
+Wait-split script extended and the 44-user output is unchanged; trying it on the four older 128-user runs.
+
+=== line 28194 @ 2026-11-12T20:01:37.328Z MAIN len=174 ===
+Trial figures for 128 users look right. Finishing the one-command script for that set and cleaning up the trial folder; then it only needs the arm to land (about 4:48 PM ET).
+
+=== line 28204 @ 2026-11-12T20:04:04.385Z MAIN len=198 ===
+One clean-up command was blocked by a safety check (deleting trial files); I'm leaving that folder in place and will tell you about it. Continuing with the regression check of the 44-user timelines.
+
+=== line 28224 @ 2026-11-12T20:05:28.244Z MAIN len=2401 ===
+The repeat of the no-hint arm finished clean at 2:44 PM ET, and it reproduces its first run almost exactly. The learned-price arm at 128 users started right after, booted with the intended settings, and should end about 4:48 PM ET.
+
+**What the repeat shows** (mean TTFT, 44 users, 70 GB)
+
+| Turn set | No hints, both runs | Exact hints, both runs | Rules 1+3, both runs |
+|---|---|---|---|
+| 6,715 turns all runs share | 0.71, 0.72 s | 0.51, 0.54 s | 0.66, 0.78 s |
+| 11,067 turns the ten leading runs share | 0.91, 0.91 s | 0.70, 0.77 s | 0.77, 0.86 s |
+
+- **The no-hint arm is the most repeatable arm so far.** Its two runs differ by 0.001–0.005 s, against 0.04–0.12 s for the hinted arms that have a repeat. That is one pair of runs, so the size of that gap could be chance.
+- **Exact hints beat no hints: shown.** They lead in all four run pairs by 0.14–0.21 s, well above either arm's own rerun move.
+- **Rules 1+3 against no hints: not shown.** On the smaller turn set the four pairs run from −0.06 to +0.06 s; on the larger one the rules lead by 0.05–0.14 s, but the smallest lead is under their own 0.10 s rerun move.
+- **The end-of-session signal alone: no TTFT gain shown, but 14–17 % fewer SSD pages in every pair.**
+- **Turn latency still does not follow TTFT.** No hints and exact hints sit at 12.06–12.17 s; the learned-price arm is the slowest at 12.67 s.
+
+**128-user figures**
+
+The set is scripted and tried on the four older 128-user runs (original HiCache, old oracle, JIT p50, JIT exact). I'll draw it into `agent_cache/results/compare_c26_designs_c128/` once the learned-price arm lands. Three things about it:
+
+- Every run is cut to its first two hours, because the original HiCache and old oracle runs at 128 users lasted five.
+- The JIT runs at 128 users are from the earlier build, not this campaign's.
+- The time-series figure shows SSD read rate instead of host memory, since at 128 users the GPU queue sets TTFT and the arms differ mainly in SSD traffic.
+
+The two 44-user figure sets still come out byte-identical after these script changes.
+
+**One thing for you:** a trial folder, `agent_cache/results/_trial_c128/` (109 MB), is left over. A safety check refused my delete command, so I left it; it is safe to remove.
+
+The queue is unchanged. Next up after the 128-user arm is the all-four-rules arm, due about 6:52 PM ET, when I'll redraw the 44-user figures as you asked.
+
+=== line 28331 @ 2026-11-12T21:50:04.898Z MAIN len=179 ===
+The learned-price arm at 128 users finished clean at 4:48 PM ET and the all-four-rules arm has started; I'm reading the new arm's numbers and then drawing the 128-user figure set.
+
+=== line 28373 @ 2026-11-12T21:51:13.900Z MAIN len=110 ===
+The new arm's numbers are in and its figures are drawing; next I check the figures and write the record entry.
+
+=== line 28442 @ 2026-11-12T21:52:52.143Z MAIN len=165 ===
+Figures for 128 users are drawn; I'm fixing two small things in them (a legend that overlaps a line, and a footnote that should cover the new arm) before writing up.
+
+=== line 28492 @ 2026-11-12T21:54:32.776Z MAIN len=127 ===
+Applying three small figure fixes for the 128-user set (legend position, two footnotes), then I'll redraw and write the record.
+
+=== line 28538 @ 2026-11-12T21:55:58.594Z MAIN len=133 ===
+Redrawing the 128-user figures with the fixes and re-checking the 44-user ones; meanwhile collecting the last numbers for the record.
+
+=== line 28590 @ 2026-11-12T21:57:19.975Z MAIN len=163 ===
+The 128-user figures are redrawn with the fixes; I'm checking the last one and waiting on the byte-for-byte check of the 44-user figures before writing the record.
+
+=== line 28622 @ 2026-11-12T21:58:26.725Z MAIN len=103 ===
+Checks are done; I'm confirming two expected file differences, then writing the record and the summary.
+
+=== line 28660 @ 2026-11-12T21:59:34.257Z MAIN len=69 ===
+Record is written; saving notes for later sessions, then the summary.
+
+=== line 28676 @ 2026-11-12T22:00:04.095Z MAIN len=3036 ===
+The learned-price arm at 128 users finished clean at 4:48 PM ET, and the 128-user figure set is drawn in `agent_cache/results/compare_c26_designs_c128/`. The all-four-rules arm at 44 users started right after with soft pins on and should end about 6:53 PM ET.
+
+## What the 128-user arm shows
+
+**The pricing rule never started a read early.** All 3,670 start decisions during the run were "leave the read to the turn's arrival". The rule expected a queue wait of about 29 s against a read of about 5 s, so an early start buys nothing. Three things follow:
+
+- **The learned price never moved.** Nothing was read early, no read was refused room, and the price stayed at 5e-5 for the whole run.
+- **Reads were timed like just-in-time reads.** After arrival the engine holds each read so it lands just before admission, the same as in the JIT arms.
+- **The same rule did read early at 44 users.** There it started 838 reads early, at moments when it expected no queue wait, so one rule covers both settings without a switch.
+
+**Results, first 6,900 s of each run** (one run per arm):
+
+| | Original HiCache | Old oracle | JIT exact | JIT p50 | No hints | Rules 1+3+4 |
+|---|---|---|---|---|---|---|
+| Turns | 8,334 | 15,525 | 15,384 | 15,366 | 15,418 | 15,502 |
+| Mean TTFT | 50.20 s | 20.58 s | 20.93 s | 20.98 s | 20.84 s | 20.57 s |
+| SSD pages read | 433K | 1,438K | 998K | 1,195K | 1,153K | 1,049K |
+
+- **TTFT:** the new arm is level with the old oracle. The five leading arms span 20.57–20.98 s and there is no repeat at 128 users, so no order among them is shown.
+- **SSD traffic:** 27 % under the old oracle, 12 % under JIT p50, 9 % under the no-hint arm, 5 % over JIT exact.
+- **What it tests:** with rules 1 and 4 idle, this arm is effectively rule 3 (eviction by return chance) on top of arrival-time reads.
+
+## Figures
+
+The set has the same figures as the 44-user one, for original HiCache, the old oracle, JIT p50, JIT exact and rules 1+3+4. Start with `pricing_vs_jit.png` and `ec_wait_split.png`.
+
+- **Cut to two hours:** the HiCache and old-oracle runs lasted five hours, so every run is cut to its first two.
+- **Older build for JIT:** the two JIT runs are from the earlier build (campaign 23), not this campaign's.
+- **Fourth panel:** `pricing_vs_jit.png` shows SSD read rate instead of host memory, since the room is not the limit at 128 users.
+- **Footnotes:** `pricing_vs_jit.png` and `ec_wait_split.png` say that the pricing arm started no read early.
+
+The 44-user figures still redraw byte-identical after the script changes. The record is in `results/campaign26/DECISIONS.md`.
+
+## For you to decide
+
+- **All-four-rules arm at 128 users:** I recommend not adding it. Rule 2 only acts on reads started early, and there were none, so it would repeat this arm.
+- **Trial folder:** `agent_cache/results/_trial_c128/` (110 MB) is still there and safe to delete; I also wrote this round's check outputs into it.
+
+The queue is unchanged. When the all-four-rules arm lands I'll redraw the 44-user figures with it, as you asked.
+
+=== line 28798 @ 2026-11-12T23:54:50.969Z MAIN len=132 ===
+The all-four-rules arm finished clean at 6:53 PM ET; I'm rebuilding the comparison tables and redrawing the 44-user figures with it.
+
+=== line 28838 @ 2026-11-12T23:57:14.028Z MAIN len=141 ===
+Tables are rebuilt and the figures redrawn (94 s); I'm now checking each redrawn figure and the new arm's read log before writing the record.
+
+=== line 28892 @ 2026-11-12T23:58:54.260Z MAIN len=165 ===
+Still checking the redrawn figures one by one (two look right so far; the deck-style figure's legend now runs off the right edge with seven entries, which I'll fix).
+
+=== line 28957 @ 2026-11-13T00:00:11.953Z MAIN len=157 ===
+Legend fix is in and the other two figure sets still reproduce byte for byte; viewing the corrected figure, then on to the new arm's read log and the record.
+
+=== line 29014 @ 2026-11-13T00:01:27.533Z MAIN len=94 ===
+Legend fix verified against the other sets (byte-identical); viewing the corrected figure now.
+
+=== line 29066 @ 2026-11-13T00:02:45.818Z MAIN len=156 ===
+Writing a small check of what rule 2's bumped reads cost (the new arm reads 27 % more SSD pages than the learned-price arm); then the record and the report.
+
+=== line 29091 @ 2026-11-13T00:04:11.888Z MAIN len=123 ===
+`fq90` booted clean (landing quantile 0.9, ends about 8:56 PM ET). Writing the record entry for the all-four-rules arm now.
+
+=== line 29111 @ 2026-11-13T00:05:45.328Z MAIN len=73 ===
+Record is written; updating my notes for later sessions, then the report.
+
+=== line 29150 @ 2026-11-13T00:06:52.865Z MAIN len=2959 ===
+The all-four-rules arm finished clean at 6:53 PM ET, and the 44-user figures in `agent_cache/results/compare_c26_designs/` are redrawn with it as a seventh series (dotted orange).
+
+**Result: all four rules reach 0.66 s mean TTFT, the level of the best rules 1+3 run, but read 27 % more from SSD than rules 1+3+4.** By the repeat rule nothing new is shown on TTFT, since this arm has one run.
+
+| 6,715 shared returning turns | JIT exact | Rules 1+3 | Rules 1+3+4 | All four rules | No hints |
+|---|---|---|---|---|---|
+| Mean TTFT | 0.51, 0.54 s | 0.66, 0.78 s | 0.80 s | 0.66 s | 0.71, 0.72 s |
+| SSD pages, whole run | 388K, 397K | 437K, 415K | 420K | 534K | 562K, 559K |
+| Reads staged before arrival | 1,202, 1,207 | 629, 560 | 838 | 1,569 | 0 |
+
+Two numbers in a cell are two runs of that arm.
+
+## What rule 2 did
+
+- **It works as built.** An arrived turn's read now takes room from early reads instead of being refused. The delay charged to early reads fell from 1,081 s to 404 s, the learned price settled at about a quarter of its starting value, and early reads nearly doubled.
+- **The cost is wasted reads.** 462 of the 1,569 early reads were given up for an arrived turn, and nearly all of those turns read again. The reads given up had loaded 14 % of everything the run read from SSD.
+- **The SSD saving mostly goes.** Rules 1+3 read 22–26 % fewer pages than the no-hint arm; all four rules read 5 % fewer.
+- **No more reads were ready at arrival.** 196 reading turns found their read landed, against 206 without rule 2.
+
+## How to read the TTFT
+
+- **Against rules 1+3+4:** 0.14 s faster, one run each. A rerun of rules 1+3 alone moved 0.12 s, and the gain is not on the turns rule 2 touched, so it is not shown.
+- **Against no hints:** ahead in both pairs by 0.05–0.06 s; not shown without a repeat.
+- **Against JIT exact:** behind in both pairs by 0.12–0.15 s.
+- **Latency and throughput:** level with the best arms (12.03 s per turn, 11,706 turns by minute 115).
+
+## Figures
+
+Open `pricing_vs_jit.png`, `ec_wait_split.png` and `timeline_ec_full.png` first. With seven entries the legend of `pricing_vs_jit.png` ran off the right edge, so the script now picks the column count that fits (two here). The other figure sets still redraw byte-identical.
+
+## For you to decide
+
+At 70 GB only 44K tokens of host memory are free beyond the GPU's copy, and rules 2 and 4 only move that room between early reads and arrived turns. Whether they pay off with more room is untested: the three 100 GB arms in the queue are the no-hint arm and the two JIT arms.
+
+I recommend adding an all-four-rules arm at 100 GB at the end of the queue, about 2 h more, ending around 9:20 AM ET Friday. I have not touched the queue.
+
+The next arm (`fq90`, just-in-time with landing quantile 0.9) started at 6:54 PM ET, is running clean, and ends about 8:56 PM ET. The record is in `results/campaign26/DECISIONS.md`, with the new check in `results/campaign26/checks/bumps.py`.
+
+=== line 29304 @ 2026-11-13T01:58:26.265Z MAIN len=163 ===
+`fq90` finished clean at 8:56 PM ET (11,740 turns, no errors) and `ec_r3` is booting with the right settings; I'm rebuilding the comparison tables with `fq90` now.
+
+=== line 29330 @ 2026-11-13T02:00:06.420Z MAIN len=93 ===
+Pair table with `fq90` is rebuilt; reading its rows against the JIT p50 and rule-1 runs next.
+
+=== line 29364 @ 2026-11-13T02:02:06.815Z MAIN len=174 ===
+Tables are rebuilt: `fq90` lands at 0.94 s on the shared turns, between JIT p50 (1.35–1.60 s) and the leading group (0.66–0.80 s). Running the latency check, then the record.
+
+=== line 29404 @ 2026-11-13T02:03:29.134Z MAIN len=116 ===
+Writing a small check of how much host memory `fq90`'s early reads hold compared with rule 1; then the record entry.
+
+=== line 29447 @ 2026-11-13T02:05:38.748Z MAIN len=156 ===
+Mechanism check is done: `fq90`'s early reads hold about five times the host memory of rule 1's. Verifying one engine detail, then writing the record entry.
+
+=== line 29498 @ 2026-11-13T02:06:50.601Z MAIN len=108 ===
+Record entry for `fq90` is written; tidying its wrapping, then updating my notes and sending you the report.
+
+=== line 29522 @ 2026-11-13T02:07:32.937Z MAIN len=2327 ===
+`fq90` finished clean at 8:56 PM ET with 0.94 s mean TTFT on the shared turns: well ahead of JIT p50, but behind every leading run.
+
+This arm is JIT p50 with one change: each read is timed to finish at the 90th percentile of the forecast gap (late) instead of the 10th (early). It has one run, so nothing counts as shown by the repeat rule.
+
+| 6,715 shared returning turns | JIT p50 (early) | `fq90` (late) | Rule 1 alone | No hints | JIT exact |
+|---|---|---|---|---|---|
+| Mean TTFT | 1.35–1.60 s | 0.94 s | 0.67 s | 0.71, 0.72 s | 0.51, 0.54 s |
+| Host memory held by early reads, of 44K free tokens | 24.6K | 13.2K | 2.7K | 0 | 4.0K |
+| Recomputed tokens per turn | 928–1,007 | 446 | 181 | 135–145 | 120–151 |
+| Turns sent by minute 115 | 10,043–10,208 | 11,204 | 11,580 | 11,645–11,680 | 11,699–11,703 |
+
+The memory row comes from one run per arm.
+
+- **Against JIT p50:** 0.41–0.66 s faster in all three pairs, where the three JIT p50 runs differ by up to 0.25 s among themselves.
+- **Against the leading runs:** behind all eleven, by 0.14–0.29 s (0.40–0.43 s for exact hints). On the wider 10,830 turns it shares with them alone, the gaps shrink to 0.05–0.26 s, and its gap to rule 1 shrinks from 0.27 s to 0.09 s.
+- **Why it trails rule 1:** it finishes about as many reads before their turn arrives (419 against 367), but they wait much longer for it, 60 s against 12 s at the 90th percentile. They therefore hold five times the host memory, so more reads of arrived turns are refused room (625 against 396) and more history is recomputed.
+- **What it means for the design:** this is the deck's argument for rule 1 observed in a run. A fixed percentile cannot tell a turn about to arrive from one a minute away; starting by expected cost can. The edge over this fixed percentile is 0.09–0.27 s on one run each, and it changes nothing against the arms that start no read early.
+
+`ec_r3` (rule 3 alone) started at 8:57 PM ET, is running clean and ends about 10:59 PM ET. I will redraw `compare_c26_designs` when it lands; `fq90` is not part of that figure set. The queue is unchanged and ends about 7:15 AM ET Friday.
+
+The record is in `results/campaign26/DECISIONS.md`, with the new memory check in `results/campaign26/checks/pin_hold.py`. Still open from the last report: whether to add an all-four-rules arm at 100 GB.
+
+=== line 29614 @ 2026-11-13T04:00:05.001Z MAIN len=143 ===
+`ec_r3` (rule 3 alone) finished clean at 10:58 PM ET; I'm rebuilding the comparison tables with it and boot-checking the next arm, `nofc_c128`.
+
+=== line 29674 @ 2026-11-13T04:02:07.214Z MAIN len=123 ===
+Checking that the rebuilt pair table leaves the earlier cells unchanged, then the figures and the record entry for `ec_r3`.
+
+=== line 29708 @ 2026-11-13T04:04:40.791Z MAIN len=121 ===
+Figures are redrawn with `ec_r3`; now checking which ones changed and looking at the new timeline and wait-split figures.
+
+=== line 29767 @ 2026-11-13T04:06:14.087Z MAIN len=126 ===
+Tables, figures and checks for `ec_r3` are done (rule 3 alone lands level with JIT p50, 1.48 s); writing the record entry now.
+
+=== line 29795 @ 2026-11-13T04:07:55.275Z MAIN len=86 ===
+Record entry for `ec_r3` is written; updating my notes, then I'll send you the report.
+
+=== line 29834 @ 2026-11-13T04:08:49.960Z MAIN len=2046 ===
+`ec_r3` (rule 3 alone) finished clean at 10:58 PM ET and lands level with JIT p50: 1.48 s mean TTFT against 1.35–1.60 s. The eviction rule on its own buys nothing on TTFT; the gain of the pricing arms comes from rule 1.
+
+This arm (one run) is JIT p50 with one change: eviction by chance of return within 30 s instead of by next use. With the earlier arms it completes the two-by-two of rules 1 and 3. The table gives mean TTFT on the 6,715 returning turns every run shares, one value per run:
+
+| | Next-use eviction | Rule 3 (evict by return chance) |
+|---|---|---|
+| JIT p50 read timing | 1.35, 1.48, 1.60 s | 1.48 s |
+| Rule 1 (start by expected cost) | 0.67 s | 0.66, 0.78 s |
+
+- **Rule 3:** it moves TTFT by −0.12 to +0.13 s without rule 1 and by −0.02 to +0.10 s with it, so there is no effect in either row. Against the JIT p50 run on the same build the difference is within 0.02 s.
+- **Rule 1:** it is worth 0.68–0.93 s under next-use eviction and 0.71–0.83 s under rule 3, with every interval clear of zero.
+- **Why rule 3 cannot help here:** the reads still finish early and wait for their turn, holding on average 27.9K of the 44K free tokens of host memory (JIT p50: 24.6K). Memory pinned by a read is outside any eviction rule.
+- **SSD traffic:** 4–7 % fewer pages than each JIT p50 run. That is one run, so it needs a repeat before it counts.
+
+For the paper's ablation, rule 3 is not a source of the TTFT gain at this setting; its only candidate benefit is the SSD saving.
+
+Figures in `results/compare_c26_designs/` are redrawn: `timeline_ec_r3.png` is new and `ec_wait_split.png` has a row for the arm. `compare.png` is unchanged because rule 3 alone, like rule 1 alone, is not one of its compared arms; say if you want either added.
+
+`nofc_c128` (128 users, the rival that uses no gap forecast) started at 11:00 PM ET, is running clean and ends about 1:02 AM ET. The queue is unchanged and ends about 7:10 AM ET Friday. The record is in `results/campaign26/DECISIONS.md`. Still open: whether to add an all-four-rules arm at 100 GB.
+
+=== line 29851 @ 2026-11-13T05:11:00.180Z MAIN len=655 ===
+About 7 hours: four arms are left, and the queue should finish around 7:10 AM ET today (Friday 13 Nov). It is 12:11 AM ET now.
+
+| Arm | Setting | Ends about (ET) |
+|---|---|---|
+| `nofc_c128` (running, clean, 51 min left) | 128 users, 160 GB, no gap forecast | 1:02 AM |
+| `nofc_noend_h100` | 44 users, 100 GB, no hints | 3:05 AM |
+| `jit_p50_h100` | 44 users, 100 GB, JIT p50 | 5:08 AM |
+| `jit_exact_h100` | 44 users, 100 GB, JIT exact | 7:11 AM |
+
+Each arm takes about 2 h 03 min, including server start and shutdown. The estimate assumes no host outage; a preemption reruns the interrupted arm from scratch, which adds up to 2 hours plus the downtime.
+
+=== line 29893 @ 2026-11-13T06:03:19.202Z MAIN len=143 ===
+`nofc_c128` finished clean at 1:02 AM ET (level with the old oracle at 128 users); installing its table and boot-checking the first 100 GB arm.
+
+=== line 29923 @ 2026-11-13T06:04:45.377Z MAIN len=116 ===
+Writing up `nofc_c128`; the next arm's server is taking longer than usual to start, so I'm looking at its log first.
+
+=== line 29988 @ 2026-11-13T06:06:01.719Z MAIN len=146 ===
+Waiting on the 100 GB arm's server to finish loading weights (slow after the 160 GB arm, as before); checking how the watcher treats a long start.
+
+=== line 30058 @ 2026-11-13T06:07:20.163Z MAIN len=1991 ===
+`nofc_c128` finished clean at 1:02 AM ET. At 128 users the rival with no gap forecast lands level with the old oracle and the pricing arm: 20.57 s mean TTFT against 20.58 s and 20.57 s.
+
+This arm reads a turn's history from SSD only when the turn arrives, and evicts ended sessions first and queued turns last. Each arm has one run at 128 users, so no order between them counts as shown.
+
+| First 6,900 s, 128 users, 160 GB | Old oracle | JIT exact | JIT p50 | Rules 1+3+4 | No hints | No gap forecast (`nofc_c128`) |
+|---|---|---|---|---|---|---|
+| Mean TTFT | 20.58 s | 20.93 s | 20.98 s | 20.57 s | 20.84 s | 20.57 s |
+| Turns sent | 15,525 | 15,384 | 15,366 | 15,502 | 15,418 | 15,519 |
+| SSD pages read | 1,438K | 998K | 1,195K | 1,049K | 1,153K | 1,122K |
+
+- **TTFT:** every arm that keeps the history of queued turns lands within 0.41 s (2 %) of the others, with or without hints, a gap forecast or a price.
+- **Why:** the GPU queue decides the wait. A turn waits about 20 s either way; reading at arrival only moves about a second of that wait from the queue to the read.
+- **SSD traffic:** this is what differs. This arm reads 22 % fewer pages than the old oracle and 7 % more than the pricing arm.
+
+So the 128-user setting cannot rank read-start rules. No figure changed: the 128-user figure set holds the five design series, not the rivals.
+
+One fix on my side: my watcher's error checks covered only the 70 GB and 160 GB run folders, so the three 100 GB arms would have been watched for their end only. I replaced it with a widened copy, `results/campaign26/checks/watch_all.sh`, before the first 100 GB arm's client started, so nothing ran unchecked.
+
+`nofc_noend_h100` (44 users, 100 GB, no hints) is running clean since 1:07 AM ET and ends about 3:09 AM ET. Its server took 4.5 minutes to start because the model weights had to be re-read from disk after the 160 GB arm. The queue is unchanged and now ends about 7:15 AM ET. The record is in `results/campaign26/DECISIONS.md`.
+
+=== line 30232 @ 2026-11-13T17:05:12.787Z MAIN len=146 ===
+Relaunched arm's server is still loading weights after the reboot; meanwhile I'm re-reading the deck and the record to list every unfinished item.
+
+=== line 30272 @ 2026-11-13T19:27:55.958Z MAIN len=22 ===
+No response requested.
+
+=== line 30398 @ 2026-11-13T19:33:28.180Z MAIN len=78 ===
+Running the cut-run comparison against its 70 GB counterparts and the leaders.
+
+=== line 30418 @ 2026-11-13T19:34:55.159Z MAIN len=189 ===
+Cut-run result is striking: at 100 GB the no-hint arm reads from SSD on only 0.7 % of turns and reaches 0.37 s TTFT. Finishing its wait-split and latency tables while the audit agents work.
+
+=== line 30440 @ 2026-11-13T19:36:49.567Z MAIN len=143 ===
+Cut-run result recorded (100 GB removes nearly all SSD reads; 0.37 s with no hints). Updating memory notes; the audit agents are still running.
+
+=== line 30502 @ 2026-11-13T19:38:31.758Z MAIN len=155 ===
+Waiting on the audit agents; meanwhile checking the existing eviction-replay tool to see whether a CPU-only host-pool sweep (70–160 GB) can be run from it.
+
+=== line 30539 @ 2026-11-13T19:40:39.552Z MAIN len=167 ===
+Host-pool sweep on the replay model reproduces the 100 GB measurement (0.7 %) and shows reads halving every 5 GB above 70 GB; recording it. Audit agents still running.
+
+=== line 30603 @ 2026-11-13T19:42:37.574Z MAIN len=140 ===
+Preparing the 100 GB figure set (same style as the 70 GB and 128-user sets) so it can be drawn as the arms land; audit agents still reading.
+
+=== line 30731 @ 2026-11-13T19:45:29.653Z MAIN len=157 ===
+Still waiting on the audit agents (all ten are reading); meanwhile checking what blocks the "no host mirror" design, since the 100 GB result now supports it.
+
+=== line 30745 @ 2026-11-13T19:46:03.158Z MAIN len=3146 ===
+The queue is running again: the host went down twice more, and I relaunched it at 2:28 PM ET. The first 100 GB arm was cut at minute 84 by the first outage, and its partial run already answers most of the 100 GB question.
+
+## What happened
+- **2:30 AM ET:** host went down, 84 minutes into the first 100 GB arm (the no-hint arm).
+- **12:02 PM ET:** host came back and I relaunched; it went down again at 12:06 PM, before the server had finished starting.
+- **2:27 PM ET:** host came back; relaunched at 2:28 PM on a new GPU unit. The arm booted with the right settings and is running clean.
+
+The three 100 GB arms rerun from scratch, queue unchanged. If the host stays up:
+
+| Arm | Ends about (ET, Friday) |
+|---|---|
+| No hints, 100 GB | 4:35 PM |
+| JIT p50, 100 GB | 6:38 PM |
+| JIT exact, 100 GB | 8:41 PM |
+
+## What the cut run shows
+With 30 GB more host memory, the no-hint arm almost stops reading from SSD and beats exact hints at 70 GB. This is one run and only its first 79 minutes; the rerun in progress is its repeat.
+
+| 8,030 shared returning turns | No hints, 100 GB (cut) | No hints, 70 GB (two runs) | JIT exact, 70 GB (two runs) |
+|---|---|---|---|
+| Mean TTFT | 0.37 s | 0.65, 0.66 s | 0.48, 0.51 s |
+| Mean TTFT in the first load episode | 0.51 s | 1.77, 1.77 s | 1.12, 1.25 s |
+| Turns reading from SSD | 56 (0.7 %) | 1,125, 1,138 (14 %) | 691, 743 (9 %) |
+| Wait for the turn's own SSD read, per turn | 0.006 s | 0.22, 0.23 s | 0.07 s |
+| Turn latency | 10.7 s | 11.3 s | 11.3 s |
+
+- **On your question about a larger host pool:** it does not make room for earlier reads; it removes the reads. Only 0.006 s per turn is left for any read-start rule to save at 100 GB, so I expect the two JIT arms to tie with this one.
+- **Pool sweep (CPU replay):** I fitted the existing eviction replay at 70 GB and it reproduces the 100 GB measurement (0.7 %). It says reads roughly halve for every 5 GB above 70 GB, so 70 GB is already the setting most favourable to hints at 44 users.
+- **Limit:** the second, heavier load episode comes after minute 84, so the full run should show somewhat more reads.
+
+## What this changes in the open decisions
+- **136 GB arm:** I'd drop it; the replay puts it at essentially no reads.
+- **All-four-rules arm at 100 GB:** I recommended adding it earlier; I now recommend against, since there is almost nothing for the rules to price.
+- **Original HiCache at 100 GB:** this is the control that is missing. Without it we cannot say whether the extra memory alone fixes HiCache or the no-hint arm's mechanisms are still needed. It would be one more 2-hour arm; I have not queued it.
+
+## In progress
+- An audit of everything left undone (the campaign record, the session transcript, the deck, the paper plan, the code and the figures) is running with ten reader agents. I'll send the verified list and continue the items that are mine to finish.
+- A 100 GB figure set is wired up in `agent_cache/results/compare_c26_designs_h100/`. It currently holds the cut run's timeline and an overview, and fills in as the arms land.
+
+The record is in `agent_cache/results/campaign26/DECISIONS.md` (last three entries).
+

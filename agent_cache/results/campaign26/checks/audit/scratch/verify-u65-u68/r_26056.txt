@@ -1,0 +1,79 @@
+=== [26056] user 2026-11-12T01:32:05.342Z
+TOOL_RESULT == supported_claims
+ - Original HiCache collapses at 44 users / 70 GB and every arm with read pins does not: 5.47 and 6.62 s against 1.89 s or less on the 6,715 shared returning turns; all run pairs have one sign and the smallest gap (3.59 s) is 3x the baseline's own rerun move (1.15 s). It holds on other metrics too: 25.8-29.9 s against 11.5-15.9 s mean turn latency, 6,956-7,541 against 10,037-11,716 turns sent before minute 115.
+ - PAPER_PLAN's 79 %: read pins without hints give 72-82 % of the way from original HiCache to exact hints (hint-free 1.61 and 1.89 s; two runs on each side).
+ - A p50 forecast acted on as exact is no better than pins alone (JIT p50 1.35 and 1.60 s against hint-free 1.61 and 1.89 s) and is worse than every arm that stages little or nothing: nofc_noend, ec_r13 and JIT exact are 0.64-1.02 s ahead of each of three JIT p50 runs, 3-5x the JIT p50 rerun move (0.18 s). Its mechanisms repeat (staged reads 2,094 and 2,202; launches refused 1,743 and 1,732; mean pins 30.2K and 31.5K tokens), and the new build is not the cause (jit_p50_d_cut - jit_p50_ctl = +0.05 s [-0.04,+0.15] over the first 75 minutes; the second episode is not covered).
+ - PAPER_PLAN's caution that hint-free shares are floors because that arm lacks queue-state mechanisms: at 44 users those mechanisms are worth 1.02 s (1.95 -> 0.93 s on 9,703 turns; turns that shrank while queued 288 -> 9), one run each, not separated from one another.
+ - The replay's negative predictions held on the GPU: rule 1 ties reading at arrival once recomputation is charged for the queue (ec_r1 0.67 against nofc 0.69 s; 0.86 against 0.88 s); read timing alone does not reach exact hints; most of rule 3's gain is the end signal (reading turns 1,898 without it, 1,581 with it, 1,582 with the three-quantile score).
+ - Exact hints under the just-in-time routine are the best arm on TTFT: 0.20 s ahead of the no-hint rival on both turn sets (0.51 against 0.71 s; 0.70 against 0.91 s), same sign in 16 of 16 and 21 of 22 blocks. One run from another date and unit, and not visible in turn latency (-0.05 to -0.12 s, intervals cover zero).
+ - Hints reduce SSD read traffic at 44 users, one run each: 562K pages with no hint, 469K with the end signal (-17 %), 437K with three quantiles (-22 %), 388K with exact hints (-31 %). The read thread is 16-21 % busy there, so nothing follows for latency.
+ - The measurement plumbing is sound: I reproduced the 6,715 / 11,198 / 9,702 / 6,579 shared sets and every arm's mean on them; decode step, first-turn prefill and SSD ms per page agree within 1-3 % across arms in matched windows; bytes read from the device equal the engine's s2h pages x 6.29 MB (ratio 1.00), so the page cache is not a hidden tier; no client errors in any of the 12 runs.
+ - DECISIONS' own reading rule 'a difference under about 0.25 s is not a result on one run each' is consistent with the same-arm pairs (0.25, 0.28 and 1.15 s on the 6,715 turns).
+
+== contradicted_claims
+ - Contradicted: PAPER_PLAN 'The claim' and contribution row 1, that forecasts from the agent drive the gain. At 44 users / 70 GB an engine with no gap forecast and no end signal is at 0.71 s against 5.47-6.62 s for original HiCache and 0.51 s for exact hints (96 %); three-quantile hints add 0.05 s (6,715 turns) to 0.14 s (11,198 turns), about one rerun move.
+ - Contradicted: PAPER_INTRO 'once landed reads are protected, exact return times cut mean TTFT a further 2.9x [1.47 -> 0.50 s]' and PAPER_PLAN 'exact hints add 0.96 s'. Against a hint-free engine that also protects queued turns, exact hints are worth 0.20 s (0.71 -> 0.51 s, 1.4x).
+ - Contradicted: PAPER_PLAN contribution row 'where the gain comes from' (just-in-time timing 18 %, gate and hold 4 %). With nofc_noend as the hint-free step, exact-hint timing is 0.20 s of about 5-6 s (3-4 %).
+ - Contradicted: PAPER_PLAN CPU calibration, 'the rest of p50's 1.01 s is eviction ... rule 3 at least as important as rule 1'. ec_r1 keeps JIT p50's eviction order and is at 0.67 s against 1.35-1.60 s; rule 3 adds 0.01-0.10 s and leaves the number of reading turns unchanged (1,582 against 1,572 and 1,581).
+ - Contradicted (open loop): rule 4 as stated, dual ascent on tokens refused minus idle room. On ec_r13's own signals the price reaches its floor in 0.6 min and stays there in 77 % of intervals; DECISIONS replaces it by a 'harm' rule that has no closed-loop run.
+ - Contradicted: Formulation section 6, 'one pooled distribution for every key ... that is the hint-free arm'. The engine acting on no forecast (reads at arrival, queue-state protection) is at 0.69-0.71 s, not the hint-free arm's 1.61-1.89 s; the table of methods lacks this rival.
+ - Contradicted in its second half: 'a point forecast acted on as exact is worth no more than none ... a distribution and a price recover part of that'. The first half holds (it is worse than none, by 0.64-0.89 s). The recovery is matched with no distribution and no price (nofc 0.69, nofc_noend 0.71 against ec_r13 0.66 s).
+ - Unsupported: rule 1's picture that the read lands at the quantile q = lambda L / (1 + lambda L) (64K tokens near p77). At 5e-5 rule 1 staged 629 of 2,667 decisions and 13 % of reading turns had landed by arrival; never staging ties it (0.014 s); no price sensitivity run.
+ - Unsupported: 'the client sends a distribution, the engine picks the point: the paper's case against sending one number'. No arm contrasts three quantiles with one number under the new rules (fq90 is queued under the old routine), and the rival that receives no number ties.
+ - Unsupported: DECISIONS 'ec_r13 reaches the exact-hint arm's level'. It is 0.149 s behind on the 6,715 turns ([+0.08,+0.23], 29 % slower) and 0.063 s behind on the 11,198 ([-0.01,+0.14]); the reference is one run from another date, unit and build.
+ - Unsupported: every 128-user hint claim (58 % kept without hints, p50 hints keeping nearly all the rest, up to 17 s per turn). The comparison arm lacks the queue-state mechanisms and the fair rival has not run.
+ - Unsupported: rule 2 (soft pins) and per-key recalibration (no run, the latter not built); the Whittle argument (the room holds two or three histories); the cost model's 'queue taken as given' (queue wait is where arms differ: JIT p50 is 0.25 s of queue and 0.27 s after admission behind exact hints).
+ - Unsupported: PAPER_PLAN contribution rows 'latency against load' (knee shifts of 3-5 %, 6 %, 11 % read from swings in single runs; no user-count sweep) and 'the conditional table' (the engine has never read its own reply on a GPU; these runs take the reply key from the client).
+ - Unsupported: PAPER_INTRO paragraph 2-3 as the setting of the evaluation. Figure 1 is campaign 14's old client; in the current-code settings the read thread is 16-21 % busy (44 users) or the GPU queue decides (128 users); 'idle time says little about return' holds at x70 (LRU AUC 0.763), not at the evaluated x10 (0.922).
+
+== missing_from_plan
+ - A host-memory sweep at fixed users and a non-mirroring write policy: in-progress context peaks at 1.40 M tokens (138 GB) against a 0.712 M pool; a 160 GB pool holds 1.63 M, and GPU plus host without the mirror 1.38 M. Neither the plan nor the queue varies pool size at 44 users.
+ - End-to-end metrics as primary results: turn latency, turns and tokens per hour, share of turns within a TTFT target, p99 and maximum, first turns included; and one open-loop arrival run, since the closed loop at 44 sessions slows its own offered load when an arm is slow.
+ - A repeat of nofc_noend (the queue repeats nofc only) and a rerun of JIT exact on the current build and unit; a same-arm pair at 128 users; enough runs per arm for a test on run means (4-6).
+ - The planned user-count sweep compares the best routine with original HiCache; it needs nofc_noend as the comparison, or it will measure the protection mechanisms again and not the hint.
+ - The 2x2 of read start by eviction score (reads at arrival with the return-chance score; rule 1 with the forecast-free order), exact hints under the new rules, and sensitivity to the price and the 30 s horizon on turns the tuning never saw.
+ - Each queue-state mechanism alone (queued-turn protection, gate, hold, re-reads), and head-to-head runs against CachedAttention-style look-ahead and Bidaw's hit-potential eviction and read order built in the same engine.
+ - Other seeds and traces, a long-context or human-paced workload, a second model or GPU, and a faster SSD: at 2.3-2.5 GB/s the read itself is 0.7 s of a 2.0-2.4 s stall, so a local NVMe shrinks the only quantity read timing can remove.
+ - Forecast robustness and incentives: a stale or shifted table, wrong keys, missing end signals, the engine parsing its own reply, and a client that reports short gaps to keep its history in host memory at other tenants' cost.
+ - Policy overhead: per-tick cost of rules 1 and 3 with 128 or more plans, and hint bytes per request (3 KB today).
+ - SSD write volume and the full-volume regime: write-through wrote about 1.2 TB per 115 min at 44 users (about 15 TB per day on a 2.3 TB volume); starting from an empty volume a 2 h arm stays near half full, below the cleaner's 70 % mark, so the cleaner never runs in these arms.
+ - Steady state: every arm is a 2 h cold start with two transient episodes; no run is long enough to average over many episodes or to show recovery after one.
+ - More than one GPU or replica: the prefetcher refuses multi-rank setups, and there is no account of a router in front of several engines.
+ - Reproducibility: the engine is uncommitted and frozen/ is outside git; four engine freezes on the day of the runs with reviewer-found logic defects and two known ones left; PAPER_PLAN still quotes numbers from deleted runs (the p50's 87 %, the oracle's 0.05-0.14 s spread); GPU units are unrecorded for campaigns 19-21.
+ - Limits of this review (not a plan item): I ran only CPU scripts on the 12 finished runs (/home/wanhr/sglang/agent_cache/results/campaign26/checks/verify/reviewer/, review1-8.py with .out files); I did not read the run in progress, could not check rules 2 and 4 (no runs), could not separate GPU-unit from run-to-run effects, and took campaign 18's x70 figures and the AUC values from the project's notes and PAPER_PLAN without recomputing them.
+
+== defensible_headline
+ On one H200 with 44 concurrent agent sessions, a 70 GB host pool and tool gaps stretched x10 (one trace, one seed, 2 h runs), SGLang's three-tier HiCache spends its load episodes recomputing history it had already read back: mean TTFT of returning turns 5.5 and 6.6 s in two runs, 25.8-29.9 s per turn end to end, 7,541 and 6,956 turns served. Protecting what queued turns need (read pins, queued-turn eviction protection, an arrival gate and hold, re-reads; no gap forecast and no end signal) brings this to 0.71 s (7.7-9.3x lower), 11.6 s per turn and 11,680 turns (+55 to +68 %), 96 % of the way to exact next-arrival hints (0.51 s). Acting on a p50 forecast as if it were exact is worse than not forecasting (1.35-1.60 s in three runs, the new build included). Three-quantile forecasts under rules 1 and 3 add 0.05-0.15 s of TTFT and 22 % fewer SSD pages over that rival in one run each: a margin not yet separated from the 0.25-0.28 s that reruns of one arm moved, and not visible in turn latency or throughput.
+cache_ORDER.json
+cache_base_rep.json
+cache_baseline.json
+cache_ec_r1.json
+cache_ec_r13.json
+cache_hintfree.json
+cache_hintfree_ctl.json
+cache_jit_exact.json
+cache_jit_p50.json
+cache_jit_p50_ctl.json
+cache_jit_p50_d_cut.json
+cache_nofc.json
+cache_nofc_noend.json
+common.py
+parse_cache.py
+result.json
+review1.out
+review1.py
+review2.out
+review2.py
+review3.out
+review3.py
+review4.out
+review4.py
+review5.out
+review5.py
+review6.out
+review6.py
+review7.out
+review7.py
+review8.out
+review8.py
+Shell cwd was reset to /home/wanhr/sglang

@@ -1,0 +1,387 @@
+=== L22357 2026-11-11T03:01:25.447Z side=False len=183
+Both background jobs are still running (design review; CPU pre-checks and code maps), and the first control arm is healthy. I'm using the wait to write unit tests for the policy math.
+
+=== L22407 2026-11-11T03:04:11.518Z side=False len=97
+Usage limit reached — stopping the background agents and saving state so this can resume cleanly.
+
+=== L22425 2026-11-11T03:04:29.982Z side=False len=50
+You've hit your 5-hour limit · resets 7:30am (UTC)
+
+=== L22534 2026-11-11T03:59:10.166Z side=False len=165
+I'm now writing the engine changes myself, starting with the new flags and the eviction strategy; the two background jobs (review, CPU pre-checks) are still running.
+
+=== L22572 2026-11-11T04:01:02.911Z side=False len=168
+Flags and the eviction strategy are in; I'm now wiring rule 1 (expected-cost start and release), soft-pin victim selection and the price controller into the prefetcher.
+
+=== L22617 2026-11-11T04:03:25.423Z side=False len=145
+Prefetcher and cache hooks are written; fixing a small import detail, then wiring the scheduler and writing tests. Background jobs still running.
+
+=== L22689 2026-11-11T04:06:25.337Z side=False len=169
+Engine wiring for all four rules is written and its new unit tests pass (59 in the prefetcher suite). Checking on the background review and studies, and the control run.
+
+=== L22720 2026-11-11T04:08:12.060Z side=False len=50
+You've hit your 5-hour limit · resets 8:50am (UTC)
+
+=== L22729 2026-11-11T04:19:52.509Z side=False len=163
+Picking up where I left off: checking the control run and whether the background review and studies survived, then on to freezing and smoke-testing the new engine.
+
+=== L22838 2026-11-11T04:23:26.581Z side=False len=127
+One neighbouring test file shows two failures; checking whether my change caused them or they fail on the untouched engine too.
+
+=== L22872 2026-11-11T04:24:48.534Z side=False len=169
+Argument resolution accepts the new flags end to end. Running the config guard tests, then freezing the engine and queueing the first new arm behind the running control.
+
+=== L22890 2026-11-11T04:26:47.189Z side=False len=196
+Engine frozen and importable. Queueing the first new arm (rule 1 with a fixed price) to start as soon as the running control ends, then getting an independent check of the new code while it waits.
+
+=== L22912 2026-11-11T04:28:33.897Z side=False len=165
+Recorded the review and the build in the campaign's decisions file. While the two-reviewer code check runs, I'm preparing the comparison script for when arms finish.
+
+=== L23039 2026-11-11T04:34:51.702Z side=False len=135
+Double-checked the new code path by hand for crash risks while two independent reviewers work on it; checking whether they've reported.
+
+=== L23212 2026-11-11T04:47:43.034Z side=False len=174
+Added the forecast-free rival mode as well (reads only at arrival, eviction by end signal and queue). Checking the reviewers now, six minutes before the first new arm starts.
+
+=== L23430 2026-11-11T05:03:27.387Z side=False len=136
+Two of my new tests and one validation-order check fail; debugging them before re-freezing (the hint-free control is running meanwhile).
+
+=== L23475 2026-11-11T05:07:01.973Z side=False len=146
+All fixes are in and tested (unit suites and the fuzz pass). Freezing the corrected engine and queueing the rule-1 arm behind the running control.
+
+=== L23608 2026-11-11T05:59:27.453Z side=False len=191
+Two of the new tests fail: one is a real gap in my fix (a branch point kept a stale session mapping when the ranked child was itself unknown), the other is the test's own timing. Fixing both.
+
+=== L23626 2026-11-11T06:03:07.539Z side=False len=164
+All suites and the fuzz pass with the second round of fixes. Freezing the engine again and repointing the three queued arms before the control ends at about 07:03Z.
+
+=== L23714 2026-11-11T09:03:58.061Z side=False len=50
+You've hit your 5-hour limit · resets 9:10am (UTC)
+
+=== L24014 2026-11-11T11:09:49.182Z side=False len=146
+Deciding the next arms: the deck plans both settings, so I'm checking how the earlier 128-user arms were launched before adding them to the queue.
+
+=== L24038 2026-11-11T11:10:59.715Z side=False len=114
+Still on the same step: working out which slide your link points to, so the next arms match the setting you meant.
+
+=== L24214 2026-11-11T11:13:56.683Z side=False len=105
+Tests pass with the new switch. Freezing it as a new engine copy now, then I'll queue the remaining arms.
+
+=== L24268 2026-11-11T11:15:05.645Z side=False len=134
+Checking that every newly queued arm's flags pass the server's own validation, so a bad combination can't stop the campaign overnight.
+
+=== L24291 2026-11-11T11:16:31.425Z side=False len=175
+Running: rule 1 alone (ends about 13:10 UTC). Meanwhile I'm writing a per-turn split of where the remaining gap to exact hints sits, before recording the forecast-free result.
+
+=== L24351 2026-11-11T11:18:01.522Z side=False len=91
+Recording the forecast-free result and the new queue in the campaign log, then I'll report.
+
+=== L24418 2026-11-11T11:19:28.135Z side=False len=150
+Adding one more control (today's JIT p50 on the new engine build, flags off) so the comparison can't be blamed on the engine version; then the report.
+
+=== L24573 2026-11-11T13:09:25.703Z side=False len=198
+Rule 1 alone finished cleanly (0.67 s on the shared turns, the same as rules 1+3 and the no-forecast rival); the hint-free rival is booting. Recording the result and checking the new arm's boot now.
+
+=== L24618 2026-11-11T13:10:39.105Z side=False len=142
+Writing the rule-1 result into the decision log, then redrawing the figure; the hint-free rival booted with the right settings and is running.
+
+=== L24643 2026-11-11T13:11:58.473Z side=False len=179
+Measuring how much SSD read time each arm puts inside a turn's wait (to test whether the 0.12 s gap is the read stall or noise); the hint-free rival is running until about 15:10Z.
+
+=== L24782 2026-11-11T13:17:35.625Z side=False len=152
+Reading how the arrival hold estimates a turn's wait, to see whether a fairer "read at arrival" rival needs a new arm; the campaign is running normally.
+
+=== L24838 2026-11-11T13:20:40.726Z side=False len=170
+Queue reordered (same-build JIT p50 control next, then the repeats); fixing a timestamp in its note, then validating the queue and writing the wait analysis into the log.
+
+=== L24857 2026-11-11T13:22:01.991Z side=False len=132
+Writing the wait analysis and the new queue order into the decision log; the hint-free rival is running cleanly (ends about 15:10Z).
+
+=== L24899 2026-11-11T13:23:21.879Z side=False len=136
+While the hint-free rival runs (to about 15:10Z), I'm preparing the comparison script for the two 128-user arms at the end of the queue.
+
+=== L24930 2026-11-11T13:24:27.809Z side=False len=158
+The 128-user comparison script is ready and tested on the earlier runs. Next: figure support for the new arms, then waiting on the running arm (about 15:10Z).
+
+=== L24998 2026-11-11T13:25:39.092Z side=False len=120
+Drawing a per-arm figure of where the wait goes (one stacked bar per run); the campaign is still on the hint-free rival.
+
+=== L25017 2026-11-11T13:26:46.762Z side=False len=145
+Reading the paper plan so I can fold campaign 26's results into it once the control and the repeats are in (tonight); the running arm is healthy.
+
+=== L25039 2026-11-11T13:28:20.427Z side=False len=190
+Measured the room staging has to work with at this setting: about 54K tokens (two or three histories), 40–46K in the load episodes. Adding that to the log; the running arm ends about 15:10Z.
+
+=== L25222 2026-11-11T15:12:48.210Z side=False len=100
+The hint-free rival finished clean; I'm analysing it now while the same-build JIT p50 control boots.
+
+=== L25267 2026-11-11T15:13:53.175Z side=False len=125
+Writing the hint-free rival's result into the decisions file; the same-build JIT p50 control is running with the right flags.
+
+=== L25307 2026-11-11T15:15:42.147Z side=False len=98
+Recording the hint-free rival's result, then fixing the 128-user arm set before those lines start.
+
+=== L25323 2026-11-11T15:16:53.947Z side=False len=76
+Queue updated and validated; now writing the result into the decisions file.
+
+=== L25364 2026-11-11T15:18:01.930Z side=False len=101
+Result recorded; updating the memory index, then I wait for the same-build control (about 17:14 UTC).
+
+=== L25408 2026-11-11T15:19:28.069Z side=False len=111
+Built a pairwise comparison for the repeats (with within-run intervals); testing it on the control repeats now.
+
+=== L25440 2026-11-11T15:20:39.214Z side=False len=165
+The same-build control is healthy at minute 9; I'm confirming that its staged reads begin (the earlier control's began at minute 10) before I go quiet until it ends.
+
+=== L25466 2026-11-11T15:24:03.782Z side=False len=230
+The same-build JIT p50 control has started staging reads, on the same turn and at the same 9 min 54 s after the first arrival as the earlier control. No tracebacks; it runs until about 17:14 UTC, and the watcher will wake me then.
+
+=== L25605 2026-11-11T20:44:39.559Z side=False len=75
+Recorded the outage and the cut-run result; verifying the rerun's boot now.
+
+=== L25735 2026-11-11T21:06:24.172Z side=False len=167
+Found how the earlier timeline figures were made (`scripts/timeline.py` driven from a per-campaign plot script); I'm producing the same set for campaign 26's arms now.
+
+=== L25778 2026-11-11T21:07:45.969Z side=False len=170
+Writing a small driver that feeds campaign 26's runs to the same `timeline.py` used for the earlier figure sets (no edits to it), so the output matches the earlier style.
+
+=== L25819 2026-11-11T21:09:10.361Z side=False len=134
+Driver written; running it now over the nine runs that exist (takes a few minutes, at low priority so the benchmark is not disturbed).
+
+=== L25884 2026-11-11T21:10:20.628Z side=False len=193
+The per-run timeline set (request lanes, pools, queue, tier events) is drawn; I'm checking it, then making the over-time comparison figure in the same style as the earlier `hicache_vs_jit.png`.
+
+=== L25929 2026-11-11T21:14:59.955Z side=False len=77
+Writing the comparison figure script now; a first render follows in a minute.
+
+=== L25984 2026-11-11T21:16:35.250Z side=False len=111
+Both figure sets are done and checked; noting them in the decisions file and then I'll show you where they are.
+
+=== L26003 2026-11-11T22:46:22.970Z side=False len=50
+You've hit your 5-hour limit · resets 1:30am (UTC)
+
+=== L26133 2026-11-12T01:39:03.369Z side=False len=109
+Queue reordered and validated. Writing the two results and the reviewer's points into the decisions file now.
+
+=== L26168 2026-11-12T01:40:45.509Z side=False len=192
+Redrew the comparison figure with the repeat as a dotted line (0.64 and 0.76 s for the two runs, 0.69 s with no hints). Drawing the per-run timelines for the two new arms and then I'll report.
+
+=== L26284 2026-11-12T02:23:07.123Z side=False len=194
+Applying the small corrections the recomputation turned up (three column labels, late turns in the bootstrap) and recording the check in the decisions file; the running arm ends about 02:51 UTC.
+
+=== L26347 2026-11-12T02:37:37.047Z side=False len=133
+Computing what a read costs when the queue is short, to answer your question with numbers; the current arm has about 14 minutes left.
+
+=== L26365 2026-11-12T02:39:24.289Z side=False len=142
+Numbers are in and three 100 GB arms are appended at the end of the queue to test your point; noting it in the decisions file, then answering.
+
+=== L26463 2026-11-12T02:54:55.298Z side=False len=279
+The no-hint rival at 128 users booted cleanly and is serving requests. It runs with the intended settings (reads at arrival, queue-only eviction, 160 GB host pool), with no errors so far. Its client started at 02:53 UTC, so it ends about 04:55 UTC; the watcher will wake me then.
+
+=== L26553 2026-11-12T04:57:09.861Z side=False len=122
+Recording the 128-user no-hint arm's numbers and checking that the next arm (exact hints on the new build) booted cleanly.
+
+=== L26612 2026-11-12T04:58:28.248Z side=False len=152
+Still on the per-arm routine: the 128-user numbers are recorded; now fixing one sentence in that entry and confirming the next arm's client has started.
+
+=== L26679 2026-11-12T07:00:18.017Z side=False len=125
+The exact-hint arm on the new build finished cleanly; I'm reading its comparison tables now and checking the next arm's boot.
+
+=== L26719 2026-11-12T07:01:23.686Z side=False len=99
+Reading the exact-hint repeat against the other arms on both shared turn sets, then I'll record it.
+
+=== L26735 2026-11-12T07:02:31.716Z side=False len=117
+One more quick table (turn latency with the repeat included), then I record the result and check the next arm's boot.
+
+=== L26763 2026-11-12T07:03:40.895Z side=False len=79
+Record is updated and intact; saving the result to memory, then I'll summarise.
+
+=== L26843 2026-11-12T15:36:41.978Z side=False len=132
+The host was down from 07:07 to 15:31 UTC; I relaunched the campaign at 15:36 UTC and am waiting for the restarted arm's boot check.
+
+=== L26916 2026-11-12T15:41:36.057Z side=False len=191
+The restarted arm (`ec_r134`) booted cleanly: its client started at 10:40 AM ET with the intended settings and no errors, so it should finish about 12:42 PM ET. The watcher will wake me then.
+
+=== L26944 2026-11-12T16:54:35.924Z side=False len=137
+Setting up the new figure set: I'm reading the existing plotting scripts and the colour rules first, then I'll draw into a new directory.
+
+=== L27004 2026-11-12T16:55:46.778Z side=False len=134
+Still preparing: I've read the plotting helpers; now identifying the old Oracle run and checking that every figure script can read it.
+
+=== L27039 2026-11-12T16:57:55.251Z side=False len=106
+Still on it: wiring the old Oracle run into the figure scripts, then drawing the set into a new directory.
+
+=== L27079 2026-11-12T16:59:37.605Z side=False len=91
+Writing the set definition into the plotting scripts now; the first figures follow shortly.
+
+=== L27115 2026-11-12T17:00:57.500Z side=False len=109
+The timeline set is drawing in the background; I'm now adapting the deck-style figure script for the new set.
+
+=== L27171 2026-11-12T17:02:52.086Z side=False len=171
+The main figures render correctly for the new set. Now adding the remaining pieces: other runs of each arm in the footnote, the all-runs overview, and the wait-split bars.
+
+=== L27213 2026-11-12T17:04:38.803Z side=False len=90
+Checking the redrawn overview's legend, then the last figure (where each arm's wait goes).
+
+=== L27241 2026-11-12T17:05:45.953Z side=False len=109
+Nearly there: rendering the last figure (the wait split), then I'll check everything once more and summarise.
+
+=== L27281 2026-11-12T17:07:17.277Z side=False len=112
+Figures are done; running the one-command redraw script once end to end to confirm it works, then I'll write up.
+
+=== L27297 2026-11-12T17:08:43.125Z side=False len=73
+Recording the new set in the campaign notes and memory, then the summary.
+
+=== L27445 2026-11-12T17:27:39.135Z side=False len=147
+Thinking this through against the data: I'm checking a few numbers (where the remaining time goes, and how the host pool is used) before answering.
+
+=== L27493 2026-11-12T17:30:07.938Z side=False len=120
+Digging into what actually limits the best arm now (it's not the SSD reads); a couple more measurements and I'll answer.
+
+=== L27522 2026-11-12T17:34:02.009Z side=False len=140
+Nearly done: the logs show what limits the best arm. One quick literature check on the two directions I'm about to suggest, then the answer.
+
+=== L27560 2026-11-12T17:35:22.161Z side=False len=62
+Writing the findings into the campaign notes, then the answer.
+
+=== L27622 2026-11-12T17:44:41.507Z side=False len=110
+`ec_r134` finished cleanly; adding it to the tables and the new figure set, then checking the next arm's boot.
+
+=== L27638 2026-11-12T17:46:10.186Z side=False len=98
+Figures updated with the new arm; writing its result into the campaign notes, then a short report.
+
+=== L27681 2026-11-12T17:55:59.397Z side=False len=96
+Adding the rules 1, 3 and 4 arm as a sixth series to the comparison figures now; redraw follows.
+
+=== L27709 2026-11-12T17:57:44.372Z side=False len=56
+Checking the last two redrawn figures, then I'll report.
+
+=== L27761 2026-11-12T18:00:36.835Z side=False len=68
+Found the mechanism in the price log; writing it down and answering.
+
+=== L27865 2026-11-12T19:48:00.210Z side=False len=192
+The repeat of the no-hint arm finished at 2:44 PM ET, and the learned-price arm at 128 users started right after. I've relaunched the watcher and rerun the comparison tables; reading them now.
+
+=== L27926 2026-11-12T19:49:57.352Z side=False len=132
+Still on the same step: the new 128-user arm booted clean, and I'm writing the record entry for the no-hint repeat before reporting.
+
+=== L27983 2026-11-12T19:51:47.248Z side=False len=188
+Preparing the 128-user figure scripts now so that set can be drawn as soon as the learned-price arm at 128 users lands (about 4:48 PM ET). Reading the existing plot scripts to extend them.
+
+=== L28019 2026-11-12T19:52:59.944Z side=False len=125
+Still preparing the 128-user figure set while the arm runs; checking two data details first, then extending the plot scripts.
+
+=== L28061 2026-11-12T19:55:31.895Z side=False len=100
+Timeline script extended for the 128-user set; running a trial on the four older 128-user runs next.
+
+=== L28086 2026-11-12T19:57:13.124Z side=False len=132
+Deck-style script extended; now checking that the two existing 44-user figures still come out byte-identical, then a 128-user trial.
+
+=== L28120 2026-11-12T19:58:26.951Z side=False len=166
+Checked the new SSD panel against the disk monitor's numbers (agrees within 3 %). Now fixing an axis-label rounding and extending the overview and wait-split scripts.
+
+=== L28158 2026-11-12T20:00:24.150Z side=False len=106
+Wait-split script extended and the 44-user output is unchanged; trying it on the four older 128-user runs.
+
+=== L28194 2026-11-12T20:01:37.328Z side=False len=174
+Trial figures for 128 users look right. Finishing the one-command script for that set and cleaning up the trial folder; then it only needs the arm to land (about 4:48 PM ET).
+
+=== L28204 2026-11-12T20:04:04.385Z side=False len=198
+One clean-up command was blocked by a safety check (deleting trial files); I'm leaving that folder in place and will tell you about it. Continuing with the regression check of the 44-user timelines.
+
+=== L28331 2026-11-12T21:50:04.898Z side=False len=179
+The learned-price arm at 128 users finished clean at 4:48 PM ET and the all-four-rules arm has started; I'm reading the new arm's numbers and then drawing the 128-user figure set.
+
+=== L28373 2026-11-12T21:51:13.900Z side=False len=110
+The new arm's numbers are in and its figures are drawing; next I check the figures and write the record entry.
+
+=== L28442 2026-11-12T21:52:52.143Z side=False len=165
+Figures for 128 users are drawn; I'm fixing two small things in them (a legend that overlaps a line, and a footnote that should cover the new arm) before writing up.
+
+=== L28492 2026-11-12T21:54:32.776Z side=False len=127
+Applying three small figure fixes for the 128-user set (legend position, two footnotes), then I'll redraw and write the record.
+
+=== L28538 2026-11-12T21:55:58.594Z side=False len=133
+Redrawing the 128-user figures with the fixes and re-checking the 44-user ones; meanwhile collecting the last numbers for the record.
+
+=== L28590 2026-11-12T21:57:19.975Z side=False len=163
+The 128-user figures are redrawn with the fixes; I'm checking the last one and waiting on the byte-for-byte check of the 44-user figures before writing the record.
+
+=== L28622 2026-11-12T21:58:26.725Z side=False len=103
+Checks are done; I'm confirming two expected file differences, then writing the record and the summary.
+
+=== L28660 2026-11-12T21:59:34.257Z side=False len=69
+Record is written; saving notes for later sessions, then the summary.
+
+=== L28798 2026-11-12T23:54:50.969Z side=False len=132
+The all-four-rules arm finished clean at 6:53 PM ET; I'm rebuilding the comparison tables and redrawing the 44-user figures with it.
+
+=== L28838 2026-11-12T23:57:14.028Z side=False len=141
+Tables are rebuilt and the figures redrawn (94 s); I'm now checking each redrawn figure and the new arm's read log before writing the record.
+
+=== L28892 2026-11-12T23:58:54.260Z side=False len=165
+Still checking the redrawn figures one by one (two look right so far; the deck-style figure's legend now runs off the right edge with seven entries, which I'll fix).
+
+=== L28957 2026-11-13T00:00:11.953Z side=False len=157
+Legend fix is in and the other two figure sets still reproduce byte for byte; viewing the corrected figure, then on to the new arm's read log and the record.
+
+=== L29014 2026-11-13T00:01:27.533Z side=False len=94
+Legend fix verified against the other sets (byte-identical); viewing the corrected figure now.
+
+=== L29066 2026-11-13T00:02:45.818Z side=False len=156
+Writing a small check of what rule 2's bumped reads cost (the new arm reads 27 % more SSD pages than the learned-price arm); then the record and the report.
+
+=== L29091 2026-11-13T00:04:11.888Z side=False len=123
+`fq90` booted clean (landing quantile 0.9, ends about 8:56 PM ET). Writing the record entry for the all-four-rules arm now.
+
+=== L29111 2026-11-13T00:05:45.328Z side=False len=73
+Record is written; updating my notes for later sessions, then the report.
+
+=== L29304 2026-11-13T01:58:26.265Z side=False len=163
+`fq90` finished clean at 8:56 PM ET (11,740 turns, no errors) and `ec_r3` is booting with the right settings; I'm rebuilding the comparison tables with `fq90` now.
+
+=== L29330 2026-11-13T02:00:06.420Z side=False len=93
+Pair table with `fq90` is rebuilt; reading its rows against the JIT p50 and rule-1 runs next.
+
+=== L29364 2026-11-13T02:02:06.815Z side=False len=174
+Tables are rebuilt: `fq90` lands at 0.94 s on the shared turns, between JIT p50 (1.35–1.60 s) and the leading group (0.66–0.80 s). Running the latency check, then the record.
+
+=== L29404 2026-11-13T02:03:29.134Z side=False len=116
+Writing a small check of how much host memory `fq90`'s early reads hold compared with rule 1; then the record entry.
+
+=== L29447 2026-11-13T02:05:38.748Z side=False len=156
+Mechanism check is done: `fq90`'s early reads hold about five times the host memory of rule 1's. Verifying one engine detail, then writing the record entry.
+
+=== L29498 2026-11-13T02:06:50.601Z side=False len=108
+Record entry for `fq90` is written; tidying its wrapping, then updating my notes and sending you the report.
+
+=== L29614 2026-11-13T04:00:05.001Z side=False len=143
+`ec_r3` (rule 3 alone) finished clean at 10:58 PM ET; I'm rebuilding the comparison tables with it and boot-checking the next arm, `nofc_c128`.
+
+=== L29674 2026-11-13T04:02:07.214Z side=False len=123
+Checking that the rebuilt pair table leaves the earlier cells unchanged, then the figures and the record entry for `ec_r3`.
+
+=== L29708 2026-11-13T04:04:40.791Z side=False len=121
+Figures are redrawn with `ec_r3`; now checking which ones changed and looking at the new timeline and wait-split figures.
+
+=== L29767 2026-11-13T04:06:14.087Z side=False len=126
+Tables, figures and checks for `ec_r3` are done (rule 3 alone lands level with JIT p50, 1.48 s); writing the record entry now.
+
+=== L29795 2026-11-13T04:07:55.275Z side=False len=86
+Record entry for `ec_r3` is written; updating my notes, then I'll send you the report.
+
+=== L29893 2026-11-13T06:03:19.202Z side=False len=143
+`nofc_c128` finished clean at 1:02 AM ET (level with the old oracle at 128 users); installing its table and boot-checking the first 100 GB arm.
+
+=== L29923 2026-11-13T06:04:45.377Z side=False len=116
+Writing up `nofc_c128`; the next arm's server is taking longer than usual to start, so I'm looking at its log first.
+
+=== L29988 2026-11-13T06:06:01.719Z side=False len=146
+Waiting on the 100 GB arm's server to finish loading weights (slow after the 160 GB arm, as before); checking how the watcher treats a long start.
+
+=== L30232 2026-11-13T17:05:12.787Z side=False len=146
+Relaunched arm's server is still loading weights after the reboot; meanwhile I'm re-reading the deck and the record to list every unfinished item.
+
+=== L30272 2026-11-13T19:27:55.958Z side=False len=22
+No response requested.
+

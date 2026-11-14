@@ -1,0 +1,56 @@
+=== line 23049 type assistant ts 2026-11-11T04:35:28.454Z
+**Design review (the first thing you asked for).** The build is also done and the first new arm is queued; details after the review.
+
+**Verdict.** The formulation is sound and matches `PAPER_PLAN.md` ("Formulation" 1–8 and "Design point") statement for statement, with matching numbers. I re-derived rule 1's threshold and rule 3's keep test, and checked the engine solver I wrote against the CPU room model's (400 of 400 random cases agree). The weak part is reach, not correctness: by the deck's own replay, read timing covers 36 % of the way to exact hints and only ties reading-at-arrival once recomputation is weighted ×10, so as specified the design is likely to land near the hint-free arm at 44 users unless eviction (rule 3) carries it.
+
+| # | Weak spot | Fix |
+|---|---|---|
+| 1 | The model prices only the host-only room (44K of 712K tokens) and says GPU eviction stays HiCache's. But most of the p50's cost is in eviction, and today's hinted arms already order GPU and host eviction by next use. | Rule 3 scores every session in GPU and host memory. Built that way; the "problem" slide should say so. |
+| 2 | The deck's "exact order" for rule 3 (rank by return rate, no horizon) was never run. | I ran an eviction replay on two recorded timelines: it reads from SSD on 29.8 % of returning turns, worse than LRU (19.4 %), because right after a turn ends the rate is near zero. The fixed horizon gets 16.2 % (today's p50 order 17.7 %, exact 12.6 %); any horizon from 10 to 120 s works. Use the fixed horizon; drop the rate order. |
+| 3 | Past the p90 the hint says nothing, and there is no "never returns" mass. | The same replay shows the plain lognormal tail is as good as a pooled-tail fix, so nothing needs adding. This relies on the client signalling every session end, which the replay does and a real agent may not; state that assumption. |
+| 4 | Once no forecast ends a session, a staged read's pin has no release (only a 600 s backstop). | Added a hold test: release the pin when holding costs more rent than the stall it saves. |
+| 5 | Rule 4 compares a flow (tokens refused per interval) with a stock (idle tokens). By my arithmetic it settles where refusals are as large as idle room, close to JIT p50's regime, not at the cost-minimising price (pins at about 15 % of the room in the replay). | Built as the deck states so it can be tested, but I would not trust it yet. The rule-1 arm logs both signals every 5 s, so I can check the controller on real data before spending a GPU arm on it. |
+| 6 | The cost model leaves out the queue (a recomputed token costs 6–8× its prefill) and SSD bandwidth. | Not built. Would mean pricing recomputation by queue length, so a turn waits for room rather than recomputes. |
+| 7 | Soft pins change the host allocation path for a 2–6 % replay gain. | Built behind a flag; last in the queue. |
+| 8 | The "approaches the best possible" claim needs many sessions each small against the room; at 70 GB the room holds two or three histories. | Present the theory as where the rules come from, and add a setting where the room holds ten or more. |
+| 9 | Evidence is single runs plus a replay of costs, not TTFT; the reference slide omits Continuum, Tokencake, Bidaw and CachedAttention, which `PAPER_INTRO.md` says must be cited; the queue-aware hint-free rival is not built. | Same-GPU controls are running now; the fixed-quantile rival is now a flag; the rest is open. |
+
+One smaller finding from the replay: using every past sample of a key instead of three quantiles gets 15.1 % against 16.2 %, which is the histogram's case for eviction that the deck left open.
+=== line 26312 type assistant ts 2026-11-12T02:24:26.092Z
+Status while the repeat of the no-forecast rival finishes (about 02:51 UTC):
+
+- **The independent recomputation agrees with my tables.** Two agents re-derived them from the raw logs with their own parsers, without opening my outputs first. All 157 client-side and 1,946 server-side numbers they could compare match.
+- **Their sanity checks came out clean.** The runs are comparable turn by turn: same prompts, same offered load in the load episodes, no hardware drift over the day, no censored turns.
+- **The other two review agents never finished.** They were cut off twice by the usage limit, so I stopped that workflow and read what they had left on disk; nothing in it overturns a result.
+- **Small corrections from the check.** Three column headings in the comparison output understated what the column holds. The split of read stall by "admitted within 0.1 s" moves with that threshold, so "what read timing can win" is 0.14 to 0.20 s per turn rather than a flat 0.17 s. Both are in `DECISIONS.md`.
+- **Next arm.** The no-hint rival at 128 users starts when the current arm ends, and finishes about 04:55 UTC. The 128-user comparison script now also reports turn latency. On the earlier runs the hinted arms sit at 20.6 to 21.0 s mean TTFT and about 33 s per turn, so that is the level the rival has to reach.
+
+I'll update `PAPER_PLAN.md` once that 128-user number is in, since it decides whether any measured setting supports the hint.
+=== line 26329 type assistant ts 2026-11-12T02:33:03.229Z
+**Running now:** `nofc_rep`, the repeat of the rival that uses no gap forecast (it reads from SSD only when a turn arrives and evicts ended sessions first, queued turns last), at 44 users and 70 GB. It is at minute 102 of 120 with about 10,300 turns served, mean TTFT 0.88 s so far and no errors, and ends about 02:51 UTC. The no-hint rival at 128 users and 160 GB starts right after and runs to about 04:55 UTC.
+
+**What the results say so far (44 users, 70 GB, x10 gaps):**
+
+| Arm | Mean TTFT, 6,715 shared returning turns | Mean turn latency |
+|---|---|---|
+| Original HiCache (two runs) | 5.47, 6.62 s | 25.8, 29.9 s |
+| Old hint-free arm, read pins only (two runs) | 1.61, 1.89 s | 15.8 s (one run) |
+| JIT p50, today's method (three full runs) | 1.35, 1.48, 1.60 s | 15.3, 15.9 s (two runs) |
+| No hints, queue state only | 0.71 s | 11.6 s |
+| Rules 1 and 3, three-quantile hints (two runs) | 0.66, 0.78 s | 11.8, 12.2 s |
+| JIT, exact hints (one run from 1 November) | 0.51 s | 11.5 s |
+
+1. **Most of the gain needs no hint.** An engine that only uses queue state covers 96 % of the way from original HiCache to exact hints. "Queue state" here means reading at arrival, keeping queued turns' history, the arrival gate and hold, and re-reads. Those mechanisms are worth about 1.0 s over the old hint-free arm.
+2. **JIT p50 loses because of when it reads, not what it evicts.** Its early reads sit in host memory waiting for their turn: they need about 91K tokens where only 44K is free. Changing only the read start (rule 1 alone) brings it to 0.67 s (one run).
+3. **Rules 1 and 3 are not separated from no hints.** The arm moved 0.12 s between its two runs, more than its lead. What does repeat is 23 to 25 % fewer SSD pages read.
+4. **Exact hints are about 0.2 s ahead on TTFT, but not on latency or throughput.** Among the leading arms a turn takes 12.0 to 12.5 s and 11,500 to 11,700 turns are served; neither moves with hints. The exact-hint number is a single old run; a rerun on this build is queued.
+5. **Why hints have little to win here.** The free host room holds two or three histories and the SSD read thread is busy only 16 to 21 % of the time. All differences between the leading arms sit in two load episodes, where the GPU queue decides and a rerun of the same arm moves 0.1 to 0.25 s.
+6. **The measurements hold up.** An independent recomputation from the raw logs matches every table, and neither the new engine build nor the new GPU unit moves JIT p50.
+
+**What this means for the paper:** at this setting the forecast buys SSD traffic, not latency, so "forecasts drive the gain" does not hold here. The baseline of record should be the no-hint, queue-aware engine. Still open are the learned price and soft pins (queued) and the 128-user rival (next); the 128-user rival decides whether any measured setting supports the hint. Two settings where the design could matter have not been run: x70 gaps at 128 users, and a larger host pool at 44 users.
+=== line 26399 type assistant ts 2026-11-12T02:42:20.235Z
+Understood: the queue stays as it is and I won't add, move or cut anything.
+
+Unless you say otherwise, I'll keep to the minimum as each arm finishes: check that the next one booted cleanly, and add its numbers to `results/campaign26/DECISIONS.md`. I'll hold the larger pieces (rewriting `PAPER_PLAN.md`, new figures, further review) until you ask. If the host goes down again, the campaign needs relaunching once the session is back; finished arms are skipped.
+
+The current arm ends about 02:51 UTC, and the no-hint rival at 128 users follows, to about 04:55 UTC.

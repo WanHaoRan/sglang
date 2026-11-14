@@ -1,0 +1,53 @@
+=== line 25017 @ 2026-11-11T13:26:46.762Z assistant/text (textlen 145, match at 12) ===
+Reading the paper plan so I can fold campaign 26's results into it once the control and the repeats are in (tonight); the running arm is healthy.
+
+=== line 25075 @ 2026-11-11T13:30:22.852Z assistant/text (textlen 2940, match at 2566) ===
+lds' code on that path now.
+    - **Then the two repeats** (about 21:20 UTC), the fixed-quantile rival, the learned price, soft pins, rule 3 alone, and the two 128-user arms. The queue still ends about 10:00 UTC tomorrow.
+    
+    The setting may be the weak spot for the paper's main rule: with room for two or three histories, no forecast has much to stage. I have not queued another setting; the deck's planned third one is where rule 1 would have to show its worth.
+    
+    Nothing is committed. Files are in `agent_cache/results/`:
+    - campa
+
+=== line 25449 @ 2026-11-11T15:21:27.639Z assistant/text (textlen 2145, match at 1682) ===
+ats of rules 1+3 and `nofc` end about 19:17 and 21:20 UTC. I wrote the rule for reading them into `DECISIONS.md` before they run.
+    
+    I changed the 128-user arms, which you may want to veto. The first one is now the rival with no hints, since that is the one the paper plan says a reviewer will ask for. The rival with the end signal moved to the very end as a third 128-user arm. That adds 2 h, so the queue now ends about 11:41 UTC tomorrow; it is the line to drop if you want the time back.
+    
+    The same-build JIT p50 control is
+
+=== line 26176 @ 2026-11-12T01:42:00.569Z assistant/text (textlen 3369, match at 2071) ===
+s lose even more at the end of the turn, 3.7 to 4.3 s of latency for JIT p50.
+    
+    The independent review was interrupted; only the reviewer agent finished, and the other four are running again. Its main objections are in `DECISIONS.md`. The ones that bear on the paper's claim:
+    
+    - The no-hint engine should be the baseline of record; against it, "2.9x from exact hints" becomes 1.4x.
+    - The 44K-token room exists only because the 70 GB pool is the GPU's mirror plus a little.
+    - The setting where read timing and eviction order sh
+
+=== line 26329 @ 2026-11-12T02:33:03.229Z assistant/text (textlen 2972, match at 2505) ===
+queue decides and a rerun of the same arm moves 0.1 to 0.25 s.
+    6. **The measurements hold up.** An independent recomputation from the raw logs matches every table, and neither the new engine build nor the new GPU unit moves JIT p50.
+    
+    **What this means for the paper:** at this setting the forecast buys SSD traffic, not latency, so "forecasts drive the gain" does not hold here. The baseline of record should be the no-hint, queue-aware engine. Still open are the learned price and soft pins (queued) and the 128-user rival (
+
+=== line 27583 @ 2026-11-12T17:36:18.368Z assistant/text (textlen 3515, match at 2071) ===
+ns that are off the GPU, and a restore passes straight through to the GPU. In-memory capacity goes from 712K to 1,380K tokens, against a median live context of 1,176K. The forecasts would then decide which sessions get 712K of host memory instead of 44K. Your paper plan already lists the mirror as open item 4, blocked by the write-back lookup bug. The 100 GB arms (about 1–7 AM ET tomorrow) are the first test.
+    - **Use forecasts in aggregate (more novel, unproven).** Per-session gap forecasts bought at most 0.2 s, but the
+
+=== line 29834 @ 2026-11-13T04:08:49.960Z assistant/text (textlen 2046, match at 1365) ===
+holding on average 27.9K of the 44K free tokens of host memory (JIT p50: 24.6K). Memory pinned by a read is outside any eviction rule.
+    - **SSD traffic:** 4–7 % fewer pages than each JIT p50 run. That is one run, so it needs a repeat before it counts.
+    
+    For the paper's ablation, rule 3 is not a source of the TTFT gain at this setting; its only candidate benefit is the SSD saving.
+    
+    Figures in `results/compare_c26_designs/` are redrawn: `timeline_ec_r3.png` is new and `ec_wait_split.png` has a row for the arm. `compare.png`
+
+=== line 30745 @ 2026-11-13T19:46:03.158Z assistant/text (textlen 3146, match at 2736) ===
+ther the extra memory alone fixes HiCache or the no-hint arm's mechanisms are still needed. It would be one more 2-hour arm; I have not queued it.
+    
+    ## In progress
+    - An audit of everything left undone (the campaign record, the session transcript, the deck, the paper plan, the code and the figures) is running with ten reader agents. I'll send the verified list and continue the items that are mine to finish.
+    - A 100 GB figure set is wired up in `agent_cache/results/compare_c26_designs_h100/`. It currently holds the cut run
+

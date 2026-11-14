@@ -1,0 +1,432 @@
+"""Config fields of the ``memory`` namespace."""
+
+from __future__ import annotations
+
+import json
+from typing import (
+    Any,
+    Dict,
+    Optional,
+)
+
+import msgspec
+
+from sglang.srt.arg_groups.arg_utils import (
+    A,
+    Arg,
+)
+from sglang.srt.arg_groups.choices import RADIX_EVICTION_POLICY_CHOICES
+
+
+class Memory(msgspec.Struct):
+    """Namespace ``memory``."""
+
+    _NS_PATH = "memory"
+    radix_eviction_policy: A[
+        str,
+        Arg(
+            help=(
+                "The eviction policy of radix trees. 'lru' stands for Least "
+                "Recently Used, 'lfu' stands for Least Frequently Used, 'slru' "
+                "stands for Segmented Least Recently Used, 'priority' evicts "
+                "lower-priority requests first, and 'tlru' stands for "
+                "Tail-Optimized LRU (arXiv:2510.15152), which evicts the part of "
+                "a conversation that cannot affect tail TTFT before falling back "
+                "to LRU. 'next_use' evicts by the next arrival the next-turn "
+                "prefetcher registered: ended sessions first, then sessions "
+                "whose turn is overdue by more than overdue_grace_s (default "
+                "60), then sessions returning after horizon_s (default 300; "
+                "both in --radix-eviction-policy-config), then un-hinted nodes "
+                "by LRU, and last the sessions returning soonest; it needs "
+                "--hicache-storage-next-turn-prefetch observe|on and degrades to "
+                "finished-first LRU on un-hinted traffic. 'return_chance' evicts "
+                "the session least likely to return within horizon_s (default 30, "
+                "in --radix-eviction-policy-config) given how long it has been "
+                "idle, from the gap distribution of its next-turn hint: ended "
+                "sessions first, then un-hinted nodes by LRU, then hinted sessions "
+                "by rising chance, and queued turns last; no forecast ends a "
+                "session. Its 'score' is 'entry' (the hint's distribution, default), "
+                "'samples' (the gaps the engine has seen for the entry's key), "
+                "'lru' (no forecast: only the end signal and the queue) or 'queue' "
+                "(the queue alone: ended sessions rank by LRU too). It needs "
+                "--hicache-storage-next-turn-prefetch observe|on. See "
+                "https://docs.sglang.io/docs/advanced_features/radix_eviction_policy "
+                "for what each policy optimizes for."
+            ),
+            choices=RADIX_EVICTION_POLICY_CHOICES,
+            resolvable=True,
+        ),
+    ] = "lru"
+    # The value alone cannot distinguish the default from an explicit LRU
+    # choice, which model-specific defaults must preserve.
+    _radix_eviction_policy_explicitly_set: A[bool, Arg(no_cli=True)] = False
+    radix_eviction_policy_config: A[
+        Optional[Dict[str, Any]],
+        Arg(
+            help=(
+                "Tuning parameters for --radix-eviction-policy, as a json object "
+                "passed to the policy as keyword arguments. 'slru' takes "
+                "protected_threshold (int, default 2), e.g. "
+                "'{\"protected_threshold\": 4}'; 'tlru' takes threshold and "
+                "next_prompt_estimate (ints, tokens), e.g. "
+                '\'{"threshold": 4096, "next_prompt_estimate": 512}\'. An '
+                "unrecognized key fails at startup, naming the key and the "
+                "policy. See "
+                "https://docs.sglang.io/docs/advanced_features/radix_eviction_policy#policy-parameters "
+                "for the full parameter list."
+            ),
+            type_parser=json.loads,
+        ),
+    ] = None
+    disable_radix_cache: A[
+        bool,
+        Arg(
+            help="Disable RadixAttention for prefix caching.",
+            resolvable=True,
+        ),
+    ] = False
+    enable_page_major_kv_layout: A[
+        bool,
+        "Enable the page-major KV layout: lay out the Mamba state and full/SWA "
+        "KV caches in a page-granularity envelope (page is the outermost axis, "
+        "layer-major within a page) instead of the default per-layer "
+        "(layer-major) layout. Requires the Triton attention / linear-attn / "
+        "Mamba backends.",
+    ] = False
+    enable_unified_memory: A[
+        bool,
+        "Replace the statically-partitioned hybrid-model pools (full-attn KV + "
+        "SWA/Mamba state) with one byte buffer split dynamically between "
+        "sub-pools. Requires the Triton attention / linear-attn / Mamba "
+        "backends. Supported PD-disaggregation and speculative-decoding "
+        "configurations are validated at startup.",
+    ] = False
+    enable_session_radix_cache: A[
+        bool,
+        "Track per-session references on UnifiedRadixCache KV: eviction consumes unreferenced entries before referenced ones, and closing a session only dereferences its KV.",
+    ] = False
+    radix_cache_backend: A[
+        Optional[str],
+        "Name of a radix-cache backend previously registered via register_radix_cache_backend. Omit this flag to use the built-in default cache selection chain.",
+    ] = None
+
+    # -------------------------------------------------------------------------
+    # Hierarchical cache
+    # -------------------------------------------------------------------------
+    enable_hierarchical_cache: A[bool, "Enable hierarchical cache"] = False
+    hicache_host_memory_mode: A[
+        str,
+        Arg(
+            help="Whether host memory is a persistent HiCache tier (cache) or a transient staging buffer between GPU and the storage backend (buffer_only). buffer_only requires --hicache-storage-backend.",
+            choices=["cache", "buffer_only"],
+        ),
+    ] = "cache"
+    hicache_ratio: A[
+        Optional[float],
+        "The ratio of the size of host KV cache memory pool to the size of device pool. Defaults to 2.0 in cache mode, 1.2 in buffer_only mode, or 0.2 for backup-only host-pool decode retraction.",
+    ] = None
+    hicache_size: A[
+        int,
+        "The size of host KV cache memory pool in gigabytes. Overrides --hicache-ratio in either host memory mode.",
+    ] = 0
+    hicache_host_memory_fraction: A[
+        Optional[float],
+        "Fraction of the available host memory, bounded by visible cgroup memory.max/memory.high or v1 memory limits (after a 10 GiB reserve) that the HiCache host pools of all ranks on this machine may use. Applies only when neither --hicache-ratio nor --hicache-size is set: the default ratio is then reduced until the pools fit. Lower it when several engines share a memory cgroup.",
+    ] = 0.8
+    hicache_write_policy: A[
+        str,
+        Arg(
+            help="The write policy of hierarchical cache.",
+            choices=["write_back", "write_through", "write_through_selective"],
+        ),
+    ] = "write_through"
+    hicache_io_backend: A[
+        str,
+        Arg(
+            help="The IO backend for KV cache transfer between CPU and GPU",
+            choices=["direct", "kernel", "kernel_ascend"],
+        ),
+    ] = "kernel"
+    hicache_mem_layout: A[
+        str,
+        Arg(
+            help="The layout of host memory pool for hierarchical cache.",
+            choices=[
+                "layer_first",
+                "page_first",
+                "page_first_direct",
+                "page_first_kv_split",
+                "page_head",
+            ],
+        ),
+    ] = "page_first"
+    hicache_storage_backend: A[
+        Optional[str],
+        Arg(
+            help="The storage backend for hierarchical KV cache. Built-in backends: file, mooncake, npu_memcache, hf3fs, nixl, aibrix, tensorcast. For dynamic backend, use --hicache-storage-backend-extra-config to specify: backend_name (custom name), module_path (Python module path), class_name (backend class name).",
+            choices=[
+                "file",
+                "sim",
+                "mooncake",
+                "npu_memcache",
+                "hf3fs",
+                "nixl",
+                "aibrix",
+                "dynamic",
+                "eic",
+                "simm",
+                "mori",
+                "shm",
+                "tensorcast",
+            ],
+        ),
+    ] = None
+    hicache_storage_prefetch_policy: A[
+        str,
+        Arg(
+            help="Control when prefetching from the storage backend should stop.",
+            choices=["best_effort", "wait_complete", "timeout"],
+        ),
+    ] = "timeout"
+    hicache_storage_backend_extra_config: A[
+        Optional[str],
+        "A dictionary in JSON string format, or a string starting with a leading '@' and a config file in JSON/YAML/TOML format, containing extra configuration for the storage backend.",
+    ] = None
+    hicache_storage_prefetch_retry_poll_interval: A[
+        int,
+        Arg(
+            help=(
+                "Scheduling passes a queued request waits before its storage "
+                "availability check is re-issued, when the prefetch found "
+                "nothing and a backup may still be committing (under load the "
+                "first check can run before it does). A re-issue that waits on "
+                "staging or a moved match instead goes out on the next pass. "
+                "Only passes that reach prefill scheduling count. 0 disables "
+                "miss retries; known-hit deferrals are always re-issued. Resolved "
+                "to 0 under --hicache-storage-read-order deadline with "
+                "--hicache-storage-next-turn-prefetch on: the prefetcher's refetch "
+                "then re-issues lookups for queued turns."
+            ),
+        ),
+    ] = 8
+    hicache_storage_prefetch_retry_max_attempts: A[
+        int,
+        Arg(
+            help=(
+                "Storage availability re-issues a queued request may make, paced "
+                "miss polls and immediate re-issues alike; past the cap it is "
+                "admitted with whatever the device holds. 0 disables re-issues."
+            ),
+        ),
+    ] = 8
+
+    # -------------------------------------------------------------------------
+    # Unified Radix Cache
+    # -------------------------------------------------------------------------
+    enable_unified_cache_external_linker: A[
+        bool,
+        "Link UnifiedRadixCache directly to an external KV store (direct L3), with no host cache tier.",
+    ] = False
+    unified_cache_external_linker_backend: A[
+        str,
+        Arg(
+            help="Storage backend for --enable-unified-cache-external-linker.",
+            choices=["mooncake", "mori"],
+        ),
+    ] = "mooncake"
+    enable_linker_mla_dedup: A[
+        bool,
+        "Load replicated MLA KV on rank 0 and broadcast each layer with the Mooncake linker.",
+    ] = False
+    hicache_storage_next_turn_prefetch: A[
+        str,
+        Arg(
+            help=(
+                "Oracle next-turn prefetch from storage, driven by the "
+                "sglang.next_turn kv_hints action (session, next request id, gap). "
+                "'observe' predicts and logs only; 'on' also starts each prefetch at "
+                "the predicted admission time minus the estimated load time. "
+                "Experimental; needs the hierarchical cache with a storage backend."
+            ),
+            choices=["off", "observe", "on"],
+        ),
+    ] = "off"
+    hicache_storage_next_turn_reply_key_source: A[
+        str,
+        Arg(
+            help=(
+                "Where the next-turn prefetcher finds a reply's tool call when the "
+                "request carries a sglang.next_turn v2 gap table. 'reply' reads the "
+                "generated reply. 'hint' reads the table's replay_reply_key, for a "
+                "trace replay whose generated replies are not the recorded ones."
+            ),
+            choices=["reply", "hint"],
+        ),
+    ] = "reply"
+    hicache_storage_next_turn_read_timing: A[
+        str,
+        Arg(
+            help=(
+                "When the next-turn prefetcher issues a read under "
+                "--hicache-storage-read-order deadline. 'horizon': as soon as the span "
+                "is missing and the predicted admission is near. 'just_in_time': only "
+                "when the load estimate says the read must start, which holds pinned "
+                "memory for less time but depends more on the forecast. "
+                "'expected_cost': start the read where the expected stall equals the "
+                "expected rent of the host memory it pins, under the hint's gap "
+                "distribution and --hicache-storage-next-turn-memory-price, or leave "
+                "it to the turn's arrival when that costs less; a landed read gives "
+                "its pin back once holding it no longer pays, and no forecast ends a "
+                "plan. 'arrival': never read before the turn arrives; the plan only "
+                "serves the arrival gate, the arrival hold and the protection of "
+                "queued turns, so no gap forecast is used."
+            ),
+            choices=["horizon", "just_in_time", "expected_cost", "arrival"],
+        ),
+    ] = "horizon"
+    hicache_storage_next_turn_landing_quantile: A[
+        Optional[float],
+        (
+            "Under --hicache-storage-next-turn-read-timing just_in_time with a gap "
+            "table: the quantile of the entry's gap distribution a read is timed to "
+            "land at, for every read size. Unset keeps the entry's p10."
+        ),
+    ] = None
+    hicache_storage_next_turn_memory_price: A[
+        float,
+        (
+            "Price of host memory for --hicache-storage-next-turn-read-timing "
+            "expected_cost, in seconds of TTFT per token-second pinned. It is the "
+            "starting price under --hicache-storage-next-turn-price-learning on."
+        ),
+    ] = 5e-5
+    hicache_storage_next_turn_price_learning: A[
+        str,
+        Arg(
+            help=(
+                "'on': move --hicache-storage-next-turn-memory-price every few seconds, "
+                "up while reads are refused host memory and down while the host "
+                "memory beyond the device mirror sits idle. 'harm': set it to what "
+                "staged reads cost the turns that had arrived, per token-second they "
+                "were pinned: the recomputation left to reads refused the room a "
+                "staged read held, counted once for each turn in the queue. Needs "
+                "--hicache-storage-next-turn-read-timing expected_cost."
+            ),
+            choices=["off", "on", "harm"],
+        ),
+    ] = "off"
+    hicache_storage_next_turn_soft_pins: A[
+        str,
+        Arg(
+            help=(
+                "'on': when the read of a turn that has arrived finds no host memory, "
+                "take it from reads staged for turns that have not arrived, least "
+                "likely to return soon first, instead of cutting or dropping the "
+                "arrived turn's read. Needs --hicache-storage-next-turn-prefetch on "
+                "and --hicache-storage-read-order deadline."
+            ),
+            choices=["off", "on"],
+        ),
+    ] = "off"
+    hicache_storage_next_turn_arrival_gate: A[
+        str,
+        Arg(
+            help=(
+                "Make the next-turn prefetcher the one owner of SSD reads. 'on': a "
+                "planned turn whose prefix match covers its committed history gets no "
+                "SSD lookup when it arrives, and a planned turn's lookups are capped. "
+                "A turn with no plan looks up as usual. Needs "
+                "--hicache-storage-next-turn-prefetch on."
+            ),
+            choices=["off", "on"],
+        ),
+    ] = "off"
+    hicache_storage_next_turn_arrival_hold: A[
+        str,
+        Arg(
+            help=(
+                "'on': a parked read of a queued turn waits until the turn's predicted "
+                "admission minus the load estimate minus a margin, so it does not hold "
+                "pinned memory through the queue wait; near the head it goes at once. "
+                "Needs --hicache-storage-next-turn-prefetch on and "
+                "--hicache-storage-read-order deadline."
+            ),
+            choices=["off", "on"],
+        ),
+    ] = "off"
+    hicache_storage_read_order: A[
+        str,
+        Arg(
+            help=(
+                "Order of storage (L3) reads on the single read thread. 'fifo': a hit "
+                "allocates its host pages at once and queues in arrival order. "
+                "'deadline': hits park without host memory and are dispatched by "
+                "deadline: a next-turn prefetch before its turn arrives is due at the "
+                "predicted admission, a queued turn the prefetcher knows is due at "
+                "its position's residual wait, and anything else (no prefetcher, a "
+                "head-of-queue request) is 'now' and bypasses the limits. Host pages "
+                "are allocated at dispatch and at most "
+                "--hicache-storage-read-window-pages are in flight. With "
+                "--hicache-storage-next-turn-prefetch on the paced storage miss "
+                "retries are disabled. Experimental; needs --hicache-host-memory-mode "
+                "cache, a storage backend and TP = PP = 1."
+            ),
+            choices=["fifo", "deadline"],
+        ),
+    ] = "fifo"
+    hicache_storage_read_window_pages: A[
+        int,
+        "Pages the storage read thread may hold in flight under --hicache-storage-read-order deadline.",
+    ] = 512
+    hicache_storage_prefetch_pin_fraction: A[
+        float,
+        (
+            "Share of the host pool that storage-prefetched spans may hold locked "
+            "until their request is admitted, aborted or expired (0 = no pin, at "
+            "most 0.5: the prefetch cap). Needs --hicache-storage-read-order deadline."
+        ),
+    ] = 0.0
+
+    # -------------------------------------------------------------------------
+    # Hierarchical sparse attention
+    # -------------------------------------------------------------------------
+    enable_hisparse: A[bool, "Enable hierarchical sparse attention"] = False
+    hisparse_config: A[
+        Optional[str],
+        Arg(
+            help='A dictionary in JSON string format for hierarchical sparse attention configuration. Example: \'{"top_k": 2048, "device_buffer_size": 4096, "host_to_device_ratio": 2}\'',
+            aliases=["--hierarchical-sparse-attention-extra-config"],
+        ),
+    ] = None
+
+    # -------------------------------------------------------------------------
+    # LMCache
+    # -------------------------------------------------------------------------
+    enable_lmcache: A[
+        bool, "Using LMCache as an alternative hierarchical cache solution"
+    ] = False
+    lmcache_config_file: A[
+        Optional[str],
+        "Path to the LMCache YAML configuration file",
+    ] = None
+
+    # -------------------------------------------------------------------------
+    # FlexKV
+    # -------------------------------------------------------------------------
+    enable_flexkv: A[
+        bool,
+        (
+            "Route the default RadixCache through FlexKV's KVManager for "
+            "host-tier (CPU / SSD / Remote) KV cache offload. Equivalent "
+            "to --radix-cache-backend=flexkv but also participates in the "
+            "auto-selection chain alongside --enable-lmcache."
+        ),
+    ] = False
+    flexkv_config_file: A[
+        Optional[str],
+        (
+            "Path to the FlexKV YAML / JSON configuration file. "
+            "Equivalent to setting the FLEXKV_CONFIG_PATH environment "
+            "variable."
+        ),
+    ] = None

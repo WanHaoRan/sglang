@@ -1,0 +1,61 @@
+===== [27750] 2026-11-12T18:00:22.390Z assistant
+--- tool_use Bash toolu_01RJYx8PraZy3HbhmVgB9E1L
+[command]
+cd /home/wanhr/sglang/agent_cache; python3 -I -B - <<'EOF' | tee results/campaign26/checks/limits/price_path_ec_r134.out
+"""ec_r134: the learned price by minute beside what the room did, against the fixed-price run's log in the same minutes."""
+import collections, datetime as dt, glob, json, os, re, statistics as st
+P = re.compile(r"^\[(.{23})\] HICACHE_EVT ec_price price=(\S+) refused=(\d+) idle=(\d+) excess=(\S+) room=(\d+) held=(\d+) staged=(\d+) harm_ms=(\d+)")
+stamp = lambda s: dt.datetime.strptime(s, "%Y-%m-%d %H:%M:%S.%f").replace(tzinfo=dt.timezone.utc).timestamp()
+def load(run):
+    path = sorted(glob.glob(f"results/{run}/client_*/client.jsonl"))[-1]
+    t0 = json.loads(open(path).readline())["t_start"]
+    by = collections.defaultdict(list)
+    for line in open(f"results/{run}/server.log", errors="replace"):
+        if "ec_price" in line and (m := P.match(line)):
+            by[int((stamp(m[1]) - t0) // 60)].append([float(x) for x in m.groups()[1:]])
+    return by
+learned, fixed = load("20261112_153600_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70"), load("20261111_070012_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70")
+row = lambda v: (st.mean(x[0] for x in v), sum(x[1] for x in v) / 1000, st.mean(x[2] for x in v) / 1000, st.mean(x[6] for x in v) / 1000, sum(x[7] for x in v) / 1000)
+print("minute | learned price: price, refused K in the minute, idle room K, staged pins K, harm s | fixed price run: refused K, idle room K, staged pins K, harm s")
+for m in list(range(44, 68, 2)) + list(range(78, 96, 2)):
+    a = [x for k in (m, m + 1) for x in learned.get(k, [])]
+    b = [x for k in (m, m + 1) for x in fixed.get(k, [])]
+    if a and b:
+        pa, pb = row(a), row(b)
+        print(f"  {m:3d}-{m + 1:3d} | {pa[0]:.1e} {pa[1]:6.0f} {pa[2]:6.0f} {pa[3]:5.1f} {pa[4]:6.0f} | {pb[1]:6.0f} {pb[2]:6.0f} {pb[3]:5.1f} {pb[4]:6.0f}")
+calm = [x for k, v in learned.items() if not (52 <= k <= 64 or 85 <= k <= 92) for x in v]
+busy = [x for k, v in learned.items() if 52 <= k <= 64 or 85 <= k <= 92 for x in v]
+for name, v in (("minutes 52-64 and 85-92", busy), ("the other minutes", calm)):
+    print(f"learned-price run, {name}: price median {st.median(x[0] for x in v):.1e}, idle room K mean {st.mean(x[2] for x in v) / 1000:.0f}, refused K per minute {sum(x[1] for x in v) / 1000 / (len(v) / 12):.0f}, "
+          f"staged pins K {st.mean(x[6] for x in v) / 1000:.1f}, harm s per minute {sum(x[7] for x in v) / 1000 / (len(v) / 12):.1f}")
+EOF
+[description]
+Trace the learned price minute by minute around the load episodes
+===== [27751] 2026-11-12T18:00:22.603Z user
+--- tool_result toolu_01RJYx8PraZy3HbhmVgB9E1L 
+minute | learned price: price, refused K in the minute, idle room K, staged pins K, harm s | fixed price run: refused K, idle room K, staged pins K, harm s
+   44- 45 | 2.7e-05      0     62   0.6      0 |      0     59   0.5      0
+   46- 47 | 1.6e-05    204     45  16.8     10 |      0     64   0.1      0
+   48- 49 | 3.6e-06     94     33  34.8      2 |      0     73   0.0      0
+   50- 51 | 3.2e-06    432     40  22.4     25 |     18     55   2.5      2
+   52- 53 | 1.8e-05   1058     22  23.9    146 |    744     34   7.4     26
+   54- 55 | 4.2e-05   1145     17  10.6    127 |   1211     25   9.1     64
+   56- 57 | 5.1e-05    552     30   4.7     35 |    498     43   2.5      3
+   58- 59 | 4.6e-05     69     47   4.1      0 |    222     44   5.8      5
+   60- 61 | 5.3e-05   1324     15  14.7    148 |    951     25  12.3     50
+   62- 63 | 6.8e-05    989     27   5.4     29 |    762     11  11.4     48
+   64- 65 | 6.4e-05    791     27   5.6     14 |    117     52   2.9      3
+   66- 67 | 4.4e-05      0     58   0.5      0 |      0     61   0.0      0
+   78- 79 | 3.3e-06     21     51   8.2      0 |      0     54   0.0      0
+   80- 81 | 1.9e-06    117     49   3.8      7 |      0     52   0.0      0
+   82- 83 | 5.9e-06     17     43   9.7      1 |      0     51   0.0      0
+   84- 85 | 2.3e-06      0     40  10.1      0 |      0     54   0.0      0
+   86- 87 | 3.0e-06    354     30  18.9     26 |    861     19   3.9     50
+   88- 89 | 2.4e-05    974     15   4.9     53 |    783     11   0.4      0
+   90- 91 | 6.2e-05    994     15   2.0     60 |    803     30   3.4     41
+   92- 93 | 6.4e-05    492     40   3.1     24 |      0     58   0.2      0
+   94- 95 | 6.3e-05      0     59   0.0      0 |      0     58   0.0      0
+learned-price run, minutes 52-64 and 85-92: price median 4.6e-05, idle room K mean 25, refused K per minute 429, staged pins K 9.5, harm s per minute 33.2
+learned-price run, the other minutes: price median 2.6e-05, idle room K mean 80, refused K per minute 64, staged pins K 5.0, harm s per minute 4.3
+===== [27752] 2026-11-12T18:00:22.639Z api-request
+===== [27753] 2026-11-12T18:00:22.620Z attachment

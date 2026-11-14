@@ -1,0 +1,11 @@
+=== idx0=26312 ts=2026-11-12T02:24:26.092Z assistant/text
+Status while the repeat of the no-forecast rival finishes (about 02:51 UTC):
+
+- **The independent recomputation agrees with my tables.** Two agents re-derived them from the raw logs with their own parsers, without opening my outputs first. All 157 client-side and 1,946 server-side numbers they could compare match.
+- **Their sanity checks came out clean.** The runs are comparable turn by turn: same prompts, same offered load in the load episodes, no hardware drift over the day, no censored turns.
+- **The other two review agents never finished.** They were cut off twice by the usage limit, so I stopped that workflow and read what they had left on disk; nothing in it overturns a result.
+- **Small corrections from the check.** Three column headings in the comparison output understated what the column holds. The split of read stall by "admitted within 0.1 s" moves with that threshold, so "what read timing can win" is 0.14 to 0.20 s per turn rather than a flat 0.17 s. Both are in `DECISIONS.md`.
+- **Next arm.** The no-hint rival at 128 users starts when the current arm ends, and finishes about 04:55 UTC. The 128-user comparison script now also reports turn latency. On the earlier runs the hinted arms sit at 20.6 to 21.0 s mean TTFT and about 33 s per turn, so that is the level the rival has to reach.
+
+I'll update `PAPER_PLAN.md` once that 128-user number is in, since it decides whether any measured setting supports the hint.
+

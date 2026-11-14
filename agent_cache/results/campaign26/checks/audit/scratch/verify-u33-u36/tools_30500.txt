@@ -1,0 +1,749 @@
+=== 30502 2026-11-13T19:38:31.758Z assistant:text
+Waiting on the audit agents; meanwhile checking the existing eviction-replay tool to see whether a CPU-only host-pool sweep (70–160 GB) can be run from it.
+
+=== 30503 2026-11-13T19:38:33.306Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; ls -la --time-style=+%m-%dT%H:%M frozen/ec_policy_20261111/ frozen/ec_policy_20261111/evict_replay/ | awk '{print $5, $6, $7}'; echo; sed -n '1,80p' frozen/ec_policy_20261111/evict_replay/FINDINGS.md
+
+=== 30504 2026-11-13T19:38:33.346Z tool_result
+4096 11-11T04:51 .
+4096 11-11T11:14 ..
+4096 11-11T04:39 evict_replay
+  
+  
+  
+4096 11-11T04:39 .
+4096 11-11T04:51 ..
+4863 11-11T04:39 FINDINGS.md
+8239 11-11T04:31 evict_replay.out
+14396 11-11T04:38 evict_replay.py
+8340 11-11T04:32 evict_replay_a05.out
+808 11-11T04:39 evict_replay_noend.out
+812 11-11T04:39 evict_replay_noend_a05.out
+
+# Eviction replay for rule 3 (2026-11-11)
+
+Which eviction score keeps the histories that return, on a recorded run's own timeline. CPU only.
+Script `evict_replay.py`; outputs `evict_replay.out` (campaign 23's `jit_p50_c44`) and `evict_replay_a05.out`
+(campaign 25's `jit_p50_a05`).
+
+## The model
+
+- One pool of M tokens holds session histories. A running turn's session is locked.
+- A returning turn whose history is not all in memory reads the rest from SSD; it counts as a read turn when 256
+  tokens or more are missing.
+- Over M, idle histories are evicted from their tails, lowest priority first.
+- Each policy sees what the engine sees: the entry sent with the finished turn (p10, p50, p90), the idle time and the
+  explicit end signal. Only the exact row sees the true gap.
+- M is set once so that LRU reads on 19.4 % of returning turns, the hint-free arm's measured share (982K tokens).
+
+The timeline is the run's own, so this ranks eviction orders; it does not predict TTFT. Read pins, the GPU and host
+split and partial reads are not modelled.
+
+## Result
+
+Share of returning turns that read from SSD (`jit_p50_c44` timeline; the second timeline in brackets):
+
+| Policy | M | 0.8 M | 1.25 M |
+|---|---|---|---|
+| LRU | 19.4 % (19.4) | 53.3 % | 1.3 % |
+| Next use from the p50, today's tiers | 17.7 % (18.1) | 50.8 % | 1.0 % |
+| Next use from the p50, no expiry or overdue tier | 24.0 % (24.9) | 52.5 % | 3.5 % |
+| Chance of return within 30 s, two-piece lo
+
+=== 30507 2026-11-13T19:38:43.820Z tool_use Read
+/home/wanhr/sglang/agent_cache/frozen/ec_policy_20261111/evict_replay/evict_replay.py
+
+=== 30508 2026-11-13T19:38:43.844Z tool_result
+1	"""Eviction replay for rule 3: which score keeps the histories that return, on a recorded run's own timeline.
+2	From agent_cache/, on the host (stdlib only):
+3	  nice -n 10 python3 -I -B frozen/ec_policy_20261111/evict_replay/evict_replay.py | tee frozen/ec_policy_20261111/evict_replay/evict_replay.out
+4	One pool of M tokens holds session histories; a running turn's session is locked. A returning turn whose history is not
+5	all in memory reads the rest from SSD (a read turn when 256 tokens or more are missing). When the pool is over M, idle
+6	histories are evicted from their tails, lowest priority first. Each policy sees only what the engine sees: the hint entry
+7	sent with the finished turn (p10, p50, p90), the idle time and the explicit end signal; only the exact row sees the true gap.
+8	M is calibrated once so that LRU reproduces the hint-free arm's measured share of returning turns that read from SSD.
+9	The timeline is the run's own (closed loop), so this ranks eviction orders; it does not predict TTFT."""
+10	import bisect, collections, glob, json, math, os, statistics as st, sys
+11	
+12	RES = "results"
+13	RUNS = {"jit_p50": "20261101_222451_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70",
+14	        "jit_p50_a05": "20261105_055051_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70"}
+15	THRESHOLD = 256      # tokens: the engine's prefetch threshold
+16	LRU_TARGET = 0.194   # hint-free arm: share of returning turns that read from SSD (deck slide case-nextuse)
+17	Z90 = 1.2815515655446004
+18	SIGMA_FLOOR = 0.05
+19	
+20	
+21	def load(run):
+22	    rows = [json.loads(line) for line in open(sorted(glob.glob(os.path.join(RES, run, "client_*", "client.jsonl")))[-1]) if line.strip()]
+23	    turns = [r for r in rows if r.get("kind") == "turn" and r.get("ttft") is not None]
+24	 
+
+=== 30524 2026-11-13T19:39:34.597Z tool_use Write
+/home/wanhr/sglang/agent_cache/results/campaign26/checks/limits/pool_sweep.py
+  CONTENT: """Host-pool sweep on recorded timelines: the share of returning turns that read from SSD as the host pool grows.
+From agent_cache/:  nice -n 10 python3 -I -B results/campaign26/checks/limits/pool_sweep.py | tee results/campaign26/checks/limits/pool_sweep.out
+Uses the one-pool model of frozen/ec_policy_20261111/evict_replay/evict_replay.py, with its limits: no pins, no GPU and
+host split, the run's own timeline, so it gives read shares and not TTFT. The model's pool M is fitted once, on a 70 GB
+run, so that LRU gives that run's measured share. Another host size moves M in one of two ways, since the fit does not
+say which: by the same ratio as the host pool, or by the same number of tokens. The 100 GB cut run is the check."""
+import os
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+source = open(os.path.join(HERE, "..", "..", "..", "..", "frozen", "ec_policy_20261111", "evict_replay", "evict_replay.py")).read()
+ns = {"__name__": "evict_replay_model"}
+exec(compile(source[:source.index('\nif len(sys.argv) > 1 and sys.argv[1] == "noend":')], "evict_replay.py", "exec"), ns)
+load, simulate, share = ns["load"], ns["simulate"], ns["share"]
+POLICIES = (("LRU", ns["lru"]), ("LRU, ended sessions first", ns["lru_end"]), ("next use from the p50", ns["next_use"]()),
+            ("return chance within 30 s", ns["return_chance"](30, ns["chance_own"])), ("exact next use", ns["exact"]))
+
+TOKENS_PER_GB = 10172.8  # host pool tokens per GB: 1,017,280 at 100 GB, 1,627,648 at 160 GB
+FIT = ("nofc_noend_rep", "20261112_174138_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70", 70, 0.170)
+CHECK = ("nofc_noend_h100_cut", "20261113_060157_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H100", 100, 56 / 8030)
+SIZES = (70, 75, 80, 85, 90, 95, 100, 110, 120, 136, 160)
+
+
+def fit(turns, target):
+   
+
+=== 30525 2026-11-13T19:39:34.643Z tool_result
+File created successfully at: /home/wanhr/sglang/agent_cache/results/campaign26/checks/limits/pool_sweep.py (file state is current in your context — no need to Read it back)
+
+=== 30526 2026-11-13T19:39:37.328Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; S=/tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad; ( time nice -n 10 python3 -I -B results/campaign26/checks/limits/pool_sweep.py > $S/pool_sweep.out 2> $S/pool_sweep.err ) 2>&1 | grep real; head -5 $S/pool_sweep.err; cut -c1-240 $S/pool_sweep.out
+
+=== 30527 2026-11-13T19:40:23.212Z tool_result
+fit on nofc_noend_rep (70 GB, measured 17.0 % of returning turns reading from SSD): 12107 turns, M = 940,950 tokens (the host pool is 712,096)
+
+check on nofc_noend_h100_cut's own timeline (100 GB, 8800 turns, measured 0.7 %): LRU share with M by ratio (1,344,214) 0.7 %, by tokens (1,246,134) 0.9 %
+  the 70 GB run's first 84 min (8637 turns) at those pools: 0.7 %, 0.8 %; at its own M 12.6 %
+
+nofc_noend_rep's timeline, M scaled by the host pool's ratio: share of returning turns reading from SSD (K tokens read per returning turn)
+   host GB          M |                        LRU |  LRU, ended sessions first |      next use from the p50 |  return chance within 30 s |             exact next use
+        70    940,950 |              17.0 % ( 3.90) |              13.7 % ( 3.16) |              15.5 % ( 2.78) |              13.6 % ( 2.76) |               9.1 % ( 1.92)
+        75  1,008,160 |               9.4 % ( 2.14) |               6.7 % ( 1.55) |               9.1 % ( 1.60) |               8.2 % ( 1.59) |               4.8 % ( 1.01)
+        80  1,075,371 |               4.9 % ( 1.14) |               3.0 % ( 0.70) |               4.5 % ( 0.82) |               4.3 % ( 0.81) |               2.1 % ( 0.48)
+        85  1,142,582 |               2.7 % ( 0.61) |               1.3 % ( 0.31) |               2.2 % ( 0.43) |               1.8 % ( 0.32) |               0.9 % ( 0.20)
+        90  1,209,792 |               1.5 % ( 0.33) |               0.6 % ( 0.13) |               1.5 % ( 0.27) |               0.6 % ( 0.10) |               0.4 % ( 0.07)
+        95  1,277,003 |               1.0 % ( 0.22) |               0.2 % ( 0.04) |               1.0 % ( 0.20) |               0.2 % ( 0.03) |               0.1 % ( 0.02)
+       100  1,344,214 |               0.8 % ( 0.18) |               
+
+=== 30539 2026-11-13T19:40:39.552Z assistant:text
+Host-pool sweep on the replay model reproduces the 100 GB measurement (0.7 %) and shows reads halving every 5 GB above 70 GB; recording it. Audit agents still running.
+
+=== 30540 2026-11-13T19:40:50.366Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; S=/tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad; cp $S/pool_sweep.out results/campaign26/checks/limits/pool_sweep.out; cat >> results/campaign26/DECISIONS.md <<'EOF'
+
+**Host-pool sweep on the eviction replay (CPU, `checks/limits/pool_sweep.py` and `.out`): the reads fade by about half
+for every 5 GB above 70 GB, and the model fitted at 70 GB gives the 100 GB run's 0.7 %.** The one-pool model of
+`frozen/ec_policy_20261111/evict_replay/` (no pins, no GPU and host split, a run's own timeline; read shares, not
+TTFT), fitted on `nofc_noend_rep` so that LRU gives its measured 17.0 % of returning turns reading from SSD. Another
+host size moves the model's pool by the host pool's ratio or by the tokens added; both are shown, as a range.
+
+| Host pool | 70 GB | 75 | 80 | 85 | 90 | 100 | 110 | 160 |
+|---|---|---|---|---|---|---|---|---|
+| LRU (no hints) | 17.0 % | 9.4-10.8 | 4.9-6.7 | 2.7-4.2 | 1.5-2.7 | 0.8-1.2 | 0.6-0.8 | 0.2-0.3 |
+| LRU, ended sessions first | 13.7 % | 6.7-8.0 | 3.0-4.4 | 1.3-2.4 | 0.6-1.3 | 0.0-0.3 | 0.0 | 0.0 |
+| next use from the p50 | 15.5 % | 9.1-10.5 | 4.5-6.6 | 2.2-3.9 | 1.5-2.1 | 0.8-1.1 | 0.6-0.8 | 0.2-0.3 |
+| exact next use | 9.1 % | 4.8-5.5 | 2.1-3.3 | 0.9-1.7 | 0.4-0.9 | 0.1-0.2 | 0.0-0.1 | 0.0 |
+
+- **Check.** On the 100 GB cut run's own timeline the model gives 0.7 % (by ratio) and 0.9 % (by tokens); measured
+  0.7 %. The 70 GB run's first 84 min give 0.7-0.8 % at those pools and 12.6 % at 70 GB, so the fall is the pool's
+  and not the timeline's.
+- **What a forecast can save in reads shrinks with the pool:** exact next use against LRU is 7.9 points of returning
+  turns at 70 GB, about 5 at 75 GB, 3 at 80 GB, 2 at 85 GB and under 1 from 100 GB.
+- **Reading.** 70 GB, the smalle
+
+=== 30541 2026-11-13T19:40:50.405Z tool_result
+1113 results/campaign26/DECISIONS.md
+
+=== 30544 2026-11-13T19:40:55.145Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; C=frozen/oracle_scripts_staging/c26_ec; cat $C/plot_ec.py
+
+=== 30545 2026-11-13T19:40:55.176Z tool_result
+"""Campaign 26 at ARRIVAL=0.1 over time. In the container, from agent_cache/scripts/:
+  [FIGSET=designs] [FIGSET_OUT=folder] PYTHONPATH=. python3 ../frozen/oracle_scripts_staging/c26_ec/plot_ec.py
+Writes ec_overview.png and ec_overview.csv (the table view) into the set's folder, as plot_timeline.py's sets: ec (default,
+results/compare_c26_ec), designs (results/compare_c26_designs: every run of original HiCache, the old oracle, JIT p50, JIT
+exact and the pricing arms; an arm's other runs are dashed, and the pricing arms differ by dash as in the set's other
+figures) and designs_c128 (results/compare_c26_designs_c128: the same designs at 128 users and 160 GB, one run each, the
+first 115 min of each). Campaign 26's arms come from its manifest, so each joins when it lands. A run's last, partial bin
+is left out.
+Colours: pal.py on all pairs of the six hues, worst dE 16.3 normal, 8.6 protan, 9.2 deutan; contrast below 3:1 on the green,
+so the CSV is the table view. An earlier run of an arm is dashed in the arm's colour; rule 1 alone and rule 3 alone are the
+expected-cost colour with their own dashes."""
+import collections, csv, json, os, statistics as st
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+from timeline import INK, MUTED, style  # noqa: E402
+
+RES = "../results"
+BIN = 300
+FIXED = {"baseline": "20261101_082229_three_tier_wc_custom_L1nat_H70",
+         "hintfree": "20261101_122705_three_tier_wc_dl_poll0_custom_L1nat_H70",
+         "jit_p50": "20261101_222451_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70",
+         "jit_exact": "20261101_202142_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70"}
+STYLE = {"baseline": ("original HiCache", "#2a78d6", "-", 1.6),
+         "hintfree_ctl": ("hint-free (read pins, no hints)", "#79600
+
+=== 30554 2026-11-13T19:41:03.372Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; T=/home/wanhr/.claude/projects/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/subagents/workflows/wf_0e0fa340-c4a; ls $T | head -40; echo; [ -f $T/journal.jsonl ] && python3 -I -B - <<'EOF'
+import json
+p = "/home/wanhr/.claude/projects/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/subagents/workflows/wf_0e0fa340-c4a/journal.jsonl"
+for line in open(p):
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    print({k: (str(v)[:90] if not isinstance(v, (int, float)) else v) for k, v in d.items() if k in ("type", "event", "label", "status", "phase", "kind", "ts", "timestamp", "agentId")})
+EOF
+echo "$(TZ=America/New_York date +%T) ET"
+
+=== 30555 2026-11-13T19:41:03.426Z tool_result
+agent-a1c9746d395282f7e.jsonl
+agent-a1c9746d395282f7e.meta.json
+agent-a2226d2326161dec9.jsonl
+agent-a2226d2326161dec9.meta.json
+agent-a2d1b068736a1a3db.jsonl
+agent-a2d1b068736a1a3db.meta.json
+agent-a88afafc29df516d8.jsonl
+agent-a88afafc29df516d8.meta.json
+agent-a92b5bb3f244b91fd.jsonl
+agent-a92b5bb3f244b91fd.meta.json
+agent-a9ea1171bf9c95908.jsonl
+agent-a9ea1171bf9c95908.meta.json
+agent-aa6e9a28a7c233c14.jsonl
+agent-aa6e9a28a7c233c14.meta.json
+agent-ab8a7c62ce9532ffa.jsonl
+agent-ab8a7c62ce9532ffa.meta.json
+agent-ad86eca7f326eff96.jsonl
+agent-ad86eca7f326eff96.meta.json
+agent-af1fcb3feb126d420.jsonl
+agent-af1fcb3feb126d420.meta.json
+journal.jsonl
+
+{'type': 'launched'}
+{'type': 'started', 'agentId': 'af1fcb3feb126d420', 'label': 'find:record-1', 'phase': 'Find'}
+{'type': 'started', 'agentId': 'a2d1b068736a1a3db', 'label': 'find:record-2', 'phase': 'Find'}
+{'type': 'started', 'agentId': 'ad86eca7f326eff96', 'label': 'find:record-3', 'phase': 'Find'}
+{'type': 'started', 'agentId': 'a92b5bb3f244b91fd', 'label': 'find:transcript-requests', 'phase': 'Find'}
+{'type': 'started', 'agentId': 'ab8a7c62ce9532ffa', 'label': 'find:transcript-promises', 'phase': 'Find'}
+{'type': 'started', 'agentId': 'a9ea1171bf9c95908', 'label': 'find:deck', 'phase': 'Find'}
+{'type': 'started', 'agentId': 'a2226d2326161dec9', 'label': 'find:paper-plan', 'phase': 'Find'}
+{'type': 'started', 'agentId': 'a88afafc29df516d8', 'label': 'find:code', 'phase': 'Find'}
+{'type': 'started', 'agentId': 'a1c9746d395282f7e', 'label': 'find:figures-tables', 'phase': 'Find'}
+{'type': 'started', 'agentId': 'aa6e9a28a7c233c14', 'label': 'find:leftovers', 'phase': 'Find'}
+14:41:03 ET
+
+=== 30558 2026-11-13T19:41:11.071Z tool_use Bash
+cat /home/wanhr/.claude/projects/-home-wanhr-sglang/memory/figure-style-timeline.md; echo ----; cat /home/wanhr/.claude/projects/-home-wanhr-sglang/memory/design-doc-style.md | tail -8
+
+=== 30559 2026-11-13T19:41:11.112Z tool_result
+---
+name: figure-style-timeline
+description: Data figures for the KV-tiering paper/deck go in the timeline style of scripts/jit_vs_hicache.py, not ad-hoc chart forms
+metadata:
+  type: feedback
+---
+
+For campaign result figures the user wants "timeline style like the other previous data figures": on 2026-11-11, after I had shown campaign 26's results as a stacked-bar wait split and an ad-hoc overview, they asked for the figure in that style instead.
+
+**Why:** the deck and paper already carry `hicache_vs_jit.png` and its companions (made by `agent_cache/scripts/jit_vs_hicache.py`), so new results should read as the same family. My interpretation of one request, not a stated rule; they did not say the bar figure was wrong.
+
+**How to apply:** when presenting a campaign's arms, default to that style: panels over 5-minute bins by send time, semibold title "<setting>: <what against what>", legend on top, labelled line ends on the first panel, a footnote carrying the numbers and the caveats, colours following the arm across figures, PNG plus PDF plus a CSV table view. Reuse the helpers by importing `jit_vs_hicache` (see `frozen/oracle_scripts_staging/c26_ec/plot_pricing_vs_jit.py`). `scripts/timeline.py`'s per-run `timeline_<arm>.png` set is the other "timeline" family; produce it too for a new campaign. Related: [[design-doc-style]], [[hint-realism-analysis]].
+
+**2026-11-12, the set the user asked for by name.** After checking campaign 26's figures the user asked for "a new directory for a new set of figures" at 44 users, 0.1 QPS, 70 GB host memory with five series: baseline HiCache, the old Oracle (v2), JIT p50, JIT exact, and "the rules 1 to 4 (if applicable)"; "the timeline figures, and the compare.png figure, and all other figures like in compare_c26_ec". Built as `agent_ca
+
+=== 30568 2026-11-13T19:41:23.349Z tool_use Read
+/home/wanhr/sglang/agent_cache/results/compare_c26_designs/compare.png
+
+=== 30569 2026-11-13T19:41:23.439Z tool_result
+
+
+=== 30570 2026-11-13T19:41:23.435Z user:str
+[Image: original 2066x1156, displayed at 2000x1119. Multiply coordinates by 1.03 to map to original image.]
+
+=== 30579 2026-11-13T19:41:44.715Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; C=frozen/oracle_scripts_staging/c26_ec; sed -n '1,140p' $C/plot_pricing_vs_jit.py
+
+=== 30580 2026-11-13T19:41:44.750Z tool_result
+"""Campaign 26's arms against just-in-time fetching over time, in the style of scripts/jit_vs_hicache.py's timeline figure.
+In the container, from agent_cache/scripts/:
+  PYTHONPATH=. python3 -B ../frozen/oracle_scripts_staging/c26_ec/plot_pricing_vs_jit.py [--set SET] [--arms ...] [--panels ...] [--name NAME] [--out DIR]
+Sets, as plot_timeline.py's: ec (default, results/compare_c26_ec), designs (results/compare_c26_designs: original
+HiCache, the old oracle, JIT p50, JIT exact and the pricing rules, JIT and the rules on one build) and designs_c128
+(results/compare_c26_designs_c128: the same designs at 128 users and 160 GB, the first 2 h of each run).
+Writes pricing_vs_jit.png, .pdf and .csv (the table view: every panel's value per arm and 5-minute bin).
+Panels are 5-minute bins by send time, defined as in that script and plot_c44.py: ttft (mean TTFT of all turns), tps (turns
+completed per second, by completion time), recomputed (history recomputed per returning turn), unused (history read from
+SSD but not used, per returning turn), held (host memory needed to hold SSD-loaded KV from landing to its turn's
+admission, whether or not the engine kept it), reading (share of returning turns that read from SSD), ssd (SSD read
+rate from the server's s2h_io lines, by landing time; within 3 % of iostat's on the earlier 128-user runs). A set names
+its default panels.
+Footnote numbers are over the returning turns every arm shown sent at least 300 s before its last send, as compare_ec.py;
+in the designs set the other runs of the arms shown must have sent them too, and their means are given beside.
+The footnote says so when no pricing arm shown started a read before its turn arrived (no ec_start line with decision=now).
+Colours: plot_ec.py's hues (pal.py on all pairs of the six, and o
+
+=== 30588 2026-11-13T19:41:46.722Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; C=frozen/oracle_scripts_staging/c26_ec; sed -n '140,321p' $C/plot_pricing_vs_jit.py
+
+=== 30589 2026-11-13T19:41:46.757Z tool_result
+    with open(os.path.join(RES, run, "server.log"), errors="replace") as f:
+        return any("HICACHE_EVT ec_start" in line and "decision=now" in line for line in f)
+
+
+def end_labels(ax, x, ends, gap=11.0):
+    """A dot at each line end and its label beside it, in ink; labels closer than gap points are spread, keeping their order."""
+    to_pt = 72.0 / ax.figure.dpi
+    ends = sorted(ends, key=lambda e: e[1])
+    true = [ax.transData.transform((x, y))[1] * to_pt for _, y in ends]
+    lo, hi = (v * to_pt for v in ax.get_window_extent().intervaly)
+    at = list(true)
+    for _ in range(200):  # neighbours too close move apart by the same amount, so a cluster stays centred on its dots
+        short = [(i, gap - (at[i + 1] - at[i])) for i in range(len(at) - 1) if at[i + 1] - at[i] < gap - 0.01]
+        if not short:
+            break
+        for i, d in short:
+            at[i] -= d / 2
+            at[i + 1] += d / 2
+    shift = max(0.0, at[-1] - hi) - max(0.0, lo - at[0])
+    at = [v - shift for v in at]
+    for (arm, y), t, a in zip(ends, true, at):
+        ax.plot([x], [y], "o", ms=5, color=arm.color, mec=jv.SURFACE, mew=1.2, clip_on=False, zorder=3)
+        ax.annotate(arm.short, (x, y), xytext=(9, a - t), textcoords="offset points", va="center", fontsize=9, color=jv.INK2, annotation_clip=False,
+                    arrowprops=dict(arrowstyle="-", color=jv.AXIS, lw=0.7, shrinkA=1, shrinkB=4) if abs(a - t) > 3 else None)
+
+
+def kilo(ax):
+    """jit_vs_hicache.py's, keeping a half: a tick at 2,500 reads 2.5K."""
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v / 1000:g}K" if v else "0"))
+
+
+def row_major(items, ncol):
+    """Reorder for a legend that fills by column, so it reads left to right, then down."""
+    rows = [items[i:i + ncol] for i in range(0, le
+
+=== 30592 2026-11-13T19:42:04.800Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; C=frozen/oracle_scripts_staging/c26_ec; cat $C/plot_stall.py; echo ----; sed -n '40,119p' $C/stall_ec.py
+
+=== 30593 2026-11-13T19:42:04.837Z tool_result
+"""Campaign 26: where each arm's mean TTFT goes, one stacked bar per run. In the container, from agent_cache/scripts/:
+  [FIGSET=designs] PYTHONPATH=. python3 ../frozen/oracle_scripts_staging/c26_ec/plot_stall.py [csv] [png]
+Reads the CSV that stall_ec.py writes under STALL_CSV (default ../results/compare_c26_ec/ec_wait_split.csv, the table view)
+and writes ec_wait_split.png beside it. Arms keep the CSV's order. FIGSET=designs names the new build's JIT runs as the arm;
+FIGSET=designs_c128 names the 128-user runs and the setting (160 GB, each run's first 6,900 s).
+Colours: the first four categorical slots in order, checked on adjacent pairs (worst CVD dE 9.1, normal 22.9); aqua and
+yellow are under 3:1 on the surface, so every bar carries its total and the CSV is the table view."""
+import csv, os, sys
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.patches import FancyBboxPatch  # noqa: E402
+from timeline import INK, MUTED  # noqa: E402
+
+SRC = sys.argv[1] if len(sys.argv) > 1 else "../results/compare_c26_ec/ec_wait_split.csv"
+DST = sys.argv[2] if len(sys.argv) > 2 else os.path.splitext(SRC)[0] + ".png"
+SURFACE, GRID, AXIS = "#fcfcfb", "#e1e0d9", "#c3c2b7"
+PARTS = (("after_admission_s", "after admission", "#2a78d6"),
+         ("queue_other_s", "queue wait not tied to the turn's own read", "#eb6834"),
+         ("stall_gpu_also_s", "waiting for its SSD read, and for the GPU after it", "#1baf7a"),
+         ("stall_read_last_s", "waiting for its SSD read only", "#eda100"))
+NAMES = {"jit_exact": "JIT, exact hints", "ec_r13": "rules 1 and 3", "ec_r13_rep": "rules 1 and 3, repeat", "ec_r1": "rule 1 alone",
+         "ec_r3": "rule 3 alone (JIT p50 timing)", "ec_r134": "rules 1, 3 and 4 (learned price)", "ec_full": "all four 
+
+=== 30603 2026-11-13T19:42:37.574Z assistant:text
+Preparing the 100 GB figure set (same style as the 70 GB and 128-user sets) so it can be drawn as the arms land; audit agents still reading.
+
+=== 30604 2026-11-13T19:42:42.089Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; S=/tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad; mkdir -p $S; ( cd results/compare_c26_designs && md5sum * ) > $S/designs_before.md5; ( cd results/compare_c26_designs_c128 && md5sum * ) > $S/designs_c128_before.md5; ( cd results/compare_c26_ec && md5sum * ) > $S/ec_before.md5; wc -l $S/*_before.md5; md5sum frozen/oracle_scripts_staging/c26_ec/*.py frozen/oracle_scripts_staging/c26_ec/*.sh > $S/scripts_before.md5; mkdir -p results/campaign26/checks/figs_md5; cp $S/designs_before.md5 $S/designs_c128_before.md5 $S/ec_before.md5 results/campaign26/checks/figs_md5/ 2>/dev/null; ls results/campaign26/checks/figs_md5/
+
+=== 30605 2026-11-13T19:42:42.985Z tool_result
+  56 /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/designs_before.md5
+  37 /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/designs_c128_before.md5
+  57 /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/ec_before.md5
+ 150 total
+designs_before.md5
+designs_c128_before.md5
+ec_before.md5
+
+=== 30610 2026-11-13T19:42:47.651Z tool_use Edit
+/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_timeline.py
+  OLD:   designs_c128  results/compare_c26_designs_c128: the same designs at 128 users and 160 GB, each run cut to its first
+                6,900 s as compare_c128.py's tables: campaign 19's HiCache and oracle ran 5 h, the others 2 h
+In the container, from agent_cache/scripts/:
+  NEW:   designs_c128  results/compare_c26_designs_c128: the same designs at 128 users and 160 GB, each run cut to its first
+                6,900 s as compare_c128.py's tables: campaign 19's HiCache and oracle ran 5 h, the others 2 h
+  designs_h100  results/compare_c26_designs_h100: 44 users with a 100 GB host pool against 70 GB; the rival with no
+                hints, JIT p50 and JIT exact, one run each per pool size, a method one colour and its 70 GB run dashed
+In the container, from agent_cache/scripts/:
+
+=== 30611 2026-11-13T19:42:47.693Z tool_result
+The file /home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_timeline.py has been updated successfully.
+
+=== 30612 2026-11-13T19:42:54.914Z tool_use Edit
+/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_timeline.py
+  OLD:                              core={"baseline_c128": "#2a78d6", "oracle_v2_c128": "#4a3aa7", "jit_p50_c128": "#a0307a", "jit_exact_c128": "#1baf7a",
+                                   "ec_r134_c128": "#eb6834", "ec_full_c128": "#eb6834"},
+                             dash={"ec_r134_c128": (0, (5, 1.5, 1, 1.5)), "ec_full_c128": (0, (1, 1.5))})}
+  NEW:                              core={"baseline_c128": "#2a78d6", "oracle_v2_c128": "#4a3aa7", "jit_p50_c128": "#a0307a", "jit_exact_c128": "#1baf7a",
+                                   "ec_r134_c128": "#eb6834", "ec_full_c128": "#eb6834"},
+                             dash={"ec_r134_c128": (0, (5, 1.5, 1, 1.5)), "ec_full_c128": (0, (1, 1.5))}),
+        # The three arms run at both host pool sizes, all on campaign 26's builds. The cut 100 GB run gets a timeline only.
+        "designs_h100": dict(out="compare_c26_designs_h100", ref="jit_p50_h100", extra=("nofc_noend_h100_cut",), fixed={}, limit=No
+
+=== 30613 2026-11-13T19:42:54.965Z tool_result
+The file /home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_timeline.py has been updated successfully.
+
+=== 30614 2026-11-13T19:43:01.599Z tool_use Edit
+/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_ec.py
+  OLD:     TITLE = "128 users, x10 gaps, 160 GB host pool, 0.1 users/s: the arms compared, the first 115 min of each run"
+    OUT = os.path.join(RES, "compare_c26_designs_c128")
+    BINS, TOP = 23, 300
+  NEW:     TITLE = "128 users, x10 gaps, 160 GB host pool, 0.1 users/s: the arms compared, the first 115 min of each run"
+    OUT = os.path.join(RES, "compare_c26_designs_c128")
+    BINS, TOP = 23, 300
+elif os.environ.get("FIGSET") == "designs_h100":
+    # A method one colour, its 70 GB run dashed; the 100 GB run cut by the outage is outside the manifest, dotted.
+    FIXED = {"nofc_noend_h100_cut": "20261113_060157_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H100"}
+    STYLE = {"nofc_noend_h100": ("no hints, 100 GB", "#4a3aa7", "-", 1.6),
+             "nofc_noend_h100_cut": ("no hints, 100 GB, cut 
+
+=== 30615 2026-11-13T19:43:01.641Z tool_result
+The file /home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_ec.py has been updated successfully.
+
+=== 30616 2026-11-13T19:43:04.277Z tool_use Edit
+/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_ec.py
+  OLD: figures) and designs_c128 (results/compare_c26_designs_c128: the same designs at 128 users and 160 GB, one run each, the
+first 115 min of each). Campaign 26's arms come from its manifest, so each joins when it lands. A run's last, partial bin
+is left out.
+  NEW: figures), designs_c128 (results/compare_c26_designs_c128: the same designs at 128 users and 160 GB, one run each, the
+first 115 min of each) and designs_h100 (results/compare_c26_designs_h100: no hints, JIT p50 and JIT exact at a 100 GB
+host pool, their 70 GB runs dashed). Campaign 26's arms come from its manifest, so each joins when it lands. A run's
+last, partial bin is left out.
+
+=== 30617 2026-11-13T19:43:04.320Z tool_result
+The file /home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_ec.py has been updated successfully.
+
+=== 30630 2026-11-13T19:43:12.203Z tool_use Edit
+/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_pricing_vs_jit.py
+  OLD: C128 = {"baseline_c128": DESIGNS["baseline"], "oracle_v2_c128": DESIGNS["oracle_v2"], "jit_p50_c128": DESIGNS["jit_p50_d"],
+        "jit_exact_c128": DESIGNS["jit_exact_d"], "ec_r134_c128": DESIGNS["ec_r134"], "ec_full_c128": DESIGNS["ec_full"]}
+  NEW: C128 = {"baseline_c128": DESIGNS["baseline"], "oracle_v2_c128": DESIGNS["oracle_v2"], "jit_p50_c128": DESIGNS["jit_p50_d"],
+        "jit_exact_c128": DESIGNS["jit_exact_d"], "ec_r134_c128": DESIGNS["ec_r134"], "ec_full_c128": DESIGNS["ec_full"]}
+# Two host pool sizes: a method keeps its colour, and its 70 GB run is dashed.
+H100 = {"nofc_noend_rep": ("No hints, fetch at arrival, 70 GB", "No hints, 70 GB", "#4a3aa7", (0, (4, 2))),
+        "nofc_noend_h100": ("No hints, fetch at arrival, 100 GB", "No hints, 100 GB", "#4a3aa7", "-"),
+        "jit_p50_d": ("Just-in-time, p50 hints, 70 GB", "JIT p50
+
+=== 30631 2026-11-13T19:43:12.240Z tool_result
+The file /home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_pricing_vs_jit.py has been updated successfully.
+
+=== 30632 2026-11-13T19:43:16.782Z tool_use Edit
+/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_pricing_vs_jit.py
+  OLD:                              title="128 users, 160 GB of host memory: from original HiCache to pricing the room",
+                             origin="HiCache and the old oracle are the first 2 h of campaign 19's 5 h runs and the just-in-time arms campaign 23's, on "
+                                    "the build before; the pricing arm is campaign 26's.")}
+  NEW:                              title="128 users, 160 GB of host memory: from original HiCache to pricing the room",
+                             origin="HiCache and the old oracle are the first 2 h of campaign 19's 5 h runs and the just-in-time arms campaign 23's, on "
+                                    "the build before; the pricing arm is campaign 26's."),
+        # note: a sentence the footnote always carries. The held panel is left out: it draws one room, and this set has two.
+        "designs_h100": dict(out="compare_c26_designs_h100", style=H100, again=("_rep",), others={}, panels=("ttft"
+
+=== 30633 2026-11-13T19:43:16.819Z tool_result
+The file /home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_pricing_vs_jit.py has been updated successfully.
+
+=== 30634 2026-11-13T19:43:18.887Z tool_use Edit
+/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_pricing_vs_jit.py
+  OLD:     if any(a.key in FIXED for a in arms) and any(a.key not in FIXED for a in arms):
+        notes.append(figset["origin"])
+    notes.append(jv.FOOT_HINTS)
+  NEW:     if any(a.key in FIXED for a in arms) and any(a.key not in FIXED for a in arms):
+        notes.append(figset["origin"])
+    if "note" in figset:
+        notes.append(figset["note"])
+    notes.append(jv.FOOT_HINTS)
+
+=== 30635 2026-11-13T19:43:18.925Z tool_result
+The file /home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_pricing_vs_jit.py has been updated successfully.
+
+=== 30636 2026-11-13T19:43:21.401Z tool_use Edit
+/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_pricing_vs_jit.py
+  OLD: HiCache, the old oracle, JIT p50, JIT exact and the pricing rules, JIT and the rules on one build) and designs_c128
+(results/compare_c26_designs_c128: the same designs at 128 users and 160 GB, the first 2 h of each run).
+  NEW: HiCache, the old oracle, JIT p50, JIT exact and the pricing rules, JIT and the rules on one build), designs_c128
+(results/compare_c26_designs_c128: the same designs at 128 users and 160 GB, the first 2 h of each run) and designs_h100
+(results/compare_c26_designs_h100: no hints, JIT p50 and JIT exact at 44 users with a 100 GB host pool, against 70 GB).
+
+=== 30637 2026-11-13T19:43:21.442Z tool_result
+The file /home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_pricing_vs_jit.py has been updated successfully.
+
+=== 30651 2026-11-13T19:43:28.043Z tool_use Edit
+/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_stall.py
+  OLD:     PRICED = "; the pricing arm's reads were too (rule 1 left them all to arrival, where the same hold applies)"
+TUNED = 2.18  # s, the axis length the mark sizes below were set on
+  NEW:     PRICED = "; the pricing arm's reads were too (rule 1 left them all to arrival, where the same hold applies)"
+elif os.environ.get("FIGSET") == "designs_h100":
+    NAMES |= {"nofc_noend_rep": "no hints, 70 GB", "nofc_noend_h100": "no hints, 100 GB", "jit_p50_d": "JIT, p50 hints, 70 GB",
+              "jit_p50_h100": "JIT, p50 hints, 100 GB", "jit_exact_d": "JIT, exact hints, 70 GB", "jit_exact_h100": "JIT, exact hints, 100 GB",
+              "nofc_noend_h100_cut": "no hints, 100 GB, cut at minute 84"}
+    SETTING = "44 users, x10 gaps, host pools of 70 and 100 GB"
+TUNED = 2.18  # s, the axis
+
+=== 30652 2026-11-13T19:43:28.083Z tool_result
+The file /home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_stall.py has been updated successfully.
+
+=== 30653 2026-11-13T19:43:29.728Z tool_use Edit
+/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_stall.py
+  OLD: FIGSET=designs_c128 names the 128-user runs and the setting (160 GB, each run's first 6,900 s).
+  NEW: FIGSET=designs_c128 names the 128-user runs and the setting (160 GB, each run's first 6,900 s); FIGSET=designs_h100 names
+the runs at the two host pool sizes.
+
+=== 30654 2026-11-13T19:43:29.764Z tool_result
+The file /home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/plot_stall.py has been updated successfully.
+
+=== 30655 2026-11-13T19:43:35.664Z tool_use Write
+/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/figs_designs_h100.sh
+  CONTENT: #!/bin/bash
+# Redraws results/compare_c26_designs_h100: 44 users, 0.1 users/s, a 100 GB host pool against 70 GB; the rival with no
+# hints, JIT p50 and JIT exact, one run each per pool size. From the host:
+#   docker exec sglang_hicache bash /sgl-workspace/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/figs_designs_h100.sh
+# A 100 GB arm joins once it is in results/campaign26/manifest.txt; the run cut by the outage keeps its own timeline.
+set -euo pipefail
+ROOT=/sgl-workspace/sglang/agent_cache
+HERE=$ROOT/frozen/oracle_scripts_staging/c26_ec
+OUT=results/compare_c26_designs_h100
+# No GPU for the plots: a campaign may be running on it.
+export CUDA_VISIBLE_DEVICES=7 FIGSET=designs_h100 PYTHONPATH=$ROOT/scripts
+
+cd $ROOT/scripts
+nice -n 15 python3 -B $HERE/plot_timeline.py
+nice -n 15 python3 -B $HERE/plot_pricing_vs_jit.py --set designs_h100 2> >(grep -v findfont >&2)
+nice -n 15 python3 -B $HERE/plot_ec.py
+
+cd $ROOT
+ARMS=""
+for arm in nofc_noend_rep nofc_noend_h100 jit_p50_d jit_p50_h100 jit_exact_d jit_exact_h100; do
+    if grep -q "^$arm " results/campaign26/manifest.txt; then ARMS="$ARMS $arm"; fi
+done
+STALL_CSV=$OUT/ec_wait_split.csv nice -n 15 python3 -I -B $HERE/stall_ec.py $ARMS > results/campaign26/stall_ec_designs_h100.out
+cd $ROOT/scripts
+nice -n 15 python3 -B $HERE/plot_stall.py ../$OUT/ec_wait_split.csv
+
+
+=== 30656 2026-11-13T19:43:35.705Z tool_result
+File created successfully at: /home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/figs_designs_h100.sh (file state is current in your context — no need to Read it back)
+
+=== 30668 2026-11-13T19:43:43.440Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; docker exec sglang_hicache bash -c 'set -euo pipefail; ROOT=/sgl-workspace/sglang/agent_cache; HERE=$ROOT/frozen/oracle_scripts_staging/c26_ec; export CUDA_VISIBLE_DEVICES=7 FIGSET=designs_h100 PYTHONPATH=$ROOT/scripts; cd $ROOT/scripts; nice -n 15 python3 -B $HERE/plot_timeline.py nofc_noend_h100_cut 2>&1 | grep -v findfont | tail -5; nice -n 15 python3 -B $HERE/plot_ec.py 2>&1 | grep -v findfont | tail -2'; ls -la --time-style=+%H:%M results/compare_c26_designs_h100/ | awk '{print $5, $6, $7}'
+
+=== 30669 2026-11-13T19:44:01.941Z tool_result
+nofc_noend_h100_cut: 8800 turns / 292 conv; returning TTFT mean 0.371 p50 0.259 p90 0.599 s; device/host/storage/recompute 6124/1792/57/535
+wrote ../results/compare_c26_designs_h100 runs nofc_noend_rep, jit_p50_d, jit_exact_d, nofc_noend_h100_cut | compared nofc_noend_rep, jit_p50_d, jit_exact_d
+wrote ../results/compare_c26_designs_h100 ['nofc_noend_h100_cut', 'nofc_noend_rep', 'jit_p50_d', 'jit_exact_d']
+  
+4096 19:44 .
+20480 19:43 ..
+798 19:43 compare.csv
+201550 19:43 compare.png
+884 19:44 compare_steady_1800s.csv
+221422 19:44 compare_steady_1800s.png
+8466 19:44 ec_overview.csv
+170962 19:44 ec_overview.png
+4242640 19:43 events_nofc_noend_h100_cut.csv
+526 19:43 manifest.txt
+453408 19:43 timeline_nofc_noend_h100_cut.png
+10683 19:43 ttft_over_time_60s.csv
+240103 19:43 ttft_over_time_60s.png
+1116976 19:43 turns_nofc_noend_h100_cut.csv
+
+=== 30672 2026-11-13T19:44:04.070Z tool_use Read
+/home/wanhr/sglang/agent_cache/results/compare_c26_designs_h100/ec_overview.png
+
+=== 30673 2026-11-13T19:44:04.094Z tool_result
+
+
+=== 30674 2026-11-13T19:44:04.594Z tool_use Read
+/home/wanhr/sglang/agent_cache/results/compare_c26_designs_h100/timeline_nofc_noend_h100_cut.png
+
+=== 30675 2026-11-13T19:44:04.840Z tool_result
+
+
+=== 30676 2026-11-13T19:44:04.837Z user:str
+[Image: original 1738x2228, displayed at 1560x2000. Multiply coordinates by 1.11 to map to original image.]
+
+=== 30687 2026-11-13T19:44:14.159Z tool_use Read
+/home/wanhr/sglang/agent_cache/results/compare_c26_designs/timeline_jit_exact_d.png
+
+=== 30688 2026-11-13T19:44:14.319Z tool_result
+
+
+=== 30689 2026-11-13T19:44:14.316Z user:str
+[Image: original 1738x2228, displayed at 1560x2000. Multiply coordinates by 1.11 to map to original image.]
+
+=== 30698 2026-11-13T19:44:29.537Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; for f in plot_timeline plot_ec plot_pricing_vs_jit plot_stall; do python3 -I -B -c "import ast,sys; ast.parse(open(sys.argv[1]).read()); print('syntax ok', sys.argv[1])" frozen/oracle_scripts_staging/c26_ec/$f.py; done; bash -n frozen/oracle_scripts_staging/c26_ec/figs_designs_h100.sh && echo "sh syntax ok"; docker exec sglang_hicache bash -c 'set -euo pipefail; ROOT=/sgl-workspace/sglang/agent_cache; HERE=$ROOT/frozen/oracle_scripts_staging/c26_ec; export CUDA_VISIBLE_DEVICES=7 FIGSET=designs_h100 PYTHONPATH=$ROOT/scripts; cd $ROOT/scripts; nice -n 15 python3 -B $HERE/plot_pricing_vs_jit.py --set designs_h100 2>&1 | grep -v findfont | tail -12'
+
+=== 30699 2026-11-13T19:44:32.867Z tool_result
+syntax ok frozen/oracle_scripts_staging/c26_ec/plot_timeline.py
+syntax ok frozen/oracle_scripts_staging/c26_ec/plot_ec.py
+syntax ok frozen/oracle_scripts_staging/c26_ec/plot_pricing_vs_jit.py
+syntax ok frozen/oracle_scripts_staging/c26_ec/plot_stall.py
+sh syntax ok
+Over the 9,716 returning turns all three runs sent (No hints 70 GB, JIT p50 70 GB, JIT exact 70 GB): mean TTFT 0.93, 1.58 and 0.83
+s; share of SSD reads used 89, 82 and 88 %. Turns served in 2 h: 12,107, 10,419 and 12,120.
+x10 gaps, one run per line. The host pool holds 712K tokens at 70 GB and 1,017K at 100 GB; 668K of either copy what the GPU holds.
+Exact hints are the true next-request times; p50 hints are the median gap for the tool the reply calls, from a table the agent keeps
+online. The no-hint arm fetches when a turn arrives and evicts least recently used history first, queued turns' history last.
+wrote ../results/compare_c26_designs_h100/pricing_vs_jit.png .pdf and .csv
+
+=== 30702 2026-11-13T19:44:37.792Z tool_use Read
+/home/wanhr/sglang/agent_cache/results/compare_c26_designs_h100/pricing_vs_jit.png
+
+=== 30703 2026-11-13T19:44:37.827Z tool_result
+
+
+=== 30712 2026-11-13T19:44:47.631Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; python3 -I -B - <<'EOF'
+import json
+p = "/home/wanhr/.claude/projects/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/subagents/workflows/wf_0e0fa340-c4a/journal.jsonl"
+for line in open(p):
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    if d.get("type") != "started":
+        r = d.get("result")
+        n = len(r.get("items", [])) if isinstance(r, dict) and "items" in r else ""
+        print(d.get("type"), d.get("label") or d.get("agentId"), "items", n)
+EOF
+echo "$(TZ=America/New_York date +%T) ET"; R=$(cat results/.current_run); c=$(ls -d results/$R/client_*); echo "running arm: $(wc -l < $c/client.jsonl) client lines, errors $(grep -ac '"error": "' $c/client.jsonl), tracebacks $(grep -ac Traceback results/$R/server.log)"
+
+=== 30713 2026-11-13T19:44:47.708Z tool_result
+launched None items 
+14:44:47 ET
+running arm: 1146 client lines, errors 0, tracebacks 0
+
+=== 30716 2026-11-13T19:44:57.590Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; nice -n 10 python3 -I -B - <<'EOF'
+import json
+p = "/home/wanhr/.claude/projects/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d.jsonl"
+out = []
+for i, line in enumerate(open(p, errors="replace")):
+    if i < 27425 or i > 27760:
+        continue
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    if d.get("type") != "assistant":
+        continue
+    for b in d.get("message", {}).get("content", []) or []:
+        if isinstance(b, dict) and b.get("type") == "text" and len(b.get("text", "")) > 600:
+            out.append((i, d.get("timestamp"), b["text"]))
+for i, ts, t in out:
+    print("=" * 30, i, ts, len(t))
+    print(t[:9000])
+EOF
+
+=== 30717 2026-11-13T19:44:57.824Z tool_result
+============================== 27426 2026-11-12T17:17:39.270Z 1483
+Noted: I'll redraw the figure set when the all-four-rules arm finishes, about 6:51 PM ET, with it as the fifth series.
+
+On the 128-user cases, you're right that they are queued, but only partly:
+
+| 128-user arm | Status |
+|---|---|
+| Baseline HiCache, old Oracle (v2), JIT p50, JIT exact | already exist from earlier campaigns |
+| No hints | finished last night |
+| Rules 1, 3 and 4 with the learned price (`ec_r134_c128`) | queued, about 2:44–4:47 PM ET |
+| No gap forecast, with the end signal (`nofc_c128`) | queued, about 10:58 PM–1:02 AM ET |
+| All four rules | not queued |
+
+Two caveats on the existing 128-user runs: the JIT ones are on the earlier JIT build, and the baseline and old Oracle ran five hours, so comparisons use the first two hours of each.
+
+When the 128-user rules arm finishes this afternoon, I'll draw the same five-series figure set for 128 users in a sibling directory, `agent_cache/results/compare_c26_designs_c128/`.
+
+Decision for you: do you want an all-four-rules arm at 128 users added to the queue? It costs about two hours; at the end of the queue it would finish around 9:15 AM ET Friday. I'd wait until 4:47 PM ET to decide. Rule 2 only acts when a read is refused host room, and in every hinted arm at 128 users so far that happened zero times. If the rules arm also shows zero, an all-four-rules run there would behave the same as rules 1, 3 and 4. I'll report that count when the arm lands and leave the queue as it is unless you say otherwise.
+============================== 27583 2026-11-12T17:36:18.368Z 3515
+Yes: the logs show the largest remaining loss is not about when to fetch, and I think the stronger design follows from that rather than from more rules.
+
+**Where the best arm's time 
+
+=== 30726 2026-11-13T19:45:23.525Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; grep -n -i 'mirror\|write-back\|write_back\|writeback\|one copy' PAPER_PLAN.md PAPER_INTRO.md | cut -c1-420 | head -30
+
+=== 30727 2026-11-13T19:45:23.577Z tool_result
+PAPER_PLAN.md:20:| Failure modes others can reuse: spent retry budgets causing a recompute storm, reads and backups failing near the host mirror's size, evict-then-read-back, an SSD cleaner deleting shared prefixes | `ORACLE_FINDINGS.md` sections 9.4, 9.10, 9.11; campaign 21 | traced; needs writing up |
+PAPER_PLAN.md:27:4. **The hint-free rival.** The model says removing the host mirror cuts SSD reads more than any hint. A reviewer will ask, so measure it or explain why not; write-back's lookup bug (`ORACLE_FINDINGS.md` issue 7) blocks the direct test. A simpler hint-free rival, original HiCache with read pins (the retry setting does not matter, campaign 25), already matches the new routine's p50 arm at 44 users and
+PAPER_PLAN.md:41:| $R = C_{\mathrm{host}} - C_{\mathrm{GPU}}$ | host-only room, since write-through mirrors the GPU | 43,968 | 959,488 |
+
+=== 30731 2026-11-13T19:45:29.653Z assistant:text
+Still waiting on the audit agents (all ten are reading); meanwhile checking what blocks the "no host mirror" design, since the 100 GB result now supports it.
+
+=== 30732 2026-11-13T19:45:30.627Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; grep -n -i 'issue 7\|write.back\|write_back' ORACLE_FINDINGS.md | cut -c1-300 | head -30
+
+=== 30733 2026-11-13T19:45:30.669Z tool_result
+287:A fourth arm, write-back instead of write-through, was held back. In its smoke test the SSD was written but never
+289:memory, which under write-back it usually is not. See section 11.
+982:7. **Write-back with the SSD**: `Scheduler._prefetch_kvcache` looks up the SSD only when the deepest cached match is
+983:   host-backed or the root. Under write-back that match is usually GPU-only, so the lookup is skipped (70 of 133
+985:   lookup gate dates from the original storage layer, and a later upstream change (PR #31902) let write-back refill
+
+=== 30735 2026-11-13T19:45:33.111Z tool_use Bash
+cd /home/wanhr/sglang/agent_cache; sed -n '283,292p' ORACLE_FINDINGS.md | cut -c1-400; echo ...; sed -n '976,992p' ORACLE_FINDINGS.md | cut -c1-500
+
+=== 30736 2026-11-13T19:45:33.153Z tool_result
+| `three_tier_wc_dl`           | pin + deadline order, oracle**off**                                                          | Without the oracle every read is "now", so reads are dispatched immediately and nothing is reordered: this arm measures the pin. It needs no hints. |
+| `three_tier_wc_oracle_v2`    | + oracle on (deadlines, work-ahead, memory at dispatch now matters, load model; paced retries off) | whether the oracle's deadlines are worth more than FIFO                                                                                             |
+| `three_tier_wc_oracle_v2_nu` | + next-use eviction                                                                                | whether hint-driven eviction raises host hits                                                                                                       |
+
+A fourth arm, write-back instead of write-through, was held back. In its smoke test the SSD was written but never
+read (0 hits in 1,281 lookups): the scheduler only looks up the SSD when the deepest cached match is backed by host
+memory, which under write-back it usually is not. See section 11.
+
+All three ran on a frozen engine copy of commit `5df71c4bf0`; its difference from campaign 14's engine is only the
+oracle v1 and v2 code.
+...
+6. **Next-use eviction and long queue waits**: a queued session's next use is set to its arrival time, so after 60 s in
+   the queue next-use eviction ranks it overdue and evicts it early. It fired for the first time in campaign 19: 67
+   turns waited 60-72 s in the 5 min after an SSD cleanup at full load, their history came more from the SSD and less
+   from host memory than at shorter waits, and 3 recomputed more than a page (section 9.6). Registering a queued
+   session at its predicted admission would fix
+
+=== 30745 2026-11-13T19:46:03.158Z assistant:text
+The queue is running again: the host went down twice more, and I relaunched it at 2:28 PM ET. The first 100 GB arm was cut at minute 84 by the first outage, and its partial run already answers most of the 100 GB question.
+
+## What happened
+- **2:30 AM ET:** host went down, 84 minutes into the first 100 GB arm (the no-hint arm).
+- **12:02 PM ET:** host came back and I relaunched; it went down again at 12:06 PM, before the server had finished starting.
+- **2:27 PM ET:** host came back; relaunched at 2:28 PM on a new GPU unit. The arm booted with the right settings and is running clean.
+
+The three 100 GB arms rerun from scratch, queue unchanged. If the host stays up:
+
+| Arm | Ends about (ET, Friday) |
+|---|---|
+| No hints, 100 GB | 4:35 PM |
+| JIT p50, 100 GB | 6:38 PM |
+| JIT exact, 100 GB | 8:41 PM |
+
+## What the cut run shows
+With 30 GB more host memory, the no-hint arm almost stops reading from SSD and beats exact hints at 70 GB. This is one run and only its first 79 minutes; the rerun in progress is its repeat.
+
+| 8,030 shared returning turns | No hints, 100 GB (cut) | No hints, 70 GB (two runs) | JIT exact, 70 GB (two runs) |
+|---|---|---|---|
+| Mean TTFT | 0.37 s | 0.65, 0.66 s | 0.48, 0.51 s |
+| Mean TTFT in the first load episode | 0.51 s | 1.77, 1.77 s | 1.12, 1.25 s |
+| Turns reading from SSD | 56 (0.7 %) | 1,125, 1,138 (14 %) | 691, 743 (9 %) |
+| Wait for the turn's own SSD read, per turn | 0.006 s | 0.22, 0.23 s | 0.07 s |
+| Turn latency | 10.7 s | 11.3 s | 11.3 s |
+
+- **On your question about a larger host pool:** it does not make room for earlier reads; it removes the reads. Only 0.006 s per turn is left for any read-start rule to save at 100 GB, so I expect the two JIT arms to tie with this one.
+- **Pool sweep (CPU replay):** I fitted the existing eviction 
+

@@ -1,0 +1,92 @@
+[27431] user 2026-11-12T17:22:57.343Z TEXT:
+Based on the current design and results, is there anything we still missed in terms of performance optimization? Or is there an even better and more noval design for this topic?
+
+[27445] assistant 2026-11-12T17:27:39.135Z TEXT:
+Thinking this through against the data: I'm checking a few numbers (where the remaining time goes, and how the host pool is used) before answering.
+
+[27493] assistant 2026-11-12T17:30:07.938Z TEXT:
+Digging into what actually limits the best arm now (it's not the SSD reads); a couple more measurements and I'll answer.
+
+[27522] assistant 2026-11-12T17:34:02.009Z TEXT:
+Nearly done: the logs show what limits the best arm. One quick literature check on the two directions I'm about to suggest, then the answer.
+
+[27560] assistant 2026-11-12T17:35:22.161Z TEXT:
+Writing the findings into the campaign notes, then the answer.
+
+[27583] assistant 2026-11-12T17:36:18.368Z TEXT:
+Yes: the logs show the largest remaining loss is not about when to fetch, and I think the stronger design follows from that rather than from more rules.
+
+**Where the best arm's time still goes** (exact hints on the new build, whole run, returning turns; mean TTFT 0.82 s, median 0.27 s):
+
+| Part | Mean | Share |
+|---|---|---|
+| Before the scheduler has the request | 0.14 s | 17 % |
+| Scheduler queue | 0.38 s | 47 % |
+| After admission | 0.29 s | 36 % |
+
+**What we still miss**
+
+1. **Recompute of history that was on SSD.** About 1 % of returning turns (123) recompute their history at about 11 s each. That is 14 % of all TTFT seconds and 23 % of all prefill work, mostly inside the load episodes.
+   - **Cause:** in 58 of them the read was refused host room, and in 25 the data was read and then lost before admission.
+   - **Why room is short:** the host pool keeps a copy of everything on the GPU, so only 44K of its 712K tokens are free, while a refused read needs about 20K.
+   - **Hints don't change it:** the no-hint arm shows the same pattern (113 turns).
+   - **Rule 2 likely won't either:** the no-hint arm has no early reads to release, yet 50 of its turns were refused.
+2. **Per-turn overhead before the scheduler.** It grows with prompt length, from 0.04 s under 8K tokens to 0.17 s over 64K. I have not profiled it, but the server re-tokenizes the whole history each turn with one tokenizer worker.
+3. **GPU memory in the episodes.** Fourteen minutes hold 89 % of the queue seconds, with the GPU pool 80–96 % full. Going from about 20 to 28 running requests adds about 11 % throughput while holding 40 % more of the pool.
+
+**A better design**
+
+- **One copy per page (my recommendation).** A page that is on the GPU and already saved to SSD needs no host copy; host memory then holds only sessions that are off the GPU, and a restore passes straight through to the GPU. In-memory capacity goes from 712K to 1,380K tokens, against a median live context of 1,176K. The forecasts would then decide which sessions get 712K of host memory instead of 44K. Your paper plan already lists the mirror as open item 4, blocked by the write-back lookup bug. The 100 GB arms (about 1–7 AM ET tomorrow) are the first test.
+- **Use forecasts in aggregate (more novel, unproven).** Per-session gap forecasts bought at most 0.2 s, but their sum across sessions is much steadier, and the episodes hit every arm at the same minutes. Predicting occupancy 30–60 s ahead would let the engine act before the room fills, making rule 4 predictive rather than reactive. Agent-level admission that reacts to cache pressure already exists (CONCUR, MARS, ThunderAgent), so the novelty needs a proper check; I only ran a quick search and read snippets.
+- **What I would not pursue:** finer fetch timing. Its ceiling here is about 0.2 s and the literature on it is crowded.
+
+These breakdowns come from one run per arm on one workload, and the capacity gain is arithmetic, not a measurement. Details are in the last entry of `agent_cache/results/campaign26/DECISIONS.md`.
+
+Decisions for you:
+- Should I test the aggregate-forecast idea offline on the existing logs? It needs no GPU and does not touch the queue.
+- Do you want an arm at about 136 GB, which equals the no-mirror capacity? I'd wait for the 100 GB results first.
+
+Sources:
+- [CONCUR (arXiv 2601.22705)](https://arxiv.org/pdf/2601.22705)
+- [MARS (arXiv 2604.26963)](https://arxiv.org/pdf/2604.26963)
+- [ThunderAgent (arXiv 2602.13692)](https://arxiv.org/html/2602.13692)
+
+[27589] user 2026-11-12T17:42:15.702Z TEXT:
+<task-notification>
+<task-id>b82furm9a</task-id>
+<tool-use-id>toolu_01WBCkK7UXNkid4QCieSm1Zy</tool-use-id>
+<output-file>/tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/tasks/b82furm9a.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch campaign 26 until the relaunched learned-price arm ends or a problem appears" completed (exit code 0)</summary>
+</task-notification>
+
+[27622] assistant 2026-11-12T17:44:41.507Z TEXT:
+`ec_r134` finished cleanly; adding it to the tables and the new figure set, then checking the next arm's boot.
+
+[27638] assistant 2026-11-12T17:46:10.186Z TEXT:
+Figures updated with the new arm; writing its result into the campaign notes, then a short report.
+
+[27658] assistant 2026-11-12T17:46:40.441Z TEXT:
+The learned-price arm (`ec_r134`: rules 1 and 3 with rule 4) finished cleanly at 12:42 PM ET, and the learned price bought nothing over the fixed one.
+
+| Mean TTFT | Exact hints | Rules 1+3, fixed price | Rules 1+3+4, learned price | No hints |
+|---|---|---|---|---|
+| 6,715 shared turns | 0.51, 0.54 s | 0.66, 0.78 s | 0.80 s | 0.71 s |
+| 11,067 turns the leading runs share | 0.70, 0.77 s | 0.77, 0.86 s | 0.89 s | 0.91 s |
+
+- **Not separated from the fixed price or from no hints.** It is behind both fixed-price runs, but the smaller gap (0.02 s) is inside that arm's own run-to-run move. Exact hints stay ahead of it in every pair. This is one run.
+- **Why it did not help:** the learned price sat below the fixed one in 76 % of its updates, so the engine started more early reads. Against the two fixed-price runs:
+  - 838 early reads (629 and 560);
+  - about twice the pinned memory;
+  - 654 reads refused room (395 and 420).
+- **This fits my last answer:** room for a turn that has already arrived is what is short, and a lower price hands more of it to reads nobody has asked for yet.
+
+The new figure set now includes this arm's timeline and its bar in the wait split. The fifth series in the comparisons is still rules 1 and 3 until the all-four-rules arm finishes (about 6:52 PM ET).
+
+The repeat of the no-hint arm booted cleanly and ends about 2:45 PM ET. The 128-user rules arm follows, ending about 4:48 PM ET.
+
+Still open from my last message: whether to test the aggregate-forecast idea offline, and whether to add a 136 GB arm.
+
+[27662] user 2026-11-12T17:53:56.101Z TEXT:
+Update the figures in compare_c26_design, add the rule 134 into the figure
+

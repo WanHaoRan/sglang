@@ -1,0 +1,48 @@
+=== line 263 @ 2026-11-12T03:48:35.977Z assistant/text (textlen 5734, match at 3891) ===
+released once the hint's distribution has passed (plus 5 s); the model holds it until admission.
+    - **The fit** is one-peaked, so a two-moded key like pip becomes a wide distribution. The answer is still "read at arrival", but the search for two modes has nothing to act on yet.
+    - **Slide 18** says about 24 start times; the engine checks up to 65.
+    
+    `PAPER_PLAN.md` section 5 still says reads "land at the newsvendor quantile" (8K at p29, 64K at p77). The deck is right and that text is stale.
+    
+    ## What the runs say
+    
+    Mean TTFT on the 6,715 returning turns all runs share (campaign 26, 44 users, 70 GB):
+    
+    | Arm | Mean TTFT |
+    |---|---|
+    | JIT p50, three runs | 1.35 to 1.60 s |
+    | Rule 1 alone, one run | 0.67 s |
+    |
+
+=== line 703 @ 2026-11-12T05:43:50.338Z user/str (textlen 20943, match at 7727) ===
+e`), arms, results, reviewer's 12 objections, queue state. Queue remaining after `nofc_rep`: `nofc_noend_c128` (running since 02:51Z 2026-11-12), `jit_exact_d`, `ec_r134`, `nofc_noend_rep`, `ec_r134_c128`, `ec_full`, `fq90`, `ec_r3`, `nofc_c128`, then `nofc_noend_h100`, `jit_p50_h100`, `jit_exact_h100` (no rule-1 arm at 100 GB).
+       - **agent_cache/PAPER_PLAN.md** (read fully): "Formulation" §1–8 and "Design point". Stale text flagged: §5 says reads "land at the newsvendor quantile" (8K p29, 64K p77) — the deck is right, that is not a landing quantile.
+       - **python/sglang/srt/mem_cache/next_turn_policy.py** (read): `GapDistribution` (two-piece lognormal through p10/p50/p90, 64 support points, MAX_PLAN
+
+=== line 703 @ 2026-11-12T05:43:50.338Z user/str (textlen 20943, match at 17654) ===
+ons I don't quite understand -- F(r | \delta) - q, and q = (\lambda L ) / (1 + \lambda L)"
+       - Standing constraints from context (keep in force): the user's email address is private and must never be sent to external services; do not include the user's name/project/personal details in requests to outside services; commit or push only when asked; `PAPER_PLAN.md`: "nothing gets submitted, posted or sent upstream without asking"; memory rules: stop requested runs only for errors, relaunch at once on a host shutdown (empty `.current_run` first), keep long-lived work under ~/ (host /tmp is wiped on reboot), design docs concise with no tags, campaign figures in the timeline style.
+    
+    7. Pending Tasks:
+       - A
+
+=== line 1193 @ 2026-11-12T17:39:38.378Z user/str (textlen 26887, match at 18469) ===
+e.txt** lines for `ec_r134` and `ec_full` (flags: `--hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning harm [--hicache-storage-next-turn-soft-pins on] --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}`).
+       - **agent_cache/PAPER_PLAN.md** (read 92–126, 160–204): rule statements, methods table, offline check table (λ=5e-6: 22.1K pinned, 857 s stall; 1e-5: 12.4K, 1,296 s; 2e-5: 7.7K, 1,561 s), CPU calibration.
+       - **Running arm's log (read-only):** `agent_cache/results/20261112_153600_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70/server.log`; example lines: `ec_price price=
+
+=== line 1193 @ 2026-11-12T17:39:38.378Z user/str (textlen 26887, match at 20176) ===
+ Errors and fixes:
+       - Scratchpad was wiped by the host outage (07:07–15:31Z 2026-11-12): zsh "no matches found" for the old artifact-files glob → re-read the deck with the Artifact tool (list files first, then `paths` read), which re-saved the slides locally.
+       - A grep for write-policy flags in `config_ec_r13.txt` returned nothing; not needed (PAPER_PLAN states write-through mirrors the GPU).
+       - Shell cwd resets after commands (harmless).
+       - No user corrections in this window. Several system reminders asked for a brief progress note before continuing; each was answered with one short line.
+    
+    5. Problem Solving:
+       - Verified slide 20's three F values numerically and added the engine-fit variant
+
+=== line 1193 @ 2026-11-12T17:39:38.378Z user/str (textlen 26887, match at 22210) ===
+is tokens refused room?"
+       - Standing constraints (keep in force): the user's email address is private and must never be shared with external services without explicit approval; do not include the user's name, project, email or other personal details in requests to outside services unless explicitly asked; commit or push only when the user asks; `PAPER_PLAN.md`: "nothing gets submitted, posted or sent upstream without asking"; memory rules: stop requested runs only for errors; on a host shutdown relaunch at once (empty `.current_run` first); keep long-lived work under ~/ (host /tmp is wiped on reboot); design docs concise with no tags; campaign figures in the timeline style; report times in ET (recor
+

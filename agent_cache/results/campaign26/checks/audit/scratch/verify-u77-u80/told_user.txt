@@ -1,0 +1,59 @@
+=== idx0=25017 ts=2026-11-11T13:26:46.762Z assistant/text
+Reading the paper plan so I can fold campaign 26's results into it once the control and the repeats are in (tonight); the running arm is healthy.
+
+=== idx0=25449 ts=2026-11-11T15:21:27.639Z assistant/text
+IT, exact hints | 0.51 s | 0.70 s | 1.53 s | 388K |
+    | Rules 1 and 3 | 0.66 s | 0.76 s | 1.66 s | 437K |
+    | Rule 1 alone | 0.67 s | 0.86 s | 2.02 s | 448K |
+    | Rival with the end signal (`nofc`) | 0.69 s | 0.88 s | 2.12 s | 469K |
+    | Rival with no hints (`nofc_noend`) | 0.71 s | 0.91 s | 2.14 s | 562K |
+    | JIT p50, two runs | 1.35, 1.60 s | | | |
+    | Earlier hint-free arm, two runs | 1.61, 1.89 s | | | |
+    
+    - **No hints gets 96 % of the way:** from original HiCache (5.47 and 6.62 s) to exact hints, the no-hint rival covers 96 %. The earlier hint-free arm's 72-82 % lacked the queue-state mechanisms (queued turns' history kept, arrival gate and hold, re-reads), which are worth about 1.0 s here.
+    - **The end signal:** it is worth 0.03 s of TTFT, which is inside noise, and about a sixth of the SSD traffic.
+    - **What hints add over no hints:** thre
+
+=== idx0=26176 ts=2026-11-12T01:42:00.569Z assistant/text
+th JIT p50 and the old hint-free arm, by 0.6 to 1.4 s against a rerun spread of about 0.25 s;
+      - today's arms lose even more at the end of the turn, 3.7 to 4.3 s of latency for JIT p50.
+    
+    The independent review was interrupted; only the reviewer agent finished, and the other four are running again. Its main objections are in `DECISIONS.md`. The ones that bear on the paper's claim:
+    
+    - The no-hint engine should be the baseline of record; against it, "2.9x from exact hints" becomes 1.4x.
+    - The 44K-token room exists only because the 70 GB pool is the GPU's mirror plus a little.
+    - The setting where read timing and eviction order should matter (x70 gaps at 128 users) has not been run.
+    
+    I changed the unstarted queue; say if you want any of it undone:
+    
+    - **Moved up:** the no-hint rival at 128 users runs next (about 02:51 to 04:55 UTC). It is the fair riv
+
+=== idx0=26329 ts=2026-11-12T02:33:03.229Z assistant/text
+ (two runs) | 1.61, 1.89 s | 15.8 s (one run) |
+    | JIT p50, today's method (three full runs) | 1.35, 1.48, 1.60 s | 15.3, 15.9 s (two runs) |
+    | No hints, queue state only | 0.71 s | 11.6 s |
+    | Rules 1 and 3, three-quantile hints (two runs) | 0.66, 0.78 s | 11.8, 12.2 s |
+    | JIT, exact hints (one run from 1 November) | 0.51 s | 11.5 s |
+    
+    1. **Most of the gain needs no hint.** An engine that only uses queue state covers 96 % of the way from original HiCache to exact hints. "Queue state" here means reading at arrival, keeping queued turns' history, the arrival gate and hold, and re-reads. Those mechanisms are worth about 1.0 s over the old hint-free arm.
+    2. **JIT p50 loses because of when it reads, not what it evicts.** Its early reads sit in host memory waiting for their turn: they need about 91K tokens where only 44K is free. Changing 
+
+=== idx0=27583 ts=2026-11-12T17:36:18.368Z assistant/text
+** the no-hint arm has no early reads to release, yet 50 of its turns were refused.
+    2. **Per-turn overhead before the scheduler.** It grows with prompt length, from 0.04 s under 8K tokens to 0.17 s over 64K. I have not profiled it, but the server re-tokenizes the whole history each turn with one tokenizer worker.
+    3. **GPU memory in the episodes.** Fourteen minutes hold 89 % of the queue seconds, with the GPU pool 80–96 % full. Going from about 20 to 28 running requests adds about 11 % throughput while holding 40 % more of the pool.
+    
+    **A better design**
+    
+    - **One copy per page (my recommendation).** A page that is on the GPU and already saved to SSD needs no host copy; host memory then holds only sessions that are off the GPU, and a restore passes straight through to the GPU. In-memory capacity goes from 712K to 1,380K tokens, against
+
+=== idx0=30745 ts=2026-11-13T19:46:03.158Z assistant/text
+ainst, since there is almost nothing for the rules to price.
+    - **Original HiCache at 100 GB:** this is the control that is missing. Without it we cannot say whether the extra memory alone fixes HiCache or the no-hint arm's mechanisms are still needed. It would be one more 2-hour arm; I have not queued it.
+    
+    ## In progress
+    - An audit of everything left undone (the campaign record, the session transcript, the deck, the paper plan, the code and the figures) is running with ten reader agents. I'll send the verified list and continue the items that are mine to finish.
+    - A 100 GB figure set is wired up in `agent_cache/results/compare_c26_designs_h100/`. It currently holds the cut run's timeline and an overview, and fills in as the arms land.
+    
+    The record is in `agent_cache/results/campaign26/DECISIONS.md` (last three entries).
+

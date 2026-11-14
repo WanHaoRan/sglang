@@ -1,0 +1,47 @@
+=== line 23049 assistant/text ts 2026-11-11T04:35:28.454Z
+...The cost model leaves out the queue (a recomputed token costs 6–8× its prefill) and SSD bandwidth. | Not built. Would mean pricing recomputation by queue length, so a turn waits for room rather than recomputes. |
+| 7 | Soft pins change the host allocation path for a 2–6 % replay gain. | Built behind a flag; last in the queue. |
+| 8 | The "approaches the best possible" claim needs many sessions each small against the room; at 70 GB the room holds two or three histories. | Present the theory as where the rules come from, and add a setting where the room holds ten or more. |
+| 9 | Evidence is single runs plus a replay of costs, not TTFT; the reference slide omits Continuum, Tokencake, Bidaw and CachedAttention, which `PAPER_INTRO.md` says must be cited; the queue-aware hint-free rival is not built. | Same-GPU controls are running now; the fixed-quantile rival is now a flag; the rest is open. |
+
+One smaller findi...
+
+=== line 23049 assistant/text ts 2026-11-11T04:35:28.454Z
+...uld mean pricing recomputation by queue length, so a turn waits for room rather than recomputes. |
+| 7 | Soft pins change the host allocation path for a 2–6 % replay gain. | Built behind a flag; last in the queue. |
+| 8 | The "approaches the best possible" claim needs many sessions each small against the room; at 70 GB the room holds two or three histories. | Present the theory as where the rules come from, and add a setting where the room holds ten or more. |
+| 9 | Evidence is single runs plus a replay of costs, not TTFT; the reference slide omits Continuum, Tokencake, Bidaw and CachedAttention, which `PAPER_INTRO.md` says must be cited; the queue-aware hint-free rival is not built. | Same-GPU controls are running now; the fixed-quantile rival is now a flag; the rest is open. |
+
+One smaller finding from the replay: using every past sample of a key instead of three quantiles gets 15.1 % against 16....
+
+=== line 25039 assistant/text ts 2026-11-11T13:28:20.427Z
+...Measured the room staging has to work with at this setting: about 54K tokens (two or three histories), 40–46K in the load episodes. Adding that to the log; the running arm ends about 15:10Z....
+
+=== line 25075 assistant/text ts 2026-11-11T13:30:22.852Z
+... |
+
+- **Read timing can win at most 0.17 s per turn here, a fifth of TTFT.** Rule 1 on three-quantile hints removes 0.045 s of it under either eviction order; exact hints remove 0.12 s. That is about a third of the way from reading at arrival to exact hints, which is what the deck's replay predicted.
+- **The limit is room, not the SSD.** Host memory beyond the GPU's mirror is 54K tokens at the median and 40–46K in the two load episodes, which is two or three histories. The SSD read thread is busy 16–20 % of a run.
+- **JIT p50's staged reads do land; the room they hold is what costs.** Its wait for its own reads equals rule 1's, but 70 % more of its turns read from SSD, and it loses 0.27 s after admission and 0.25 s in the queue.
+- **Correction to two earlier notes:** I suspected the arrival hold of causing most of the read wait. It does not: held turns mostly waited for the GPU anyway, and the hold costs at m...
+
+=== line 25075 assistant/text ts 2026-11-11T13:30:22.852Z
+...ading above assumes the new engine build behaves like the old one with the new flags off, and that run tests it. A separate reviewer is comparing the two builds' code on that path now.
+- **Then the two repeats** (about 21:20 UTC), the fixed-quantile rival, the learned price, soft pins, rule 3 alone, and the two 128-user arms. The queue still ends about 10:00 UTC tomorrow.
+
+The setting may be the weak spot for the paper's main rule: with room for two or three histories, no forecast has much to stage. I have not queued another setting; the deck's planned third one is where rule 1 would have to show its worth.
+
+Nothing is committed. Files are in `agent_cache/results/`:
+- campaign26/DECISIONS.md
+- campaign26/stall_ec.out
+- campaign26/stall_ec_ctl.out
+- compare_c26_ec/ec_wait_split.png...
+
+=== line 26329 assistant/text ts 2026-11-12T02:33:03.229Z
+...oved 0.12 s between its two runs, more than its lead. What does repeat is 23 to 25 % fewer SSD pages read.
+4. **Exact hints are about 0.2 s ahead on TTFT, but not on latency or throughput.** Among the leading arms a turn takes 12.0 to 12.5 s and 11,500 to 11,700 turns are served; neither moves with hints. The exact-hint number is a single old run; a rerun on this build is queued.
+5. **Why hints have little to win here.** The free host room holds two or three histories and the SSD read thread is busy only 16 to 21 % of the time. All differences between the leading arms sit in two load episodes, where the GPU queue decides and a rerun of the same arm moves 0.1 to 0.25 s.
+6. **The measurements hold up.** An independent recomputation from the raw logs matches every table, and neither the new engine build nor the new GPU unit moves JIT p50.
+
+**What this means for the paper:** at this setting the forecast buys SSD ...
+

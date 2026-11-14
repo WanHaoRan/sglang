@@ -1,0 +1,91 @@
+=== line 25995 type assistant ts 2026-11-11T21:17:07.927Z
+The figure is done, in the same style as the earlier `hicache_vs_jit.png` (it reuses that script's helpers):
+
+- `results/compare_c26_ec/pricing_vs_jit.png`, with `.pdf` and a `.csv` table view
+
+It shows five runs in 5-minute bins: original HiCache, JIT p50 (this campaign's control), the no-hint rival, rules 1 and 3, and JIT exact. The four panels are mean TTFT, turns per second, history recomputed per returning turn, and host memory needed to hold SSD-loaded KV until admission.
+
+- **Fourth panel differs from the earlier figure:** I used the host-memory panel, with the 44K-token line for what is free beyond the GPU's copy, instead of "history read from SSD but not used", because it shows the room directly. The earlier panel set is one flag away if you prefer it (command below).
+- **What the room panel shows (minutes 45-120):** reads waiting for admission need 91K tokens under JIT p50 and 80K under HiCache, against 17K under rules 1 and 3, 10K with exact hints and 6K with no hints.
+- **Footnote numbers:** over the 7,283 returning turns the five runs share, mean TTFT is 5.48, 1.33, 0.69, 0.64 and 0.51 s (HiCache, JIT p50, no hints, rules 1 and 3, JIT exact). One run per arm; HiCache and JIT exact are the same runs as in the earlier figure.
+
+I also drew the other "timeline" family, `scripts/timeline.py`'s standard set, unchanged, in the same folder:
+
+- `timeline_<label>.png` for each of the nine runs (request lanes, pool usage, queue, tier events)
+- `compare.png`, `compare_steady_1800s.png`, `ttft_over_time_60s.png`
+- `paired_cdf_<label>.png` against JIT p50
+
+To redraw with other arms or panels, from `agent_cache/scripts` in the container:
+
+```
+PYTHONPATH=. python3 -B ../frozen/oracle_scripts_staging/c26_ec/plot_pricing_vs_jit.py --arms baseline jit_p50_ctl nofc_noend ec_r13 jit_exact --panels ttft tps recomputed unused
+```
+
+I'll redraw both sets as the remaining arms land. The rerun of the same-build control is healthy and ends about 22:47 UTC; the independent check of the analysis is still running.
+
+If you want the two companion figures in the same style (TTFT CDF with KV sources, and the host-memory figure), say so and I'll make them.
+=== line 26176 type assistant ts 2026-11-12T01:42:00.569Z
+Two arms landed while I was out, and the repeat changes the reading: **the lead of rules 1 and 3 over the no-hint rivals did not repeat.** One run of the no-forecast rival's repeat is still in progress.
+
+| Mean TTFT, returning turns | JIT exact | Rules 1+3 | Rules 1+3, repeat | No forecast (`nofc`) | No hints (`nofc_noend`) | JIT p50, three runs |
+|---|---|---|---|---|---|---|
+| 6,715 turns all runs share | 0.51 s | 0.66 s | 0.78 s | 0.69 s | 0.71 s | 1.35, 1.48, 1.60 s |
+| 11,145 turns the leading runs share | 0.70 s | 0.76 s | 0.86 s | 0.88 s | 0.91 s | |
+| of those, in the two load episodes | 1.53 s | 1.66 s | 2.10 s | 2.12 s | 2.14 s | |
+
+- **Rules 1 and 3 are not separated from no hints.** The arm moved 0.10 to 0.12 s between its two runs, which is more than its lead over either rival. By the rule I wrote down before the repeats ran, the lead is not shown.
+- **What moved is the GPU queue, not the policy.** Staged reads, refusals and pins repeat closely between the two runs; the extra wait in the repeat is queueing inside the load episodes.
+- **The SSD saving does repeat.** Both runs read 23 to 25 % fewer pages than the no-hint arm.
+- **Latency and throughput do not move with hints.** Among the leading arms, mean turn latency is 12.0 to 12.5 s and 11,500 to 11,700 turns are served, with no arm more than 0.1 s ahead of the no-hint rival. The reviewer agent raised this and I recomputed it.
+- **JIT p50 is unchanged by build or GPU unit.** The full same-build rerun on the new unit gives 1.48 s, inside its own spread, and hardware timings match.
+- **What is firmly shown at this setting:**
+  - every arm beats original HiCache;
+  - the arms that stage little or nothing beat both JIT p50 and the old hint-free arm, by 0.6 to 1.4 s against a rerun spread of about 0.25 s;
+  - today's arms lose even more at the end of the turn, 3.7 to 4.3 s of latency for JIT p50.
+
+The independent review was interrupted; only the reviewer agent finished, and the other four are running again. Its main objections are in `DECISIONS.md`. The ones that bear on the paper's claim:
+
+- The no-hint engine should be the baseline of record; against it, "2.9x from exact hints" becomes 1.4x.
+- The 44K-token room exists only because the 70 GB pool is the GPU's mirror plus a little.
+- The setting where read timing and eviction order should matter (x70 gaps at 128 users) has not been run.
+
+I changed the unstarted queue; say if you want any of it undone:
+
+- **Moved up:** the no-hint rival at 128 users runs next (about 02:51 to 04:55 UTC). It is the fair rival for the one setting where hints looked decisive.
+- **Added:** a rerun of JIT exact on this build and unit (the reference is a single run from 1 November), and a repeat of the no-hint rival.
+- **Kept, in this order after those:** learned price, rules 1+3+4 at 128 users, all four rules, the fixed-quantile rival, rule 3 alone, and the end-signal rival at 128 users. The queue now ends about 21:20 UTC.
+
+The comparison figure now shows the repeat as a dotted line (`results/compare_c26_ec/pricing_vs_jit.png`), and the two new runs have their timelines.
+
+Decisions for you — none of these is queued:
+
+1. A host-pool sweep at 44 users (100 and 160 GB), to show where the room binds.
+2. x70 gaps at 128 users, with the no-hint rival, rules 1+3, JIT exact and original HiCache.
+3. Other seeds.
+
+Each arm is 2 h.
+=== line 27313 type assistant ts 2026-11-12T17:09:19.908Z
+The new figure set is in `agent_cache/results/compare_c26_designs/`, with the same kinds of figures and file names as `compare_c26_ec`.
+
+| Series | Run used | Mean TTFT on the 6,715 shared turns | Other runs of the same arm |
+|---|---|---|---|
+| Baseline HiCache | campaign 21 | 5.47 s | 6.62 s |
+| Old Oracle (v2), exact hints | campaign 21 | 1.53 s | none |
+| JIT p50 | campaign 26, new build | 1.48 s | 1.35, 1.60 s |
+| JIT exact | campaign 26, new build | 0.54 s | 0.51 s |
+| Rules 1 and 3 | campaign 26, first run | 0.66 s | 0.78 s |
+
+What is in the directory:
+- **Timelines:** `timeline_<label>.png` for each of the five runs, plus rule 1 alone (`ec_r1`) and the repeat of rules 1 and 3 (`ec_r13_rep`).
+- **Comparisons over the five:** `compare.png`, `compare_steady_1800s.png`, `ttft_over_time_60s.png`, and `paired_cdf_<label>.png` against JIT p50.
+- **Deck-style panels:** `pricing_vs_jit.png` and `.pdf`; its footnote carries the numbers above.
+- **All runs of the five arms:** `ec_overview.png`, with repeats dashed.
+- **Where the wait goes:** `ec_wait_split.png`, one bar per run including the extra rule runs.
+- **Tables:** a CSV beside each figure, and `manifest.txt` mapping labels to run folders.
+
+Choices I made that you may want changed:
+- **Rules series:** the fifth series is rules 1 and 3, the only combination that has finished. Rules 1, 3 and 4 finish about 12:42 PM ET and all four rules about 6:53 PM ET. I plan to add each rule arm's timeline and wait-split bar as it lands, and switch the fifth series to the all-four-rules arm once it exists.
+- **Which JIT runs:** I used the JIT runs on the same build as the rules, so those three differ only in settings.
+- **One run per line:** the comparisons draw one run per arm. Rules 1 and 3 moved from 0.66 to 0.78 s between its two runs, so its gap to JIT exact is not established.
+
+To redraw everything (about a minute), run `docker exec sglang_hicache bash /sgl-workspace/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/figs_designs.sh`. I spot-checked that the changed scripts still reproduce the earlier set (its `pricing_vs_jit` figure comes out identical).

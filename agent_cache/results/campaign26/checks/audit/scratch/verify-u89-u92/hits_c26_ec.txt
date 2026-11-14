@@ -1,0 +1,38 @@
+=== line 25995 ts 2026-11-11T21:17:07.927Z
+...The figure is done, in the same style as the earlier `hicache_vs_jit.png` (it reuses that script's helpers):
+
+- `results/compare_c26_ec/pricing_vs_jit.png`, with `.pdf` and a `.csv` table view
+
+It shows five runs in 5-minute bins: original HiCache, JIT p50 (this campaign's control), the no-hint rival, rules 1 and 3, and JIT exact. The four panels are mean TTFT, turns per second, history recomputed per returning turn, and host memory needed to hold SSD-loaded KV until admission.
+
+- **Fourth panel differs from the earlier figure:** I used the host-memory panel, with the 44K-token line for what is free beyond the GPU's copy, inste...
+
+=== line 26176 ts 2026-11-12T01:42:00.569Z
+... UTC). It is the fair rival for the one setting where hints looked decisive.
+- **Added:** a rerun of JIT exact on this build and unit (the reference is a single run from 1 November), and a repeat of the no-hint rival.
+- **Kept, in this order after those:** learned price, rules 1+3+4 at 128 users, all four rules, the fixed-quantile rival, rule 3 alone, and the end-signal rival at 128 users. The queue now ends about 21:20 UTC.
+
+The comparison figure now shows the repeat as a dotted line (`results/compare_c26_ec/pricing_vs_jit.png`), and the two new runs have their timelines.
+
+Decisions for you — none of these is queued:
+
+1. A host-pool sweep at 44 users (100 and 160 GB), to show where the room binds.
+2. x70 gaps at 128 users, with the no-hint rival, rules 1+3, JIT exact and original HiCache.
+3. Other seeds.
+
+Each arm is 2 h....
+
+=== line 27313 ts 2026-11-12T17:09:19.908Z
+...The new figure set is in `agent_cache/results/compare_c26_designs/`, with the same kinds of figures and file names as `compare_c26_ec`.
+
+| Series | Run used | Mean TTFT on the 6,715 shared turns | Other runs of the same arm |
+|---|---|---|---|
+| Baseline HiCache | campaign 21 | 5.47 s | 6.62 s |
+| Old Oracle (v2), exact hints | campaign 21 | 1.53 s | none |
+| JIT p50 | campaign 26, new build | 1.48 s | 1.35, 1.60 s |
+| JIT exact | campaign 26, new build | 0.54 s | 0.51 s |
+| Rules 1 and 3 | campaign 26, first run | 0.66 s | 0.78 s |
+
+What is in the directory:
+- **Timelines:** `timeline_<label>.png` for each of the five runs, ...
+

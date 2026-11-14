@@ -1,0 +1,444 @@
+##### line 263 ts 2026-11-12T03:48:35.977Z
+Rule 1's math holds and the engine implements it faithfully, but at 44 users and 70 GB the runs do not yet show it beating "never read before the turn arrives". I re-derived the rule and recomputed every number on slide 19; they all reproduce.
+
+One correction to the framing first: rule 1 is the exact optimum of one session's problem once host memory has a price. It is not shown optimal for the joint problem; that part rests on the price (rule 4) and on measurement.
+
+## What rule 1 decides
+
+A session's history is on SSD only and its turn has not arrived. Rule 1 picks when to start reading it back: now, at some later time σ, or only when the turn arrives ([slide 17](https://claude.ai/artifact/F9RQpNBrtGdEdsn52ctZg2#slide-17)).
+
+- **Landing late** stalls the turn, at 1 second of TTFT per second.
+- **Landing early** pins L tokens of host memory until admission, at λL per second (λ is the rent).
+- **The safety net:** if the turn arrives before σ, its arrival starts the read. So the stall never exceeds the read time r = bL/β, and a bad hint can cost room but never extra stall.
+
+The session minimizes J(σ) = E[stall] + λL · E[seconds pinned], given it has not returned yet.
+
+## The derivation
+
+Delaying the start by a moment does two things:
+
+- It adds stall if the turn arrives within the next r seconds: probability Pr(σ < A ≤ σ + r).
+- It saves rent if the turn arrives later than that: λL · Pr(A > σ + r).
+
+Setting the two equal and dividing by Pr(A > σ) gives the rule ([slide 18](https://claude.ai/artifact/F9RQpNBrtGdEdsn52ctZg2#slide-18)):
+
+**Start once F(r | t) ≥ q, with q = λL / (1 + λL).**
+
+F(r | t) is the chance the turn arrives within one read time, given how long the session has been idle. At λ = 5 × 10⁻⁵:
+
+| History | Read time r | q |
+|---|---|---|
+| 8K | 0.38 s | 0.29 |
+| 32K | 1.53 s | 0.62 |
+| 64K | 3.05 s | 0.77 |
+| 128K | 6.11 s | 0.87 |
+
+- **What q is:** the stall risk the read accepts, given the turn had not arrived when the read started. It is not a landing percentile. The read lands at percentile q + (1 − q)·Φ(σ*), which is p84 to p97 on the deck's sharp key.
+- **With a queue:** the turn is due Ŵ later, so the test becomes F(r − Ŵ | t) ≥ q. If Ŵ ≥ r, nothing starts early.
+- **Why a search:** the threshold is only right when F rises with idle time. On the deck's pip-like key at λ = 5 × 10⁻⁶, the threshold fires for a 32K read at idle 0, in the short mode. That costs 4.1 against 1.53 for reading at arrival, so the engine minimizes J directly.
+
+A rule of thumb I derived (not in the deck): for a short read, F(r | t) ≈ return rate × r, so the test is roughly "return rate ≥ 1.07 / (1 + λL) per second" at this price. That is 0.25 per second for 64K, meaning the hint must place the arrival within about 4 s. Real entries such as pytest (p10 7 s, p50 12 s, p90 43 s) never get there, which is why the rule mostly declines.
+
+## What the engine does
+
+`read_start` in `python/sglang/srt/mem_cache/next_turn_policy.py:165` minimizes J exactly over a 64-point distribution fitted through p10/p50/p90. It is called from `_check_pending_expected_cost` in `next_turn_prefetch.py:1063`, at most every 0.5 s per plan.
+
+It differs from the slide in these ways:
+
+- **Read time** includes a 1 s safety margin and the SSD backlog, so a small read looks longer than bL/β.
+- **Rent** is charged on every token of the session not in GPU memory, not only on the tokens being read.
+- **Ŵ** is a single number, and counts as zero unless some turn with nothing to read has been queued for 0.5 s.
+- **The pin** is released once the hint's distribution has passed (plus 5 s); the model holds it until admission.
+- **The fit** is one-peaked, so a two-moded key like pip becomes a wide distribution. The answer is still "read at arrival", but the search for two modes has nothing to act on yet.
+- **Slide 18** says about 24 start times; the engine checks up to 65.
+
+`PAPER_PLAN.md` section 5 still says reads "land at the newsvendor quantile" (8K at p29, 64K at p77). The deck is right and that text is stale.
+
+## What the runs say
+
+Mean TTFT on the 6,715 returning turns all runs share (campaign 26, 44 users, 70 GB):
+
+| Arm | Mean TTFT |
+|---|---|
+| JIT p50, three runs | 1.35 to 1.60 s |
+| Rule 1 alone, one run | 0.67 s |
+| Rules 1 and 3, two runs | 0.66, 0.78 s |
+| Reads only at arrival, no gap forecast, two runs | 0.69, 0.80 s |
+| No hints at all, one run | 0.71 s |
+| JIT with exact hints | 0.51 s |
+
+- **Rule 1 repairs JIT p50.** With the same eviction and pins, changing only the read start takes it from 1.35–1.60 s to 0.67 s. Pinned tokens fall from about 31K to 4.8K, and refused read launches from about 1,740 to 396.
+- **It does so mostly by not reading early.** Of 2,713 start decisions, 669 staged a read.
+- **Its lead over never reading early is not shown.** The two arms' repeats interleave (0.66, 0.69, 0.78, 0.80 s), and one arm moves 0.1 s between runs.
+- **The prize is small here.** Read timing can win at most 0.14 to 0.20 s per turn at this setting; rule 1 removes about 0.045 s of it and exact hints 0.12 s.
+
+## What this means for the paper
+
+- **The claim rule 1 supports today:** a point forecast acted on as exact does harm, and pricing the room removes that harm. It does not yet support "distribution hints beat no hints".
+- **The missing setting:** rule 1 needs frequent SSD reads, a short GPU queue and moderate room. The 100 GB arms at the end of the queue have no rule 1 arm; I would add one if exact hints clearly beat the no-hint arm there.
+- **The fixed-quantile rival** (`fq90`) has not run yet. It answers "why not just send p90".
+
+Campaign 26 is still running (`nofc_noend_c128` since 02:51Z); I changed nothing in it. I also saved a note that the paper targets ICML.
+
+##### line 683 ts 2026-11-12T04:43:31.687Z
+`agent_cache/results/pricing_the_room/` now holds 57 SVGs for the current deck: 47 formulas and 10 figures, named `<slide number>_<slide>_<what>.svg`. I rasterized every figure and six of the formulas to check them; nothing has been uploaded to the deck.
+
+**Formulas (47)**
+- They are the same formulas as the PNG set in `results/pricing_room_formulas`, renumbered to the current slide order (for example `18_rule1_main.svg`, `14_price_light_ink.svg`).
+- Glyphs are outlines, so no font is needed. Each one matches its old PNG's size to within 0.25 px on the slide.
+- The set includes two formulas the deck does not show as images: `21_rule3_keep` and `14_price_dark_ink`, as the PNG set did.
+
+**Figures (10)**
+- Case timelines, three stacked per slide: `05_case-late`, `06_case-early`, `07_case-lost`, `08_case-nextuse`, `09_case-gpu`.
+- Diagrams: `15_onegap_diagram`, `17_tradeoff_diagram`.
+- Charts, with their titles and legends: `16_conditional_chart`, `19_rule1keys_chart`, `25_floor_chart`.
+- Labels are real, editable text set in IBM Plex Sans by name, not embedded. On a machine without that font they fall back to Arial and shift slightly.
+
+**Sizing**
+- Every file's viewBox is in slide pixels and its size is in points at half that, so PowerPoint's 13.33-inch slide inserts it at its deck size, as with the PNGs.
+
+**To regenerate**
+- Formulas: `uv run --no-project --with pymupdf python3 scripts/deck_formulas.py --svg`. I changed this script: file names now come from the deck order, and `--svg` is new. The PNG mode is still there but I could not run it here (no pdftocairo), and it would now write the new names.
+- Figures: `python3 scripts/deck_figures.py <deck project dir>` (new script). It reads the deck's `project/` folder as downloaded from the artifact; my copy is in the session scratchpad and will not survive a reboot.
+
+This host had no LaTeX, so I installed the tectonic binary at `~/.local/bin/tectonic`, as the option you picked said.
+
+##### line 690 ts 2026-11-12T04:48:31.685Z
+Those two lines are one algebra step that the slide skips: divide the derivative by the chance that the turn has not arrived yet. (The symbol is σ, the read's start time, not δ.)
+
+**Start from the derivative**
+
+```
+dJ/dσ = P1 − λL · P2
+
+P1 = Pr(σ < A ≤ σ + r)   the turn arrives during the read   → waiting adds stall
+P2 = Pr(A > σ + r)       the turn arrives after the read    → waiting saves rent
+```
+
+**The two probabilities add up to "not arrived by σ"**
+
+If the turn has not arrived by σ, it either arrives within the next r seconds or later than that. So:
+
+```
+P1 + P2 = Pr(A > σ)
+```
+
+**F is P1 as a share of that**
+
+F(r | σ) is the chance the turn arrives within one read time, given it has not arrived by σ:
+
+```
+F = P1 / (P1 + P2)      so   P1 = Pr(A > σ) · F
+                             P2 = Pr(A > σ) · (1 − F)
+```
+
+**Substitute and factor**
+
+```
+dJ/dσ = Pr(A > σ) · [ F − λL · (1 − F) ]
+      = Pr(A > σ) · [ F · (1 + λL) − λL ]
+      = Pr(A > σ) · (1 + λL) · [ F − λL / (1 + λL) ]
+      = (a positive number) · [ F(r | σ) − q ]
+```
+
+That is what "∝ F(r | σ) − q" means: the derivative has the same sign as F − q. The fraction λL / (1 + λL) falls out of the factoring, and the slide names it q.
+
+**Reading it**
+
+- **F < q:** the derivative is negative, so starting later lowers the cost. Keep waiting.
+- **F > q:** the derivative is positive, so starting later raises the cost. Start now.
+- **F = q:** the minimum, which gives "start once F(r | t) ≥ q".
+
+**Why q has that form**
+
+q is the break-even point between the two costs of waiting one more moment:
+
+- With chance F the turn comes during the read, and the delay costs 1 (a second of stall per second).
+- With chance 1 − F it comes later, and the delay saves λL (a second of rent on L tokens).
+
+Setting F · 1 = (1 − F) · λL and solving gives F = λL / (1 + λL). So q is the cost of a second early divided by the cost of a second early plus a second late.
+
+**With numbers**
+
+For a 64K history at λ = 5 × 10⁻⁵, λL = 3.28: a second early costs 3.28 times a second late. Then q = 3.28 / 4.28 = 0.77. At F = 0.77 the stall side is 0.77 × 1 = 0.77 and the rent side is 0.23 × 3.28 = 0.75, so the two balance. The read should start only once the turn is 77 % likely to arrive within the next 3 seconds.
+
+The slide would be easier to follow with the line Pr(A > σ) = P1 + P2 shown between the derivative and the "∝" step.
+
+##### line 966 ts 2026-11-12T15:56:44.233Z
+Rule 2 says: when a turn has arrived and its read finds the host room full, take the room from the staged read least likely to be needed within its own read time, never from the arrived turn. A staged read is one that rule 1 started early, that has landed, and that is pinned (protected from eviction) until its own turn arrives.
+
+## The three choices on the slide
+
+| Pins | Who loses | Cost |
+|---|---|---|
+| None (original HiCache) | The staged read: LRU can evict it before its turn | 52 % of tokens read from SSD were gone at admission |
+| Hard (every arm so far) | The arrived turn: its read is refused or cut | Missing tokens are recomputed on the GPU; JIT p50 had 1,743 of 5,001 launches refused |
+| Soft (rule 2) | One staged read gives its room back | One re-read, and a stall only if its turn returns too soon |
+
+## Where the score comes from
+
+The slide states the rule and cites Cao et al.; the derivation is short. Suppose staged read j is bumped at time t and read again as soon as possible:
+
+```
+pages are back at t + r_j at the earliest
+turn j stalls only if it arrives before then:     chance = F_j(r_j | t)
+expected stall = area under F_j(x | t), 0 to r_j  ≈ ½ · r_j · F_j(r_j | t)
+tokens freed   = L_j = (β / b) · r_j
+
+expected stall per token freed ≈ (b / 2β) · F_j(r_j | t) = 23 µs × F_j
+```
+
+The read time cancels: a larger staged read frees more room but takes that much longer to bring back. So ordering by F alone is ordering by expected stall per token of room gained.
+
+## Why the arrived turn always outranks a staged read
+
+Per token of room:
+
+```
+refuse the arrived read:  1/ρ ≈ 110 µs of GPU prefill, and every turn queued behind it waits too
+bump a staged read:       at most b/β = 47 µs of stall, for one turn, with the GPU free for others
+```
+
+Even a staged read whose turn returns at once is cheaper to bump than an arrived read is to refuse. That is Cao et al.'s "do no harm": never drop data needed now to keep data needed later. F only orders the staged reads among themselves.
+
+## The slide's example
+
+I recomputed the three values and they match the slide.
+
+| Staged read | Read time | Chance F | Expected stall if bumped |
+|---|---|---|---|
+| 16K tokens, sharp 20 s key, idle 18 s | 0.76 s | 0.135 | 49 ms |
+| 24K, pip-like, idle 5 s | 1.15 s | 0.005 | 2 ms |
+| 24K, pip-like, idle 24 s | 1.15 s | 0.054 | 31 ms |
+
+The pip-like session idle 5 s goes first. Its short mode (about 1 s) has passed and its long mode (about 27 s) has not begun, so a return in the next second is nearly impossible. Refusing a 24K read instead would cost 2.7 s of GPU prefill.
+
+## How it fits the other rules
+
+- **Rule 1** uses the same number: it starts a read when F_j(r_j | t) ≥ q, each session against the price.
+- **Rule 2** covers the moments the price cannot: the price holds the room only on average, and when it is physically full, rule 2 ranks the staged reads on that same F.
+- **Rule 4** counts bumped tokens as refused; otherwise a full room with no refusals would leave the price stuck.
+
+## What the engine does
+
+The code is at `python/sglang/srt/mem_cache/unified_radix_cache.py:2993` and `python/sglang/srt/mem_cache/next_turn_prefetch.py:1207`. A read that cannot get host pages tries, in order:
+
+1. Evict idle, unpinned history, in rule 3's order.
+2. With soft pins on, and only if the asking turn is in the queue: release staged pins in ascending F until the shortfall is covered, then evict just the shortfall. The rest of a bumped read stays cached, unpinned, and reads in flight are never bumped.
+3. Cut the read to a shorter prefix, or refuse it.
+
+A bumped read's plan is reset, so rule 1 may stage it once more; otherwise it is read at arrival.
+
+The build differs from the slide in four ways:
+
+- **Horizon:** the engine uses the read time plus a 1 s safety margin, so its F is higher (about 0.36 instead of 0.135 for the sharp read).
+- **One peak:** the hint is three quantiles and the fitted distribution has one peak, so it cannot see the gap between pip's modes. The read idle 5 s scores 0.039, not 0.005; the order survives, but the 11-fold contrast shrinks to 1.5-fold.
+- **Due times:** the slide's footnote about comparing due times is not built. The arrival hold covers most of it, because a queued turn's read is held until just before its admission.
+- **Only with rule 1:** the flag check allows soft pins only under expected-cost timing.
+
+## Evidence
+
+- **Replay (CPU, campaign 23's reads, 90K room):** soft pins cut today's p50 timing by 24 % (1,766 to 1,345 s). They cut the best expected-cost rule by only 2 % (1,269 to 1,241 s), and 2–6 % across room sizes.
+- **The trade they make:** on the same rule with and without them, refused reads of arrived turns fall from 820 to 586 and recomputed tokens from 6.8M to 4.0M, while stall rises from 556 to 795 s. Soft pins convert recomputation into stall.
+- **GPU:** no run has rule 2 yet. `ec_full` (rules 1, 3 and 4 with soft pins) is fourth in the queue, about 4:45 pm to 6:50 pm ET today if the host stays up. Its pair, `ec_r134`, is running now.
+- **What to expect:** little at 44 users. In the run with rules 1 and 3 (`ec_r13`), staged pins averaged 2.2K of 44K tokens. The recomputation they left to arrived turns sums to 457 s, about 0.04 s per turn, against a rerun spread of about 0.1 s.
+- **Reach:** the rival that never reads early still has 277–297 refused launches against rule 1's 395, so roughly 100 launches are within rule 2's reach. The counters (`ec_bump`, refused launches, recomputed tokens) will show an effect before TTFT does.
+
+## For the paper
+
+- **State the derivation.** The derivation above is not in the deck. Its condition, b/β < 1/ρ (reading is cheaper than recomputing), is the premise of tiering.
+- **Frame it as robustness.** Rule 2 caps what a wrong forecast costs other sessions at one wasted read. The replay agrees: it matters most where timing is worst.
+- **Soft spots a reviewer will find:**
+  - There is no GPU result yet, and the expected effect is under the noise.
+  - The horizon r_j assumes the room is free again at once; over 30 s the same pip-like session returns with chance 0.68.
+  - The example needs a two-moded hint that the build cannot receive.
+
+##### line 1029 ts 2026-11-12T16:14:17.463Z
+Yes, largely: both rules answer the same question, which waiting session's tokens leave the room when it is full, and both pick the session least likely to return soon.
+
+In the code they call the same function, `chance_within(idle, window)`, with a different window (`python/sglang/srt/mem_cache/next_turn_prefetch.py:1227` and `python/sglang/srt/mem_cache/next_use_eviction.py:255`). In the model the room constraint counts idle histories and staged reads together, and slide 24 speaks of one ranking by one score.
+
+## Why the deck has two
+
+The engine holds two kinds of tokens for a session between turns and protects them differently:
+
+- **Idle history:** left in host memory after a turn. Nothing protects it, so rule 3 orders its eviction.
+- **Staged read:** brought back early by rule 1 and pinned, so eviction cannot take it. Rule 3 never sees it.
+
+Rule 2 exists only because of the pin. The pin exempts staged reads from rule 3, and rule 2 lifts that exemption for one kind of asker: a turn that has arrived.
+
+## Where they differ
+
+| | Rule 2 | Rule 3 |
+|---|---|---|
+| Removes | Staged reads (pinned) | Idle histories (unpinned), in GPU and host memory |
+| Who can trigger it | Only the read of an arrived turn | Any request for room, including an early read |
+| Window for the chance | The read's own time, about 1 s | Fixed 30 s |
+| Order of use | Second, when rule 3 has nothing left to evict | First |
+| Without it | Hard pins: the arrived turn is refused | LRU |
+
+## The one real conflict: the window
+
+Because the windows differ, the two rules can rank the same sessions in opposite orders. I scored two sessions from slide 21 over both windows:
+
+| Session | Chance within 30 s | Chance within one read (1.1 s) |
+|---|---|---|
+| B: 20 s test run, idle 12 s | 1.00 | 0.00001 |
+| C: pip-like, idle 3 s | 0.64 | 0.002 |
+
+Rule 3 evicts C before B; scored over rule 2's window, B would go before C.
+
+The right window is how long the tokens stay out. Rule 2 lends the room for about one read, so a short window fits. Slide 21 already says rule 3's exact order is by return rate, which is the short-window limit; the 30 s is what the trace study scored.
+
+## For the paper
+
+I would state one rule: when the room is full, the waiting session with the lowest return rate (times reload cost per token) leaves, whether its tokens are an idle history or a staged read. A turn that has arrived never leaves. Rules 2 and 3 become two cases of it, and the paper has three decisions: when to fetch, who leaves, and the price.
+
+Two things to know first:
+
+- **It is not built that way.** Pins still separate the two kinds. A staged read's launch evicts idle history in rule 3's order without comparing its own chance of return with theirs; whether it launches at all is rule 1's test against the price.
+- **No run has both rules yet.** `ec_full`, due about 4:45 pm to 6:50 pm ET today, is the first.
+
+##### line 1085 ts 2026-11-12T16:29:30.718Z
+Right: the two scores only rank sessions whose turn has not arrived. A turn in the queue has already returned, so its chance of return is 1, and both rules place it above every waiting session as a fixed priority, not through the equation.
+
+| Next turn is… | What is still uncertain | What happens to its tokens |
+|---|---|---|
+| Not arrived (the agent runs a tool) | The return time A | Scored by F given the idle time: rules 1, 2, 3 |
+| Arrived, in the queue | Only the admission time D = A + W | Never bumped (rule 2), evicted last (rule 3), pinned once read |
+
+One known gap in the build: a turn that entered the queue within the last scheduler pass can still have its landed read bumped.
+
+## What replaces the return time
+
+For a queued turn the time that matters is when it is due, D. The engine estimates it from the queue position and the admission rate, and uses it for one thing: the queued turn's read is held so that it lands just before admission. A history that shrinks while the turn waits is read again.
+
+## What the equations leave out
+
+On slide 15's map no rule acts in the queued phase; the read is simply pinned until admission.
+
+- **Rule 1 has the queue; rules 2 and 3 do not.** Rule 1 starts on F(r − Ŵ | t), the chance the turn is due within one read time. Rules 2 and 3 are written on the return time alone.
+- **Queued turns are not ranked against each other.** They all tie at 1, and the build breaks the tie by recency (LRU inside the queued tier), not by queue position. Slide 20's footnote ("strictly the two due times are compared") is this gap.
+
+## One way to close it
+
+Write the score on the due time instead of the return time:
+
+```
+G_i(x | t) = chance that turn i is due within x seconds
+
+waiting session:  G = F_i(x − Ŵ | t)         the gap distribution, shifted by the predicted wait
+queued turn:      G = 0 before Ŵ_i, 1 after  a step, known from the queue position
+```
+
+A queued turn is then a session with an exact hint, and the deck's exact-hint limits already say what to do:
+
+- **Rule 1** reads at D − r, which is the hold.
+- **Rules 2 and 3** evict the farthest due first, so the turn at the back of the queue gives way and is read back inside its own wait.
+- **"Arrived outranks waiting"** follows from the order: under first-come-first-served, a queued turn is due before any session that has not arrived.
+
+The due-time order among queued turns is not built or tested.
+
+## Why it matters for the paper
+
+Queued turns need no forecast, and most of the measured gain is there:
+
+- **44 users:** the rival with no hints differs from the hint-free arm in three mechanisms, all for turns in the queue and not yet separated. Their history is evicted last, their reads are held until admission, and lost history is read again. It is at 0.71 s against 1.61–1.89 s.
+- **What hints add on top:** exact hints add about 0.2 s. Rules 1 and 3 on three quantiles add at most 0.05 s, inside the rerun spread.
+- **128 users:** queues are long, and that rival ties the hinted arms (20.84 s against 20.58–20.98 s). On slide 9, 93 % of what original HiCache recomputes is history that was in memory at arrival and evicted while the turn queued.
+
+So the equations as written model the smaller part. With the due time in the score, the queue becomes a free exact hint, and the agent's distribution extends the same rules to turns that have not arrived.
+
+##### line 1111 ts 2026-11-12T16:34:22.304Z
+`c_i` is what it costs, in seconds of TTFT per token, to get history i back after evicting it. It takes one of two values:
+
+```
+c_i = b/β ≈ 47 µs per token    the tokens are on SSD: read them back
+c_i = 1/ρ ≈ 110 µs per token   the SSD lacks them: recompute them on the GPU
+```
+
+A history with both kinds of pages gets the per-token average.
+
+**What it does in the score.** `F_i(H | t) · c_i` is the expected time lost per token of room freed: the chance the history is needed, times what each token costs to restore. It is per token because eviction frees tokens, and it puts the score in the same units as the price.
+
+**When it changes the order.** Only when some history has pages missing from SSD.
+- For histories wholly on SSD, `c_i` is the same 47 µs for all, so it drops out and the order is by F alone.
+- Missing pages cost 2.4 times as much, so such a history is kept longer. A history on SSD with F = 0.9 scores 42 µs; one not on SSD with F = 0.5 scores 55 µs and stays.
+
+**Rule 2 has no `c`** for the same reason: every staged read came from SSD.
+
+**In the build, `c_i` is not there.** The eviction policy ranks by F alone (`python/sglang/srt/mem_cache/next_use_eviction.py:258`), which assumes every history is on SSD. With write-through that is the normal case.
+
+**One caveat for the paper.** The two values are not the same kind of cost. The 47 µs is a stall for one turn, and only if the read is not back in time. The 110 µs is GPU time, which also delays every turn queued behind it; campaign 23 puts that at 6–8 times the prefill itself. So `c_i` for missing pages is understated once the queue is counted.
+
+##### line 1158 ts 2026-11-12T16:39:46.939Z
+Changing λ does not change which session is ahead of which. It changes how much room all sessions ask for in total, and that total is the one thing that has to match the room.
+
+## Where λ enters a decision
+
+λ is the rent on host room, in seconds of TTFT per token-second. At 5 × 10⁻⁵, holding 20K tokens for one second costs as much as one second of stall.
+
+- **Rule 1** uses it in the threshold q = λL / (1 + λL). A higher λ raises q, so the read starts later.
+- **Rule 3's keep test** on the slide uses the same q. The build uses rule 3 only as a ranking, so in the build λ acts through rule 1 alone.
+- **The rankings** (rule 2, rule 3's eviction order) do not use λ at all.
+
+I computed one 64K read on the deck's sharp 20 s key at different prices:
+
+| λ | q | Read starts | Expected stall | Expected time pinned |
+|---|---|---|---|---|
+| 0 | 0 | at once | 0 s | 17.1 s |
+| 5 × 10⁻⁶ | 0.25 | 15.7 s into the gap | 0.27 s | 1.66 s |
+| 5 × 10⁻⁵ | 0.77 | 19.0 s | 1.81 s | 0.20 s |
+| 5 × 10⁻⁴ | 0.97 | in effect at arrival | 3.04 s | 0 s |
+
+The price slides each session along its own trade between stall and room.
+
+## Why one shared λ, and why it must move
+
+Each session decides alone, and λ is the only thing through which it sees the others. Because it is the same for all, it leaves their order alone and moves the total. In an offline check on 1,981 real turns (room not modelled), going from 5 × 10⁻⁶ to 2 × 10⁻⁵ cuts the average tokens pinned from 22K to 8K and raises total stall from 857 to 1,561 s.
+
+The right total depends on the room, and the room is not fixed:
+
+- **Across settings:** λ is about 0 at 160 GB, where room is plentiful, and 5 × 10⁻⁵ at 70 GB.
+- **Across room sizes in the replay:** the best fixed λ is 1 × 10⁻⁴ for a 70K room, 5 × 10⁻⁵ at 90K and 2 × 10⁻⁵ at 110K.
+- **Within a run:** the room is contested in load episodes and idle between them.
+
+With too low a price everyone reads early, the room fills, and arrived turns are refused, which is JIT p50's failure. With too high a price the room sits idle while turns stall. Rule 4 searches for the price in between: refused room pushes λ up, idle room pulls it down.
+
+This is the outer loop that replaces solving the optimization. Rules 1 and 3 are each session's best answer to a price, and rule 4 finds the price at which those answers fit the room. Without it, λ is a constant tuned by hand for one room.
+
+## What the build has found so far
+
+- **The deck's formula does not work as stated.** Replayed on a real run's signals, it drives λ to its floor within a minute. The room is idle on average (75K tokens) and refused only in bursts, so "refused minus idle" is positive in only 9 % of intervals.
+- **The build's second form prices by harm:** the recomputation that staged pins left to arrived turns, per token-second pinned. On the same run it stays near 3 × 10⁻⁵ without being told the calibrated 5 × 10⁻⁵.
+- **The first live test is running now.** `ec_r134` is 57 minutes in and ends about 12:40 pm ET; it has no TTFT yet.
+  - The price started at 5 × 10⁻⁵ and has swung between 2 × 10⁻⁶ and 5.7 × 10⁻⁵, with a median of 2.5 × 10⁻⁵.
+  - Staged pins rose to 11–16K tokens in the last 20 minutes, against 1–4K at the fixed price.
+  - As the first load episode began, 332 s of harm was charged in 7 minutes. The fixed-price run had 457 s in two hours.
+  - This may be the price lagging the load, but the run is half done.
+- **The real test of rule 4** is `ec_r134_c128`, about 2:40 to 4:45 pm ET today: whether the same code finds a price near zero at 160 GB.
+
+##### line 1178 ts 2026-11-12T16:43:57.369Z
+It is the unmet demand for room: tokens of history that a read tried to bring from SSD into host memory and could not, because the room was full when the read launched. Rule 4 sums it over each 5 s interval.
+
+Three things count toward it in the build:
+
+1. **A read refused whole.** No room is found even after evicting idle history, so the read's full size counts.
+2. **A read cut short.** Only a prefix fits, so the part cut off counts.
+3. **With soft pins, a bumped staged read.** Its tokens count, as slide 22 asks.
+
+Early reads and reads of arrived turns both count. The slide also lists "histories pushed out while their score beat the price"; the build does not count those.
+
+**What happens to those tokens.** An arrived turn retries the lookup while it waits, up to three lookups in all. Whatever it still lacks at admission is recomputed on the GPU at about 110 µs per token. A refused early read is left to the turn's arrival.
+
+**Two intervals from the run in progress** (R = 43,968 tokens):
+
+```
+refused 75,712   idle 14,726   g = (75,712 − 14,726) / 43,968 = +1.39   price goes up
+refused  5,440   idle 28,605   g = ( 5,440 − 28,605) / 43,968 = −0.53   price goes down
+```
+
+**Do not confuse it with "launches refused room"** in the run tables (1,732–1,743 for JIT p50, 395 under rule 1). Those count reads; rule 4 counts their tokens.
+
+**The two terms are not the same kind of quantity.** Refused is a flow (tokens per 5 s) and idle is a stock (tokens of free room, averaged over the interval). That mismatch is part of why the deck's formula sinks to its floor.
+

@@ -1,0 +1,19 @@
+[23049] assistant 2026-11-11T04:35:28.454Z TEXT:
+**Design review (the first thing you asked for).** The build is also done and the first new arm is queued; details after the review.
+
+**Verdict.** The formulation is sound and matches `PAPER_PLAN.md` ("Formulation" 1–8 and "Design point") statement for statement, with matching numbers. I re-derived rule 1's threshold and rule 3's keep test, and checked the engine solver I wrote against the CPU room model's (400 of 400 random cases agree). The weak part is reach, not correctness: by the deck's own replay, read timing covers 36 % of the way to exact hints and only ties reading-at-arrival once recomputation is weighted ×10, so as specified the design is likely to land near the hint-free arm at 44 users unless eviction (rule 3) carries it.
+
+| # | Weak spot | Fix |
+|---|---|---|
+| 1 | The model prices only the host-only room (44K of 712K tokens) and says GPU eviction stays HiCache's. But most of the p50's cost is in eviction, and today's hinted arms already order GPU and host eviction by next use. | Rule 3 scores every session in GPU and host memory. Built that way; the "problem" slide should say so. |
+| 2 | The deck's "exact order" for rule 3 (rank by return rate, no horizon) was never run. | I ran an eviction replay on two recorded timelines: it reads from SSD on 29.8 % of returning turns, worse than LRU (19.4 %), because right after a turn ends the rate is near zero. The fixed horizon gets 16.2 % (today's p50 order 17.7 %, exact 12.6 %); any horizon from 10 to 120 s works. Use the fixed horizon; drop the rate order. |
+| 3 | Past the p90 the hint says nothing, and there is no "never returns" mass. | The same replay shows the plain lognormal tail is as good as a pooled-tail fix, so nothing needs adding. This relies on the client signalling every session end, which the replay does and a real agent may not; state that assumption. |
+| 4 | Once no forecast ends a session, a staged read's pin has no release (only a 600 s backstop). | Added a hold test: release the pin when holding costs more rent than the stall it saves. |
+| 5 | Rule 4 compares a flow (tokens refused per interval) with a stock (idle tokens). By my arithmetic it settles where refusals are as large as idle room, close to JIT p50's regime, not at the cost-minimising price (pins at about 15 % of the room in the replay). | Built as the deck states so it can be tested, but I would not trust it yet. The rule-1 arm logs both signals every 5 s, so I can check the controller on real data before spending a GPU arm on it. |
+| 6 | The cost model leaves out the queue (a recomputed token costs 6–8× its prefill) and SSD bandwidth. | Not built. Would mean pricing recomputation by queue length, so a turn waits for room rather than recomputes. |
+| 7 | Soft pins change the host allocation path for a 2–6 % replay gain. | Built behind a flag; last in the queue. |
+| 8 | The "approaches the best possible" claim needs many sessions each small against the room; at 70 GB the room holds two or three histories. | Present the theory as where the rules come from, and add a setting where the room holds ten or more. |
+| 9 | Evidence is single runs plus a replay of costs, not TTFT; the reference slide omits Continuum, Tokencake, Bidaw and CachedAttention, which `PAPER_INTRO.md` says must be cited; the queue-aware hint-free rival is not built. | Same-GPU controls are running now; the fixed-quantile rival is now a flag; the rest is open. |
+
+One smaller finding from the replay: using every past sample of a key instead of three quantiles gets 15.1 % against 16.2 %, which is the histogram's case for eviction that the deck left open.
+

@@ -1,0 +1,938 @@
+=== 1 cover
+KV cache tiering for agent sessions · problem formulation
+Pricing the room
+When to fetch and what to evict across GPU memory, host memory and SSD, when the agent knows only a distribution of when each session returns
+Haoran Wan · 6 November 2026
+--- notes 1 cover
+This deck states the problem behind the uncertain-hint results. N agent sessions, each with a context length and a distribution for when it returns, share GPU memory, host memory, one SSD and one GPU. Pricing host memory turns the problem into one decision per session: the expected-cost policy. The deck then asks whether those rules are the right way to solve the problem, what can be proved and what a replay of real reads shows, and ends with what a better model would add, what is still open and the next steps.
+=== 2 setting
+The setting
+N agent sessions share one server across three tiers
+Session 1
+turn
+tool
+turn
+tool
+Session 2
+tool
+turn
+tool
+turn
+⋮
+Session N
+turn
+tool
+turn
+tool
+time →
+Each session alternates between a turn on the GPU and a gap while its agent runs a tool. The agent sends a distribution for that gap. During the gap the engine decides where the history waits and when it is read back.
+GPU memory
+turns running or queued · 668K tokens
+↓ write-through · ↑ load
+Host memory
+a mirror of the GPU, plus room R for idle histories
+↓ write · ↑ read in
+[img:r = bL / β]
+seconds
+SSD
+every history · 2.11 GB/s, shared by reads and writes
+--- notes 2 setting
+The setting first. Each session alternates between a turn on the GPU and a gap while its agent runs a tool. The agent tells the engine what it is waiting on, as a distribution of how long that gap lasts. During the gap the engine makes two decisions: where the session’s KV history waits, and when to read it back so that it is there when the turn arrives. Between turns, the history can stay in GPU memory, in host memory, or only on SSD. Host memory mirrors the GPU under write-through, so the room for idle histories is the host pool minus the GPU pool. Reading a history of L tokens back from SSD takes b·L/β seconds.
+=== 3 motivation
+Why
+Where host memory is short, p50 hints do no better than none
+5.17 s
+Original HiCache
+1.47 s
+Hint-free arm: read pins, no hint
+1.51 s
+JIT, p50 hints
+No better than no hint
+0.50 s
+JIT, exact hints
+The forecast’s errors are paid in shared host memory. Reads timed by the p50 land early and stay pinned: 30.9K pinned tokens against 6.2K with exact hints, on about 44K tokens of room. A third of read launches are then refused room, and 2.7 times as many turns read their history from SSD as with exact hints.
+Mean TTFT on the 7,768 returning turns the arms share; 44 users, 70 GB of host memory, first 2 h (campaign 23).
+--- notes 3 motivation
+At 44 users and 70 GB, the p50 hint used as if it were exact ties with sending no hint at all: 1.51 s against 1.47 s. Exact hints under the same just-in-time routine reach 0.50 s. The cost sits in host memory. Early starts on two-moded keys, and gaps that run past the p90, pin reads long before admission. Those pins push other reads out of a room of about 44K tokens: 1,743 of 5,001 read launches are revoked for room, and 88 percent of recomputed tokens are on reads that found their data but were cut or revoked. More turns read from SSD as well: 2.7 times as many as with exact hints. Eviction acting on the p50 drops histories that come back early, and pins push histories out too; these runs do not separate the two.
+=== 4 roadmap
+Roadmap
+The argument takes five steps
+1
+What goes wrong
+Reads land too late or too early, and eviction drops histories that are about to return.
+2
+The model
+Every failure trades waiting against host memory. One optimization problem states the trade.
+3
+The policy
+Charge rent for host memory. Each session then decides alone, by four rules.
+4
+Is it right?
+What can be proved, what a toy instance shows, and what a replay of real reads shows.
+5
+What could be better
+Where the model stops, three changes that would take it further, and the next steps.
+--- notes 4 roadmap
+Here is the whole argument before the details. First, five real turns show what goes wrong today: reads that land too late or too early, and eviction that drops histories about to return. Second, all of those are one trade, waiting against host memory, and it can be written as one optimization problem. Third, the policy: put a rent on host memory, so that each session can decide alone, by four rules. Fourth, whether those rules are the right way to solve the problem: what can be proved, what a toy instance shows, and what a replay of real reads shows. Fifth, where the model stops, what would take it further, and what comes next.
+=== 5 case-late
+What goes wrong · read timing
+With no hint, the turn waits at the head of the queue
+No hint, no pin · original HiCache
+TTFT 1.50 s
+history
+turn
+on SSD only until the turn arrives
+read 22K tokens: 1.1 s
+arrives, nothing ahead
+waits 1.2 s for its read
+p50 hint · JIT p50 · pytest: p10 7.0 s, p50 12.2 s, p90 43 s
+TTFT 0.29 s
+history
+turn
+pinned 4.2 s, until admission
+away 17.3 s; the p50 said 12.2 s
+admitted at once
+Exact hint · JIT exact · the same turn, gap 17.3 s
+TTFT 0.21 s
+history
+turn
+read starts 1.6 s before arrival, lands 0.5 s before
+admitted at once
+830 of 2,047
+turns in original HiCache that read history were admitted the moment it landed
+416
+of them had nothing ahead in the queue: the read, 0.8 s on average, was their only wait
+1,015 vs 401
+the same with p50 vs exact hints, of 2,513 and 1,419 that read
+Conversation 169, turn 29 in original HiCache, JIT p50 and JIT exact (campaign 23, 44 users). Seconds from the turn’s arrival.
+--- notes 5 case-late
+One real turn in three runs. Original HiCache has no hint, so it learns that a turn needs its history only when the turn arrives. This one arrived with nothing ahead of it in the queue, but its 21,504-token history was on SSD only. The read started at arrival and took 1.1 s, and the turn could not start until it landed: TTFT 1.50 s. With p50 hints (pytest: p10 7.0 s, p50 12.2 s, p90 43 s; the gap was 17.3 s) the read started 5.6 s before the turn arrived and landed 4.2 s before; it stayed pinned until admission and the turn was admitted at once: TTFT 0.29 s. With exact hints the read landed 0.5 s before arrival: TTFT 0.21 s. Across original HiCache's run, 830 of the 2,047 returning turns that read history were admitted within 50 ms of their read reaching host memory, so the read set their admission; they waited 2.63 s on average from arrival, much of it in the queue. 416 of them had no request ahead of them, and for those the read was the whole wait, 0.78 s on average. The same count is 1,015 of 2,513 reading turns with p50 hints and 401 of 1,419 with exact hints, over 10,076 and 11,804 returning turns against original HiCache's 7,768. This is the late side of the trade-off: a stall of up to the whole read time, r = bL/β.
+=== 6 case-early
+What goes wrong · read timing
+A read that lands early is lost, or pinned at others’ cost
+No hint, no pin · original HiCache · conversation 90, turn 49; with exact hints, TTFT 0.59 s
+TTFT 26.54 s
+history
+turn
+landed 33K, unpinned: lost
+read again, 46K: lost again
+in the queue behind 5 turns: 15.9 s
+recomputes 49.5K tokens
+p50 hint · JIT p50 · pip: p10 2.4 s, p50 22.2 s, p90 58 s
+TTFT 6.17 s
+history
+turn
+pinned: 24K tokens for 30.8 s, until admission
+away 27.7 s; the read is timed for the p10 and lands 25.5 s before arrival
+waits 5.3 s
+Exact hint · JIT exact · the same turn, gap 27.7 s
+TTFT 0.28 s
+history
+turn
+read starts 2.8 s before the turn arrives, lands 1.8 s before
+admitted at once
+52 % vs 0 %
+of the tokens read from SSD were gone by admission, original HiCache vs read pins
+5.5 s vs 1.7 s
+median time a staged read sits landed before admission, p50 vs exact hints
+1,743 vs 381
+read launches refused host room, p50 vs exact hints, of 5,001 and 2,088
+Conversation 90, turn 49: original HiCache. Conversation 228, turn 15: JIT p50 and JIT exact. Campaign 23, 44 users.
+--- notes 6 case-early
+Two ways a read that lands early goes wrong, each on a real turn. Top: original HiCache, on another turn, because that run never reached the p50 example's. It has no hint, so it starts a read when the turn arrives, and no read pins. The turn arrived behind 5 others with 24,192 tokens of its prompt in memory, 7,808 of them the shared prefix, and 33,024 more on SSD. The read landed 1.3 s after arrival, 14.6 s before admission. Nothing held it: at 10.5 s the turn's match had shrunk to the shared prefix, so neither the read nor the history that had been in memory was usable any more. The engine looked the history up again and read 46,080 tokens, which landed 3.5 s before admission and were gone too. The turn recomputed 49,454 tokens: TTFT 26.5 s. With exact hints the same turn's read landed 1.9 s before arrival and was pinned until admission: TTFT 0.59 s. Across the original HiCache run, 52 % of the tokens reads loaded into host memory before admission were gone when their turn was admitted (18.1M of 37.9M used), and 116 of its 2,047 reading turns read twice. The hint-free arm, which pins reads, loses none. Middle and bottom: one turn in JIT p50 and JIT exact. The agent ran pip; the p50 hint for pip was p10 2.4 s, p50 22.2 s, p90 58 s, from 536 past gaps. JIT p50 times every read to land near the p10, whatever its size: it started this one 1.3 s after the previous turn ended. The read landed 25.5 s before the turn arrived; only 24,128 of its 34,176 tokens found room, and the rest was read again after arrival. The landed part stayed pinned in host memory until admission, 30.8 s in all, on a host room of about 44K tokens. While it sat there, 12 reads were refused room at launch, 6 of them for turns already waiting; those turns recomputed 111,666 tokens in all. That is co-occurrence, not one-to-one blame: the room is shared by every pin. The gap itself, 27.7 s, was ordinary, 5.5 s past the p50: most of the early landing is by design, the p50 minus p10 early start. With exact hints the read landed 1.8 s before arrival and was pinned for 1.8 s. Across the runs, staged reads sit landed a median 5.5 s before admission with p50 hints against 1.7 s with exact hints, and read launches refused for room are 1,743 of 5,001 against 381 of 2,088. Landing early costs either way: without a pin the read itself is lost; with one, other turns pay for the pinned memory in refused reads and recomputation.
+=== 7 case-lost
+What goes wrong · eviction
+LRU evicts the reads that queued turns wait for
+No hint, no pin · original HiCache · the read is lost; the turn recomputes 27.7K tokens
+TTFT 40.97 s
+history
+turn
+landed but unpinned: evicted before admission
+in the queue behind 18 turns: 36.5 s
+p50 hint · JIT p50 · python: p10 6.9 s, p50 7.3 s, p90 13 s
+TTFT 3.59 s
+history
+turn
+pinned 8.6 s
+kept: used at admission
+in the queue behind 5 turns: 2.6 s
+Exact hint · JIT exact · the same turn, gap 22.7 s
+TTFT 0.77 s
+history
+turn
+lands 1.8 s before arrival, pinned until admission
+admitted at once
+Reads lost before admission, by the wait after landing
+HiCache
+p50
+exact
+2 %
+0 %
+0 %
+37 %
+0 %
+0 %
+59 %
+0 %
+0 %
+87 %
+0 %
+0 %
+99 %
+0 %
+0 %
+< 0.5 s
+0.5–2 s
+2–5 s
+5–15 s
+15–60 s
+2,375 of 2,870
+tokens per turn that original HiCache recomputes are reads like this one, lost before admission
+Pins alone remove it: the hint-free arm loses none, 1.47 s against 5.17 s mean TTFT
+Conversation 180, turn 46 in original HiCache, JIT p50 and JIT exact (campaign 23). Chart: each turn’s last read before admission.
+--- notes 7 case-lost
+One turn in three runs. Original HiCache: the turn arrived behind 18 others, and its 27,584-token history was on SSD. The read started at arrival and landed 1.3 s later. Original HiCache does not pin a landed read, so the copy sat in host memory as one more least recently used entry while the turn waited 36.5 s in the queue, and LRU evicted it. At admission the history was gone: the turn recomputed 27,720 tokens, and its first token came 41.0 s after arrival. JIT p50 (python: p10 6.9 s, p50 7.3 s, p90 13 s; the gap was 22.7 s) read the history before the turn arrived. It landed 6.0 s early and stayed pinned through a 2.6 s wait behind 5 turns, and the turn used all of it: TTFT 3.59 s. JIT exact landed it 1.8 s before arrival and admitted the turn at once: TTFT 0.77 s. The chart takes each returning turn's last read before admission and counts it lost when the turn neither used it nor kept half of it, by the wait from the read reaching host memory to admission. Original HiCache: 21 of 897, 54 of 147, 87 of 147, 286 of 329, 524 of 527. With read pins no read is lost within a minute in any run: 0 of 2,494 with p50 hints and 0 of 1,419 with exact hints (past a minute, p50 lost 13 of its 19). LRU ranks by the last access, so it cannot tell a history whose turn is already queued, needed within seconds, from one whose session has gone quiet. In the formulation a queued turn has F = 1, so rule 3 never evicts it; read pins do the same, which is most of the gain from 5.17 s to 1.47 s at 44 users.
+=== 8 case-nextuse
+What goes wrong · eviction
+Eviction by the p50 drops histories that return early
+No hint, no pin · original HiCache · LRU; back 0.8 s after its last turn
+TTFT 0.32 s
+history
+turn
+used 0.8 s ago, so LRU keeps it in GPU memory
+admitted at once
+p50 hint · JIT p50 · sphinx: p10 2.0 s, p50 7.2 s, p90 17 s
+TTFT 3.58 s
+history
+turn
+expected back in 7.7 s: evicted from GPU and host
+read 39K tokens: 2.7 s
+waits 3.3 s for its read
+Exact hint · JIT exact · the same turn, gap 0.8 s
+TTFT 0.29 s
+history
+turn
+expected back in 0.9 s: kept in GPU memory
+admitted at once
+Turns that read from SSD, by where the gap fell
+HiCache
+p50
+exact
+16 %
+13 %
+2 %
+23 %
+23 %
+6 %
+27 %
+26 %
+10 %
+42 %
+36 %
+23 %
+before p10
+p10 to p50
+p50 to p90
+past p90
+24.7 % vs 19.4 %
+of returning turns read history from SSD with p50 hints vs LRU with read pins (the hint-free arm)
+Original HiCache reads 26.4 %: without pins it also loses reads while turns queue. Exact hints 9.3 %.
+Conversation 113, turn 44 in original HiCache, JIT p50 and JIT exact (campaign 23). Chart: the 7,739 returning turns every run served.
+--- notes 8 case-nextuse
+One turn in three runs. The agent ran sphinx; its hint was p10 2.0 s, p50 7.2 s, p90 17 s, and the session came back after 0.8 s. Original HiCache ranks by recency: the history had just been used, so LRU kept it in GPU memory and the turn was admitted at once: TTFT 0.32 s. JIT p50 registers each session's next use from the p50, 7.7 s here, and evicts ended sessions first, then overdue ones, then the farthest next use. Within the 0.8 s gap the history left both GPU and host memory; the turn read 39,168 tokens from SSD and waited 3.3 s with nothing ahead of it: TTFT 3.58 s. With exact hints the engine expected it at 0.9 s and kept it in GPU memory: TTFT 0.29 s. The chart takes the 7,739 returning turns every run served and groups them by where the true gap fell in the p50 hint the turn was sent with. Original HiCache and JIT p50 both read far more often than exact hints in every group. Original HiCache's share is high for another reason: without read pins it loses reads while turns queue, and the recomputation keeps its queue long and its memory full, so more histories leave memory. LRU with read pins, the hint-free arm, reads from SSD on 19.4 % of these turns, against 24.7 % with p50 hints, 26.4 % in original HiCache and 9.3 % with exact hints. The gap between p50 hints and the hint-free arm is largest for turns that come back before the p50: 6.6 % against 13.2 % before the p10, 15.1 % against 22.8 % between the p10 and the p50. Pins also take host room in the p50 run, so these runs do not separate eviction from pins; option B (exact gaps for eviction, p50 for reads) does. The trace study agrees on the ranking: at x10 the point forecast orders returns worse than LRU (AUC 0.837 against 0.922), and the chance of return given idle time does best (0.952).
+=== 9 case-gpu
+What goes wrong · GPU load at 128 users, 160 GB
+Just-in-time reads trade SSD bandwidth for GPU time
+No hint, no pin · original HiCache · the GPU recomputes all 35.6K tokens of history
+TTFT 111.00 s
+history
+turn
+in GPU and host memory at arrival; evicted while the turn queued
+in the queue behind 82 turns: 104.6 s
+GPU: 6.4 s
+p50 hint · JIT p50 · pip: p10 7.2 s, p50 17.5 s, p90 55 s
+TTFT 18.99 s
+history
+turn
+pinned 23.5 s
+SSD reads 35.6K tokens in 1.4 s, before the turn arrives
+in the queue 18.7 s behind 38 turns; GPU: 0.3 s for 371 new tokens
+Exact hint · JIT exact · the same turn, gap 27.8 s
+TTFT 19.98 s
+history
+turn
+SSD reads 35.6K tokens in 1.7 s, while the turn queues
+in the queue 19.6 s behind 41 turns; GPU: 0.4 s for 371 new tokens
+93 % vs 5 %
+of the GPU's prefill recomputes history, HiCache vs JIT: 6.6K vs 1.6K prefill tokens/s
+0.53 vs 1.4–1.6
+GB/s read from SSD, HiCache vs JIT exact and p50; writes 0.66 vs 0.19 GB/s
+152 s vs 30 s
+p90 TTFT of returning turns, HiCache vs JIT; the median is near 10 s in all three
+Conversation 239, turn 4: original HiCache (campaign 19), JIT p50 and JIT exact (campaign 23), 128 users, 160 GB. Tiles: minutes 40–120.
+--- notes 9 case-gpu
+At 128 users and 160 GB of host memory the GPU is the scarce resource. Top: original HiCache. When the turn arrived, all but the last 413 tokens of its prompt were in GPU or host memory, and it waited 104.6 s behind 82 turns. LRU evicted the history while it waited; its paced retries kept looking up only those 413 tokens on SSD, so at admission only the 7,808-token shared prefix was left. The GPU recomputed 35,627 tokens, 6.4 s from admission to the first token, which came 111.0 s after arrival. In minutes 40–120, 93 % of the history original HiCache recomputes is like this, in memory at arrival and gone by admission; reads lost before admission are 5 %. Middle: JIT p50 (pip: p10 7.2 s, p50 17.5 s, p90 55 s; the gap was 27.8 s) read the 35,584 tokens from SSD 4.9 s before the turn arrived and kept them pinned through a 18.7 s wait behind 38 turns; the GPU prefilled only the 371 new tokens: TTFT 19.0 s. Bottom: JIT exact read them while the turn queued and admitted it 3.0 s after they landed: TTFT 20.0 s. Across minutes 40–120 the GPU prefills 6,602 tokens/s in original HiCache, 93 % of them recomputed history, against 1,570 and 1,571 tokens/s and 5 % with exact and p50 hints. The SSD reads 0.53 GB/s in HiCache against 1.38 and 1.64 GB/s, and HiCache writes 0.66 GB/s back, the history it recomputes, against 0.19 GB/s. Reads plus writes come to 1.6–1.8 GB/s of the device's 2.11 GB/s in the JIT runs, so the trade has a ceiling. The median TTFT is near 10 s in all three, set by the full GPU; the p90 falls from 152 s to 30 s. Original HiCache ran in campaign 19 and the JIT arms in campaign 23, one run each.
+=== 10 b-model
+Step 2 of 5
+1
+What goes wrong
+2
+The model
+3
+The policy
+4
+Is it right?
+5
+What could be better
+Reading late stalls the turn. Reading early loses the read, or pins memory that other turns need. Evicting on a point forecast drops histories that are about to return. Each choice trades waiting against host memory, without knowing when the session comes back.
+Can that trade be written as one problem?
+--- notes 10 b-model
+That was step one. Five real turns, and one pattern. Reading late makes the turn wait for its read. Reading early either loses the read, when nothing holds it, or pins host memory that other turns then cannot use. Evicting on a point forecast drops histories that were about to come back. Every one of these is the same trade, waiting against host memory, made without knowing when the session returns. So the next question is whether that trade can be written down as one problem.
+=== 11 turncost
+The model
+A turn pays for queueing, stalling and prefill
+[img:TTFT = W + S + (Δ + U) / ρ]
+Δ: the turn’s new tokens, prefilled in any case. ρ: the GPU’s prefill rate, about 9K tokens/s.
+[img:W]
+queue wait
+From arrival A to admission D = A + W, while the GPU serves other turns.
+[img:S = (ℓ − D)+]
+stall
+The history’s read lands at ℓ, after the turn is due at D.
+[img:U]
+recomputed history
+Tokens lost (evicted, or read revoked or cut) and not read back. Reading costs under half as much, on another device: a failure, not an option.
+Sessions are coupled through W: one session’s recomputation lengthens the wait of every turn queued behind it.
+--- notes 11 turncost
+Time to first token has three parts. Queue wait is set by everyone’s prefill work. Stall is the part the fetch policy controls directly. Recomputation happens only when history was lost, because reading it back costs under half as much and uses the SSD rather than the GPU. A recomputed history costs its own turn prefill time and lengthens the wait of every turn queued behind it.
+=== 12 problem
+GPU eviction and admission order stay as HiCache does them; sessions interact only through R, β and the queue.
+The model
+The engine minimizes total TTFT under shared limits
+[img:Minimize over policies π the expected total TTFT over turns, subject to: the sum over sessions of h_i(t) + p_i(t) ≤ R at every t (host room); SSD reads + writes ≤ β (one SSD); one GPU, first come first served (gives the queue wait W)]
+h: tokens of a session’s history kept in the room
+p: tokens pinned by a read staged for it
+R: the room, host memory beyond the GPU’s mirror
+β: SSD bandwidth, 2.11 GB/s
+Each tick the policy π sees L, k, a, h and p for every session, the queue and the hints, and decides:
+Retain
+which idle histories stay in the room
+Fetch
+for each history not in the room: start its read now, or wait for the arrival
+Pins
+whether a staged read can be taken back for another
+--- notes 12 problem
+Written as an optimization: minimize total time to first token, subject to the host room at every instant, one SSD whose bandwidth reads and writes share, and one GPU whose first-come-first-served queue produces the wait. The policy makes three decisions each tick: which idle histories to keep, when to start each read, and whether a staged read can be reclaimed. The sessions interact only through the room, the SSD and the queue.
+=== 13 b-policy
+Step 3 of 5
+1
+What goes wrong
+2
+The model
+3
+The policy
+4
+Is it right?
+5
+What could be better
+One problem: the lowest total TTFT, with every session drawing on one small room of host memory. That room ties each session’s choice to all the others, so the problem cannot be solved jointly on every tick.
+How can the engine decide one session at a time?
+--- notes 13 b-policy
+That was step two: the trade is now one problem. Minimize total time to first token, with every session drawing on the same small room of host memory. The room is what makes it hard. It ties each session’s choice to every other session’s, so the engine cannot solve the whole thing jointly on every tick. The question for step three is how to let it decide one session at a time and still respect the room.
+=== 14 price
+The policy
+Pricing host memory lets each session decide alone
+[img:E[sum over turns of TTFT] + λ E[∫ Σi (h_i + p_i) dt] − λRT = Σi J_i(λ) − λRT + const, where J_i(λ) = E[S_i] + E[U_i]/ρ + λ E[∫ (h_i + p_i) dt]]
+− λRT: the room itself is free
+λRT is the rent on the whole room for the whole run, R tokens for T seconds. Subtracting it leaves a charge only on use beyond the room. It is the same for every policy, so no decision depends on it.
+const: queue waits and new tokens’ prefill.
+Each session decides alone
+It weighs its own stall against its own rent and minimizes its own J. The queue and the SSD’s speed are taken as given.
+The room holds on average
+The rent keeps demand near R on average, not at every instant: Whittle’s move for restless bandits. Rankings handle the instants.
+The rent is learned
+λ, in seconds of TTFT per token-second, is the room’s shadow price: zero while room sits idle, high when reads are refused room.
+--- notes 14 price
+The answer is a rent. Instead of deciding centrally who gets the room, the engine posts a price for it, and each session compares that price with what the room saves it. The room constraint couples all sessions. Replacing it with a price, λ seconds of TTFT per token-second of host memory, turns the problem into a sum of per-session problems. This is the standard Lagrangian move, as in Whittle’s relaxation of restless bandits: the room is respected on average, and the price is raised or lowered until it is. With the room idle the price is zero; with reads being refused room, it is high. The last term, λRT, is the rent on the whole room for the whole run: R tokens for T seconds, where T is the run’s length. The room itself is free, so its rent is subtracted, and what the price really charges is use beyond the room. That term is the same whatever the sessions do, so it changes no decision. It matters in two places: rule 4 raises the price while demand is above R and lowers it while demand is below, and the floor on a later slide subtracts it. Const collects the queue waits and the new tokens’ prefill, which are fixed once the queue is taken as given. The price is learned, not configured.
+=== 15 onegap
+The policy · the map
+Four rules act at four points of one idle gap
+Session
+turn
+the agent runs a tool
+queued, Ŵ
+next turn
+turn ends
+turn arrives
+admitted
+1 · starts at σ*
+Prefix Cache
+in the host room
+SSD only
+read, r
+staged, pinned
+on the GPU
+3 · stays while it ranks high enough
+2 · may yield to an arrived turn
+4 · λ is updated every few seconds from refused and idle room
+Rule 1 · fetch
+When does the read start?
+Rule 2 · soft pins
+A turn has arrived and needs room: which early read gives way?
+Rule 3 · retain
+The room is full: which idle history leaves?
+Rule 4 · price
+What is the rent right now?
+--- notes 15 onegap
+Before the rules one by one, here is where each of them acts. This is one gap from start to finish, and each rule answers one question. Rule 1: when does the read start? Rule 2: a turn has arrived and needs room, so which early read gives way? Rule 3: the room is full, so which idle history leaves? Rule 4: what is the rent right now? In order: the turn ends and the key is known; the history is mirrored to host memory and SSD. While room is short, rule 3 keeps it in the host room only as long as it ranks high enough; otherwise it lives on SSD alone. Rule 1 picks the start time σ* when the gap begins and re-solves only when an input changes, the price, the predicted wait or the read rate, because while the session just stays idle the best start does not move. The read lands and waits as a staged read, pinned until admission; rule 2 may hand its room to a turn that has already arrived, and rule 1 then plans a re-read. If the turn arrives first, its arrival starts the read. Under all of it, rule 4 moves the price every few seconds. The next slides take the rules in this order.
+=== 16 conditional
+The policy · what the hint gives
+Every rule reads one quantity off the hint
+[img:F(x | t) = Pr(A ≤ t + x | A > t) = (Φk(a + x) − Φk(a)) / (1 − Φk(a))]
+The chance the session returns within the next x seconds, given a seconds idle.
+Once a mode has passed, F falls; it rises again as the next mode nears.
+[svg:Schematic of a two-moded gap distribution over the time since the last turn ended. The time already idle is shaded grey; the next x seconds after now are highlighted under the curve.]
+idle so far: a
+now: t
+next x seconds
+short mode
+long mode
+time since the last turn ended →
+Rule 1 · fetch
+[img:F(r − Ŵ | t)]
+Rule 2 · soft pins
+[img:F(r | t)]
+Rule 3 · retain
+[img:F(H | t)]
+--- notes 16 conditional
+All the policy needs from the hint is one conditional probability: the chance that the session returns within the next x seconds, given how long it has been idle. Rule 1 asks it over the read time net of the predicted queue wait, rule 2 over a staged read’s read time, and rule 3 over a horizon H. The chart is a schematic, not data: real keys mix modes, for example pip sends p10 0.85 s against p50 22 s. Once the short mode has passed, the conditional probability falls, and it rises again as the long mode nears. On a toy pip-like key, F(30 s | t) is 0.66 right after the turn, 0.63 at 2 s idle and 0.79 at 25 s, so idle time alone ranks returns poorly.
+=== 17 tradeoff
+The policy · rule 1 · when to read a history back
+Landing early costs memory; landing late costs stall
+Lands early
+read: r = bL/β
+pinned: costs λL per second
+σ: read starts
+ℓ: read lands
+D: turn admitted
+Lands late
+read: r = bL/β
+stall: costs 1 per second
+σ: read starts
+D: turn due
+ℓ: read lands, turn admitted
+[img:J(σ | t) = E[stall] + λL E[seconds pinned]]
+given A > t; the read starts at min(σ, A), so a turn that arrives first starts its own read
+Choose σ ≥ t, or “at arrival”, with the lowest J, and recheck every tick. A read takes r = bL/β: 3.0 s for 64K tokens.
+--- notes 17 tradeoff
+This is the single-session trade-off behind rule 1. A read that lands before admission holds its L tokens of host memory until the turn is admitted, which costs λ·L per second. A read that lands after admission makes the turn wait, which costs one second of TTFT per second. Choosing when to start the read means choosing where to sit between the two. If the turn arrives before the planned start, its arrival starts the read.
+=== 18 rule1
+The policy · rule 1 · when to read a history back
+Rule 1 starts a read once its stall risk reaches q
+[img:dJ/dσ = Pr(σ < A ≤ σ + r), waiting adds stall, minus λL Pr(A > σ + r), waiting saves rent; this is proportional to F(r | σ) − q with q = λL / (1 + λL); so start once F(r | t) ≥ q]
+No queue. The newsvendor’s critical ratio, applied to the start time.
+With a queue, start once
+[img:F(r − Ŵ | t) ≥ q]
+Ŵ is the predicted wait. If Ŵ ≥ r, nothing starts early; once the turn has arrived, the read starts when the remaining wait falls to about r.
+At
+[img:λ = 5 × 10^−5]
+History
+Read time
+Stall risk q
+8K tokens
+0.38 s
+0.29
+32K tokens
+1.53 s
+0.62
+64K tokens
+3.05 s
+0.77
+128K tokens
+6.11 s
+0.87
+q is the chance the turn is due before the read lands, given it had not arrived when the read started. It is not a landing quantile.
+A turn that arrives first starts its own read, so a stall never exceeds r: a bad hint costs room, never extra stall.
+Today’s JIT p50 lands every read near p10, whatever its size.
+--- notes 18 rule1
+Rule 1 solves the single-session trade-off from the previous slide. Waiting a moment longer to start the read adds stall if the turn comes within the read time, and saves λL of rent per second otherwise. The two balance where F(r | t) equals q = λL / (1 + λL), the newsvendor’s critical ratio: if a second early costs three times a second late, accept a stall three times in four. Bigger histories and scarcer room raise q, so those reads start later relative to the hint. q is conditional. It is the stall chance given the turn has not arrived when the read starts, not a quantile of the arrival: the reads land at the q-th percentile only when the read is long next to the hint’s spread. A turn that arrives first starts its own read, so the stall is at most r, the cost of having no hint at all. With a queue, the turn is due Ŵ later, so the test shifts by Ŵ, and after arrival the same test starts the read when the remaining wait falls to about r. For two-moded keys the threshold can fire in the wrong mode, so the engine minimizes J over about 24 start times instead.
+=== 19 rule1keys
+The policy · rule 1 on two made-up keys
+Early reads pay off only when the hint is sharp
+Chance a 64K read started now lands late, F(r | t)
+[svg:The chance a 64K-token read started now lands after the turn is due, F(r | t), against idle time, on two made-up keys. On a key of 20 plus or minus 2 seconds it rises from 0 to 1 between 14 and 22 seconds and crosses the 0.77 threshold at 19 seconds. On a pip-like key it starts at 0.2, drops near 0 within 2 seconds, and stays below 0.15.]
+0
+10
+20
+30
+0.5
+1
+idle time, s
+q = 0.77 for 64K
+starts at 19.0 s
+20 ± 2 s key
+pip-like key
+Sharp hint, long read
+On the 20 ± 2 s key the 128K read’s cost falls from 6.11 to 3.42; the 8K read gains nothing.
+Wide hint: wait for the arrival
+The pip-like key never starts early. Landing at its p10 would hold a 64K read 23 s.
+Cheaper room, earlier reads
+At λ = 5 × 10⁻⁶ the 64K read starts at 15.7 s, not 19.0, and stalls 0.26 s, not 1.80.
+History
+r
+q
+20 ± 2 s key: starts at
+lands at
+cost
+pip-like key: cost
+pip-like, landing at p10: cost
+8K
+0.38 s
+0.29
+23.6 s, in effect at arrival
+p97
+0.38
+0.38
+10.2
+32K
+1.53 s
+0.62
+20.9 s
+p88
+1.44
+1.53
+39.9
+64K
+3.05 s
+0.77
+19.0 s
+p84
+2.46
+3.05
+75.9
+128K
+6.11 s
+0.87
+16.3 s
+p87
+3.42
+6.11
+136
+Made-up keys, not trace data; no queue; λ = 5 × 10⁻⁵. Pip-like: 20 % near 0.85 s, 80 % near 27 s. Cost = stall + λL × seconds pinned, in seconds of TTFT: reading at arrival costs r, exact hints 0.
+--- notes 19 rule1keys
+Two made-up keys show what rule 1 does. On a sharp key, a test run of about 20 seconds give or take 2, the chance that a 64K read started now lands late rises steeply and crosses its threshold of 0.77 at 19 seconds, so the read starts then. Long reads gain most: the 128K read’s cost falls from 6.1 to 3.4 seconds, while an 8K read gains nothing, because its read time is short next to the hint’s 2-second spread. On a wide, two-moded key like pip, the chance never gets near the threshold, so every read waits for the arrival; the hint’s value there is in not pinning, since landing at the p10 would hold a 64K read for 23 seconds. The lands-at column shows q is not a landing quantile: the reads land at p97, p88, p84 and p87. With room ten times cheaper, reads start earlier and stall less.
+=== 20 rule2
+The policy · rule 2 · which early read gives way
+Rule 2 reclaims the staged read least likely needed
+A turn has arrived and its read needs room, but the room is full, partly with staged reads: reads that landed early and wait for their own turns.
+No pins · original HiCache
+Staged reads are lost
+LRU evicts staged reads before their turns: 52 % of the tokens it loaded from SSD were gone at admission.
+Hard pins · every arm today
+The arrived turn loses
+Its read is revoked or cut and recomputed at 110 µs per token of GPU time, delaying the queue. JIT p50, 44 users: 1,743 of 5,001 read launches revoked.
+Soft pins · rule 2
+[img:take room from argmin over j of F_j(r_j | t)]
+The bumped history stays on SSD: one re-read, and a stall only if its turn returns before the re-read lands, which is Fj(rj | t).
+Three staged reads
+16K · 20 s key · idle 18 s
+F = 0.135
+24K · pip-like · idle 5 s, between modes
+F = 0.005: bumped first
+24K · pip-like · idle 24 s
+F = 0.054
+Cao et al.’s “do no harm”: never discard data needed sooner to fetch data needed later. With a long queue the arrived turn is not due at once, so strictly the two due times are compared.
+--- notes 20 rule2
+Rule 2 decides who gives way when an arrived turn needs room and the room is full of staged reads. Without pins, as in original HiCache, LRU throws staged reads away before their turns, and half of what it read from SSD was lost. With hard pins, as in every arm today, the staged reads are untouchable, so the arrived turn’s own read is revoked or cut and its history recomputed on the GPU, which delays everyone queued behind it. Soft pins take the room from the staged read least likely to be needed soon. Its history is still on SSD, so bumping it costs one re-read, plus a stall only if its turn comes back before the re-read could land, and that chance is exactly F_j(r_j | t). In the example, the pip-like session idle 5 seconds sits between its two modes, so its chance of returning within its read time is half a percent: it is bumped first. This is Cao et al.’s “do no harm” rule from integrated prefetching and caching. With a long queue the arrived turn is not due right away, so strictly the rule should compare the two due times.
+=== 21 rule3
+The policy · rule 3 · which idle history leaves the room
+Rule 3 keeps the histories most likely back soon
+[img:evict argmin over i of F_i(H | t) c_i]
+c: 47 µs per token from SSD, 110 µs for pages the SSD lacks
+Session
+Waiting on
+Idle
+F(30 s | t)
+LRU evicts
+Rule 3 evicts
+E
+a person
+20 s
+0.03
+2nd
+1st
+C
+pip-like, between modes
+3 s
+0.64
+4th
+2nd
+D
+pip-like, long mode
+45 s
+0.78
+1st
+3rd
+A
+a file edit
+1 s
+1.00
+5th
+kept
+B
+a 20 s test run
+12 s
+1.00
+3rd
+kept
+LRU evicts D first for its long idle, though D, in pip’s long mode, is likelier back than C, and keeps E, which waits on a person.
+Keep while return rate × r ≥ q
+The rent sets the bar through rule 1’s q: a re-read would hold the room for r seconds anyway. At 70 GB a history stays only if it is due back within about its read time plus a second.
+No forecast ends a session
+JIT p50 ends one at p50 + max(60 s, p50) and evicts it first. Rule 3 scores it from its distribution’s tail; only the end signal sets F to 0.
+The exact order needs no horizon
+It ranks by return rate, the chance of return per second: B, due in 8 s, would leave before A, due in 1 s. Not yet run on the traces.
+Example: made-up keys, H = 30 s, all histories on SSD. Trace study: AUC 0.900 at x70, against 0.825 for point forecasts and 0.763 for LRU; at x10, 0.952 against 0.922 for LRU.
+--- notes 21 rule3
+Rule 3 decides which idle history leaves the room when it is full; the history stays on SSD. Each history is scored by the chance it returns within a horizon H, times the cost per token to bring it back: 47 microseconds from SSD, 110 for pages the SSD lacks. The lowest score goes first. In the example, LRU evicts D first because it has been idle longest, yet D is in pip’s long mode and likelier to return within 30 seconds than C, which sits between modes; and LRU keeps E, which is waiting on a person. Compared with the rent, the session’s own keep test comes out of the same derivative as rule 1. Holding a history a moment longer costs the rent on its tokens. Dropping it costs, if the turn comes in that moment, a stall of one read time plus the room that read then takes. The two balance where the return rate times the read time equals q, rule 1’s threshold. So at the 70 GB price a history stays only if it is due back within about its own read time plus a second, and the room mostly holds reads about to land; at 160 GB the price is near zero and the ranking matters only once the room fills. Unlike JIT p50, no forecast ends a session: an overdue session keeps its tail probability until the agent’s end signal. The ranking shown uses a fixed horizon of 30 seconds, which is what the trace study scored. The exact order needs no horizon: it ranks by the return rate, which reduces to Belady’s order with exact hints and to LRU with one pooled distribution, and it would separate A from B here. That order has not been run on the traces. In the trace study the fixed-horizon order separates returns better than point forecasts and LRU at x70; at x10, LRU is nearly as good.
+=== 22 rule4
+The policy · rule 4 · what the rent is
+Rule 4 learns the price from refused and idle room
+[img:λ ← λ e^(η g)]
+[img:g = (tokens refused room − idle room) / R]
+every few seconds
+Dual ascent
+g is how far the demand for room exceeds R. λ rises while sessions want more room than exists and falls while room sits idle.
+Multiplicative
+λ spans orders of magnitude: about 0 at 160 GB. In the replay at 70 GB the best fixed λ is 1 × 10⁻⁴ for a 70K-token room, 5 × 10⁻⁵ at 90K and 2 × 10⁻⁵ at 110K.
+Speed
+Slower than pins drain, faster than a load episode (about 25 min at 44 users): about a minute per tenfold change. At a cold start, bisect λ until planned holdings equal R.
+What counts as refused
+With soft pins, few reads are refused outright. Bumped staged reads, and histories pushed out while their score beat the price, must count, or a full room leaves λ stuck.
+Rule 4 also recalibrates each key: a key whose arrivals keep landing above its p90 gets a heavier tail.
+--- notes 22 rule4
+Rule 4 sets the price. Every few seconds the engine compares the demand for room with the room: tokens that wanted room and were refused push the price up, room that sat idle pulls it down. This is dual ascent on the room constraint, as in network congestion pricing. The update is multiplicative because the price spans orders of magnitude: near zero at 160 GB, and in the replay of the 70 GB run the best fixed price is five times ten to the minus five for a 90K-token room, moving five-fold between a 70K and a 110K room. A fixed price is right for one room only, and the room moves within a run, which is the case for learning it. The time constant sits between how fast pins drain and how long a load episode lasts, so about a minute per tenfold change; at a cold start, bisect the price until the sessions’ planned holdings fill the room. One subtlety: once soft pins exist, few reads are refused outright, so bumped staged reads and histories pushed out while their score still beat the price must count as refused too; otherwise a full room with no refusals would leave the price stuck. The same feedback recalibrates each key from where its arrivals actually land.
+=== 23 b-proof
+Step 4 of 5
+1
+What goes wrong
+2
+The model
+3
+The policy
+4
+Is it right?
+5
+What could be better
+Four rules from one idea: a history belongs in the room when its chance of coming back soon is worth the rent. Rule 1 fetches it, rules 2 and 3 say who gives way, and rule 4 sets the rent.
+Are these rules the right way to solve the problem?
+--- notes 23 b-proof
+That was step three, the policy. Four rules, and one idea behind them: a history belongs in the room when its chance of coming back soon is worth the rent. Rule 1 fetches it back in time. Rules 2 and 3 say who gives way when the room is short. Rule 4 sets the rent. They came from relaxing the problem, so the fair question is whether they are the right way to solve it. Step four takes that in three parts: what can be proved, what a toy instance shows, and what a replay of real reads shows.
+=== 24 proof
+Is it right? · what can be proved
+Three statements can be proved
+Scope
+What holds
+Proof
+Status
+One session, given the rent and the queue
+Rule 1 is the session’s optimum: start once the chance of arriving within one read reaches q. Rule 3 gets the same threshold: keep while return rate × read time ≥ q.
+One derivative of J: the newsvendor’s critical ratio. Two-moded keys need a search, not a threshold.
+exact
+All sessions, any policy
+For any rent, the per-session optima minus the room’s rent are a floor under every policy that keeps the room and sees the same hints.
+Weak duality, in two lines.
+a floor
+Many sessions
+If sessions meet only through the room, and each is small next to it, ranking by the same scores closes the gap to the floor as N grows.
+Index-policy theory for restless bandits (Weber & Weiss 1990; Brown & Smith 2020); not yet written out for this model.
+as N grows
+[img:Sum over sessions of the minimum of J_i(λ), minus λRT, is at most the expected sum over turns of S + U/ρ]
+The floor, for any λ ≥ 0. What cannot be proved is that the rankings are optimal at a given N: the coupled problem is PSPACE-hard in general (Papadimitriou & Tsitsiklis 1999). At a given size, the gap to the floor is measured.
+--- notes 24 proof
+Can we prove the rules are the right way to solve the problem? Three statements can be proved, each weaker than the last. First, for one session with the rent given, rule 1 is exactly that session’s optimum. Take the derivative of its cost in the start time: waiting adds stall if the turn comes within one read time and saves rent otherwise, and the two balance where the chance of arriving within one read time equals q. That is the newsvendor’s critical ratio. The same derivative, taken for a history that is already in the room, gives rule 3 its test: keep it while its return rate times its read time is at least q. So fetching and keeping share one threshold, and rule 3 needs no separate horizon. For keys with two modes the threshold is not enough and the session’s optimum is a search over idle time: on a made-up two-moded key the best plan keeps the history through the short mode and then lets it go. Second, for all sessions together there is a floor. For any rent, add up the per-session optima and subtract the rent on the whole room, λRT: no policy that respects the room and sees the same hints can cost less. The reason takes two lines. A policy that respects the room holds at most R tokens for T seconds, so the rent it pays is at most λRT, and its cost with rent, less λRT, is at most its real cost. And each session’s optimum with rent is at most what that policy gives it. That is weak duality. At the best rent the sessions ask, on average, for exactly the room: the rent paid and the rent subtracted cancel, and the floor is the cost of plans that fit the room on average, not at every instant. It does not say the rules are optimal; it gives a number to measure them against. A policy with exact arrival times is outside it, because it knows more. Third, when sessions interact only through the room and each is small next to it, ranking by the same scores closes the gap to that floor as the number of sessions grows. That is the theory of index policies for restless bandits. It has not been written out for this model: the proof would follow Brown and Smith’s, where breaking ties and mixing two plans at the margin matter. What cannot be proved is that the rankings are optimal at a given size: the coupled problem is PSPACE-hard in general, and with exact hints and histories of unequal size it is still NP-hard. Related results back the single rules: ranking by return rate is the hazard-rate order that bounds non-anticipative caching (Panigrahy and co-authors), and the pre-warm and keep-alive windows of serverless platforms are the same two decisions with fixed percentiles in place of a rent.
+=== 25 floor
+Is it right? · a toy instance, made-up keys
+In a toy, the rules close on the floor as sessions grow
+Stall per turn, seconds
+[svg:Stall per turn against the number of sessions on a toy instance. LRU with reads at arrival falls from 1.31 to 0.73 seconds between 48 and 768 sessions; the four rules fall from 0.60 to 0.24; the floor is 0.19 at every size.]
+48
+96
+192
+384
+768
+0.5
+1.0 s
+sessions sharing the room
+1.31
+0.73
+0.60
+0.24
+floor 0.19
+LRU, read at arrival
+the four rules
+3.2× to 1.3×
+the rules’ cost over the floor, from 48 to 768 sessions. LRU with reads at arrival stays 3.8× above it.
+2.8× at 768
+in a saturated room: at 6K tokens per session, reads in flight alone take 82 % of it, and the gap closes slowly.
+70 GB sits left of this chart
+44 users share a room of two or three histories. There the floor says little, so the answer is measured.
+Toy: four made-up keys and 16K to 64K histories, in the same mix at every size; 9K tokens of room per session; no queue, no SSD contention. Rules at their best fixed price, or a mix of two.
+--- notes 25 floor
+This is what the three statements look like on a toy instance. The keys are made up: a 20-second test run, a two-moded pip-like key, a quick file edit and a person, with histories of 16K to 64K tokens in the same mix at every size, and 9K tokens of room per session. There is no queue and no SSD contention. The dashed line is the floor from the previous slide: no policy that respects the room and uses these hints can be below it. At the best price, about 2.5 times ten to the minus six, the sessions pay 0.37 seconds of rent per turn and 0.36 is subtracted for the room, so the floor of 0.19 is nearly their stall alone, 0.17. The blue line is LRU with reads at arrival. The orange line is the four rules at their best fixed price. With 48 sessions the rules cost 3.2 times the floor; with 768 they cost 1.3 times, while LRU stays 3.8 times above it. Part of the remaining gap is that the floor’s optimum mixes two plans and one fixed price cannot; rule 4’s moving price is what would do that mixing. The picture is less kind when the room is saturated. With 6K tokens of room per session, the reads in flight alone take 82 percent of the room, and the rules are still 2.8 times the floor at 768 sessions. In that toy the order by return rate costs 2 to 13 percent less than the fixed 30-second horizon, and up to 20 percent less again when an arrived turn does not bump a history that is due back sooner than its own re-read would take. The 70 GB setting sits to the left of this chart: 44 users and a room of two or three histories. There the floor says little about a real policy, so the next slide measures instead.
+=== 26 replay
+Is it right? · a replay of real reads
+On real reads, rule 1 beats today’s timing, not exact hints
+Stall plus recomputation over 2,576 turns, seconds
+JIT p50, as run
+1,766
+Read at arrival
+1,481
+Best fixed quantile, q = 0.9
+1,336
+Rule 1, λ = 5 × 10⁻⁵
+1,269
+Rule 1 with soft pins (rule 2)
+1,241
+Exact arrival times
+813
+The room fills in bursts: under rule 1 it holds 13.5K pinned tokens of 90K on average, and 750 reads are still refused room. A floor built on the average room is loose here, so this setting is measured.
+28 %
+below today’s rule, 14 % below reading at arrival and 5 % below the best fixed quantile
+36 %
+of the way from reading at arrival to exact times. The rest lies in which histories were evicted: 1,925 turns read from SSD, against 723 with exact hints
+A tie at ×10
+Charged ten times its prefill for the queue it causes, recomputation leaves the rules level with reading at arrival: 5,167 against 5,187 s
+CPU replay of the JIT p50 run’s reads (campaign 23, 44 users, 70 GB): its evictions and queue waits held fixed, a 90K-token room fitted to both runs within about ±25 %. Soft-pin row: sample form, λ = 1 × 10⁻⁵. Costs, not TTFT.
+--- notes 26 replay
+At 44 users and 70 GB the room holds two or three histories, so the theorems say little and the answer has to be measured. This is a CPU replay of the p50 run’s own reads. It keeps the run’s evictions and queue waits, and changes only when each read starts and whether a landed read can be taken back; one room of 90K tokens reproduces both campaign 23 runs within about 25 percent on staged reads, revokes and pinned tokens. The cost is stall seconds plus recomputed tokens at 9K tokens per second, over the 2,576 turns that read history. The run’s own rule costs 1,766 seconds, more than reading at arrival at 1,481, which matches the GPU result that p50 hints do no better than none. Rule 1 on the same p10, p50 and p90 costs 1,269: 28 percent below the run’s rule, 14 percent below reading at arrival and 5 percent below the best fixed quantile. Soft pins add 2 percent. Exact arrival times cost 813, so the best realistic rule covers 36 percent of the way from reading at arrival. The rest is not timing. It lies in which histories had to be read at all: 1,925 turns read from SSD against 723 with exact hints. The replay keeps the run’s evictions, so it cannot say how much of that is eviction acting on wrong return times and how much is pins pushing histories out; the GPU arm with exact hints for eviction and p50 timing for reads decides it. Either way, rule 3 is at least as important as rule 1. Two cautions. First, the best price moves with the room, from 1 times ten to the minus four at 70K to 2 times ten to the minus five at 110K, which is rule 4’s case for learning it. Second, the result depends on what a recomputed token costs. Campaign 23 puts it at six to eight times its own prefill once the queue it causes is counted; at ten times, rule 1 with soft pins only ties reading at arrival, and with hard pins it is slightly behind. The replay gives direct costs and counts, not TTFT.
+=== 27 methods
+Is it right? · today’s methods as special cases
+Today’s methods fit the same notation
+Method
+Hint
+Read lands at
+Evicts first
+Pins
+Original HiCache
+none
+[img:A + r] starts at arrival
+longest idle (LRU)
+none
+Hint-free arm
+none
+[img:A + r]
+LRU
+hard
+Old routine
+exact or p50
+deadline order within a horizon; a median 9.8 s early with exact hints
+next use
+hard
+JIT, exact
+exact arrival
+[img:D − 1 s]
+next use
+hard
+JIT, p50
+p10, p50
+near the p10, for every size
+ended at
+[img:p50 + max(60 s, p50)]
+next use, from the p50
+hard
+Fixed quantile (rival, not run)
+p10, p50, p90
+one quantile q for every size and room
+next use
+hard
+Expected cost (proposed)
+[img:Φk]
+[img:q_i = λL_i / (1 + λL_i)] the stall risk it accepts
+[img:F_i(H | t) c_i]
+soft
+Next use: ended sessions first, then overdue ones, then the farthest next arrival. Hard pins hold a read until admission.
+--- notes 27 methods
+Each method is a choice of hint, read timing, eviction order and pin type. HiCache and the hint-free arm read at arrival and evict by LRU; the hint-free arm adds hard read pins. The hinted arms evict by next use. JIT exact lands reads one second before admission; JIT p50 lands them near the p10 for every size and treats an overdue session as ended. The fixed-quantile rival answers “why not just send p80”. The proposed policy chooses the stall risk it accepts from the history’s size and the price, rechecks it against idle time, and uses soft pins.
+=== 28 limits
+Is it right? · a sanity check
+At the limits the policy reduces to today’s arms
+Exact hints → JIT exact
+F is a step at A − t. Rule 1 starts every read at D − r for any λ, and rule 3, ranked by return rate, evicts the farthest next use (Belady).
+One pooled distribution → the hint-free arm
+A longer idle means a later return, so F(H | a) falls with a: rule 3 is LRU. F(r − Ŵ | a) stays below q unless λ is near 0, so reads start at arrival.
+[img:λ → 0:]
+keep everything
+Every history stays in host memory or is read back at once, as HiCache does with ample room.
+[img:λ → ∞:]
+read at arrival
+Nothing is fetched before its turn arrives.
+--- notes 28 limits
+These are sanity checks of the formulation: at its limits it should give back policies that are known to be right. With exact hints the conditional probability is a step, so the read starts exactly one read time before admission whatever the price, and eviction by return rate becomes Belady’s farthest next use; a fixed horizon would only split histories into due within it or not. With a single pooled distribution, the chance of return falls with idle time, so eviction becomes LRU; the chance of arriving within one read time stays below the quantile, so reads start at arrival, which is the hint-free arm. The price moves the policy between keeping everything and fetching nothing early.
+=== 29 b-better
+Step 5 of 5
+1
+What goes wrong
+2
+The model
+3
+The policy
+4
+Is it right?
+5
+What could be better
+Given the rent, each rule is the best a session can do, and with many sessions the rules approach the best possible. On the run’s own reads they beat today’s timing, and still stop well short of exact hints.
+Would a better model, or a different goal, go further?
+--- notes 29 b-better
+That was step four. Given the rent, each rule is the best a single session can do. With many sessions the rules approach the best any policy could reach. On the run’s own reads they beat today’s timing, but they still stop well short of exact hints. So the last step asks what would close more of that gap: a better model, or a different goal, and then what comes next.
+=== 30 settings
+What could be better · where the model stops
+The two settings bind on different resources
+44 users, 70 GB of host memory
+The host room binds
+R = 44K tokens of room.
+The replay puts the best price near λ = 5 × 10⁻⁵: a 64K read should accept a stall risk of 0.77, and idle histories barely stay.
+JIT p50 lands every read near p10; 1,743 of 5,001 read launches are revoked for room.
+1.51 s ≈ 1.47 s
+JIT p50 ≈ no hint; exact hints reach 0.50 s
+128 users, 160 GB of host memory
+The GPU binds
+R = 959K tokens and no read is revoked: λ ≈ 0, so landing early is free.
+59–90 turns queued: a recomputed token costs about (1 + Q)/ρ. An 18K-token history is 2 s of GPU time, about 2 min of summed TTFT.
+HiCache recomputes 93 % of its prefill; JIT 4.6 %.
+12.56 s ≈ 12.46 s
+JIT p50 ≈ JIT exact; original HiCache is at 53.12 s
+Mean TTFT, first 2 h. 44 users: 7,768 shared turns (campaign 23). 128 users: 8,175 shared turns (campaigns 19, 23, 25); prefill shares over minutes 40–120.
+--- notes 30 settings
+The model prices one resource, the host room, and the two settings show where that is enough and where it is not. Where room is short, the p50 hint’s errors are paid in pinned memory and refused reads, and it ties with no hint. Where room is ample, landing early is free and the p50 ties with exact hints. What binds there is the GPU: recomputing lost history delays every queued turn, so a recomputed token costs about one plus the queue length times its prefill time. That is why reading instead of recomputing cuts TTFT about four-fold at 128 users, and why the hint’s timing matters little there.
+=== 31 better
+What could be better · the model and the goal
+Three changes would let the model reach further
+Decide more
+One score for all of memory
+The model owns the host-only room, 44K of the 712K tokens in memory, and leaves GPU eviction as it is. Most idle histories wait on the GPU, so that is where eviction decides whether a turn reads from SSD.
+Replay: timing covers 36 % of the way to exact times; the rest lies in what was evicted.
+Price more
+GPU time and SSD bandwidth
+A recomputed token costs its own prefill and delays every queued turn: about 1 + Q times as much. With that price, waiting for room beats recomputing, and an early read must earn more. At 128 users JIT p50 keeps the SSD 87 % busy.
+Replay: charged ×10, the rules only tie reading at arrival.
+A different goal
+Sessions per GPU under a TTFT target
+This is the number an operator buys. Under a target, a stall shorter than the slack is free, and what counts is never losing a history a queued turn needs and never recomputing behind a queue.
+At 44 users mean TTFT falls 3.4-fold with p50 hints; the load carried at a 5 s mean rises about 6 %, a rough reading.
+Outside the model: sharper hints (after a same-key gap of 30 s or more, the next is that long 35 % of the time, against 4 %) and the host mirror, 668K of the 712K host tokens at 70 GB.
+--- notes 31 better
+Would a better model, or a different goal, do better? Three changes, each tied to a measurement. First, decide more. The formulation owns the host-only room, 44K of the 712K tokens of memory at 70 GB, and leaves GPU eviction as HiCache does it. But most idle histories wait in GPU memory, so that is where eviction decides whether a turn has to read from SSD. The replay says timing covers only 36 percent of the way to exact hints and the rest lies in which histories were evicted, so one score for every history in memory, GPU and host, is the change most likely to pay. Second, price more. Today only host memory has a price. A recomputed token costs its own prefill and also delays every turn queued behind it, about one plus the queue length times as much, and the SSD is 87 percent busy at 128 users. With those prices a turn that finds no room should wait for it instead of recomputing, and an early read has to earn more. In the replay, charging recomputation ten times its prefill leaves the rules level with reading at arrival. Third, a different goal. Mean TTFT at one load sits on a steep knee: at 44 users it falls 3.4-fold with p50 hints, while the load carried at a mean TTFT of 5 seconds rises by about 6 percent, and 11 percent with exact hints, read roughly from swings within one run. Sessions per GPU under a TTFT target is the number an operator buys. Under a target, a stall shorter than the slack costs nothing, and what matters is never losing the history of a turn that is already queued and never recomputing behind a queue. Two more levers sit outside the model: the information in the hint itself, where a session’s own history sharpens the tail, and the host mirror, which takes 668K of the 712K host tokens at 70 GB.
+=== 32 open
+What could be better · open questions
+Three parts of the formulation are still open
+A floor for a small room
+Pricing the average room gives a loose floor when the room holds two or three histories and fills in bursts. A price that varies in time, or a model of refused reads as blocking, should give a tighter one.
+Two-moded keys
+pip sends p10 0.85 s and p50 22 s. A threshold can fire in the short mode and pin the read through the long one. On a toy key like it, at λ = 5 × 10⁻⁶, the session’s exact plan keeps the history through the short mode, then lets it go.
+The hint’s form
+For timing reads, p10/p50/p90, a 24-bin histogram and every sample land within 3 % of each other in the replay. The histogram’s case now rests on eviction, an “ended” bin and merging keys.
+--- notes 32 open
+Three things the formulation does not settle. First, a floor that is tight in a small room. The floor from pricing the room on average is loose when the room holds two or three histories and fills in bursts, which is the 70 GB setting. A price that varies in time, or a model that treats refused reads as blocking, should give a tighter one; neither is worked out. Second, two-moded keys. The closed-form threshold assumes the chance of arriving soon only grows with idle time, and two-moded keys break that. Solving the session’s problem exactly on a made-up pip-like key, at a low price, keeps the history through the short mode and then lets it go, which is 4 to 8 percent cheaper than the best single start time; at the 70 GB price it simply waits for the arrival. So a staged read should be released once its mode has passed, not held until admission. Third, how the distribution is encoded on the wire. In the replay, three quantiles time reads as well as a histogram or every sample, so the histogram’s case rests on eviction, the explicit end and merging keys.
+=== 33 next
+What could be better · next steps
+The next steps wait for a go
+1
+GPU diagnosis at 44 users · about 4 h
+Exact hints for eviction with p50 timing for reads, and the client-only probe p10 = p50. The replay points at eviction for most of the p50’s 1.01 s; this run decides it.
+2
+Rule 1 with a fixed λ, and soft pins · 2 h arms
+Start near λ = 5 × 10⁻⁵, with “no forecast ends a session”, on today’s p10/p50/p90; at both settings, against JIT p50, JIT exact, the hint-free arm and a fixed-quantile arm.
+3
+Rule 3 by return rate · CPU first
+Score the rate order on the traces against the fixed horizon and LRU, then carry it to GPU eviction: one score for all of memory.
+4
+Then
+Rule 4’s learned λ; a floor with a time-varying price on the run’s reads; a third setting with fewer users at 160 GB; and the hint-free rival that keeps queued turns’ history.
+Done on CPU, 7 November: the room model and the replay of read-start rules. Nothing on the GPU or in the engine is built or run before a go.
+--- notes 33 next
+The CPU calibration is done: it gave the price, showed that soft pins add little once timing is right, and pointed at eviction for the rest of the p50’s cost. So the order now is this. First the 44-user diagnosis on the GPU, exact hints for eviction with p50 timing for reads, which decides whether eviction really carries that cost. Then rule 1 with a fixed price and soft pins, at both settings, against today’s arms and a fixed-quantile rival. In parallel on the CPU, rule 3 in its rate form: score it on the traces against the fixed horizon and LRU, and carry it to GPU eviction, so that one score covers all of memory. After that, the learned price, a tighter floor from a time-varying price on the run’s own reads, a third setting, and the hint-free rival with queue-state mechanisms, which is the comparison a reviewer will ask for at 128 users.
+=== 34 resources
+Reference · constants
+Four shared resources set what a token costs
+Symbol
+Meaning
+44 users, 70 GB
+128 users, 160 GB
+[img:N]
+sessions
+44
+128
+[img:C_GPU]
+GPU KV pool
+668K tokens
+668K tokens
+[img:C_host]
+host pool
+712K tokens
+1.63M tokens
+[img:R = C_host − C_GPU]
+host-only room: write-through mirrors the GPU
+44K tokens
+959K tokens
+[img:b]
+KV bytes per token
+98,304
+98,304
+[img:β]
+SSD bandwidth, shared by reads and writes
+2.11 GB/s
+2.11 GB/s
+[img:ρ]
+GPU prefill rate
+≈ 9K tokens/s
+≈ 9K tokens/s
+Read from SSD
+[img:b / β ≈ 47 µs]
+of SSD time per token
+Recompute
+[img:1 / ρ ≈ 110 µs]
+of GPU time per token
+--- notes 34 resources
+These are the measured constants of the H200 runs with Qwen3-30B-A3B. The row that matters most is R, the host room left for idle histories once write-through has mirrored the GPU: 44K tokens at 70 GB, 959K at 160 GB. The four shared resources are GPU memory, the host room, SSD bandwidth and GPU time. Per token, reading from SSD costs under half as much as recomputing, and it uses the SSD rather than the GPU.
+=== 35 session
+Reference · symbols
+Each session has a context, an idle clock and a gap distribution
+Symbol
+Meaning
+[img:L]
+context length: tokens of KV history the next turn reuses
+[img:Δ]
+new tokens the next turn adds, prefilled in any case
+[img:e, a = t − e]
+when the last turn ended; how long the session has been idle
+[img:k]
+what the agent waits on: the tool plus the command’s first word, e.g. execute_bash/pip
+[img:G ∼ Φk]
+the gap: the hint is its distribution for key k, and G = ∞ for a session that ends
+[img:A = e + G]
+the next arrival
+[img:D = A + W]
+admission, after a queue wait W
+[img:h, p]
+tokens kept in the host room; tokens pinned by a read staged for the session
+Per session i; the index is dropped where it is clear. The hint arrives with each request; the key is read from the engine’s own reply.
+--- notes 35 session
+Three things describe a session for the policy: its context length L, how long it has been idle, and the distribution of its gap. The agent sends that distribution per key, the tool plus the first word of its command, and the engine reads the key from its own reply when the turn ends. The arrival A is random; admission D adds the queue wait W.
+=== 36 refs
+Reference
+The results the argument leans on
+Pricing a shared resource
+Whittle (1988). Restless bandits: activity allocation in a changing world. J. Appl. Probab. 25A.
+Weber & Weiss (1990). On an index policy for restless bandits. J. Appl. Probab. 27.
+Adelman & Mersereau (2008). Relaxations of weakly coupled stochastic dynamic programs. Oper. Res. 56.
+Brown & Smith (2020). Index policies and performance bounds for dynamic selection problems. Manag. Sci. 66.
+Papadimitriou & Tsitsiklis (1999). The complexity of optimal queuing network control. Math. Oper. Res. 24.
+Caching and prefetching
+Cao, Felten, Karlin & Li (1995). A study of integrated prefetching and caching strategies. SIGMETRICS.
+Ferragut, Rodríguez & Paganini (2016). Optimizing TTL caches under heavy-tailed demands. SIGMETRICS.
+Dehghan, Massoulié, Towsley, Menasché & Tay (2019). A utility optimization approach to network cache design. IEEE/ACM Trans. Netw. 27.
+Panigrahy, Nain, Neglia & Towsley (2020). A new upper bound on cache hit probability for non-anticipative caching policies. IFIP Performance.
+Shahrad et al. (2020). Serverless in the wild. USENIX ATC.
+--- notes 36 refs
+Where each result is used. Whittle’s relaxation is the move of pricing the room so that sessions separate. Weber and Weiss, and Brown and Smith, give the conditions under which ranking by the priced scores is near-optimal with many sessions; Adelman and Mersereau compare the relaxations of problems coupled only through shared resources. Papadimitriou and Tsitsiklis show the coupled problem is PSPACE-hard in general. On the caching side, Cao and co-authors give the “do no harm” rule behind soft pins. Ferragut and co-authors show that the best timer for a cached item is set by the hazard rate of its requests, and Panigrahy and co-authors that ranking by hazard rate over size bounds every policy that cannot see the future, which is rule 3 in its rate form. Dehghan and co-authors set cache timers through a dual price, as rule 4 does. Serverless in the wild sets pre-warm and keep-alive windows from fixed percentiles of each application’s idle times: the same two decisions as rules 1 and 3, without a price.

@@ -1,0 +1,65 @@
+=== L17 2026-11-04T22:04:52.704Z side=False len=995
+I am working on a project called agent_cache, in the directory of agent_cache. You can try to check the files and results there. I am running some evaluations. In the mean time, let's try to design the algorithm part, several questions I want to figure out to make this paper interesting: 1) how we should design the hint format, several options are like a) a distribution for the specific tool call type, based on the history, b) currently we just use one p50 number as the next gap hint, c) the entire percentile numbers and d) maybe we use a small ml model and use some feedback that's non explicit, and 2) how we design the engine pipeline policy based on the hint, right now, the engine just act the same way as the hint is exact (oracle), but we should come up with some clever method to make it better -- closer to the oracle performance. Two total open-ended questions, let's try to figure it out or at least have some thoughts. First check the working progress and then discuss with me.
+
+=== L372 2026-11-04T23:11:31.153Z side=False len=12129
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+<system-reminder>
+<tools-used-before-summary>Bash, Read</tools-used-before-summary>
+</system-reminder>
+Summary:
+1. Primary Request and Intent:
+   The user is working on agent_cache (in /home/wanhr/sglang/agent_cache), with evaluations running. Their message: "I am working on a project called agent_cache, in the directory of agent_cache. You can try to check the files and results there. I am running some evaluations. In the mean time, let's try to design the algorithm part, several questions I want to figure out to make this paper interesting: 1) how we should design the hint format, several options are like a) a distribution for the specific tool call type, based on the history, b) currently we just use one p50 number as the next gap hint, c) the entire percentile numbers and d) maybe we use a small ml model and use some feedback that's non explicit, and 2) how we design the engine pipeline policy based on the hint, right now, the engine just act the same way as the hint is exact (oracle), but we should come up with some clever method to make it better -- closer to the oracle performance. Two total open-ended questions, let's try to figure it out or at least have some thoughts. First check the working progress and then discuss with me."
+   - The intent is a design discussion, not implementation.
+   - Memory rules that apply:
+     - do not change the engine or start GPU runs without the user's go;
+     - stop runs only for errors;
+     - keep design text concise, real-system first, with no bracket source tags;
+     - do not post, submit or open PRs without asking.
+
+2. Key Technical Concepts:
+   - HiCache three tiers (GPU, host, SSD) in SGLang.
+   - The next-turn prefetcher (`sglang.next_turn` kv_hints v1 point, v2 table per reply key), with the reply key resolved at commit (`replay_reply_key` in the replay).
+   - Just-in-time reads, arrival gate and hold, read pins, next-use eviction tiers (ENDED/OVERDUE/FAR/UNKNOWN/SOON), and plan expiry → ENDED.
+   - Certainty-equivalent use of the p50 today, vs decision-theoretic hedging:
+     - newsvendor landing quantile q* = λ·tok/(λ·tok + 1);
+     - option to read at arrival when the queue wait W covers the load L;
+     - deficit D = L - W.
+   - A price for host memory (λ), learned by dual ascent from revokes and cuts.
+   - Soft, preemptible pins, so certain reads preempt speculative ones (Cao et al. 1995 "do no harm"; TIP, Patterson et al. SOSP'95).
+   - Eviction by conditional survival / value density (LHD-style).
+   - Log-histogram (DDSketch-like) per-key distributions with an end bin and n.
+   - Kaplan-Meier censoring for the online table; hierarchical shrinkage (key → tool → `*`); per-key calibration from where arrivals fall (PIT/conformal).
+   - Multimodal x10 gaps: a rejected-call fast mode around 0.8 s, the OpenHands polling grid around 7 s, a heavy tail.
+   - Session tail autocorrelation.
+
+3. Files and Code Sections:
+   - `agent_cache/PAPER_PLAN.md` (uncommitted diff): claims status. At 44 users, hint-free 1.47 s ties the oracle, and only jit on exact hints gains.
+   - `agent_cache/CAMPAIGN23_FINDINGS.md`: full campaign 23 results and the 2026-11-04 gain decomposition.
+     - 79 % of the gain from read pins, 18 % from just-in-time timing.
+     - The p50 forecast costs 1.01 s at 44 users (pins and revokes), 0.07 s at 128.
+     - Options A-H for next steps.
+   - `agent_cache/DIST_HINT_DESIGN.md`: the current design in four points (online table per key, engine takes p50 at commit, oracle routine unchanged). Later steps: whole distribution, read timing, and issues.
+   - `agent_cache/results/campaign25/` (DECISIONS.md, queue.txt, launcher.log): campaign 25 is running.
+   - `python/sglang/srt/mem_cache/next_turn_prefetch.py` (read only). Key logic:
+     - `_resolve_hint` → `NextTurnHint(next_gap_s=entry.p50, early_s=max(0, p50 - p10))`, using `pick_gap_entry` (key, tool, `*`).
+     - `on_turn_committed`: `predicted = offset.predict_arrival(...)`, `expires_at = predicted + max(MIN_EXPIRY_S=60, gap)`, and it registers next_use.
+     - `_check_pending_deadline`: `NTP_LEAD_HORIZON_S=120`. Under just-in-time, `start_at = trigger_time(admission_at, load_s, margin_s=plan.early_s + NTP_JIT_MARGIN_S(1.0))`, then `_stage(plan)`.
+     - `_expire` → `finish(ABORT)` + `_end_session`.
+     - `read_not_before` (hold, `NTP_HOLD_MARGIN_S=2.0`); `prefetch_gate` (`MAX_REFETCHES=2`).
+     - `GapEntry` reads only key, p10, p50 and ended; p90 and n are ignored.
+   - `python/sglang/srt/mem_cache/next_turn_estimators.py`: ArrivalOffset EWMA (seed 0.10 s), AdmissionRate, `residual_wait=(pos+0.5)/rate`, and L3LoadModel (alloc 0.5 + 0.044 + 2.5 ms/page + backlog + drain 0.36).
+   - `python/sglang/srt/mem_cache/next_use_eviction.py`: tiers ENDED(0), OVERDUE(1, grace 60 s), FAR(2, > 300 s), UNKNOWN(3, LRU), SOON(4, farthest first).
+   - `agent_cache/scripts/gap_hints.py`: `OnlineGapTable` (empirical ln-quantiles p10/p50/p90 + n per key level, MIN_POOLED=5), `END_ENTRY`, `next_turn_envelope` (v2 table + v1 p50).
+   - `agent_cache/frozen/hint_realism_20261027/reports/trace.md`: the trace predictability study.
+     - Tool name gives R² 0.736; the best GBDT 0.832; the online table 0.766.
+     - Per-class conditional survival beats point forecasts and LRU (AUC 0.900 / 0.952).
+     - The "ended" bit is the most valuable signal at x10.
+   - Created `agent_cache/frozen/hint_policy_20261104/` (git-ignored frozen folder): README.md, hint_calib.py/.out, read_policy.py, read_policy_dt.py/.out, read_policy_ts.py/.out, session_cond.py/.out.
+     - Inputs: run `results/20261101_222451_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70` (jit_p50_c44) and its `client_222615_cmp_three_tier_wc_oracle_v2_nu_owned/client.jsonl`.
+     - Run from agent_cache/results with `python3 -I <script> <run> <client.jsonl>`.
+     - read_policy_dt.py models e
+
+=== L392 2026-11-05T03:28:10.188Z side=False len=295
+1. I do agree that the client should send the distribution and the engine picks the point. But let me think about the form. 2. don't start yet. 3. a engine side. Help me summarize the points discussed into a document, maybe into the paper_plan.md, about this design point. Let me think about it.
+

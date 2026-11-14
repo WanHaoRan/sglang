@@ -1,0 +1,158 @@
+--- [29150] 2026-11-13T00:06:52.865Z len 2959 ---
+The all-four-rules arm finished clean at 6:53 PM ET, and the 44-user figures in `agent_cache/results/compare_c26_designs/` are redrawn with it as a seventh series (dotted orange).
+
+**Result: all four rules reach 0.66 s mean TTFT, the level of the best rules 1+3 run, but read 27 % more from SSD than rules 1+3+4.** By the repeat rule nothing new is shown on TTFT, since this arm has one run.
+
+| 6,715 shared returning turns | JIT exact | Rules 1+3 | Rules 1+3+4 | All four rules | No hints |
+|---|---|---|---|---|---|
+| Mean TTFT | 0.51, 0.54 s | 0.66, 0.78 s | 0.80 s | 0.66 s | 0.71, 0.72 s |
+| SSD pages, whole run | 388K, 397K | 437K, 415K | 420K | 534K | 562K, 559K |
+| Reads staged before arrival | 1,202, 1,207 | 629, 560 | 838 | 1,569 | 0 |
+
+Two numbers in a cell are two runs of that arm.
+
+## What rule 2 did
+
+- **It works as built.** An arrived turn's read now takes room from early reads instead of being refused. The delay charged to early reads fell from 1,081 s to 404 s, the learned price settled at about a quarter of its starting value, and early reads nearly doubled.
+- **The cost is wasted reads.** 462 of the 1,569 early reads were given up for an arrived turn, and nearly all of those turns read again. The reads given up had loaded 14 % of everything the run read from SSD.
+- **The SSD saving mostly goes.** Rules 1+3 read 22–26 % fewer pages than the no-hint arm; all four rules read 5 % fewer.
+- **No more reads were ready at arrival.** 196 reading turns found their read landed, against 206 without rule 2.
+
+## How to read the TTFT
+
+- **Against rules 1+3+4:** 0.14 s faster, one run each. A rerun of rules 1+3 alone moved 0.12 s, and the gain is not on the turns rule 2 touched, so it is not shown.
+- **Against no hints:** ahead in both pairs by 0.05–0.06 s; not shown without a repeat.
+- **Against JIT exact:** behind in both pairs by 0.12–0.15 s.
+- **Latency and throughput:** level with the best arms (12.03 s per turn, 11,706 turns by minute 115).
+
+## Figures
+
+Open `pricing_vs_jit.png`, `ec_wait_split.png` and `timeline_ec_full.png` first. With seven entries the legend of `pricing_vs_jit.png` ran off the right edge, so the script now picks the column count that fits (two here). The other figure sets still redraw byte-identical.
+
+## For you to decide
+
+At 70 GB only 44K tokens of host memory are free beyond the GPU's copy, and rules 2 and 4 only move that room between early reads and arrived turns. Whether they pay off with more room is untested: the three 100 GB arms in the queue are the no-hint arm and the two JIT arms.
+
+I recommend adding an all-four-rules arm at 100 GB at the end of the queue, about 2 h more, ending around 9:20 AM ET Friday. I have not touched the queue.
+
+The next arm (`fq90`, just-in-time with landing quantile 0.9) started at 6:54 PM ET, is running clean, and ends about 8:56 PM ET. The record is in `results/campaign26/DECISIONS.md`, with the new check in `results/campaign26/checks/bumps.py`.
+
+--- [29522] 2026-11-13T02:07:32.937Z len 2327 ---
+`fq90` finished clean at 8:56 PM ET with 0.94 s mean TTFT on the shared turns: well ahead of JIT p50, but behind every leading run.
+
+This arm is JIT p50 with one change: each read is timed to finish at the 90th percentile of the forecast gap (late) instead of the 10th (early). It has one run, so nothing counts as shown by the repeat rule.
+
+| 6,715 shared returning turns | JIT p50 (early) | `fq90` (late) | Rule 1 alone | No hints | JIT exact |
+|---|---|---|---|---|---|
+| Mean TTFT | 1.35–1.60 s | 0.94 s | 0.67 s | 0.71, 0.72 s | 0.51, 0.54 s |
+| Host memory held by early reads, of 44K free tokens | 24.6K | 13.2K | 2.7K | 0 | 4.0K |
+| Recomputed tokens per turn | 928–1,007 | 446 | 181 | 135–145 | 120–151 |
+| Turns sent by minute 115 | 10,043–10,208 | 11,204 | 11,580 | 11,645–11,680 | 11,699–11,703 |
+
+The memory row comes from one run per arm.
+
+- **Against JIT p50:** 0.41–0.66 s faster in all three pairs, where the three JIT p50 runs differ by up to 0.25 s among themselves.
+- **Against the leading runs:** behind all eleven, by 0.14–0.29 s (0.40–0.43 s for exact hints). On the wider 10,830 turns it shares with them alone, the gaps shrink to 0.05–0.26 s, and its gap to rule 1 shrinks from 0.27 s to 0.09 s.
+- **Why it trails rule 1:** it finishes about as many reads before their turn arrives (419 against 367), but they wait much longer for it, 60 s against 12 s at the 90th percentile. They therefore hold five times the host memory, so more reads of arrived turns are refused room (625 against 396) and more history is recomputed.
+- **What it means for the design:** this is the deck's argument for rule 1 observed in a run. A fixed percentile cannot tell a turn about to arrive from one a minute away; starting by expected cost can. The edge over this fixed percentile is 0.09–0.27 s on one run each, and it changes nothing against the arms that start no read early.
+
+`ec_r3` (rule 3 alone) started at 8:57 PM ET, is running clean and ends about 10:59 PM ET. I will redraw `compare_c26_designs` when it lands; `fq90` is not part of that figure set. The queue is unchanged and ends about 7:15 AM ET Friday.
+
+The record is in `results/campaign26/DECISIONS.md`, with the new memory check in `results/campaign26/checks/pin_hold.py`. Still open from the last report: whether to add an all-four-rules arm at 100 GB.
+
+--- [29834] 2026-11-13T04:08:49.960Z len 2046 ---
+`ec_r3` (rule 3 alone) finished clean at 10:58 PM ET and lands level with JIT p50: 1.48 s mean TTFT against 1.35–1.60 s. The eviction rule on its own buys nothing on TTFT; the gain of the pricing arms comes from rule 1.
+
+This arm (one run) is JIT p50 with one change: eviction by chance of return within 30 s instead of by next use. With the earlier arms it completes the two-by-two of rules 1 and 3. The table gives mean TTFT on the 6,715 returning turns every run shares, one value per run:
+
+| | Next-use eviction | Rule 3 (evict by return chance) |
+|---|---|---|
+| JIT p50 read timing | 1.35, 1.48, 1.60 s | 1.48 s |
+| Rule 1 (start by expected cost) | 0.67 s | 0.66, 0.78 s |
+
+- **Rule 3:** it moves TTFT by −0.12 to +0.13 s without rule 1 and by −0.02 to +0.10 s with it, so there is no effect in either row. Against the JIT p50 run on the same build the difference is within 0.02 s.
+- **Rule 1:** it is worth 0.68–0.93 s under next-use eviction and 0.71–0.83 s under rule 3, with every interval clear of zero.
+- **Why rule 3 cannot help here:** the reads still finish early and wait for their turn, holding on average 27.9K of the 44K free tokens of host memory (JIT p50: 24.6K). Memory pinned by a read is outside any eviction rule.
+- **SSD traffic:** 4–7 % fewer pages than each JIT p50 run. That is one run, so it needs a repeat before it counts.
+
+For the paper's ablation, rule 3 is not a source of the TTFT gain at this setting; its only candidate benefit is the SSD saving.
+
+Figures in `results/compare_c26_designs/` are redrawn: `timeline_ec_r3.png` is new and `ec_wait_split.png` has a row for the arm. `compare.png` is unchanged because rule 3 alone, like rule 1 alone, is not one of its compared arms; say if you want either added.
+
+`nofc_c128` (128 users, the rival that uses no gap forecast) started at 11:00 PM ET, is running clean and ends about 1:02 AM ET. The queue is unchanged and ends about 7:10 AM ET Friday. The record is in `results/campaign26/DECISIONS.md`. Still open: whether to add an all-four-rules arm at 100 GB.
+
+--- [29851] 2026-11-13T05:11:00.180Z len 655 ---
+About 7 hours: four arms are left, and the queue should finish around 7:10 AM ET today (Friday 13 Nov). It is 12:11 AM ET now.
+
+| Arm | Setting | Ends about (ET) |
+|---|---|---|
+| `nofc_c128` (running, clean, 51 min left) | 128 users, 160 GB, no gap forecast | 1:02 AM |
+| `nofc_noend_h100` | 44 users, 100 GB, no hints | 3:05 AM |
+| `jit_p50_h100` | 44 users, 100 GB, JIT p50 | 5:08 AM |
+| `jit_exact_h100` | 44 users, 100 GB, JIT exact | 7:11 AM |
+
+Each arm takes about 2 h 03 min, including server start and shutdown. The estimate assumes no host outage; a preemption reruns the interrupted arm from scratch, which adds up to 2 hours plus the downtime.
+
+--- [30058] 2026-11-13T06:07:20.163Z len 1991 ---
+`nofc_c128` finished clean at 1:02 AM ET. At 128 users the rival with no gap forecast lands level with the old oracle and the pricing arm: 20.57 s mean TTFT against 20.58 s and 20.57 s.
+
+This arm reads a turn's history from SSD only when the turn arrives, and evicts ended sessions first and queued turns last. Each arm has one run at 128 users, so no order between them counts as shown.
+
+| First 6,900 s, 128 users, 160 GB | Old oracle | JIT exact | JIT p50 | Rules 1+3+4 | No hints | No gap forecast (`nofc_c128`) |
+|---|---|---|---|---|---|---|
+| Mean TTFT | 20.58 s | 20.93 s | 20.98 s | 20.57 s | 20.84 s | 20.57 s |
+| Turns sent | 15,525 | 15,384 | 15,366 | 15,502 | 15,418 | 15,519 |
+| SSD pages read | 1,438K | 998K | 1,195K | 1,049K | 1,153K | 1,122K |
+
+- **TTFT:** every arm that keeps the history of queued turns lands within 0.41 s (2 %) of the others, with or without hints, a gap forecast or a price.
+- **Why:** the GPU queue decides the wait. A turn waits about 20 s either way; reading at arrival only moves about a second of that wait from the queue to the read.
+- **SSD traffic:** this is what differs. This arm reads 22 % fewer pages than the old oracle and 7 % more than the pricing arm.
+
+So the 128-user setting cannot rank read-start rules. No figure changed: the 128-user figure set holds the five design series, not the rivals.
+
+One fix on my side: my watcher's error checks covered only the 70 GB and 160 GB run folders, so the three 100 GB arms would have been watched for their end only. I replaced it with a widened copy, `results/campaign26/checks/watch_all.sh`, before the first 100 GB arm's client started, so nothing ran unchecked.
+
+`nofc_noend_h100` (44 users, 100 GB, no hints) is running clean since 1:07 AM ET and ends about 3:09 AM ET. Its server took 4.5 minutes to start because the model weights had to be re-read from disk after the 160 GB arm. The queue is unchanged and now ends about 7:15 AM ET. The record is in `results/campaign26/DECISIONS.md`.
+
+--- [30745] 2026-11-13T19:46:03.158Z len 3146 ---
+The queue is running again: the host went down twice more, and I relaunched it at 2:28 PM ET. The first 100 GB arm was cut at minute 84 by the first outage, and its partial run already answers most of the 100 GB question.
+
+## What happened
+- **2:30 AM ET:** host went down, 84 minutes into the first 100 GB arm (the no-hint arm).
+- **12:02 PM ET:** host came back and I relaunched; it went down again at 12:06 PM, before the server had finished starting.
+- **2:27 PM ET:** host came back; relaunched at 2:28 PM on a new GPU unit. The arm booted with the right settings and is running clean.
+
+The three 100 GB arms rerun from scratch, queue unchanged. If the host stays up:
+
+| Arm | Ends about (ET, Friday) |
+|---|---|
+| No hints, 100 GB | 4:35 PM |
+| JIT p50, 100 GB | 6:38 PM |
+| JIT exact, 100 GB | 8:41 PM |
+
+## What the cut run shows
+With 30 GB more host memory, the no-hint arm almost stops reading from SSD and beats exact hints at 70 GB. This is one run and only its first 79 minutes; the rerun in progress is its repeat.
+
+| 8,030 shared returning turns | No hints, 100 GB (cut) | No hints, 70 GB (two runs) | JIT exact, 70 GB (two runs) |
+|---|---|---|---|
+| Mean TTFT | 0.37 s | 0.65, 0.66 s | 0.48, 0.51 s |
+| Mean TTFT in the first load episode | 0.51 s | 1.77, 1.77 s | 1.12, 1.25 s |
+| Turns reading from SSD | 56 (0.7 %) | 1,125, 1,138 (14 %) | 691, 743 (9 %) |
+| Wait for the turn's own SSD read, per turn | 0.006 s | 0.22, 0.23 s | 0.07 s |
+| Turn latency | 10.7 s | 11.3 s | 11.3 s |
+
+- **On your question about a larger host pool:** it does not make room for earlier reads; it removes the reads. Only 0.006 s per turn is left for any read-start rule to save at 100 GB, so I expect the two JIT arms to tie with this one.
+- **Pool sweep (CPU replay):** I fitted the existing eviction replay at 70 GB and it reproduces the 100 GB measurement (0.7 %). It says reads roughly halve for every 5 GB above 70 GB, so 70 GB is already the setting most favourable to hints at 44 users.
+- **Limit:** the second, heavier load episode comes after minute 84, so the full run should show somewhat more reads.
+
+## What this changes in the open decisions
+- **136 GB arm:** I'd drop it; the replay puts it at essentially no reads.
+- **All-four-rules arm at 100 GB:** I recommended adding it earlier; I now recommend against, since there is almost nothing for the rules to price.
+- **Original HiCache at 100 GB:** this is the control that is missing. Without it we cannot say whether the extra memory alone fixes HiCache or the no-hint arm's mechanisms are still needed. It would be one more 2-hour arm; I have not queued it.
+
+## In progress
+- An audit of everything left undone (the campaign record, the session transcript, the deck, the paper plan, the code and the figures) is running with ten reader agents. I'll send the verified list and continue the items that are mine to finish.
+- A 100 GB figure set is wired up in `agent_cache/results/compare_c26_designs_h100/`. It currently holds the cut run's timeline and an overview, and fills in as the arms land.
+
+The record is in `agent_cache/results/campaign26/DECISIONS.md` (last three entries).
+

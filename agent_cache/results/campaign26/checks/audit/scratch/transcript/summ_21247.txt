@@ -1,0 +1,143 @@
+This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+<system-reminder>
+<tools-used-before-summary>Agent, AskUserQuestion, Bash, Edit, Read, Skill, StructuredOutput, TaskStop, ToolSearch, WebFetch, WebSearch, Workflow, Write</tools-used-before-summary>
+</system-reminder>
+Summary:
+1. Primary Request and Intent:
+   - **Background:**
+     - H200 SGLang HiCache KV tiering (GPU / host / SSD).
+     - Campaign 25 request (2026-11-04): "Let's do the following evaluations, 1) with 128 users, do a hint-free arm to study the hint's effectiveness, 2) in the 44 users scenario, let's increase the QPS to 0.5 and 1, for the original hicache, hint free, jit exact and jit_p50, each 2 hours."
+     - The user chose "Arrival 0.5 and 1 as asked", then: "Let's cancel the QPS=1 case for now and only run the QPS=0.5 case for now."
+   - **The 128-user hint-usefulness topic is CLOSED** ("Let's stop here, I think we can move on with this topic"). Do not raise option I, `three_tier_wc_dl` at 128 users, or F's `oracle_v2` at 128 again unless asked.
+   - **Latest user request:** "Let's add some evaluation on top of existing ones to make it last 8-9 hours from now in total for cost effective considerations. What do we want to know but didn't evaluation yet".
+     - I queued base_a01_rep, poll0_a01 and dl_a01, ending about 13:40Z.
+     - That report was already sent, with: "I'll report the arrival-0.5 comparison about 08:20Z, marked provisional until the repeat lands about 10:00Z, and the rest after 13:40Z."
+     - A later status message promised: "I'll send the full four-arm comparison and plots after `jit_p50_a05` ends."
+   - **Standing constraints:**
+     - Commit only when asked.
+     - "Published" means a paper; do NOT post, submit, send upstream or open PRs without asking.
+     - Do not edit `agent_cache/scripts/`, launchers (`c25.sh`, `watch.sh`) or frozen engines while a campaign runs. Appending to `queue.txt` is allowed.
+     - Stop runs only for errors: a traceback, client errors, a dead server, or a client that stops sending. A slowdown is a result.
+     - The host is preemptible. On a shutdown, empty `results/.current_run` first, then relaunch at once.
+     - Host /tmp is wiped on reboot; keep durable work in `agent_cache/frozen/` or `results/`.
+     - Doc style: concise, plain, no [RH]-style tags, real system first, log small issues rather than evaluating them.
+     - Repo rules: comment style, msgspec not dataclasses, no defensive getattr.
+     - Hint format / engine policy design: build nothing until the user says go.
+     - No security-specific instructions were stated by the user.
+
+2. Key Technical Concepts:
+   - **Arms (scripts/start_server.sh):**
+     - `three_tier_wc`: original HiCache (LRU, write_through, poll 8, 8 attempts).
+     - `three_tier_wc_poll0`: COMMON + HOST + L3_WC + `--hicache-storage-prefetch-retry-poll-interval 0 --hicache-storage-prefetch-retry-max-attempts 8`; no pins; never run before.
+     - `three_tier_wc_dl`: V2 (deadline order, pin 0.3) + RQ poll 8/8. The start_server check expects "deadline, pin 0.3, banner 1 retry_poll_interval=8".
+     - `three_tier_wc_dl_poll0`: hint-free; V2 + poll 0.
+     - `three_tier_wc_oracle_v2_nu_owned`: JIT + arrival gate/hold; engine_owned_20261101.
+   - **Engine paced retries:**
+     - `StoragePrefetchRetries.poll_miss` arms a non-immediate retry; `pop_ready` cancels it if interval <= 0 (storage_prefetch.py:63-66).
+     - `_retry_storage_prefetch` logs a warning "reissue cap reached" at max attempts. The per-attempt re-issue is logged only at debug level.
+     - `_prefetch_after_device_hit_loss` logs "device prefix shrank before admission ... reissuing storage lookup" unless past the cap.
+     - poll_miss sites in unified_radix_cache.py: rate-limited decline :2127; terminate with no host_indices :2341; :2987/:3007 (SRS); controller miss termination / below-threshold :3220/:3229.
+     - `_prefetch_outcome_stats` (attempts, declined_rate_limited, etc.) are NOT in server.log.
+   - **Landed-read-lost rule (lost_after_landing.py):** loaded > 0, reply_reprefilled > 64, and cached_details.storage < 0.5 × loaded.
+   - **Workload:** 44 users, 70 GB, x10 gaps, USERS=768, TURNS=50, SEED=0. The same users arrive in the same order at every rate. Load metric: context of sessions not parked in a gap of 60 s or more; knee near 1,050K tokens.
+
+3. Files and Code Sections:
+   - **`frozen/oracle_scripts_staging/c25_h/compare_h.py`** (NEW).
+     - Run from agent_cache/: `nice -n 10 python3 -I -B frozen/oracle_scripts_staging/c25_h/compare_h.py | tee results/campaign25/compare_h.out`.
+     - DESC order: baseline (c21 `20261101_082229_three_tier_wc_custom_L1nat_H70`), base_rep, poll0, dl, hintfree (c21 `20261101_122705_three_tier_wc_dl_poll0_custom_L1nat_H70`), jit_exact (c23 `20261101_202142_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70`).
+     - `LABEL = {"base_a01_rep": "base_rep", "poll0_a01": "poll0", "dl_a01": "dl"}`, read from campaign25/manifest.txt.
+     - MARGIN = 300: turns sent at least 300 s before the arm's last send.
+     - ORDER_RUN = c21 oracle `20261101_102434_...`; STRETCHES as compare_a05.
+     - Regexes: IO with rid, START prefetch_start, PIN srs_pin, EVICT, SUCC "HiCache prefetch success ... loaded=", SHR shrank, CAP "reissue cap reached".
+     - `load()` returns pages, reads, loaded, starts, pinned, lost, shrank, capped, evict, minute and position.
+     - Sections:
+       - per-arm summary;
+       - hardware control;
+       - `same(A, "all arms")`: TTFT = queue + after | recomputed | landed-lost % | share of gain from baseline and from base_rep to jit_exact | by stretch;
+       - run-to-run baseline vs base_rep (paired, by stretch), only if base_rep is present;
+       - mechanisms table;
+       - by-position;
+       - per-15-min;
+       - minute reached.
+     - Tested on the 3 fixed arms: 7,283 turns, baseline 5.48, hint-free 1.54 (79 %), jit_exact 0.51.
+   - **`results/campaign25/compare_a05.out`** (NEW): the full four-arm arrival comparison, with the numbers in section 5.
+   - **`results/compare_c25_a05/arrival_overview.png` and `.csv`**: redrawn 07:55Z with all four 0.5 arms.
+   - **`results/campaign25/DECISIONS.md`**, added:
+     - `jit_exact_a05` entry: 12,532 turns; 0.76 vs 0.72 on 11,804 turns; 0.66 on 6,762; hint-free keeps 83 % (78 % at 0.1).
+     - `jit_p50_a05` entry: 10,566 turns; 1.77 vs 1.65 on 10,076; decode 47.1 vs 48.3.
+     - "**Part 2 result**" paragraph: order and shares hold; near-repeats; only the baseline moves (+2.03 s, congests from minute 30 instead of 45, main episode lasts to the end of the 2 h); base_a01_rep decides.
+     - A Part 3 "Script:" bullet for compare_h.py: 979 landed-lost turns = 91 % of recompute, 23 cap, 662 multi-lookups.
+   - **`CAMPAIGN23_FINDINGS.md`**:
+     - header: "Updated 2026-11-05 with campaign 25's 44-user arms at a faster arrival rate."
+     - new In-short bullet "**The 44-user results hold when users arrive five times faster**", ending "(due 2026-11-05 about 10:00Z) tells whether that is the rate or its run-to-run spread". This bullet must be updated after the repeat.
+     - How-sure sentence: near-repeats +0.01, +0.04, +0.12 s.
+   - **`PAPER_PLAN.md`**:
+     - item 1: appended the campaign 25 near-repeat sentence (GPU unit `GPU-2c5a8afb`; the baseline's straight repeat is in the queue).
+     - row 18: "Pins against paced retries off being separated (campaign 25's `poll0_a01` and `dl_a01`, due 2026-11-05 about 13:40Z)."
+   - **Memory:**
+     - `hint-realism-analysis.md`: appended the 2026-11-05 07:54Z entry.
+     - `MEMORY.md`: the campaign 25 line now includes "arrival-0.5 arms done 07:54Z 2026-11-05 (hinted and hint-free arms repeat within 0.01-0.12 s, only original HiCache moves, +2.0 s)".
+
+4. Errors and fixes:
+   - compare_h.py's first version had junk lines: `reads = collections.Counter(... if False)` and `{sum(1 for _, _, _ in ()) or ...}`. Fixed via a python replace: added a `reads` Counter incremented per s2h_io, and the column now uses `st.mean(d['reads'][k] for k in rd)`.
+   - A zsh glob error when no client dir existed yet for base_a01_rep: harmless; checked again later.
+   - No user feedback on errors in this window.
+
+5. Problem Solving:
+   - **Arrival 0.5 is complete.** The 44-user results hold. Hint-free, jit_exact and jit_p50 are near-repeats. Only the baseline moves, +2.03 s.
+   - **base_a01_rep** is verified as a true repeat: identical server args apart from the random seed, same frozen engine.
+   - **Option-H script** is ready and validated against known numbers.
+
+6. All user messages:
+   - "So the 128 hint free confirms that the hint is useful, right?"
+   - "Let's stop here, I think we can move on with this topic"
+   - "How long will the evaluation take"
+   - "Let's add some evaluation on top of existing ones to make it last 8-9 hours from now in total for cost effective considerations. What do we want to know but didn't evaluation yet"
+   - Earlier: the campaign 25 request, "Arrival 0.5 and 1 as asked", and "Let's cancel the QPS=1 case for now and only run the QPS=0.5 case for now."
+   - Nothing new from the user in this window; the notifications were system events.
+
+7. Pending Tasks:
+   - Send the user the four-arm arrival-0.5 report (text). It is promised and not yet sent this window.
+   - **Watcher bc48jp6y9** wakes at each arm's end. Each time:
+     - check launcher.log and the manifest;
+     - confirm no client errors or tracebacks;
+     - restart `cd /home/wanhr/sglang/agent_cache && bash frozen/oracle_scripts_staging/c25_load/watch.sh` in the background.
+   - **Schedule:** base_a01_rep ends about 09:58-10:01Z; poll0_a01 about 11:50Z; dl_a01 about 13:40Z.
+   - **After base_a01_rep:**
+     - run compare_h.py (tee to `results/campaign25/compare_h.out`), giving the run-to-run spread vs `20261101_082229`;
+     - update the DECISIONS.md, CAMPAIGN23_FINDINGS.md In-short bullet, PAPER_PLAN.md and memory;
+     - report whether the baseline's +2.03 s at 0.5 is the rate or noise.
+   - **On poll0_a01 launch:**
+     - verify `'hicache_storage_prefetch_retry_poll_interval': 0` in its server.log and that the client sends.
+     - If the launch fails, c25.sh exits: comment out the line in queue.txt and relaunch c25.sh.
+   - **After dl_a01:** the full option-H analysis with compare_h.py (2x2: baseline/rep, poll0, dl, hint-free, plus jit_exact); docs and report. A plot is optional.
+   - **On preemption:**
+     1. `docker start sglang_hicache`
+     2. `docker exec sglang_hicache bash -c ': > /sgl-workspace/sglang/agent_cache/results/.current_run'`
+     3. Record the GPU UUID in hardware.txt.
+     4. Relaunch: `docker exec -d sglang_hicache bash -c 'nohup bash /sgl-workspace/sglang/agent_cache/frozen/oracle_scripts_staging/c25_load/c25.sh >> /sgl-workspace/sglang/agent_cache/results/campaign25/launcher.log 2>&1'`
+     5. Restart the watcher.
+
+8. Current Work:
+   - After jit_p50_a05 finished (07:54:34Z, clean), I:
+     - restarted the watcher (bc48jp6y9);
+     - ran compare_a05.py to `results/campaign25/compare_a05.out`;
+     - redrew `arrival_overview.png`;
+     - updated DECISIONS.md, CAMPAIGN23_FINDINGS.md, PAPER_PLAN.md and memory;
+     - verified base_a01_rep is serving and is a true repeat.
+   - The last step was the memory update ("ok"). The final text report to the user about the four-arm comparison had not been written yet.
+
+9. Optional Next Step:
+   - Send the user the four-arm arrival report, as promised: "I'll send the full four-arm comparison and plots after `jit_p50_a05` ends." Content:
+     - On the 6,762 shared turns at arrival 0.5: original 7.57 s, hint-free 1.85 s (83 %), p50 1.65 s (86 %), exact 0.66 s. At 0.1 on the same turns: 5.54, 1.61, 1.62, 0.51.
+     - The paired near-repeats: +0.01, +0.04, +0.12; baseline +2.03 s, provisional until base_a01_rep about 10:00Z.
+     - The figure at `results/compare_c25_a05/arrival_overview.png`.
+     - The docs updated.
+     - base_a01_rep running since 07:56Z as a verified true repeat.
+   - Then wait for watcher bc48jp6y9 at base_a01_rep's end and run compare_h.py.
+
+If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: /home/wanhr/.claude/projects/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d.jsonl
+Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
+
+The messages after this summary are the most recent messages from before compaction, kept verbatim. The summary was written without seeing them, so something it says has not happened yet may already have happened in them.

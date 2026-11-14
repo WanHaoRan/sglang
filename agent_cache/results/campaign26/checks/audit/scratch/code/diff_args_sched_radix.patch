@@ -1,0 +1,422 @@
+diff --git a/python/sglang/srt/arg_groups/choices.py b/python/sglang/srt/arg_groups/choices.py
+index 14d9f7dfcb..8c76497f63 100644
+--- a/python/sglang/srt/arg_groups/choices.py
++++ b/python/sglang/srt/arg_groups/choices.py
+@@ -181,7 +181,15 @@ FP4_GEMM_RUNNER_BACKEND_CHOICES = [
+     "marlin",
+ ]
+ 
+-RADIX_EVICTION_POLICY_CHOICES = ["lru", "lfu", "slru", "priority", "tlru", "next_use"]
++RADIX_EVICTION_POLICY_CHOICES = [
++    "lru",
++    "lfu",
++    "slru",
++    "priority",
++    "tlru",
++    "next_use",
++    "return_chance",
++]
+ 
+ RL_ON_POLICY_TARGET_CHOICES = ["fsdp"]
+ 
+diff --git a/python/sglang/srt/arg_groups/field_order.py b/python/sglang/srt/arg_groups/field_order.py
+index 346591cfac..99800437eb 100644
+--- a/python/sglang/srt/arg_groups/field_order.py
++++ b/python/sglang/srt/arg_groups/field_order.py
+@@ -520,6 +520,10 @@ POSITIONAL_FIELD_ORDER = (
+     "hicache_storage_next_turn_prefetch",
+     "hicache_storage_next_turn_reply_key_source",
+     "hicache_storage_next_turn_read_timing",
++    "hicache_storage_next_turn_landing_quantile",
++    "hicache_storage_next_turn_memory_price",
++    "hicache_storage_next_turn_price_learning",
++    "hicache_storage_next_turn_soft_pins",
+     "hicache_storage_next_turn_arrival_gate",
+     "hicache_storage_next_turn_arrival_hold",
+     "hicache_storage_read_order",
+diff --git a/python/sglang/srt/arg_groups/fields/memory.py b/python/sglang/srt/arg_groups/fields/memory.py
+index 4c56184807..3096e20204 100644
+--- a/python/sglang/srt/arg_groups/fields/memory.py
++++ b/python/sglang/srt/arg_groups/fields/memory.py
+@@ -39,7 +39,17 @@ class Memory(msgspec.Struct):
+                 "both in --radix-eviction-policy-config), then un-hinted nodes "
+                 "by LRU, and last the sessions returning soonest; it needs "
+                 "--hicache-storage-next-turn-prefetch observe|on and degrades to "
+-                "finished-first LRU on un-hinted traffic. See "
++                "finished-first LRU on un-hinted traffic. 'return_chance' evicts "
++                "the session least likely to return within horizon_s (default 30, "
++                "in --radix-eviction-policy-config) given how long it has been "
++                "idle, from the gap distribution of its next-turn hint: ended "
++                "sessions first, then un-hinted nodes by LRU, then hinted sessions "
++                "by rising chance, and queued turns last; no forecast ends a "
++                "session. Its 'score' is 'entry' (the hint's distribution, default), "
++                "'samples' (the gaps the engine has seen for the entry's key), "
++                "'lru' (no forecast: only the end signal and the queue) or 'queue' "
++                "(the queue alone: ended sessions rank by LRU too). It needs "
++                "--hicache-storage-next-turn-prefetch observe|on. See "
+                 "https://docs.sglang.io/docs/advanced_features/radix_eviction_policy "
+                 "for what each policy optimizes for."
+             ),
+@@ -261,11 +271,63 @@ class Memory(msgspec.Struct):
+                 "--hicache-storage-read-order deadline. 'horizon': as soon as the span "
+                 "is missing and the predicted admission is near. 'just_in_time': only "
+                 "when the load estimate says the read must start, which holds pinned "
+-                "memory for less time but depends more on the forecast."
++                "memory for less time but depends more on the forecast. "
++                "'expected_cost': start the read where the expected stall equals the "
++                "expected rent of the host memory it pins, under the hint's gap "
++                "distribution and --hicache-storage-next-turn-memory-price, or leave "
++                "it to the turn's arrival when that costs less; a landed read gives "
++                "its pin back once holding it no longer pays, and no forecast ends a "
++                "plan. 'arrival': never read before the turn arrives; the plan only "
++                "serves the arrival gate, the arrival hold and the protection of "
++                "queued turns, so no gap forecast is used."
+             ),
+-            choices=["horizon", "just_in_time"],
++            choices=["horizon", "just_in_time", "expected_cost", "arrival"],
+         ),
+     ] = "horizon"
++    hicache_storage_next_turn_landing_quantile: A[
++        Optional[float],
++        (
++            "Under --hicache-storage-next-turn-read-timing just_in_time with a gap "
++            "table: the quantile of the entry's gap distribution a read is timed to "
++            "land at, for every read size. Unset keeps the entry's p10."
++        ),
++    ] = None
++    hicache_storage_next_turn_memory_price: A[
++        float,
++        (
++            "Price of host memory for --hicache-storage-next-turn-read-timing "
++            "expected_cost, in seconds of TTFT per token-second pinned. It is the "
++            "starting price under --hicache-storage-next-turn-price-learning on."
++        ),
++    ] = 5e-5
++    hicache_storage_next_turn_price_learning: A[
++        str,
++        Arg(
++            help=(
++                "'on': move --hicache-storage-next-turn-memory-price every few seconds, "
++                "up while reads are refused host memory and down while the host "
++                "memory beyond the device mirror sits idle. 'harm': set it to what "
++                "staged reads cost the turns that had arrived, per token-second they "
++                "were pinned: the recomputation left to reads refused the room a "
++                "staged read held, counted once for each turn in the queue. Needs "
++                "--hicache-storage-next-turn-read-timing expected_cost."
++            ),
++            choices=["off", "on", "harm"],
++        ),
++    ] = "off"
++    hicache_storage_next_turn_soft_pins: A[
++        str,
++        Arg(
++            help=(
++                "'on': when the read of a turn that has arrived finds no host memory, "
++                "take it from reads staged for turns that have not arrived, least "
++                "likely to return soon first, instead of cutting or dropping the "
++                "arrived turn's read. Needs --hicache-storage-next-turn-prefetch on "
++                "and --hicache-storage-read-order deadline."
++            ),
++            choices=["off", "on"],
++        ),
++    ] = "off"
+     hicache_storage_next_turn_arrival_gate: A[
+         str,
+         Arg(
+diff --git a/python/sglang/srt/arg_groups/hicache_hook.py b/python/sglang/srt/arg_groups/hicache_hook.py
+index 57e5b6e90c..3542ad0db5 100644
+--- a/python/sglang/srt/arg_groups/hicache_hook.py
++++ b/python/sglang/srt/arg_groups/hicache_hook.py
+@@ -4,6 +4,7 @@
+ from __future__ import annotations
+ 
+ import logging
++import math
+ from typing import Any
+ 
+ from sglang.srt.arg_groups.overrides import (
+@@ -219,26 +220,39 @@ def resolve_storage_read_order(server_args: Any):
+             f"{cfg.hicache_storage_read_window_pages}."
+         )
+     arrival_hold = cfg.hicache_storage_next_turn_arrival_hold == "on"
++    soft_pins = cfg.hicache_storage_next_turn_soft_pins == "on"
+     if (
+-        cfg.hicache_storage_next_turn_arrival_gate == "on" or arrival_hold
++        cfg.hicache_storage_next_turn_arrival_gate == "on" or arrival_hold or soft_pins
+     ) and cfg.hicache_storage_next_turn_prefetch != "on":
+         raise ValueError(
+-            "--hicache-storage-next-turn-arrival-gate and "
+-            "--hicache-storage-next-turn-arrival-hold act on the next-turn prefetcher's "
++            "--hicache-storage-next-turn-arrival-gate, "
++            "--hicache-storage-next-turn-arrival-hold and "
++            "--hicache-storage-next-turn-soft-pins act on the next-turn prefetcher's "
+             "plans and need --hicache-storage-next-turn-prefetch on."
+         )
++    read_timing = cfg.hicache_storage_next_turn_read_timing
++    expected_cost = read_timing in ("expected_cost", "arrival")
++    validate_next_turn_pricing(cfg, expected_cost=expected_cost)
+     if cfg.hicache_storage_read_order == "fifo":
+         if pin > 0:
+             raise ValueError(
+                 "--hicache-storage-prefetch-pin-fraction > 0 needs "
+                 "--hicache-storage-read-order deadline."
+             )
+-        if arrival_hold:
++        if arrival_hold or soft_pins or expected_cost:
+             raise ValueError(
+-                "--hicache-storage-next-turn-arrival-hold holds parked reads, which "
+-                "needs --hicache-storage-read-order deadline."
++                "--hicache-storage-next-turn-arrival-hold, "
++                "--hicache-storage-next-turn-soft-pins and "
++                "--hicache-storage-next-turn-read-timing expected_cost or arrival act "
++                "on parked and pinned reads, which need --hicache-storage-read-order "
++                "deadline."
+             )
+         return
++    if expected_cost and pin <= 0:
++        raise ValueError(
++            "--hicache-storage-next-turn-read-timing expected_cost and arrival act on "
++            "pinned reads and need --hicache-storage-prefetch-pin-fraction above 0."
++        )
+     if cfg.hicache_storage_backend is None:
+         raise ValueError(
+             "--hicache-storage-read-order deadline needs a storage backend "
+@@ -263,6 +277,48 @@ def resolve_storage_read_order(server_args: Any):
+         )
+ 
+ 
++def validate_next_turn_pricing(cfg: Any, *, expected_cost: bool) -> None:
++    quantile = cfg.hicache_storage_next_turn_landing_quantile
++    if quantile is not None:
++        if not 0.0 < quantile < 1.0:
++            raise ValueError(
++                "--hicache-storage-next-turn-landing-quantile must be in (0, 1), got "
++                f"{quantile}."
++            )
++        if cfg.hicache_storage_next_turn_read_timing != "just_in_time":
++            raise ValueError(
++                "--hicache-storage-next-turn-landing-quantile times just-in-time "
++                "reads and needs --hicache-storage-next-turn-read-timing just_in_time."
++            )
++    price = cfg.hicache_storage_next_turn_memory_price
++    if not (math.isfinite(price) and price >= 0):
++        raise ValueError(
++            "--hicache-storage-next-turn-memory-price must be a finite, non-negative "
++            f"number, got {price}."
++        )
++    soft_pins = cfg.hicache_storage_next_turn_soft_pins == "on"
++    if soft_pins and cfg.hicache_storage_next_turn_read_timing != "expected_cost":
++        # The other routines stage a bumped plan again without a cap.
++        raise ValueError(
++            "--hicache-storage-next-turn-soft-pins on needs "
++            "--hicache-storage-next-turn-read-timing expected_cost."
++        )
++    if (
++        cfg.hicache_storage_next_turn_price_learning != "off"
++        and cfg.hicache_storage_next_turn_read_timing != "expected_cost"
++    ):
++        raise ValueError(
++            "--hicache-storage-next-turn-price-learning moves the price that "
++            "--hicache-storage-next-turn-read-timing expected_cost decides by."
++        )
++    if expected_cost and cfg.hicache_storage_next_turn_prefetch != "on":
++        raise ValueError(
++            "--hicache-storage-next-turn-read-timing expected_cost and arrival act on "
++            "the next-turn prefetcher's plans and need "
++            "--hicache-storage-next-turn-prefetch on."
++        )
++
++
+ def validate_hicache_host_memory_mode(server_args: Any):
+     cfg = resolving_view(server_args)
+     if cfg.hicache_host_memory_mode not in ("cache", "buffer_only"):
+diff --git a/python/sglang/srt/arg_groups/kv_cache_hook.py b/python/sglang/srt/arg_groups/kv_cache_hook.py
+index 6d820331e5..54f7675f2d 100644
+--- a/python/sglang/srt/arg_groups/kv_cache_hook.py
++++ b/python/sglang/srt/arg_groups/kv_cache_hook.py
+@@ -406,6 +406,33 @@ def handle_cache_compatibility(server_args: Any) -> None:
+                     f"in --radix-eviction-policy-config, got {value!r}."
+                 )
+ 
++    if cfg.radix_eviction_policy == "return_chance":
++        if cfg.hicache_storage_next_turn_prefetch == "off":
++            raise ValueError(
++                "--radix-eviction-policy return_chance scores sessions by the gap "
++                "distribution of their next-turn hint, which only "
++                "--hicache-storage-next-turn-prefetch observe|on provides."
++            )
++        config = cfg.radix_eviction_policy_config or {}
++        unknown = sorted(set(config) - {"horizon_s", "score"})
++        if unknown:
++            raise ValueError(
++                "--radix-eviction-policy return_chance takes 'horizon_s' and 'score' "
++                f"in --radix-eviction-policy-config, got {unknown}."
++            )
++        horizon = config.get("horizon_s", 30.0)
++        if not isinstance(horizon, (int, float)) or horizon <= 0:
++            raise ValueError(
++                "--radix-eviction-policy return_chance needs a positive 'horizon_s' "
++                f"in --radix-eviction-policy-config, got {horizon!r}."
++            )
++        score = config.get("score", "entry")
++        if score not in ("entry", "samples", "lru", "queue"):
++            raise ValueError(
++                "--radix-eviction-policy return_chance takes 'score' entry, samples, "
++                f"lru or queue in --radix-eviction-policy-config, got {score!r}."
++            )
++
+     if cfg.enable_hierarchical_cache and cfg.disable_radix_cache:
+         raise ValueError(
+             "The arguments enable-hierarchical-cache and disable-radix-cache are mutually exclusive "
+diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
+index 149e7309d7..b0e00cdc34 100644
+--- a/python/sglang/srt/managers/scheduler.py
++++ b/python/sglang/srt/managers/scheduler.py
+@@ -1433,6 +1433,10 @@ class Scheduler(
+             read_timing=get_memory().hicache_storage_next_turn_read_timing,
+             arrival_gate=get_memory().hicache_storage_next_turn_arrival_gate,
+             arrival_hold=get_memory().hicache_storage_next_turn_arrival_hold,
++            landing_quantile=get_memory().hicache_storage_next_turn_landing_quantile,
++            memory_price=get_memory().hicache_storage_next_turn_memory_price,
++            price_learning=get_memory().hicache_storage_next_turn_price_learning,
++            soft_pins=get_memory().hicache_storage_next_turn_soft_pins,
+         )
+         self.tree_cache.next_turn_prefetch = self.next_turn_prefetch
+ 
+diff --git a/python/sglang/srt/mem_cache/unified_radix_cache.py b/python/sglang/srt/mem_cache/unified_radix_cache.py
+index 82218286c2..115da551d4 100644
+--- a/python/sglang/srt/mem_cache/unified_radix_cache.py
++++ b/python/sglang/srt/mem_cache/unified_radix_cache.py
+@@ -304,9 +304,22 @@ class UnifiedRadixCache(BasePrefixCache):
+         self.read_not_before_fn: Optional[
+             Callable[[CacheRequestHandle, ParkedRead, int], Optional[float]]
+         ] = None
++        # Soft pins: the staged reads to give up for a read that found no host room.
++        self.soft_pin_victims_fn: Optional[
++            Callable[[CacheRequestHandle, int], list[CacheRequestHandle]]
++        ] = None
++        # Told the node a storage read's span was inserted as, for session-scored eviction.
++        self.prefetch_landed_fn: Optional[Callable[[CacheRequestHandle, NodeId], None]] = (
++            None
++        )
+         self.prefetch_pin_budget_tokens = 0
+         self.pinned_prefetch: dict[CacheRequestHandle, _PinnedPrefetch] = {}
+         self.pinned_prefetch_tokens = 0
++        # (request, tokens) of storage reads revoked or cut for host room since
++        # take_room_refusals() last ran; None until the next-turn prefetcher asks.
++        self.room_refusals: Optional[list[tuple[CacheRequestHandle, int]]] = None
++        # Host pool beyond a full device mirror, tokens; set with the read scheduler.
++        self.host_room_floor_tokens = 0
+         # Write-side dedupe: beliefs about what storage already holds, so
+         # re-inserts of hot prefixes skip the redundant backup.
+         self.storage_existence_cache = StorageExistenceCache()
+@@ -583,6 +596,10 @@ class UnifiedRadixCache(BasePrefixCache):
+         self.prefetch_pin_budget_tokens = int(
+             memory.hicache_storage_prefetch_pin_fraction * cc.mem_pool_host.size
+         )
++        self.host_room_floor_tokens = max(
++            self.page_size,
++            cc.mem_pool_host.size - self.token_to_kv_pool_allocator.size_full,
++        )
+         cc.extra_occupancy_fn = lambda: self.pinned_prefetch_tokens
+         logger.info(
+             "HiCache storage reads: order=deadline window_pages=%d budget_tokens=%d "
+@@ -2460,6 +2477,8 @@ class UnifiedRadixCache(BasePrefixCache):
+                 self._pin_prefetch(
+                     request, insert_result.inserted_host_node, loaded_from_storage
+                 )
++                if self.prefetch_landed_fn is not None:
++                    self.prefetch_landed_fn(request, insert_result.inserted_host_node)
+ 
+         self.dec_host_lock_ref(last_host_node_id, anchor_lock_params)
+         del self.ongoing_prefetch[request]
+@@ -2975,6 +2994,11 @@ class UnifiedRadixCache(BasePrefixCache):
+         if host_indices is None:
+             self.evict_host(alloc_len)
+             host_indices = cc.mem_pool_host.alloc(alloc_len)
++        if host_indices is None and self.soft_pin_victims_fn is not None:
++            shortfall = alloc_len - cc.mem_pool_host.available_size()
++            if shortfall > 0 and self._bump_staged_reads(request, shortfall):
++                self.evict_host(shortfall)
++                host_indices = cc.mem_pool_host.alloc(alloc_len)
+         if host_indices is None and not buffer_mode:
+             # Memory-pressure fallback: a shorter page-aligned prefix.
+             # (Cache mode only — buffer mode parks for the full hit.)
+@@ -2994,6 +3018,7 @@ class UnifiedRadixCache(BasePrefixCache):
+                     max(alloc_len, aux_hit_tokens), "host_capacity"
+                 )
+                 return False
++            self._report_room_refusal(request, hit_tokens)
+             self._finish_storage_prefetch(
+                 request, fulfilled_tokens=0, reason="host_capacity"
+             )
+@@ -3026,6 +3051,8 @@ class UnifiedRadixCache(BasePrefixCache):
+             )
+             return True
+ 
++        if alloc_len < hit_tokens:
++            self._report_room_refusal(request, hit_tokens - alloc_len)
+         self._resolve_storage_prefetch_tokens(
+             request, hit_tokens - alloc_len, reason="host_capacity"
+         )
+@@ -3044,6 +3071,36 @@ class UnifiedRadixCache(BasePrefixCache):
+         return True
+ 
+ 
++    def _bump_staged_reads(self, request: CacheRequestHandle, tokens: int) -> bool:
++        """Soft pins: release the staged reads the prefetcher gives up so this read
++        finds the `tokens` of host room it is short of; True when any pin was released."""
++        victims = self.soft_pin_victims_fn(request, tokens)
++        for victim in victims:
++            self.release_aborted_request(victim)
++        return bool(victims)
++
++    def pinned_prefetch_tokens_of(self, request: CacheRequestHandle) -> int:
++        pin = self.pinned_prefetch.get(request)
++        return 0 if pin is None else pin.tokens
++
++    def host_room_tokens(self) -> tuple[int, int]:
++        """(room, held): host tokens beyond the device mirror as it stands, and those
++        that pinned and in-flight storage reads hold."""
++        cc = self.cache_controller
++        mirror = self.tree_core.evictable_size() + self.tree_core.protected_size()
++        return (
++            max(0, cc.mem_pool_host.size - mirror),
++            cc.prefetch_tokens_occupied + self.pinned_prefetch_tokens,
++        )
++
++    def _report_room_refusal(self, request: CacheRequestHandle, tokens: int) -> None:
++        if self.room_refusals is not None:
++            self.room_refusals.append((request, tokens))
++
++    def take_room_refusals(self) -> list[tuple[CacheRequestHandle, int]]:
++        refusals, self.room_refusals = self.room_refusals or [], []
++        return refusals
++
+     def _park_storage_hit(self, operation) -> None:
+         """Deadline order: hold the hit without host memory until dispatch."""
+         request = operation.handle
+diff --git a/python/sglang/srt/mem_cache/utils.py b/python/sglang/srt/mem_cache/utils.py
+index 1f38b4284f..7d60ffaf9a 100644
+--- a/python/sglang/srt/mem_cache/utils.py
++++ b/python/sglang/srt/mem_cache/utils.py
+@@ -56,7 +56,10 @@ from sglang.srt.mem_cache.evict_policy import (
+     SLRUStrategy,
+     TLRUStrategy,
+ )
+-from sglang.srt.mem_cache.next_use_eviction import NextUseStrategy
++from sglang.srt.mem_cache.next_use_eviction import (
++    NextUseStrategy,
++    ReturnChanceStrategy,
++)
+ 
+ _EVICTION_POLICY_FACTORIES: dict[str, Callable[..., EvictionStrategy]] = {
+     "lru": LRUStrategy,
+@@ -68,6 +71,7 @@ _EVICTION_POLICY_FACTORIES: dict[str, Callable[..., EvictionStrategy]] = {
+     "slru": SLRUStrategy,
+     "tlru": TLRUStrategy,
+     "next_use": NextUseStrategy,
++    "return_chance": ReturnChanceStrategy,
+ }
+ 
+ 

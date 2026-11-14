@@ -1,0 +1,31 @@
+===== [29851] ts=2026-11-13T05:11:00.180Z
+About 7 hours: four arms are left, and the queue should finish around 7:10 AM ET today (Friday 13 Nov). It is 12:11 AM ET now.
+
+| Arm | Setting | Ends about (ET) |
+|---|---|---|
+| `nofc_c128` (running, clean, 51 min left) | 128 users, 160 GB, no gap forecast | 1:02 AM |
+| `nofc_noend_h100` | 44 users, 100 GB, no hints | 3:05 AM |
+| `jit_p50_h100` | 44 users, 100 GB, JIT p50 | 5:08 AM |
+| `jit_exact_h100` | 44 users, 100 GB, JIT exact | 7:11 AM |
+
+Each arm takes about 2 h 03 min, including server start and shutdown. The estimate assumes no host outage; a preemption reruns the interrupted arm from scratch, which adds up to 2 hours plus the downtime.
+===== [30058] ts=2026-11-13T06:07:20.163Z
+`nofc_c128` finished clean at 1:02 AM ET. At 128 users the rival with no gap forecast lands level with the old oracle and the pricing arm: 20.57 s mean TTFT against 20.58 s and 20.57 s.
+
+This arm reads a turn's history from SSD only when the turn arrives, and evicts ended sessions first and queued turns last. Each arm has one run at 128 users, so no order between them counts as shown.
+
+| First 6,900 s, 128 users, 160 GB | Old oracle | JIT exact | JIT p50 | Rules 1+3+4 | No hints | No gap forecast (`nofc_c128`) |
+|---|---|---|---|---|---|---|
+| Mean TTFT | 20.58 s | 20.93 s | 20.98 s | 20.57 s | 20.84 s | 20.57 s |
+| Turns sent | 15,525 | 15,384 | 15,366 | 15,502 | 15,418 | 15,519 |
+| SSD pages read | 1,438K | 998K | 1,195K | 1,049K | 1,153K | 1,122K |
+
+- **TTFT:** every arm that keeps the history of queued turns lands within 0.41 s (2 %) of the others, with or without hints, a gap forecast or a price.
+- **Why:** the GPU queue decides the wait. A turn waits about 20 s either way; reading at arrival only moves about a second of that wait from the queue to the read.
+- **SSD traffic:** this is what differs. This arm reads 22 % fewer pages than the old oracle and 7 % more than the pricing arm.
+
+So the 128-user setting cannot rank read-start rules. No figure changed: the 128-user figure set holds the five design series, not the rivals.
+
+One fix on my side: my watcher's error checks covered only the 70 GB and 160 GB run folders, so the three 100 GB arms would have been watched for their end only. I replaced it with a widened copy, `results/campaign26/checks/watch_all.sh`, before the first 100 GB arm's client started, so nothing ran unchecked.
+
+`nofc_noend_h100` (44 users, 100 GB, no hints) is running clean since 1:07 AM ET and ends about 3:09 AM ET. Its server took 4.5 minutes to start because the model weights had to be re-read from disk after the 160 GB arm. The queue is unchanged and now ends about 7:15 AM ET. The record is in `results/campaign26/DECISIONS.md`.

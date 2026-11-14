@@ -2,15 +2,15 @@
 
 Started 2026-11-11 02:49Z by request: review the deck "Pricing the Room" (the paper's design), build it, and compare it with
 JIT p50 and the other methods at the deck's workload. Setting: 44 users, 70 GB of host memory, gaps x10, `ARRIVAL=0.1`,
-`USERS=768`, `TURNS=50`, `SEED=0`, 2 h per arm, as campaigns 21 and 23, so turns pair with those runs by (conv, turn).
-GPU unit `GPU-605dfc41` (new after the 02:34Z boot).
+`USERS=768`, `TURNS=50`, `SEED=0`, 2 h per arm, as campaigns 21 and 23, so turns pair with those runs by (conv, turn). Two settings joined later: 128 users with 160 GB (`_c128` arms) and 44 users with 100 GB (`_h100` arms).
+GPU units, a new one after each host outage (each arm's is in `launcher.log`): `GPU-605dfc41` from the 02:34Z boot, `GPU-a7198925` from 20:40Z on 11 Nov, `GPU-6374d407` from 15:36Z on 12 Nov, `GPU-72ebee63` at 17:03Z on 13 Nov (no client started), `GPU-a8a5cbbe` from 19:28Z on 13 Nov.
 
-Launcher `frozen/oracle_scripts_staging/c26_ec/c26.sh`, watcher `watch.sh` there, queue `queue.txt`, finished arms in
-`manifest.txt`. A queue line may end with extra server flags; they reach the server through `SERVER_EXTRA` in
+Launcher `frozen/oracle_scripts_staging/c26_ec/c26.sh`, watcher `checks/watch_all.sh` (since 06:06Z on 13 Nov; `watch.sh` beside the launcher before that, which skips 100 GB runs), queue `queue.txt`, finished arms in
+`manifest.txt`, runs outside the manifest that a table may name (cut runs, earlier campaigns) in `extra_runs.txt`. A queue line may end with extra server flags; they reach the server through `SERVER_EXTRA` in
 `scripts/start_server.sh` (added before launch), so new arms need no script edits while the campaign runs.
 
 Relaunch after a shutdown: `: > results/.current_run`, `docker start sglang_hicache`, then the `docker exec -d` line at the
-top of `c26.sh`. Finished arms are skipped.
+top of `c26.sh`, then the watcher from `agent_cache/` (`bash results/campaign26/checks/watch_all.sh`). Finished arms are skipped; an interrupted arm reruns from the start.
 
 ## Review of the design, 2026-11-11
 
@@ -20,18 +20,18 @@ cases. Weak spots, with what the build does about each:
 
 | # | Weak spot | In the build |
 |---|---|---|
-| 1 | The model prices only the host-only room (44K of 712K tokens) and leaves GPU eviction to HiCache, but the replay puts most of the p50's cost in eviction, and the hinted arms already order GPU and host eviction by next use | rule 3 scores every session in GPU and host memory |
+| 1 | The model prices only the host-only room (44K of 712K tokens) and leaves GPU eviction to HiCache, but the replay puts most of the p50's cost in eviction, and the hinted arms already order GPU and host eviction by next use | rule 3 scores every session in GPU and host memory. Since: the runs put the p50's cost in when its reads start, not in eviction (`ec_r1`, `ec_r3` and `fq90` under Results) |
 | 2 | Past the p90 the hint says nothing. A lognormal tail makes an overdue session with a sharp key look certain to return, and there is no "never returns" mass; the replay signals every recorded end, which a real agent may not | checked in the eviction replay (below): the plain lognormal tail is as good as a pooled tail while ends are signalled, so nothing was added |
 | 3 | With no forecast ending a session, a staged read's pin has no release (600 s backstop only) | the pin is given back once the entry has passed (its last few support points plus 5 s). A release by rent against stall was tried first and dropped before any run: at 5e-5 a 64K-token pin costs 3.2 s per second, so it released almost every read as it landed |
 | 4 | The cost leaves out the queue (a recomputed token costs 6-8 times its prefill) and SSD bandwidth; the replay ties reading at arrival once recomputation is weighted x10 | not built |
-| 5 | The room is about 90K and moves; "idle room" has no meaning in a host pool that is always full of evictable histories | room = host pool minus device-resident tokens, held = pinned plus in-flight reads |
+| 5 | The room is about 90K and moves; "idle room" has no meaning in a host pool that is always full of evictable histories | room = host pool minus device-resident tokens, held = pinned plus in-flight reads. Since: the room measured 54K at the median and 40-46K in the load episodes, not 90K; 44K is the pool minus the GPU's mirror |
 | 6 | Rule 4 compares a flow (tokens refused per interval) with a stock (idle tokens); by my arithmetic it settles where refusals are as large as idle room, near JIT p50's regime | built as stated (`price-learning on`, bumped tokens count as refused), plus a second rule (`harm`): the price is the recomputation staged pins left to arrived turns, per token-second pinned. `ec_r1` logs both rules' signals every 5 s |
-| 7 | Soft pins touch the host allocation path for 2-6 % in the replay | built behind a flag, last in the queue |
+| 7 | Soft pins touch the host allocation path for 2-6 % in the replay | built behind a flag; ran as `ec_full`, with rules 1 and 3 and the harm price |
 | 8 | The asymptotic claim needs many sessions each small against the room; at 70 GB the room holds two or three histories | paper: present the theory as the rules' derivation; add a setting where the room holds ten or more |
 | 9 | Evidence is single runs and a replay of costs, not TTFT | same-GPU controls in this campaign |
-| 10 | The reference slide omits Continuum, Tokencake, Bidaw and CachedAttention, which `PAPER_INTRO.md` says must be cited; the queue-aware hint-free rival is not built | fixed-quantile rival is a flag; the rest is open |
+| 10 | The reference slide omits Continuum, Tokencake, Bidaw and CachedAttention, which `PAPER_INTRO.md` says must be cited; the queue-aware hint-free rival is not built | fixed-quantile rival is a flag and ran as `fq90`; the queue-aware rival with no hints was built as engine e and ran as `nofc_noend` (repeat, 128 users, 100 GB); the references are open |
 
-Two further points came out of the eviction replay (`frozen/ec_policy_20261111/evict_replay/FINDINGS.md`), which replays
+Three further points came out of the eviction replay (`frozen/ec_policy_20261111/evict_replay/FINDINGS.md`), which replays
 eviction on a run's own timeline with the pool sized so that LRU matches the hint-free arm's 19.4 % of returning turns
 reading from SSD:
 
@@ -42,12 +42,12 @@ reading from SSD:
 - Most of rule 3's gain is the end signal: LRU that evicts ended sessions first reads on 16.9 %. Without the signal the
   three-quantile score reads on 23.8 %, worse than LRU, and no tail fix helps; scoring from every sample of the key
   reads on 15.1 % with the signal and 18.0 % without. So the score should come from samples the engine collects per
-  key, and the fair rival is LRU with ended sessions first. Neither is built yet.
+  key, and the fair rival is LRU with ended sessions first. Neither was built at the review; both are scores of `return_chance` now (`samples`, `lru`): `lru` ran as `nofc`, `nofc_rep` and `nofc_c128`, `samples` never ran.
 
-## What was built (uncommitted; engine frozen as `frozen/engine_ec_20261111d`)
+## What was built (engines frozen as `frozen/engine_ec_20261111d` and `e`; in the author's commit a5fe6121c8 since 2026-11-13 17:03Z)
 
 - `python/sglang/srt/mem_cache/next_turn_policy.py`: the distribution (two-piece lognormal through p10/p50/p90, a point
-  for exact hints), `read_start` (rule 1), `worth_holding` (release), `chance_within` (rules 2 and 3), `PriceController`
+  for exact hints), `read_start` (rule 1), `chance_within` (rules 2 and 3), `PriceController`
   (rule 4).
 - `--hicache-storage-next-turn-read-timing expected_cost` with `--hicache-storage-next-turn-memory-price` (default 5e-5):
   rule 1. A landed read stays pinned until admission, as in the room model, or until its entry has passed. A plan lives
@@ -57,14 +57,14 @@ reading from SSD:
   and queued-turn protection. With `score: lru` below it is the rival that uses no gap forecast.
 - `--radix-eviction-policy return_chance` (`horizon_s`, default 30): rule 3 for GPU and host eviction. `score` picks
   where the chance comes from: `entry` (the hint's three quantiles), `samples` (the gaps the engine has seen for the
-  entry's key, then for every key), or `lru` (no forecast: ended sessions first, queued turns last, LRU between).
-- `--hicache-storage-next-turn-soft-pins on`: rule 2.
+  entry's key, then for every key), `lru` (no forecast: ended sessions first, queued turns last, LRU between), or `queue` (engine e only: `lru` with the end signal ignored too). The score is the chance alone: the plan's cost factor c_i and the deck's keep test are not built (every history read back whole from SSD costs the same, `PAPER_PLAN.md` Formulation 6; turns whose SSD copy was short are 2.7-2.9 % of TTFT seconds at most, `checks/limits/why_recompute.out`).
+- `--hicache-storage-next-turn-soft-pins on`: rule 2. It takes room from the staged read least likely to return within its own read time; the deck's comparison of the two due times is not built.
 - `--hicache-storage-next-turn-price-learning on | harm`: rule 4's price as the deck states it, or by measured harm.
-  The per-key recalibration of rule 4 is not built as such; `score: samples` is the engine learning each key's gaps.
+  The per-key recalibration of rule 4 is not built as such; `score: samples` is the engine learning each key's gaps. Nor are the cold-start bisection (every arm starts at the fitted 5e-5) and the count of evicted histories as refused (rule 3 ranks and reads no price); so "all four rules" (`ec_full`) is rules 1 to 3 with the harm-learned price.
 - `--hicache-storage-next-turn-landing-quantile q`: the fixed-quantile rival, under `just_in_time`.
 - New log events: `ec_start`, `ec_release`, `ec_bump`, `ec_price`.
 
-Three earlier freezes are deleted; none produced a run. The first had the release by rent. The second was stopped
+Engines d and e were cut from b684fd6464. `python/` and the tests at a5fe6121c8 equal engine e; d is e without the `queue` score (`next_use_eviction.py`, `fields/memory.py`, `kv_cache_hook.py`). `agent_cache/frozen/` is outside git (`.git/info/exclude`), and d's `changes_vs_HEAD.patch` lacks the new file `next_turn_policy.py` (e's has it). Three earlier freezes are deleted; none produced a run. The first had the release by rent. The second was stopped
 30 s into `ec_r1` when a two-reviewer code check came back (no crash paths, the defects below), and the hint-free control
 ran in its slot. A second review of the fixes cleared the arms to run and found rarer defects, fixed as well. In
 `engine_ec_20261111d`:
@@ -87,12 +87,12 @@ ran in its slot. A second review of the fixes cleared the arms to run and found 
   when its entry passes is given up; a fixed price is no longer clamped; the harm price's prior fades.
 
 Known and left: with soft pins, a turn that reached the scheduler within the last pass can have its landed staged read
-bumped (one pass wide; needs a scheduler hook to close). `ec_release` pops the loaded-span record, so a turn later
+bumped (one pass wide; needs a scheduler hook to close). `ec_release` and `ec_bump` pop the loaded-span record, so a turn later
 served by those still-resident pages counts as a host hit in the logs, not a storage hit.
 
 Unit tests are in `test/registered/unit/mem_cache/` (`test_next_turn_estimators.py`, `test_next_turn_prefetch.py`,
 `test_next_use_eviction.py`, `test_storage_read_dispatch.py`, `test_oracle_v2_flags.py`); they pass with the GPU hidden
-(`CUDA_VISIBLE_DEVICES=7`). `test_pp_prefetch_ticket.py` has two failures that the untouched engine has too.
+(`CUDA_VISIBLE_DEVICES=7`). `test_pp_prefetch_ticket.py` has two failures that the untouched engine has too (`test_allocation_error_preserves_ack_sequence_and_next_ticket`, `test_cancel_before_ticket_defers_free_until_final_ack`): its fixture builds the cache and the controller with `__new__` and lacks attributes this branch sets in `__init__` since f1885117c1 (`_storage_read_ms_ewma`, `pinned_prefetch`). By reading, not rerun.
 
 ## Arms
 
@@ -113,11 +113,13 @@ Unit tests are in `test/registered/unit/mem_cache/` (`test_next_turn_estimators.
 | `nofc_noend_c128`, `ec_r134_c128`, `nofc_c128` | `engine_ec_20261111e`, `d`, `d` | the deck's second setting, 128 users and 160 GB: the rival with no hints, rules 1, 3 and 4, then the rival with the end signal |
 | `jit_exact_d` | `engine_ec_20261111d` | added 2026-11-12: today's JIT on exact hints, the reference on this build and GPU unit |
 | `nofc_noend_rep` | `engine_ec_20261111e` | added 2026-11-12: the rival with no hints, again |
+| `nofc_noend_h100`, `jit_p50_h100`, `jit_exact_h100` | `engine_ec_20261111e`, `d`, `d` | added 2026-11-12: 44 users with a 100 GB host pool: the rival with no hints, JIT p50, JIT exact |
+| `jit_p50_d_cut`, `nofc_noend_h100_cut`, `oracle_v2`, `oracle_v2_p50`, the four `_c128` references | see `extra_runs.txt` | runs outside the manifest that tables name: two runs cut by outages, and references from campaigns 19, 21 and 23 |
 
 Every new arm is today's JIT p50 arm (`three_tier_wc_oracle_v2_nu_owned`: gate, hold, pin fraction 0.3) with the flags
 above replacing its read timing and eviction. The queue was rewritten 11:15Z after `nofc`, reordered 13:20Z after
 `ec_r1` and changed 15:16Z after `nofc_noend` (only unstarted lines; the order is under Results) and, after the outage
-of 16:32Z, the changes of 01:38Z and 02:38Z on 2026-11-12 and the outage of 07:07Z that day, ends about 12:10Z on 2026-11-13. `checks/validate_queue.py` parsed every unstarted line's flags with its own engine and ran the
+of 16:32Z, the changes of 01:38Z and 02:38Z on 2026-11-12, the outage of 07:07Z that day and the outages of 07:31Z and 17:06Z on 2026-11-13, ends about 01:41Z on 2026-11-14 with three 100 GB arms (`nofc_noend_h100` on engine e, `jit_p50_h100` and `jit_exact_h100` on engine d; defined under Results, 02:38Z on 12 Nov). `checks/validate_queue.py` parsed every unstarted line's flags with its own engine and ran the
 validation hooks: all pass.
 
 - **`engine_ec_20261111e`** (frozen 11:14Z) is engine d plus one eviction score, `"queue"`: an ended session ranks by
@@ -126,7 +128,7 @@ validation hooks: all pass.
 - **Not queued:** rule 3 from the engine's own samples. With `nofc` level with `ec_r13`, the score is worth less than
   one run can show; the replay put it at one point of read share.
 - **The 128-user price is learned, not fixed.** 5e-5 was fitted to 70 GB; the deck puts the price near zero at 160 GB.
-  If `ec_r134` shows the harm rule misbehaving at 44 users, the 128-user line changes before it starts.
+  If `ec_r134` shows the harm rule misbehaving at 44 users, the 128-user line changes before it starts. Since: `ec_r134` did show it (the price decays in calm stretches and is lowest just before each load episode), the 128-user line ran unchanged, and it made no difference there: rule 1 started no read early and the price never moved.
 
 ## Results
 
@@ -1034,3 +1036,178 @@ last, LRU between; it differs from the no-hint rival (`nofc_noend_c128`) in usin
   arrival, return chance with score `queue`, engine e; no tracebacks, no client errors) and ends about 08:09Z. Its
   server took 4.5 min to start, 212 s of it loading weights from a cold page cache after the 160 GB arm; the client
   starts only once the server is ready.
+
+**Outages of 07:31Z and 17:06Z on 2026-11-13: `nofc_noend_h100` cut at minute 84, relaunched 19:28Z on the arm's third
+GPU unit, the campaign's fifth.**
+
+- The host went down at 07:31Z, 84 min into `nofc_noend_h100` (client from 06:06:58Z: 8,800 turns, no client errors,
+  no tracebacks). It came back at 17:02Z and the launcher was restarted at 17:03Z on GPU unit `GPU-72ebee63`; the host
+  went down again at 17:06Z, before that server had finished starting (no client, nothing to keep). It came back at
+  19:27Z and the launcher was restarted at 19:28Z on GPU unit `GPU-a8a5cbbe`. The arm reruns from scratch.
+- The 84-minute run is kept as `nofc_noend_h100_cut` in `extra_runs.txt` (run
+  `20261113_060157_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H100`, GPU unit `GPU-6374d407`, the unit of every arm
+  from `ec_r134` to `nofc_c128`).
+- Queue unchanged, three arms: `nofc_noend_h100` to about 21:35Z, `jit_p50_h100` to about 23:38Z, `jit_exact_h100` to
+  about 01:41Z on 2026-11-14. Watcher: `checks/watch_all.sh`.
+- `nofc_noend_h100` booted with its settings at 19:33Z (44 users, 100 GB host pool of 1,017,280 tokens, reads at
+  arrival, return chance with score `queue`, engine e; no tracebacks, no client errors). Server start 4.3 min, 165 s of
+  it loading weights from a cold page cache after the reboot.
+
+**`nofc_noend_h100_cut` (the 84 min before the outage, GPU unit `GPU-6374d407`): with a 100 GB host pool the rival
+with no hints reads from SSD on 0.7 % of returning turns and reaches 0.37 s, ahead of JIT exact at 70 GB (0.48,
+0.51 s).** Tables: `compare_ec_h100cut.out` (ten runs), `pairs_ec_h100cut.out`, `stall_ec_h100cut.out`,
+`checks/latency_h100cut.out` (seven runs on the 8,030 returning turns they share: the cut run's first 79 min, which
+hold the first load episode and not the second). One run, cut; the rerun in progress is its repeat.
+
+| 8,030 shared returning turns | no hints, 100 GB (cut) | no hints, 70 GB | rules 1, 3, 70 GB | JIT exact, 70 GB |
+|---|---|---|---|---|
+| mean TTFT | 0.37 s | 0.65, 0.66 s | 0.60, 0.70 s | 0.48, 0.51 s |
+| in the first load episode (1,453 turns) | 0.51 s | 1.77, 1.77 s | 1.52, 2.21 s | 1.12, 1.25 s |
+| elsewhere (6,577 turns) | 0.34 s | 0.41, 0.41 s | 0.40, 0.37 s | 0.34, 0.34 s |
+| p99; turns over 10 s | 2.6 s; 0 | 7.2 s; 25 and 7.9 s; 47 | 6.8 s; 29 and 10.4 s; 94 | 5.0 s; 15 and 6.1 s; 27 |
+| read stall + rest of queue wait + after admission | 0.006 + 0.019 + 0.346 | 0.223 + 0.053 + 0.376, 0.230 + 0.060 + 0.367 | 0.141 + 0.072 + 0.390, 0.190 + 0.116 + 0.400 | 0.070 + 0.045 + 0.366, 0.072 + 0.052 + 0.383 |
+| turns reading from SSD | 56 | 1,125, 1,138 | 991, 1,006 | 691, 743 |
+| SSD pages | 17K | 329K, 328K | 266K, 258K | 210K, 223K |
+| recomputed tokens per turn | 34 | 127, 118 | 179, 217 | 106, 131 |
+| turn latency | 10.72 s | 11.35, 11.32 s | 11.52, 11.87 s | 11.26, 11.27 s |
+
+- **Clean to the cut.** 8,800 turns in 83.7 min, no client errors, no tracebacks. Decode 36.3 ms per step at 8-15
+  running and first-turn prefill 0.089 ms per token, in line with the other arms.
+- **Almost nothing is read.** 56 of the 8,030 returning turns read from SSD against 1,125 and 1,138 for the same arm
+  at 70 GB; host eviction 7.5 M tokens in 79 min against 47 M in 115 min; no read launch refused room; 396K tokens of
+  room idle at the price updates against 76K. The sessions not parked in a long gap hold up to about 1,010K tokens in
+  the first episode (`load K` in the position table), just under the pool's 1,017K.
+- **TTFT.** 0.28 and 0.29 s under the same arm at 70 GB (intervals -0.48 to -0.11), 1.26 s under it in the episode.
+  0.11 and 0.14 s under JIT exact at 70 GB (+0.02 to +0.26), all of it in the episode (0.61 and 0.74 s; elsewhere
+  0.00). No turn over 10 s.
+- **The wait.** The read stall is 0.006 s per turn (0.22-0.23 s at 70 GB, 0.07 s for JIT exact there). That is all a
+  read-start rule could take off at this pool size: the two JIT arms queued at 100 GB can lead this arm by a few
+  hundredths of a second at most, unless their eviction order costs or saves reads.
+- **Latency.** 0.54-0.63 s per turn under the 70 GB leaders, more than the TTFT gap: the time after the first token
+  is 0.3-0.4 s shorter as well.
+- **Reading.** At 44 users, 30 GB more host memory removes the reads themselves, with no hint: the larger pool does
+  not make room for earlier reads, it leaves almost none to start. Read-start rules have something to decide only
+  where the pool is well under the working load (70 GB here).
+- **Limits.** One run, its first 79 min. The second episode carries a higher load (about 1,050K tokens in the 70 GB
+  runs, above the pool), so the full run should read more there.
+
+**Host-pool sweep on the eviction replay (CPU, `checks/limits/pool_sweep.py` and `.out`): the reads fade by about half
+for every 5 GB above 70 GB, and the model fitted at 70 GB gives the 100 GB run's 0.7 %.** The one-pool model of
+`frozen/ec_policy_20261111/evict_replay/` (no pins, no GPU and host split, a run's own timeline; read shares, not
+TTFT), fitted on `nofc_noend_rep` so that LRU gives its measured 17.0 % of returning turns reading from SSD. Another
+host size moves the model's pool by the host pool's ratio or by the tokens added; both are shown, as a range.
+
+| Host pool | 70 GB | 75 | 80 | 85 | 90 | 100 | 110 | 160 |
+|---|---|---|---|---|---|---|---|---|
+| LRU (no hints) | 17.0 % | 9.4-10.8 | 4.9-6.7 | 2.7-4.2 | 1.5-2.7 | 0.8-1.2 | 0.6-0.8 | 0.2-0.3 |
+| LRU, ended sessions first | 13.7 % | 6.7-8.0 | 3.0-4.4 | 1.3-2.4 | 0.6-1.3 | 0.0-0.3 | 0.0 | 0.0 |
+| next use from the p50 | 15.5 % | 9.1-10.5 | 4.5-6.6 | 2.2-3.9 | 1.5-2.1 | 0.8-1.1 | 0.6-0.8 | 0.2-0.3 |
+| return chance within 30 s (rule 3) | 13.6 % | 8.2-9.5 | 4.3-6.1 | 1.8-3.6 | 0.6-1.8 | 0.0-0.3 | 0.0 | 0.0 |
+| exact next use | 9.1 % | 4.8-5.5 | 2.1-3.3 | 0.9-1.7 | 0.4-0.9 | 0.1-0.2 | 0.0-0.1 | 0.0 |
+
+- **Check.** On the 100 GB cut run's own timeline the model gives 0.7 % (by ratio) and 0.9 % (by tokens); measured
+  0.7 %. The 70 GB run's first 84 min give 0.7-0.8 % at those pools and 12.6 % at 70 GB, so the fall is the pool's
+  and not the timeline's.
+- **What a forecast can save in reads shrinks with the pool:** exact next use against LRU is 7.9 points of returning
+  turns at 70 GB, about 5 at 75 GB, 3 at 80 GB, 2 at 85 GB and under 1 from 100 GB.
+- **Rule 3's score does not beat ended-first LRU at any pool size** (row added 21:25Z; it was computed and left out):
+  level at 70 GB (13.6 against 13.7 %, with 13 % fewer tokens read per turn), behind from 75 to 85 GB (8.2-9.5 against
+  6.7-8.0 %, 4.3-6.1 against 3.0-4.4 %, 1.8-3.6 against 1.3-2.4 %), level again from 90 GB. So by the model a
+  pricing arm at a pool between 70 and 100 GB would not gain from the three-quantile score over the end signal.
+- **Reading.** 70 GB, the smallest pool that still mirrors the GPU, is the setting most favourable to hints at 44
+  users; a pool between 70 and 100 GB would show a smaller version of the 70 GB result, and a pool above 100 GB (the
+  136 GB arm once proposed) next to nothing. Not queued. A setting with more reads and a short GPU queue would need
+  more users per GB without the GPU saturating; the model cannot place it, since it replays one run's timeline.
+
+**The old routine on p50 hints at 44 users (campaign 21's run, named `oracle_v2_p50` in `extra_runs.txt`): 2.05 s on
+the 6,715 returning turns ten runs share, behind the same routine on exact hints (1.53 s) and JIT p50 on the new
+build (1.48 s).** Tables: `compare_ec_oldp50.out`, `pairs_ec_oldp50.out`. The deck's methods table lists the old
+routine with exact or p50 hints; the p50 one was in no table of this campaign (found by the audit of 13 Nov).
+
+- On the 9,274 returning turns the eight hinted and no-hint runs share: 1.97 s against 1.68 s with exact hints (+0.28 s,
+  interval [-0.02, +0.61], so that order is not separated on this pair), 1.51 s for JIT p50, 0.84 s for JIT exact,
+  0.91 and 0.92 s with no hints, 0.79 and 0.92 s for rules 1 and 3. It reads from SSD on 2,326 turns (1,852 with exact
+  hints) and 445K pages (355K).
+- One run from campaign 21 (its own GPU unit; 1.95 s there on that campaign's 7,768 shared turns). The old routine was
+  not rerun on the new build.
+
+**Audit of what is left undone (2026-11-13, asked for): `checks/audit/`.** `audit_20261113.json` holds 102 checked
+items with their evidence and 12 more from a completeness pass, `items.tsv` is the index, `scratch/` the readers'
+probes (unreviewed). Done from it the same day: the head, the review table, "What was built" and the Arms table above
+were corrected in place (additions marked "Since:"; the earlier text is `checks/audit/DECISIONS_before_head_edit.md`),
+rule 3's row in the pool sweep, the old routine's p50 row, and `checks/limits/price_path.py` saved beside its output.
+At 21:27Z the author stopped the follow-up analyses and at 21:29Z asked for nothing more until the 100 GB arms are
+done, so the rest is parked: by owner in `items.tsv`, 17 items the lead could finish, 9 that wait for the arms, 52
+decisions for the author and 24 held edits to the paper docs and the deck. The audit's corrections to entries below
+(`record_corrections` in the JSON, part B) are not applied; nor is the byte check of the older figure sets after
+today's plot-script edits (`checks/figs_md5/check.sh` is ready).
+
+**`nofc_noend_h100` done 21:33Z on 2026-11-13 (rc 0, full 2 h, GPU unit `GPU-a8a5cbbe`); `jit_p50_h100` launched 21:33Z
+and booted with its settings** (100 GB host pool of 1,017,280 tokens, just-in-time reads on p50 hints, next-use
+eviction, engine d; client from 21:35:19Z, no tracebacks, no client errors; weights loaded in 13 s from the page
+cache). By the author's request of 21:29Z the three 100 GB arms are compared once all are done.
+
+**`jit_p50_h100` done 23:35Z on 2026-11-13 (rc 0, full 2 h); `jit_exact_h100` launched 23:35Z and booted with its
+settings** (100 GB host pool of 1,017,280 tokens, just-in-time reads on exact hints, next-use eviction, engine d,
+GPU unit `GPU-a8a5cbbe`; client from 23:37:34Z, no tracebacks, no client errors). It ends about 01:38Z on 14 Nov.
+
+**100 GB host pool at 44 users, all three arms (done 01:38Z on 2026-11-14, each a clean 2 h on GPU unit
+`GPU-a8a5cbbe`): no hints, JIT p50 and JIT exact tie at 0.41 s, and all three beat every 70 GB run.** With 30 GB more
+host memory under 1 % of returning turns read from SSD, so there is nothing left for a hint to time. Tables:
+`compare_ec_h100.out`, `pairs_ec_h100.out` (the three arms, 11,828 shared returning turns), `pairs_ec_h100_vs70.out`,
+`stall_ec_designs_h100.out`, `checks/latency_h100.out` (with the 70 GB runs, 9,716 shared returning turns),
+`pairs_ec_h100_rep.out` (with the cut run), `checks/limits/pool_check_h100.out`. Figures:
+`results/compare_c26_designs_h100/` (`figs_designs_h100.sh`).
+
+| 9,716 shared returning turns | No hints | JIT p50 | JIT exact |
+|---|---|---|---|
+| mean TTFT at 100 GB | 0.41 s | 0.41 s | 0.42 s |
+| mean TTFT at 70 GB | 0.93, 0.93 s | 1.58 s | 0.72, 0.83 s |
+| p99 TTFT at 100 GB (70 GB) | 3.0 s (12.4, 12.5) | 3.0 s (14.5) | 4.1 s (11.5, 12.7) |
+| turns reading from SSD at 100 GB (70 GB) | 92 (1,598, 1,610) | 103 (2,361) | 62 (1,061, 1,110) |
+| SSD pages at 100 GB (70 GB) | 27K (469K, 470K) | 27K (568K) | 20K (324K, 335K) |
+| wait at 100 GB: read stall + rest of queue + after admission | 0.011 + 0.056 + 0.343 | 0.009 + 0.055 + 0.347 | 0.002 + 0.074 + 0.343 |
+| turn latency at 100 GB (70 GB: `_rep`, `_d` runs) | 10.90 s (12.16) | 10.89 s (16.24) | 10.90 s (12.11) |
+| turns sent before minute 115 at 100 GB (70 GB) | 12,236 (11,645) | 12,237 (10,050) | 12,236 (11,703) |
+
+- **Clean.** 12,861-12,862 turns each, no client errors, no tracebacks, settings as queued. Hardware control in line
+  with the 70 GB runs (decode 36.6-37.4 ms per step at 8-15 running, first-turn prefill 0.087-0.089 ms per token).
+- **The three arms are level.** On their own 11,828 shared returning turns: JIT p50 minus no hints +0.001 s
+  [-0.01, +0.01], JIT exact minus no hints +0.004 s [-0.01, +0.02], JIT exact minus JIT p50 +0.004 s [-0.01, +0.02].
+  Same turns served, same latency. No order is shown; the JIT arms have one run each.
+- **The no-hint arm repeats.** On the 8,030 turns of the cut run's first 79 min the full run is at 0.37 s against
+  0.37 s (-0.003 s [-0.02, +0.01]), 59 reading turns against 56, on another GPU unit. On that set the JIT arms are
+  0.002-0.008 s ahead of both no-hint runs, and on the whole 2 h JIT exact is 0.004 s behind: mixed signs, thousandths.
+- **Against 70 GB:** no hints -0.52 s on both pairs ([-0.82, -0.26]), JIT p50 -1.17 s [-1.70, -0.67], JIT exact -0.30
+  and -0.41 s ([-0.54, -0.10], [-0.73, -0.13]). JIT exact at 70 GB is 0.31-0.42 s behind every 100 GB arm, rules 1 and
+  3 at 70 GB 0.37-0.49 s behind. Throughput is 5 % above the 70 GB leaders' and 22 % above JIT p50's.
+- **Why hints do nothing here.** Reads are needed on 62-103 of 9,716 turns, and no launch was refused room (385K
+  tokens of host memory idle at the median). Exact hints land 55 of their 62 reads before the turn arrives, the p50
+  12 of 103, no hints none of 92: that is 0.009 s of read stall per turn between the best and the worst, and one run's
+  rest-of-queue wait differs by more (0.055-0.074 s). JIT p50 staged 10 reads early in 2 h, JIT exact 64.
+- **The second load episode is the GPU's.** Positions 8,750-11,000 (not in the cut run): 0.69, 0.70 and 0.76 s, of
+  which read stall 0.045, 0.031 and 0.014 s and queue 0.27, 0.28 and 0.37 s. The slowest 500-turn bin (minute 80) is
+  1.34-1.44 s in all three.
+- **The forecast of 02:38Z on 12 Nov was wrong by about six.** It said "about a third as much on SSD as at 70 GB";
+  measured is a seventeenth (92 against 1,598 and 1,610 reading turns; 27K against 470K pages). It compared the pool
+  with the context of every session in progress (median 1,176K tokens); what has to stay in memory is the context of
+  sessions not parked in a long gap, which peaks at 1,012-1,019K and 992-1,003K in the two episodes, at or just under
+  the 1,017K pool.
+- **The pool model holds on the full runs** (`pool_check_h100.out`): LRU 0.8-1.1 % against 0.9 % measured for no
+  hints, next use from the p50 0.7-1.0 % against 1.0 % for JIT p50. Exact next use gives 0.1-0.2 % against 0.6 %
+  measured for JIT exact, whose eviction is next use within a 300 s horizon and not the model's exact order.
+- **Reading.** At 44 users and x10 gaps the two things early reads need do not occur together: at 70 GB there are
+  reads (14 % of turns) and 44K tokens of room; at 100 GB there are 349K of room and no reads; the sweep says reads
+  fade by half per 5 GB in between. So "do early reads pay once there is room" has no test at this user count, and
+  the deck's ample-room claims are not shown here: the tie is from having nothing to read. What the 30 GB bought is
+  larger than anything a hint bought at 70 GB (0.52 s against 0.10-0.21 s for exact hints over no hints).
+- **Limits.** One run per JIT arm. One trace, one seed. Original HiCache was not run at 100 GB, so whether the extra
+  memory alone would fix it, without the no-hint arm's queue protection and read pins, is open. `pairs_ec.py` now
+  passes named arms to the loader (it dropped `_h100` arms before; the earlier file is
+  `checks/audit/pairs_ec_before_h100.py`). In `pricing_vs_jit.png` the three 100 GB end labels sit on each other.
+
+**End state, 01:38Z on 2026-11-14.** The queue is done: launcher idle with no `END` file (an appended queue line
+starts within a minute; `touch results/campaign26/END` makes it exit), server stopped, GPU idle, container up, no
+watcher running. 21 runs in the manifest (15 at 44 users and 70 GB, 3 at 128 users, 3 at 100 GB); the tables also
+name five runs of campaigns 21, 23 and 25 and the runs in `extra_runs.txt`. No relaunch is needed after an outage
+unless arms are added.
