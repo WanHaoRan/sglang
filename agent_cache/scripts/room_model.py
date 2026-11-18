@@ -424,7 +424,7 @@ RETRY_S = 1.0          # median delay from a revoked read to its retry in both r
 MAX_LOOKUPS = 3        # MAX_REFETCHES = 2 re-reads after the first lookup
 
 
-def simulate(data: dict, policy: dict, *, room) -> dict:
+def simulate(data: dict, policy: dict, *, room, per_job: bool = False) -> dict:
     """Replay the run's reads under one read-start policy. `room` is tokens, or a function of time.
 
     Each turn has a primary read (staged before arrival, or at arrival under the hold) and the run's re-reads after a
@@ -668,7 +668,7 @@ def simulate(data: dict, policy: dict, *, room) -> dict:
     span = max(job["A"] for job in jobs) - min(job["A"] for job in jobs)
     stall = [s["stall"] for s in st_]
     recompute = sum(s["recompute"] for s in st_)
-    return dict(
+    out = dict(
         staged_reads=m["staged_reads"], staged_revoked=m["staged_revoked"],
         arrival_reads=m["arrival_reads"] + m["reread_reads"],
         arrival_revoked=m["arrival_revoked"] + m["reread_revoked"], reclaimed=m["reclaimed"], expired=m["expired"],
@@ -676,6 +676,9 @@ def simulate(data: dict, policy: dict, *, room) -> dict:
         lead_p50=pct(leads, 0.5), lead_p90=pct(leads, 0.9), landed_after_arrival=m["landed_after_arrival"],
         stall_s=round(sum(stall)), late_turns=sum(1 for s in stall if s > 0), recompute_tokens=recompute,
         cost_s=round(sum(stall) + recompute / RHO), wasted_pages=m["wasted_pages"], jobs=len(jobs))
+    if per_job:   # tokens each reading turn recomputed, in job order: prefill_curve.py prices them by position
+        out["recompute_by_job"] = [s["recompute"] for s in st_]
+    return out
 
 
 def main() -> None:

@@ -41,7 +41,7 @@ STRUT = r"\vphantom{(Ap}"
 # The braces make the underbrace an ordinary atom, so the minus after it is spaced as binary.
 PRICE = (r"\begin{aligned} &\mathbb{E}\Big[\sum_{\text{turns}} \mathrm{TTFT}\Big]"
          r" + \lambda\,\mathbb{E}\Big[\int \sum_{i} \big(h_i + p_i\big)\,dt\Big] - \lambda R T \\[8pt]"
-         r" &\qquad = \sum_{i} {\underbrace{\Big(\mathbb{E}[S_i] + \frac{\mathbb{E}[U_i]}{\rho}"
+         r" &\qquad = \sum_{i} {\underbrace{\Big(\mathbb{E}[S_i] + \rho\,\mathbb{E}\big[U_i(2L_i - U_i)\big]"
          r" + \lambda\,\mathbb{E}\Big[\int (h_i + p_i)\,dt\Big]\Big)}_{J_i(\lambda)}}"
          r" - \lambda R T + \textcolor{%s}{\text{const}} \end{aligned}")
 
@@ -56,7 +56,7 @@ F = {
     "resources_beta": (r"\beta", "ink", 30, True),
     "resources_rho": (r"\rho", "ink", 30, True),
     "resources_b_over_beta": (r"b/\beta \approx 47\ \text{\textmu s}", "ink", 34, True),
-    "resources_1_over_rho": (r"1/\rho \approx 110\ \text{\textmu s}", "ink", 34, True),
+    "resources_2_rho_x": (r"2\rho x \approx 6.4\ \text{ns} \times x", "ink", 34, True),
     "session_L": (r"L", "ink", 30, True),
     "session_Delta": (r"\Delta", "ink", 30, True),
     "session_e_a": (r"e,\quad a = t - e", "ink", 30, True),
@@ -71,7 +71,11 @@ F = {
     "conditional_F_r_minus_W_hat": (r"F(r - \hat{W} \mid t)", "ink", 34, True),
     "conditional_F_r": (r"F(r \mid t)", "ink", 34, True),
     "conditional_F_H": (r"F(H \mid t)", "ink", 34, True),
-    "turncost_TTFT": (r"\mathrm{TTFT} = W + S + \frac{\Delta + U}{\rho}", "ink", 40, False),
+    # Prefill from position x0 to x1 takes rho (x1^2 - x0^2): the turn prefills from L - U to L + Delta.
+    "turncost_TTFT": (r"\begin{aligned} \mathrm{TTFT} &= W + S + \rho\,\big[(L + \Delta)^2 - (L - U)^2\big] \\[6pt]"
+                      r" &= W + S + \underbrace{\rho\,\Delta\,(2L + \Delta)}_{\textcolor{muted}{\text{new tokens}}}"
+                      r" + \underbrace{\rho\,U\,(2L - U)}_{\textcolor{muted}{\text{recomputed prefix}}} \end{aligned}",
+                      "ink", 34, False),
     "turncost_W": (r"W", "ink", 30, True),
     "turncost_S": (r"S = (\ell - D)^{+}", "ink", 30, True),
     "turncost_U": (r"U", "ink", 30, True),
@@ -83,7 +87,7 @@ F = {
                    r" & \text{SSD reads} + \text{writes} \le \beta & & \textcolor{muted}{\text{one SSD}} \\[2pt]"
                    r" & \text{one GPU, first come first served} & & \textcolor{muted}{\text{gives the queue wait } W}"
                    r" \end{alignedat}", "ink", 32 * 793 / 933, False),
-    # Both shown shrunk from 901 to 766 px wide.
+    # Both at 32 px per em shrunk by 766/901, the scale the deck first showed them at.
     "price_light_ink": (PRICE % "mutedlight", "light", 32 * 766 / 901, False),
     "price_dark_ink": (PRICE % "muted", "ink", 32 * 766 / 901, False),
     "tradeoff_J": (r"J(\sigma \mid t) = \mathbb{E}[\text{stall}] + \lambda L\,\mathbb{E}[\text{seconds pinned}]",
@@ -95,7 +99,7 @@ F = {
                       r" &\Longrightarrow\quad \text{start once } F(r \mid t) \ge q \end{aligned}", "ink", 32, False),
     "rule1_queue": (r"F(r - \hat{W} \mid t) \ge q", "ink", 30, True),
     "rule1_lambda": (r"\lambda = 5 \times 10^{-5}", "accent", 26, True),
-    "proof_bound": (r"\sum_{i} \min_{\pi_i} J_i(\lambda) - \lambda R T \;\le\; \mathbb{E}\Big[\sum_{\text{turns}} S + \frac{U}{\rho}\Big]",
+    "proof_bound": (r"\sum_{i} \min_{\pi_i} J_i(\lambda) - \lambda R T \;\le\; \mathbb{E}\Big[\sum_{\text{turns}} S + \rho\,U(2L - U)\Big]",
                           "ink", 30, False),
     "rule2_argmin": (r"\text{take room from}\ \operatorname*{arg\,min}_{j}\, F_j(r_j \mid t)", "ink", 28, False),
     "rule3_argmin": (r"\text{evict}\ \operatorname*{arg\,min}_{i}\, F_i(H \mid t)\, c_i", "ink", 28, False),

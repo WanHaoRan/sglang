@@ -148,8 +148,45 @@ recomputation that follows is what the GPU queue pays for. At 70K and a weight o
 - **TTFT is out of reach.** The model gives direct costs and counts. The queue effect enters only through the
   recomputation weight above.
 
+## Recomputation priced by context (2026-11-16)
+
+The costs above convert recomputed tokens at a flat 9K tokens/s. Prefill time is not linear in tokens: attention
+grows with the square of the context. On this box (Qwen3-30B-A3B-Instruct-2507, bf16 KV, triton attention, 8K
+chunks) the single-stream sweep of 2026-09-22 (`results/probe_moe/probe.log`) takes 0.33 s at 8K tokens, 3.58 s at
+32K and 13.73 s at 65K, and T(L) = 0.092 + 0.84e-6 L + 3.21e-9 L^2 s fits 4K-65K within 7 %. 9K tokens/s is the
+average of a 32K prefill. A token at position p costs about 6.4 ns x p: 52 us at 8K, 174 us at 27K, 386 us at 60K,
+against 46.6 us to read it from SSD (equal at 7.1K, twice at 14.4K).
+
+`scripts/prefill_curve.py replay` prices each turn's recomputed tokens as the tail of its history, [e - U, e) with
+e = prompt - new tokens, at T(e) - T(e - U). The reading turns' histories end at 11K/26K/42K (p10/p50/p90), so
+recomputation weighs 1.35-1.5 times as much as at 9K tokens/s. At 90K, the same policies:
+
+| Rule | Flat 9K | By context | By context, x7 |
+|---|---|---|---|
+| JIT p50, as run | 1,766 s | 2,294 s | 14,409 s |
+| Read at arrival | 1,481 s | 1,680 s | 5,345 s |
+| Fixed quantile, q = 0.9 | 1,336 s | 1,590 s | 6,450 s |
+| Expected cost, p10/p50/p90, λ = 5e-5 | 1,269 s | 1,521 s | 6,480 s |
+| Same, λ = 1e-4 | 1,284 s | 1,510 s | 5,747 s |
+| Same, λ = 1e-4, soft pins | 1,290 s | 1,483 s | 5,070 s |
+| Expected cost (samples, 1e-5) + soft pins | 1,241 s | 1,450 s | 5,376 s |
+| Exact arrival times | 813 s | 1,018 s | 4,836 s |
+
+- **At x1 the ranking holds, with smaller margins.** λ = 5e-5 is 34 % below the run's rule, 9 % below reading at
+  arrival and 4 % below the best fixed quantile; with soft pins the rules cover 35 % of the way to exact times.
+- **The queue weight applies on top of the curve.** Campaign 23's 6-8 times is in measured seconds. At x7, rule 1
+  needs a higher price and soft pins: at λ = 1e-4 it is 5 % below reading at arrival with soft pins and 8 % above
+  with hard pins; at 5e-5 soft pins only tie. At its best price, rule 1 with soft pins is +1 % (70K), -5 % (90K)
+  and -8 % (110K) against reading at arrival; with hard pins it never beats it.
+- **The price.** With hard pins the best λ is 1e-4 at 70K and 90K (5e-5 within 1 %) and 5e-5 at 110K, and at x7 it
+  reaches 1e-3. With soft pins λ = 1e-4 is the most robust: -5/-12/-14 % at x1 and +2/-5/-8 % at x7 (70K/90K/110K).
+  For the GPU arms, which pay the queue, this replaces "start λ near 5e-5" in item 1 of the plan above.
+- **Soft pins do most of the work.** Tried at every price (above they were tried only at each form's best price), a
+  fixed quantile with soft pins comes within 1.5 % of rule 1 with soft pins at x1 (1,453 against 1,432 s), 6 % at x7.
+
 ## Files
 
+- `prefill_curve.csv`: every rule at rooms 70K, 90K and 110K, recomputation priced flat and by context.
 - `calibration.csv`: each run's own routine over rooms 30K-160K, beside the measured row.
 - `policies.csv`: every rule at rooms 70K, 90K and 110K.
 - `policy_tradeoff.png` / `.pdf`: pinned memory against cost at 90K, and each key rule's cost split into stall and
@@ -157,3 +194,4 @@ recomputation that follows is what the GPU queue pays for. At 70K and a weight o
 - `run_exact.json.gz`, `run_p50.json.gz`: the parsed runs (cache of `load_run`).
 
 Rerun: `cd agent_cache/scripts && python3 room_model.py measure|calibrate|policies|figure`. Policies take about 30 s.
+Priced by context: `python3 prefill_curve.py fit|replay` (replay about 90 s).

@@ -18,18 +18,18 @@ The formulation matches `PAPER_PLAN.md` ("Formulation" 1-8, "Design point") and 
 threshold and the keep test, and the engine's solver agrees with `room_model.expected_cost_start` on 400 of 400 random
 cases. Weak spots, with what the build does about each:
 
-| # | Weak spot | In the build |
-|---|---|---|
-| 1 | The model prices only the host-only room (44K of 712K tokens) and leaves GPU eviction to HiCache, but the replay puts most of the p50's cost in eviction, and the hinted arms already order GPU and host eviction by next use | rule 3 scores every session in GPU and host memory. Since: the runs put the p50's cost in when its reads start, not in eviction (`ec_r1`, `ec_r3` and `fq90` under Results) |
-| 2 | Past the p90 the hint says nothing. A lognormal tail makes an overdue session with a sharp key look certain to return, and there is no "never returns" mass; the replay signals every recorded end, which a real agent may not | checked in the eviction replay (below): the plain lognormal tail is as good as a pooled tail while ends are signalled, so nothing was added |
-| 3 | With no forecast ending a session, a staged read's pin has no release (600 s backstop only) | the pin is given back once the entry has passed (its last few support points plus 5 s). A release by rent against stall was tried first and dropped before any run: at 5e-5 a 64K-token pin costs 3.2 s per second, so it released almost every read as it landed |
-| 4 | The cost leaves out the queue (a recomputed token costs 6-8 times its prefill) and SSD bandwidth; the replay ties reading at arrival once recomputation is weighted x10 | not built |
-| 5 | The room is about 90K and moves; "idle room" has no meaning in a host pool that is always full of evictable histories | room = host pool minus device-resident tokens, held = pinned plus in-flight reads. Since: the room measured 54K at the median and 40-46K in the load episodes, not 90K; 44K is the pool minus the GPU's mirror |
-| 6 | Rule 4 compares a flow (tokens refused per interval) with a stock (idle tokens); by my arithmetic it settles where refusals are as large as idle room, near JIT p50's regime | built as stated (`price-learning on`, bumped tokens count as refused), plus a second rule (`harm`): the price is the recomputation staged pins left to arrived turns, per token-second pinned. `ec_r1` logs both rules' signals every 5 s |
-| 7 | Soft pins touch the host allocation path for 2-6 % in the replay | built behind a flag; ran as `ec_full`, with rules 1 and 3 and the harm price |
-| 8 | The asymptotic claim needs many sessions each small against the room; at 70 GB the room holds two or three histories | paper: present the theory as the rules' derivation; add a setting where the room holds ten or more |
-| 9 | Evidence is single runs and a replay of costs, not TTFT | same-GPU controls in this campaign |
-| 10 | The reference slide omits Continuum, Tokencake, Bidaw and CachedAttention, which `PAPER_INTRO.md` says must be cited; the queue-aware hint-free rival is not built | fixed-quantile rival is a flag and ran as `fq90`; the queue-aware rival with no hints was built as engine e and ran as `nofc_noend` (repeat, 128 users, 100 GB); the references are open |
+| #  | Weak spot                                                                                                                                                                                                                      | In the build                                                                                                                                                                                                                                                      |
+| -- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1  | The model prices only the host-only room (44K of 712K tokens) and leaves GPU eviction to HiCache, but the replay puts most of the p50's cost in eviction, and the hinted arms already order GPU and host eviction by next use  | rule 3 scores every session in GPU and host memory. Since: the runs put the p50's cost in when its reads start, not in eviction (`ec_r1`, `ec_r3` and `fq90` under Results)                                                                                 |
+| 2  | Past the p90 the hint says nothing. A lognormal tail makes an overdue session with a sharp key look certain to return, and there is no "never returns" mass; the replay signals every recorded end, which a real agent may not | checked in the eviction replay (below): the plain lognormal tail is as good as a pooled tail while ends are signalled, so nothing was added                                                                                                                       |
+| 3  | With no forecast ending a session, a staged read's pin has no release (600 s backstop only)                                                                                                                                    | the pin is given back once the entry has passed (its last few support points plus 5 s). A release by rent against stall was tried first and dropped before any run: at 5e-5 a 64K-token pin costs 3.2 s per second, so it released almost every read as it landed |
+| 4  | The cost leaves out the queue (a recomputed token costs 6-8 times its prefill) and SSD bandwidth; the replay ties reading at arrival once recomputation is weighted x10                                                        | not built                                                                                                                                                                                                                                                         |
+| 5  | The room is about 90K and moves; "idle room" has no meaning in a host pool that is always full of evictable histories                                                                                                          | room = host pool minus device-resident tokens, held = pinned plus in-flight reads. Since: the room measured 54K at the median and 40-46K in the load episodes, not 90K; 44K is the pool minus the GPU's mirror                                                    |
+| 6  | Rule 4 compares a flow (tokens refused per interval) with a stock (idle tokens); by my arithmetic it settles where refusals are as large as idle room, near JIT p50's regime                                                   | built as stated (`price-learning on`, bumped tokens count as refused), plus a second rule (`harm`): the price is the recomputation staged pins left to arrived turns, per token-second pinned. `ec_r1` logs both rules' signals every 5 s                   |
+| 7  | Soft pins touch the host allocation path for 2-6 % in the replay                                                                                                                                                               | built behind a flag; ran as `ec_full`, with rules 1 and 3 and the harm price                                                                                                                                                                                    |
+| 8  | The asymptotic claim needs many sessions each small against the room; at 70 GB the room holds two or three histories                                                                                                           | paper: present the theory as the rules' derivation; add a setting where the room holds ten or more                                                                                                                                                                |
+| 9  | Evidence is single runs and a replay of costs, not TTFT                                                                                                                                                                        | same-GPU controls in this campaign                                                                                                                                                                                                                                |
+| 10 | The reference slide omits Continuum, Tokencake, Bidaw and CachedAttention, which `PAPER_INTRO.md` says must be cited; the queue-aware hint-free rival is not built                                                           | fixed-quantile rival is a flag and ran as `fq90`; the queue-aware rival with no hints was built as engine e and ran as `nofc_noend` (repeat, 128 users, 100 GB); the references are open                                                                      |
 
 Three further points came out of the eviction replay (`frozen/ec_policy_20261111/evict_replay/FINDINGS.md`), which replays
 eviction on a run's own timeline with the pool sized so that LRU matches the hint-free arm's 19.4 % of returning turns
@@ -96,25 +96,25 @@ Unit tests are in `test/registered/unit/mem_cache/` (`test_next_turn_estimators.
 
 ## Arms
 
-| Label | Engine | What it is |
-|---|---|---|
-| `jit_p50_ctl` | `engine_owned_20261101` | today's JIT p50, a control on this GPU unit |
-| `hintfree_ctl` | `engine_5df71c4bf0_v2` | hint-free arm (read pins, no hints), a control on this GPU unit |
-| `ec_r13` | `engine_ec_20261111d` | rules 1 and 3: expected-cost start at 5e-5, eviction by chance of return within 30 s (three quantiles) |
-| `nofc` | `engine_ec_20261111d` | the rival with no gap forecast: reads at arrival only, eviction by the end signal and the queue |
-| `ec_r1` | `engine_ec_20261111d` | rule 1 alone: next-use eviction from the p50 and hard pins as today |
-| `nofc_noend` | `engine_ec_20261111e` | `nofc` with the end signal ignored too: the hint-free rival that keeps queued turns' history |
-| `ec_r3` | `engine_ec_20261111d` | rule 3 alone: JIT p50's read timing, eviction by chance of return |
-| `ec_r13_rep`, `nofc_rep` | `engine_ec_20261111d` | repeats of the two leading arms |
-| `jit_p50_d` | `engine_ec_20261111d` | today's JIT p50 on the new engine with no extra flag: the same-build control (the cache changes are all behind the new flags, by diff; the prefetcher was restructured) |
-| `ec_r134` | `engine_ec_20261111d` | rules 1, 3 and 4: the price learned from the harm staged pins do, starting at 5e-5 |
-| `fq90` | `engine_ec_20261111d` | the fixed-quantile rival: JIT reads timed to land at the entry's p90, next-use eviction |
-| `ec_full` | `engine_ec_20261111d` | all four rules: `ec_r134` with soft pins |
-| `nofc_noend_c128`, `ec_r134_c128`, `nofc_c128` | `engine_ec_20261111e`, `d`, `d` | the deck's second setting, 128 users and 160 GB: the rival with no hints, rules 1, 3 and 4, then the rival with the end signal |
-| `jit_exact_d` | `engine_ec_20261111d` | added 2026-11-12: today's JIT on exact hints, the reference on this build and GPU unit |
-| `nofc_noend_rep` | `engine_ec_20261111e` | added 2026-11-12: the rival with no hints, again |
-| `nofc_noend_h100`, `jit_p50_h100`, `jit_exact_h100` | `engine_ec_20261111e`, `d`, `d` | added 2026-11-12: 44 users with a 100 GB host pool: the rival with no hints, JIT p50, JIT exact |
-| `jit_p50_d_cut`, `nofc_noend_h100_cut`, `oracle_v2`, `oracle_v2_p50`, the four `_c128` references | see `extra_runs.txt` | runs outside the manifest that tables name: two runs cut by outages, and references from campaigns 19, 21 and 23 |
+| Label                                                                                                       | Engine                                | What it is                                                                                                                                                              |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jit_p50_ctl`                                                                                             | `engine_owned_20261101`             | today's JIT p50, a control on this GPU unit                                                                                                                             |
+| `hintfree_ctl`                                                                                            | `engine_5df71c4bf0_v2`              | hint-free arm (read pins, no hints), a control on this GPU unit                                                                                                         |
+| `ec_r13`                                                                                                  | `engine_ec_20261111d`               | rules 1 and 3: expected-cost start at 5e-5, eviction by chance of return within 30 s (three quantiles)                                                                  |
+| `nofc`                                                                                                    | `engine_ec_20261111d`               | the rival with no gap forecast: reads at arrival only, eviction by the end signal and the queue                                                                         |
+| `ec_r1`                                                                                                   | `engine_ec_20261111d`               | rule 1 alone: next-use eviction from the p50 and hard pins as today                                                                                                     |
+| `nofc_noend`                                                                                              | `engine_ec_20261111e`               | `nofc` with the end signal ignored too: the hint-free rival that keeps queued turns' history                                                                          |
+| `ec_r3`                                                                                                   | `engine_ec_20261111d`               | rule 3 alone: JIT p50's read timing, eviction by chance of return                                                                                                       |
+| `ec_r13_rep`, `nofc_rep`                                                                                | `engine_ec_20261111d`               | repeats of the two leading arms                                                                                                                                         |
+| `jit_p50_d`                                                                                               | `engine_ec_20261111d`               | today's JIT p50 on the new engine with no extra flag: the same-build control (the cache changes are all behind the new flags, by diff; the prefetcher was restructured) |
+| `ec_r134`                                                                                                 | `engine_ec_20261111d`               | rules 1, 3 and 4: the price learned from the harm staged pins do, starting at 5e-5                                                                                      |
+| `fq90`                                                                                                    | `engine_ec_20261111d`               | the fixed-quantile rival: JIT reads timed to land at the entry's p90, next-use eviction                                                                                 |
+| `ec_full`                                                                                                 | `engine_ec_20261111d`               | all four rules: `ec_r134` with soft pins                                                                                                                              |
+| `nofc_noend_c128`, `ec_r134_c128`, `nofc_c128`                                                        | `engine_ec_20261111e`, `d`, `d` | the deck's second setting, 128 users and 160 GB: the rival with no hints, rules 1, 3 and 4, then the rival with the end signal                                          |
+| `jit_exact_d`                                                                                             | `engine_ec_20261111d`               | added 2026-11-12: today's JIT on exact hints, the reference on this build and GPU unit                                                                                  |
+| `nofc_noend_rep`                                                                                          | `engine_ec_20261111e`               | added 2026-11-12: the rival with no hints, again                                                                                                                        |
+| `nofc_noend_h100`, `jit_p50_h100`, `jit_exact_h100`                                                   | `engine_ec_20261111e`, `d`, `d` | added 2026-11-12: 44 users with a 100 GB host pool: the rival with no hints, JIT p50, JIT exact                                                                         |
+| `jit_p50_d_cut`, `nofc_noend_h100_cut`, `oracle_v2`, `oracle_v2_p50`, the four `_c128` references | see `extra_runs.txt`                | runs outside the manifest that tables name: two runs cut by outages, and references from campaigns 19, 21 and 23                                                        |
 
 Every new arm is today's JIT p50 arm (`three_tier_wc_oracle_v2_nu_owned`: gate, hold, pin fraction 0.3) with the flags
 above replacing its read timing and eviction. The queue was rewritten 11:15Z after `nofc`, reordered 13:20Z after
@@ -150,13 +150,13 @@ So a difference between arms under about 0.25 s is not a result on one run each.
 checked in the log (expected_cost, price 5e-5, `return_chance` with `horizon_s` 30, no tracebacks, no client errors).
 Mean TTFT on the 6,715 returning turns that all eight runs share (`compare_ec.out`):
 
-| Arm | Mean TTFT | Queue wait | Recomputed per turn | Share of the gain |
-|---|---|---|---|---|
-| Original HiCache, two runs | 5.47, 6.62 s | 4.53, 5.50 s | 2,962, 3,814 | 0 % |
-| Hint-free, two runs | 1.61, 1.89 s | 1.04, 1.29 s | 750, 903 | 72-82 % |
-| JIT p50, two runs | 1.60, 1.35 s | 0.89, 0.69 s | 970, 928 | 78-86 % |
-| `ec_r13` | 0.66 s | 0.25 s | 214 | 97-98 % |
-| JIT exact | 0.51 s | 0.13 s | 120 | 100 % |
+| Arm                        | Mean TTFT    | Queue wait   | Recomputed per turn | Share of the gain |
+| -------------------------- | ------------ | ------------ | ------------------- | ----------------- |
+| Original HiCache, two runs | 5.47, 6.62 s | 4.53, 5.50 s | 2,962, 3,814        | 0 %               |
+| Hint-free, two runs        | 1.61, 1.89 s | 1.04, 1.29 s | 750, 903            | 72-82 %           |
+| JIT p50, two runs          | 1.60, 1.35 s | 0.89, 0.69 s | 970, 928            | 78-86 %           |
+| `ec_r13`                 | 0.66 s       | 0.25 s       | 214                 | 97-98 %           |
+| JIT exact                  | 0.51 s       | 0.13 s       | 120                 | 100 %             |
 
 The share is of the way from each original-HiCache run to JIT exact.
 
@@ -167,13 +167,13 @@ The share is of the way from each original-HiCache run to JIT exact.
   (positions 5,500-7,000) it is at 1.56 s against exact 1.14, JIT p50 4.01-5.24 and hint-free 5.96-7.43.
 - **Fewer reads, almost no pins.** On its own returning turns:
 
-  | | JIT p50 (two runs) | `ec_r13` | JIT exact |
-  |---|---|---|---|
-  | Turns that read from SSD | 23.7-23.8 % | 14.3 % | 11.3 % |
-  | Staged reads | 2,094-2,202 | 629 | 1,202 |
-  | Read launches refused room | 1,732-1,743 | 395 | 381 |
-  | Mean pinned tokens | 30.2-31.5K | 4.2K | 5.9K |
-  | SSD pages read | 563-580K | 437K | 388K |
+  |                            | JIT p50 (two runs) | `ec_r13` | JIT exact |
+  | -------------------------- | ------------------ | ---------- | --------- |
+  | Turns that read from SSD   | 23.7-23.8 %        | 14.3 %     | 11.3 %    |
+  | Staged reads               | 2,094-2,202        | 629        | 1,202     |
+  | Read launches refused room | 1,732-1,743        | 395        | 381       |
+  | Mean pinned tokens         | 30.2-31.5K         | 4.2K       | 5.9K      |
+  | SSD pages read             | 563-580K           | 437K       | 388K      |
 
   The replay had put rule 3 at 16.2 % of turns reading against 17.7 % for today's order; the run gives 14.3 against
   23.7 %, so pins pushing histories out look like the rest of JIT p50's reads.
@@ -202,13 +202,13 @@ So the learned-price arm will use the harm rule; the deck's rule stays in the en
 no staged read, no tracebacks, no client errors). It reads only at arrival and evicts ended sessions first, queued turns
 last and by LRU between; from the hint it takes the end signal and which request continues which session.
 
-| Mean TTFT | Turns | JIT exact | `ec_r13` | `nofc` | JIT p50 (ctl) | Hint-free (ctl) |
-|---|---|---|---|---|---|---|
-| Returning turns all nine runs share | 6,715 | 0.51 s | 0.66 s | 0.69 s | 1.35 s | 1.89 s |
-| Returning turns these five share | 9,702 | 0.72 s | 0.79 s | 0.92 s | 1.48 s | 1.95 s |
-| Returning turns the first three share | 11,299 | 0.70 s | 0.76 s | 0.88 s | | |
-| p90, p99 on the 11,299 | | 0.86, 10.4 s | 1.30, 9.2 s | 1.51, 13.3 s | | |
-| Turns over 10 s on the 11,299 | | 118 | 97 | 197 | | |
+| Mean TTFT                             | Turns  | JIT exact    | `ec_r13`  | `nofc`     | JIT p50 (ctl) | Hint-free (ctl) |
+| ------------------------------------- | ------ | ------------ | ----------- | ------------ | ------------- | --------------- |
+| Returning turns all nine runs share   | 6,715  | 0.51 s       | 0.66 s      | 0.69 s       | 1.35 s        | 1.89 s          |
+| Returning turns these five share      | 9,702  | 0.72 s       | 0.79 s      | 0.92 s       | 1.48 s        | 1.95 s          |
+| Returning turns the first three share | 11,299 | 0.70 s       | 0.76 s      | 0.88 s       |               |                 |
+| p90, p99 on the 11,299                |        | 0.86, 10.4 s | 1.30, 9.2 s | 1.51, 13.3 s |               |                 |
+| Turns over 10 s on the 11,299         |        | 118          | 97          | 197          |               |                 |
 
 The first row stops where original HiCache's runs stop (about 7,500 turns); the later rows add the second load episode
 (positions 8,500-9,500), where every arm, exact hints included, is at 4-5 s. Tables: `compare_ec.out`, `split_ec.out`,
@@ -238,13 +238,13 @@ The first row stops where original HiCache's runs stop (about 7,500 turns); the 
 **`ec_r1` (done 13:08Z, clean): rule 1 alone is level with rules 1 and 3 and with the rival.** Settings checked in the
 log (`expected_cost` at 5e-5, `next_use` eviction with `horizon_s` 300 as in JIT p50, no tracebacks, no client errors).
 
-| Mean TTFT | Turns | JIT exact | `ec_r13` | `ec_r1` | `nofc` | JIT p50, two runs |
-|---|---|---|---|---|---|---|
-| Returning turns all ten runs share | 6,715 | 0.51 s | 0.66 s | 0.67 s | 0.69 s | 1.35, 1.60 s |
-| Of them, positions 5,500-7,000 | 1,374 | 1.14 s | 1.56 s | 1.75 s | 1.83 s | 4.01, 5.24 s |
-| Returning turns the four leading arms share | 11,198 | 0.70 s | 0.76 s | 0.86 s | 0.88 s | |
-| p90, p99 on the 11,198 | | 0.87, 10.6 s | 1.29, 9.2 s | 1.41, 12.2 s | 1.51, 13.3 s | |
-| Turns over 10 s on the 11,198 | | 118 | 97 | 173 | 197 | |
+| Mean TTFT                                   | Turns  | JIT exact    | `ec_r13`  | `ec_r1`    | `nofc`     | JIT p50, two runs |
+| ------------------------------------------- | ------ | ------------ | ----------- | ------------ | ------------ | ----------------- |
+| Returning turns all ten runs share          | 6,715  | 0.51 s       | 0.66 s      | 0.67 s       | 0.69 s       | 1.35, 1.60 s      |
+| Of them, positions 5,500-7,000              | 1,374  | 1.14 s       | 1.56 s      | 1.75 s       | 1.83 s       | 4.01, 5.24 s      |
+| Returning turns the four leading arms share | 11,198 | 0.70 s       | 0.76 s      | 0.86 s       | 0.88 s       |                   |
+| p90, p99 on the 11,198                      |        | 0.87, 10.6 s | 1.29, 9.2 s | 1.41, 12.2 s | 1.51, 13.3 s |                   |
+| Turns over 10 s on the 11,198               |        | 118          | 97          | 173          | 197          |                   |
 
 Tables: `compare_ec.out`, `split_ec_lead.out`.
 
@@ -270,15 +270,15 @@ Tables: `compare_ec.out`, `split_ec_lead.out`.
 is split where its last SSD read lands: the part before is its read stall (zero when it read nothing or its reads had
 landed by arrival), the part after is the rest. On the 11,198 returning turns the four leading arms share, per turn:
 
-| | JIT exact | `ec_r13` | `ec_r1` | `nofc` |
-|---|---|---|---|---|
-| Mean TTFT | 0.70 s | 0.76 s | 0.86 s | 0.88 s |
-| Read stall | 0.18 s | 0.24 s | 0.28 s | 0.34 s |
-| of it, the read was the last wait (admitted within 0.1 s of landing) | 0.05 s | 0.13 s | 0.12 s | 0.17 s |
-| of it, the GPU queue held the turn as well | 0.13 s | 0.11 s | 0.15 s | 0.17 s |
-| Rest of the queue wait | 0.11 s | 0.11 s | 0.15 s | 0.13 s |
-| After admission | 0.41 s | 0.41 s | 0.44 s | 0.41 s |
-| Turns reading from SSD; of them landed by arrival | 1,262; 684 | 1,582; 216 | 1,572; 269 | 1,581; 4 |
+|                                                                      | JIT exact  | `ec_r13` | `ec_r1`  | `nofc` |
+| -------------------------------------------------------------------- | ---------- | ---------- | ---------- | -------- |
+| Mean TTFT                                                            | 0.70 s     | 0.76 s     | 0.86 s     | 0.88 s   |
+| Read stall                                                           | 0.18 s     | 0.24 s     | 0.28 s     | 0.34 s   |
+| of it, the read was the last wait (admitted within 0.1 s of landing) | 0.05 s     | 0.13 s     | 0.12 s     | 0.17 s   |
+| of it, the GPU queue held the turn as well                           | 0.13 s     | 0.11 s     | 0.15 s     | 0.17 s   |
+| Rest of the queue wait                                               | 0.11 s     | 0.11 s     | 0.15 s     | 0.13 s   |
+| After admission                                                      | 0.41 s     | 0.41 s     | 0.44 s     | 0.41 s   |
+| Turns reading from SSD; of them landed by arrival                    | 1,262; 684 | 1,582; 216 | 1,572; 269 | 1,581; 4 |
 
 - **The distance between the leading arms is read stall.** `nofc` is 0.18 s behind exact hints, 0.16 s of it stall;
   `ec_r13` is 0.06 s behind, all of it stall. The order is the same in both load episodes (stall per turn at
@@ -322,15 +322,15 @@ which this client never sends. I spot-checked three of its claims in the code. S
 `queue`, no staged read, no tracebacks, no client errors). It reads only at arrival and evicts by LRU with queued turns
 last; an ended session ranks like any other.
 
-| Mean TTFT | Turns | JIT exact | `ec_r13` | `ec_r1` | `nofc` | `nofc_noend` | Hint-free (ctl) |
-|---|---|---|---|---|---|---|---|
-| Returning turns all eleven runs share | 6,715 | 0.51 s | 0.66 s | 0.67 s | 0.69 s | 0.71 s | 1.89 s |
-| Of them, positions 5,500-7,000 | 1,374 | 1.14 s | 1.56 s | 1.75 s | 1.83 s | 1.85 s | 7.43 s |
-| Returning turns the five leading arms share | 11,198 | 0.70 s | 0.76 s | 0.86 s | 0.88 s | 0.91 s | |
-| p90, p99 on the 11,198 | | 0.87, 10.6 s | 1.29, 9.2 s | 1.41, 12.2 s | 1.51, 13.3 s | 1.74, 11.6 s | |
-| Turns over 10 s on the 11,198 | | 118 | 97 | 173 | 197 | 147 | |
-| Turns reading from SSD on the 11,198 | | 1,262 | 1,582 | 1,572 | 1,581 | 1,898 | |
-| SSD pages read, whole run | | 388K | 437K | 448K | 469K | 562K | 517K |
+| Mean TTFT                                   | Turns  | JIT exact    | `ec_r13`  | `ec_r1`    | `nofc`     | `nofc_noend` | Hint-free (ctl) |
+| ------------------------------------------- | ------ | ------------ | ----------- | ------------ | ------------ | -------------- | --------------- |
+| Returning turns all eleven runs share       | 6,715  | 0.51 s       | 0.66 s      | 0.67 s       | 0.69 s       | 0.71 s         | 1.89 s          |
+| Of them, positions 5,500-7,000              | 1,374  | 1.14 s       | 1.56 s      | 1.75 s       | 1.83 s       | 1.85 s         | 7.43 s          |
+| Returning turns the five leading arms share | 11,198 | 0.70 s       | 0.76 s      | 0.86 s       | 0.88 s       | 0.91 s         |                 |
+| p90, p99 on the 11,198                      |        | 0.87, 10.6 s | 1.29, 9.2 s | 1.41, 12.2 s | 1.51, 13.3 s | 1.74, 11.6 s   |                 |
+| Turns over 10 s on the 11,198               |        | 118          | 97          | 173          | 197          | 147            |                 |
+| Turns reading from SSD on the 11,198        |        | 1,262        | 1,582       | 1,572        | 1,581        | 1,898          |                 |
+| SSD pages read, whole run                   |        | 388K         | 437K        | 448K         | 469K         | 562K           | 517K            |
 
 Tables: `compare_ec.out`, `split_ec_lead.out`, `stall_ec.out`, `split_ec_noend.out`, `stall_ec_noend.out`; figure
 `../compare_c26_ec/ec_wait_split.png` (seven runs, table view `ec_wait_split.csv`).
@@ -395,12 +395,12 @@ read as `jit_p50_d_cut` through `extra_runs.txt`, which the comparison scripts t
 sent in its first 74.7 minutes are kept, which covers the first load episode.
 
 | On the 6,579 returning turns these runs share | JIT p50 (campaign 23) | `jit_p50_ctl` | `jit_p50_d_cut` | `nofc_noend` | `ec_r13` | JIT exact |
-|---|---|---|---|---|---|---|
-| Mean TTFT | 1.53 s | 1.35 s | 1.39 s | 0.71 s | 0.66 s | 0.51 s |
-| In the first load episode (1,275 turns) | 5.16 s | 4.20 s | 4.46 s | 1.94 s | 1.66 s | 1.20 s |
-| Elsewhere (5,304 turns) | 0.66 s | 0.66 s | 0.66 s | 0.42 s | 0.42 s | 0.34 s |
-| Turns reading from SSD | 1,562 | 1,535 | 1,462 | 1,040 | 925 | 651 |
-| Recomputed tokens per turn | 922 | 913 | 902 | 147 | 211 | 122 |
+| --------------------------------------------- | --------------------- | --------------- | ----------------- | -------------- | ---------- | --------- |
+| Mean TTFT                                     | 1.53 s                | 1.35 s          | 1.39 s            | 0.71 s         | 0.66 s     | 0.51 s    |
+| In the first load episode (1,275 turns)       | 5.16 s                | 4.20 s          | 4.46 s            | 1.94 s         | 1.66 s     | 1.20 s    |
+| Elsewhere (5,304 turns)                       | 0.66 s                | 0.66 s          | 0.66 s            | 0.42 s         | 0.42 s     | 0.34 s    |
+| Turns reading from SSD                        | 1,562                 | 1,535           | 1,462             | 1,040          | 925        | 651       |
+| Recomputed tokens per turn                    | 922                   | 913             | 902               | 147            | 211        | 122       |
 
 - **Same build or not, JIT p50 is JIT p50.** The new build is 0.05 s from the old build's run on this GPU unit (5 % to
   95 % within the pair: -0.04 to 0.15 s) and 0.14 s from campaign 23's; the two old-build runs are 0.18 s apart. Outside
@@ -441,15 +441,15 @@ staged reads (2,094 and 2,202), 1,761 launches refused room (1,743 and 1,732), 2
 their lead over the rivals is not shown.** Settings and events checked as for `ec_r13`. Tables: `compare_ec.out`,
 `pairs_ec.out` (11,145 turns six runs share), `pairs_ec_ctl.out` (the 6,715), `stall_ec.out`.
 
-| Mean TTFT | Turns | JIT exact | `ec_r13` | `ec_r13_rep` | `ec_r1` | `nofc` | `nofc_noend` |
-|---|---|---|---|---|---|---|---|
-| Returning turns all thirteen runs share | 6,715 | 0.51 s | 0.66 s | 0.78 s | 0.67 s | 0.69 s | 0.71 s |
-| Of them, positions 5,500-7,000 | 1,374 | 1.14 s | 1.56 s | 2.31 s | 1.75 s | 1.83 s | 1.85 s |
-| Returning turns these six share | 11,145 | 0.70 s | 0.76 s | 0.86 s | 0.86 s | 0.88 s | 0.91 s |
-| Of them, in the two load episodes | 2,972 | 1.53 s | 1.66 s | 2.10 s | 2.02 s | 2.12 s | 2.14 s |
-| Of them, elsewhere | 8,173 | 0.40 s | 0.44 s | 0.41 s | 0.45 s | 0.43 s | 0.46 s |
-| p99; turns over 10 s on the 11,145 | | 10.6 s; 118 | 9.2 s; 97 | 13.7 s; 196 | 12.2 s; 173 | 13.3 s; 197 | 11.6 s; 147 |
-| Turns reading from SSD; pages read on the 11,145 | | 1,260; 382K | 1,576; 424K | 1,559; 414K | 1,568; 446K | 1,576; 458K | 1,893; 553K |
+| Mean TTFT                                        | Turns  | JIT exact   | `ec_r13`  | `ec_r13_rep` | `ec_r1`   | `nofc`    | `nofc_noend` |
+| ------------------------------------------------ | ------ | ----------- | ----------- | -------------- | ----------- | ----------- | -------------- |
+| Returning turns all thirteen runs share          | 6,715  | 0.51 s      | 0.66 s      | 0.78 s         | 0.67 s      | 0.69 s      | 0.71 s         |
+| Of them, positions 5,500-7,000                   | 1,374  | 1.14 s      | 1.56 s      | 2.31 s         | 1.75 s      | 1.83 s      | 1.85 s         |
+| Returning turns these six share                  | 11,145 | 0.70 s      | 0.76 s      | 0.86 s         | 0.86 s      | 0.88 s      | 0.91 s         |
+| Of them, in the two load episodes                | 2,972  | 1.53 s      | 1.66 s      | 2.10 s         | 2.02 s      | 2.12 s      | 2.14 s         |
+| Of them, elsewhere                               | 8,173  | 0.40 s      | 0.44 s      | 0.41 s         | 0.45 s      | 0.43 s      | 0.46 s         |
+| p99; turns over 10 s on the 11,145               |        | 10.6 s; 118 | 9.2 s; 97   | 13.7 s; 196    | 12.2 s; 173 | 13.3 s; 197 | 11.6 s; 147    |
+| Turns reading from SSD; pages read on the 11,145 |        | 1,260; 382K | 1,576; 424K | 1,559; 414K    | 1,568; 446K | 1,576; 458K | 1,893; 553K    |
 
 - **By the rule written before the repeats, rules 1 and 3 are not separated from either rival.** On the 6,715 turns
   their two runs are 0.035 s ahead to 0.085 s behind `nofc`, and 0.056 s ahead to 0.064 s behind `nofc_noend`. On
@@ -473,11 +473,11 @@ their lead over the rivals is not shown.** Settings and events checked as for `e
 **Turn latency and throughput (`checks/latency_lead.out`, `latency_all.out`, script `checks/latency.py`).** A reviewer
 agent raised it and I recomputed it: among the leading arms the TTFT differences do not reach the end of the turn.
 
-| On the 11,145 turns | `nofc_noend` | `nofc` | `ec_r13` | `ec_r13_rep` | `ec_r1` | JIT exact |
-|---|---|---|---|---|---|---|
-| Mean TTFT | 0.91 s | 0.88 s | 0.76 s | 0.86 s | 0.86 s | 0.70 s |
-| Mean turn latency, send to last token | 12.10 s | 12.01 s | 12.05 s | 12.45 s | 12.32 s | 12.06 s |
-| Turns sent before minute 115 | 11,680 | 11,710 | 11,690 | 11,527 | 11,580 | 11,699 |
+| On the 11,145 turns                   | `nofc_noend` | `nofc` | `ec_r13` | `ec_r13_rep` | `ec_r1` | JIT exact |
+| ------------------------------------- | -------------- | -------- | ---------- | -------------- | --------- | --------- |
+| Mean TTFT                             | 0.91 s         | 0.88 s   | 0.76 s     | 0.86 s         | 0.86 s    | 0.70 s    |
+| Mean turn latency, send to last token | 12.10 s        | 12.01 s  | 12.05 s    | 12.45 s        | 12.32 s   | 12.06 s   |
+| Turns sent before minute 115          | 11,680         | 11,710   | 11,690     | 11,527         | 11,580    | 11,699    |
 
 - **Against the arm with no hints, no arm is ahead on latency by more than 0.1 s:** `nofc` -0.09 s, `ec_r13` -0.05 s,
   exact hints -0.04 s, `ec_r1` +0.22 s, `ec_r13_rep` +0.35 s. Throughput is level: 11,527 to 11,710 turns and 2.34 to
@@ -546,12 +546,12 @@ twice by the usage limit; what they had computed is in `checks/verify/method/` a
 **What a read costs when the queue is short, and what a larger pool would change (02:38Z; `checks/calm_reads.out`,
 script `checks/calm_reads.py`).** Asked by the author: with a short queue and more host memory, do early reads pay?
 
-| Outside the load episodes, 8,174 shared returning turns | `nofc_noend` | `nofc` | `ec_r13` | `ec_r13_rep` | JIT exact |
-|---|---|---|---|---|---|
-| Turns reading from SSD | 809 (9.9 %) | 577 (7.1 %) | 678 (8.3 %) | 612 (7.5 %) | 439 (5.4 %) |
-| Their TTFT, mean and median | 1.60, 1.18 s | 1.60, 1.19 s | 1.47, 0.99 s | 1.36, 0.97 s | 1.22, 0.34 s |
-| TTFT of the other turns | 0.34 s | 0.34 s | 0.34 s | 0.34 s | 0.35 s |
-| All | 0.46 s | 0.43 s | 0.44 s | 0.41 s | 0.40 s |
+| Outside the load episodes, 8,174 shared returning turns | `nofc_noend` | `nofc`     | `ec_r13`   | `ec_r13_rep` | JIT exact    |
+| ------------------------------------------------------- | -------------- | ------------ | ------------ | -------------- | ------------ |
+| Turns reading from SSD                                  | 809 (9.9 %)    | 577 (7.1 %)  | 678 (8.3 %)  | 612 (7.5 %)    | 439 (5.4 %)  |
+| Their TTFT, mean and median                             | 1.60, 1.18 s   | 1.60, 1.19 s | 1.47, 0.99 s | 1.36, 0.97 s   | 1.22, 0.34 s |
+| TTFT of the other turns                                 | 0.34 s         | 0.34 s       | 0.34 s       | 0.34 s         | 0.35 s       |
+| All                                                     | 0.46 s         | 0.43 s       | 0.44 s       | 0.41 s         | 0.40 s       |
 
 - **With a short queue a read at arrival costs the turn about 1.2 s, and an early read timed right removes it:** the
   median reading turn is at 1.18 s with no hints and at 0.34 s with exact hints, the level of a turn that read
@@ -574,11 +574,11 @@ script `checks/calm_reads.py`).** Asked by the author: with a short queue and mo
 14.7 % of turns reading from SSD (14.2 %), 297 launches refused room (277), 2.4K tokens pinned on average (2.6K), 473K
 pages read on the shared turns (458K). Tables: `compare_ec.out`, `pairs_ec.out`.
 
-| Mean TTFT | JIT exact | `ec_r13`, repeat | `ec_r1` | `nofc`, repeat | `nofc_noend` |
-|---|---|---|---|---|---|
-| 6,715 turns | 0.51 s | 0.66, 0.78 s | 0.67 s | 0.69, 0.80 s | 0.71 s |
-| 11,145 turns | 0.70 s | 0.76, 0.86 s | 0.86 s | 0.88, 0.86 s | 0.91 s |
-| of them in the two load episodes | 1.53 s | 1.66, 2.10 s | 2.02 s | 2.12, 1.95 s | 2.14 s |
+| Mean TTFT                        | JIT exact | `ec_r13`, repeat | `ec_r1` | `nofc`, repeat | `nofc_noend` |
+| -------------------------------- | --------- | ------------------ | --------- | ---------------- | -------------- |
+| 6,715 turns                      | 0.51 s    | 0.66, 0.78 s       | 0.67 s    | 0.69, 0.80 s     | 0.71 s         |
+| 11,145 turns                     | 0.70 s    | 0.76, 0.86 s       | 0.86 s    | 0.88, 0.86 s     | 0.91 s         |
+| of them in the two load episodes | 1.53 s    | 1.66, 2.10 s       | 2.02 s    | 2.12, 1.95 s     | 2.14 s         |
 
 - **Two runs of an arm now span as much as the arms do.** On the 6,715 turns rules 1 and 3 moved 0.12 s and the
   rival 0.11 s, and the four runs interleave (0.66, 0.69, 0.78, 0.80 s). On the 11,145 the rival moved 0.01 s and
@@ -591,15 +591,15 @@ pages read on the shared turns (458K). Tables: `compare_ec.out`, `pairs_ec.out`.
 only, as for the other 128-user arms. Table: `compare_c128.out` (the same table before this arm:
 `compare_c128_pre.out`). The other rows are campaigns 18, 20, 23 and 25, on earlier builds and GPU units.
 
-| First 6,900 s | Turns | Mean TTFT | Queue wait | Turn latency | SSD pages | Turns with over one read |
-|---|---|---|---|---|---|---|
-| original HiCache | 8,334 | 50.20 s | 49.13 s | 73.96 s | 433K | 1 |
-| hint-free, read pins | 10,223 | 38.79 s | 37.95 s | 57.45 s | 1,063K | 0 |
-| early reads, exact hints (`oracle`) | 15,525 | 20.58 s | 20.15 s | 32.85 s | 1,438K | 36 |
-| early reads, p50 (`p50`) | 15,473 | 20.68 s | 20.26 s | 32.98 s | 1,441K | 162 |
-| JIT exact | 15,384 | 20.93 s | 20.50 s | 33.32 s | 998K | 0 |
-| JIT p50 | 15,366 | 20.98 s | 20.55 s | 33.39 s | 1,195K | 120 |
-| `nofc_noend_c128` | 15,418 | 20.84 s | 20.41 s | 33.19 s | 1,153K | 0 |
+| First 6,900 s                         | Turns  | Mean TTFT | Queue wait | Turn latency | SSD pages | Turns with over one read |
+| ------------------------------------- | ------ | --------- | ---------- | ------------ | --------- | ------------------------ |
+| original HiCache                      | 8,334  | 50.20 s   | 49.13 s    | 73.96 s      | 433K      | 1                        |
+| hint-free, read pins                  | 10,223 | 38.79 s   | 37.95 s    | 57.45 s      | 1,063K    | 0                        |
+| early reads, exact hints (`oracle`) | 15,525 | 20.58 s   | 20.15 s    | 32.85 s      | 1,438K    | 36                       |
+| early reads, p50 (`p50`)            | 15,473 | 20.68 s   | 20.26 s    | 32.98 s      | 1,441K    | 162                      |
+| JIT exact                             | 15,384 | 20.93 s   | 20.50 s    | 33.32 s      | 998K      | 0                        |
+| JIT p50                               | 15,366 | 20.98 s   | 20.55 s    | 33.39 s      | 1,195K    | 120                      |
+| `nofc_noend_c128`                   | 15,418 | 20.84 s   | 20.41 s    | 33.19 s      | 1,153K    | 0                        |
 
 - **On every column it lands inside the range of the four hinted arms.** In SSD pages it is 16 % above JIT exact and
   4 % below JIT p50. 25.9 % of its returning turns read from SSD, one read each; 33 tokens recomputed per returning
@@ -616,12 +616,12 @@ run.** This is point 7 of the outside reading. Tables: `compare_ec.out`, `pairs_
 runs share; the seven-run table earlier entries cite is kept as `pairs_ec_7runs.out`), `pairs_ec_ctl.out` (the 6,715
 turns all fifteen runs share), `checks/latency_lead8.out`.
 
-| Mean TTFT | JIT exact, repeat | `ec_r13`, repeat | `ec_r1` | `nofc`, repeat | `nofc_noend` |
-|---|---|---|---|---|---|
-| 6,715 turns | 0.51, 0.54 s | 0.66, 0.78 s | 0.67 s | 0.69, 0.80 s | 0.71 s |
-| 11,145 turns | 0.70, 0.77 s | 0.76, 0.86 s | 0.86 s | 0.88, 0.86 s | 0.91 s |
-| of them in the two load episodes | 1.53, 1.88 s | 1.66, 2.10 s | 2.02 s | 2.12, 1.95 s | 2.14 s |
-| of them elsewhere | 0.40, 0.37 s | 0.44, 0.41 s | 0.45 s | 0.43, 0.47 s | 0.46 s |
+| Mean TTFT                        | JIT exact, repeat | `ec_r13`, repeat | `ec_r1` | `nofc`, repeat | `nofc_noend` |
+| -------------------------------- | ----------------- | ------------------ | --------- | ---------------- | -------------- |
+| 6,715 turns                      | 0.51, 0.54 s      | 0.66, 0.78 s       | 0.67 s    | 0.69, 0.80 s     | 0.71 s         |
+| 11,145 turns                     | 0.70, 0.77 s      | 0.76, 0.86 s       | 0.86 s    | 0.88, 0.86 s     | 0.91 s         |
+| of them in the two load episodes | 1.53, 1.88 s      | 1.66, 2.10 s       | 2.02 s    | 2.12, 1.95 s     | 2.14 s         |
+| of them elsewhere                | 0.40, 0.37 s      | 0.44, 0.41 s       | 0.45 s    | 0.43, 0.47 s     | 0.46 s         |
 
 - **The reference holds.** Its two runs are 0.04 s apart on the 6,715 turns and 0.07 s on the 11,145, all of it in the
   load episodes (+0.16 and +0.35 s there, 0.00 and -0.03 s elsewhere). Its mechanisms repeat: 11.5 % of turns
@@ -695,12 +695,12 @@ one.** Rules 1 and 3 with the price set by measured harm. Tables: `compare_ec.ou
 turns the nine leading runs share; the eight-run table is kept as `pairs_ec_8runs.out`), `pairs_ec_ctl.out`,
 `stall_ec_designs.out`. Hardware control as the other arms.
 
-| Mean TTFT | JIT exact, repeat | `ec_r13`, repeat | `ec_r134` | `ec_r1` | `nofc`, repeat | `nofc_noend` |
-|---|---|---|---|---|---|---|
-| 6,715 turns | 0.51, 0.54 s | 0.66, 0.78 s | 0.80 s | 0.67 s | 0.69, 0.80 s | 0.71 s |
-| 11,067 turns | 0.70, 0.77 s | 0.77, 0.86 s | 0.89 s | 0.87 s | 0.88, 0.87 s | 0.91 s |
-| of them in the two load episodes | 1.53, 1.88 s | 1.66, 2.10 s | 2.08 s | 2.02 s | 2.12, 1.95 s | 2.14 s |
-| of them elsewhere | 0.40, 0.37 s | 0.44, 0.41 s | 0.45 s | 0.44 s | 0.42, 0.47 s | 0.46 s |
+| Mean TTFT                        | JIT exact, repeat | `ec_r13`, repeat | `ec_r134` | `ec_r1` | `nofc`, repeat | `nofc_noend` |
+| -------------------------------- | ----------------- | ------------------ | ----------- | --------- | ---------------- | -------------- |
+| 6,715 turns                      | 0.51, 0.54 s      | 0.66, 0.78 s       | 0.80 s      | 0.67 s    | 0.69, 0.80 s     | 0.71 s         |
+| 11,067 turns                     | 0.70, 0.77 s      | 0.77, 0.86 s       | 0.89 s      | 0.87 s    | 0.88, 0.87 s     | 0.91 s         |
+| of them in the two load episodes | 1.53, 1.88 s      | 1.66, 2.10 s       | 2.08 s      | 2.02 s    | 2.12, 1.95 s     | 2.14 s         |
+| of them elsewhere                | 0.40, 0.37 s      | 0.44, 0.41 s       | 0.45 s      | 0.44 s    | 0.42, 0.47 s     | 0.46 s         |
 
 - **Not separated from the fixed price or from the rivals, by the rule for repeats.** Behind both runs of rules 1 and
   3 (0.02 and 0.14 s on the 6,715 turns, 0.03 and 0.12 s on the 11,067), with the smaller gap inside that arm's own
@@ -747,12 +747,12 @@ with rule 4 dash-dot, all four rules dotted. `ec_full` is wired the same way and
 table is kept as `pairs_ec_9runs.out`), `pairs_ec_ctl.out` (the 6,715 turns all seventeen runs share; before:
 `pairs_ec_ctl_16runs.out`), `checks/latency_lead10.out`. Hardware control as the other arms.
 
-| Mean TTFT | JIT exact, repeat | `ec_r13`, repeat | `ec_r134` | `ec_r1` | `nofc`, repeat | `nofc_noend`, repeat |
-|---|---|---|---|---|---|---|
-| 6,715 turns | 0.51, 0.54 s | 0.66, 0.78 s | 0.80 s | 0.67 s | 0.69, 0.80 s | 0.71, 0.72 s |
-| 11,067 turns | 0.70, 0.77 s | 0.77, 0.86 s | 0.89 s | 0.87 s | 0.88, 0.87 s | 0.91, 0.91 s |
-| of them in the two load episodes | 1.53, 1.88 s | 1.66, 2.10 s | 2.08 s | 2.02 s | 2.12, 1.95 s | 2.14, 2.12 s |
-| of them elsewhere | 0.40, 0.37 s | 0.44, 0.41 s | 0.45 s | 0.44 s | 0.42, 0.47 s | 0.46, 0.47 s |
+| Mean TTFT                        | JIT exact, repeat | `ec_r13`, repeat | `ec_r134` | `ec_r1` | `nofc`, repeat | `nofc_noend`, repeat |
+| -------------------------------- | ----------------- | ------------------ | ----------- | --------- | ---------------- | ---------------------- |
+| 6,715 turns                      | 0.51, 0.54 s      | 0.66, 0.78 s       | 0.80 s      | 0.67 s    | 0.69, 0.80 s     | 0.71, 0.72 s           |
+| 11,067 turns                     | 0.70, 0.77 s      | 0.77, 0.86 s       | 0.89 s      | 0.87 s    | 0.88, 0.87 s     | 0.91, 0.91 s           |
+| of them in the two load episodes | 1.53, 1.88 s      | 1.66, 2.10 s       | 2.08 s      | 2.02 s    | 2.12, 1.95 s     | 2.14, 2.12 s           |
+| of them elsewhere                | 0.40, 0.37 s      | 0.44, 0.41 s       | 0.45 s      | 0.44 s    | 0.42, 0.47 s     | 0.46, 0.47 s           |
 
 - **This arm repeats more closely than any other.** +0.005 s on the 6,715 turns and +0.001 s on the 11,067 (5 % to
   95 %: -0.03 to +0.03 s), in the load episodes too (-0.01 and -0.02 s). The three hinted arms with a repeat moved
@@ -778,16 +778,16 @@ early, and the arm lands with the old oracle.** Tables: `compare_c128.out` (eigh
 `compare_c128_7runs.out`), `stall_ec_designs_c128.out`, `checks/read_starts.out`. Each run's first 6,900 s; one run per
 arm, no repeat at 128 users.
 
-| First 6,900 s | HiCache | old oracle | old p50 | JIT exact | JIT p50 | no hints | rules 1, 3, 4 |
-|---|---|---|---|---|---|---|---|
-| turns | 8,334 | 15,525 | 15,473 | 15,384 | 15,366 | 15,418 | 15,502 |
-| mean TTFT, all turns | 50.20 s | 20.58 s | 20.68 s | 20.93 s | 20.98 s | 20.84 s | 20.57 s |
-| mean TTFT, 8,001 shared returning turns | 50.55 s | 11.73 s | 11.82 s | 12.12 s | 12.23 s | 12.07 s | 11.70 s |
-| turn latency on them | 74.67 s | 23.67 s | 23.78 s | 24.18 s | 24.32 s | 24.13 s | 23.64 s |
-| SSD pages | 433K | 1,438K | 1,441K | 998K | 1,195K | 1,153K | 1,049K |
-| returning turns reading from SSD | 19.6 % | 33.1 % | 32.7 % | 21.4 % | 25.5 % | 25.9 % | 23.6 % |
-| turns with over one read | 1 | 36 | 162 | 0 | 120 | 0 | 0 |
-| reads staged before arrival | 0 | 4,643 | 4,556 | 2 | 462 | 0 | 0 |
+| First 6,900 s                           | HiCache | old oracle | old p50 | JIT exact | JIT p50 | no hints | rules 1, 3, 4 |
+| --------------------------------------- | ------- | ---------- | ------- | --------- | ------- | -------- | ------------- |
+| turns                                   | 8,334   | 15,525     | 15,473  | 15,384    | 15,366  | 15,418   | 15,502        |
+| mean TTFT, all turns                    | 50.20 s | 20.58 s    | 20.68 s | 20.93 s   | 20.98 s | 20.84 s  | 20.57 s       |
+| mean TTFT, 8,001 shared returning turns | 50.55 s | 11.73 s    | 11.82 s | 12.12 s   | 12.23 s | 12.07 s  | 11.70 s       |
+| turn latency on them                    | 74.67 s | 23.67 s    | 23.78 s | 24.18 s   | 24.32 s | 24.13 s  | 23.64 s       |
+| SSD pages                               | 433K    | 1,438K     | 1,441K  | 998K      | 1,195K  | 1,153K   | 1,049K        |
+| returning turns reading from SSD        | 19.6 %  | 33.1 %     | 32.7 %  | 21.4 %    | 25.5 %  | 25.9 %   | 23.6 %        |
+| turns with over one read                | 1       | 36         | 162     | 0         | 120     | 0        | 0             |
+| reads staged before arrival             | 0       | 4,643      | 4,556   | 2         | 462     | 0        | 0             |
 
 - **Clean.** 16,227 turns in the 2 h, no client errors, no tracebacks, settings as queued (expected cost, 5e-5, price
   learning `harm`, soft pins off, return chance with a 30 s horizon).
@@ -829,6 +829,7 @@ Script changes: `plot_timeline.py` (set `designs_c128`, a time cut, a legend cor
 the `ssd` panel, that footnote), `plot_ec.py`, `stall_ec.py` (`STALL_LIMIT_S`, `STALL_ORDER_RUN`), `plot_stall.py` (the
 set's footnote). The 44-user sets redraw to the byte after them (46 of 48 files of `compare_c26_designs`; the deck
 figure's CSV gains an `ssd` column and its PDF a new date).
+
 - `ec_full` booted with its settings at 21:51Z (soft pins on; no tracebacks, no client errors) and ends about 23:53Z.
 
 **`ec_full` (done 23:53Z on 2026-11-12, clean, GPU unit `GPU-6374d407`): all four rules land at 0.66 s, the best
@@ -837,15 +838,15 @@ pricing run's level; rule 2 does what it was built to do and pays for it in SSD 
 `pairs_ec_ctl_17runs.out`), `stall_ec_designs.out`, `checks/latency_lead11.out`, `checks/read_starts_c44.out`,
 `checks/bumps.out`. One run of this arm.
 
-| 6,715 shared returning turns | JIT exact | rules 1, 3 | rule 1 | rules 1, 3, 4 | all four | no gap forecast | no hints |
-|---|---|---|---|---|---|---|---|
-| mean TTFT | 0.51, 0.54 s | 0.66, 0.78 s | 0.67 s | 0.80 s | 0.66 s | 0.69, 0.80 s | 0.71, 0.72 s |
-| in the two load episodes | 1.14, 1.31 s | 1.56, 2.31 s | 1.75 s | 2.22 s | 1.66 s | 1.83, 2.21 s | 1.85, 1.84 s |
-| turns over 10 s | 14, 27 | 30, 93 | 55 | 83 | 38 | 53, 66 | 25, 47 |
-| recomputed tokens per turn | 120, 151 | 214, 253 | 181 | 320 | 169 | 131, 193 | 145, 135 |
-| SSD pages, whole run | 388K, 397K | 437K, 415K | 448K | 420K | 534K | 469K, 482K | 562K, 559K |
-| reads staged before arrival | 1,202, 1,207 | 629, 560 | 670 | 838 | 1,569 | 0 | 0 |
-| turns sent before minute 115 | 11,699, 11,703 | 11,690, 11,527 | 11,580 | 11,446 | 11,706 | 11,710, 11,654 | 11,680, 11,645 |
+| 6,715 shared returning turns | JIT exact      | rules 1, 3     | rule 1 | rules 1, 3, 4 | all four | no gap forecast | no hints       |
+| ---------------------------- | -------------- | -------------- | ------ | ------------- | -------- | --------------- | -------------- |
+| mean TTFT                    | 0.51, 0.54 s   | 0.66, 0.78 s   | 0.67 s | 0.80 s        | 0.66 s   | 0.69, 0.80 s    | 0.71, 0.72 s   |
+| in the two load episodes     | 1.14, 1.31 s   | 1.56, 2.31 s   | 1.75 s | 2.22 s        | 1.66 s   | 1.83, 2.21 s    | 1.85, 1.84 s   |
+| turns over 10 s              | 14, 27         | 30, 93         | 55     | 83            | 38       | 53, 66          | 25, 47         |
+| recomputed tokens per turn   | 120, 151       | 214, 253       | 181    | 320           | 169      | 131, 193        | 145, 135       |
+| SSD pages, whole run         | 388K, 397K     | 437K, 415K     | 448K   | 420K          | 534K     | 469K, 482K      | 562K, 559K     |
+| reads staged before arrival  | 1,202, 1,207   | 629, 560       | 670    | 838           | 1,569    | 0               | 0              |
+| turns sent before minute 115 | 11,699, 11,703 | 11,690, 11,527 | 11,580 | 11,446        | 11,706   | 11,710, 11,654  | 11,680, 11,645 |
 
 - **Clean.** 12,161 turns in the 2 h, no client errors, no tracebacks, settings as queued (expected cost, 5e-5, price
   learning `harm`, soft pins on, return chance with a 30 s horizon). Decode, first-turn prefill and SSD speed in line
@@ -879,6 +880,7 @@ dotted orange, in every figure, its own timeline and paired CDFs, and a ninth ro
 files of the other runs (timelines, event and turn tables, paired CDFs) came out byte-identical. `plot_pricing_vs_jit.py` now picks the legend's column count so that it ends
 inside the figure (seven labels ran past the right edge in three columns; two here); the 128-user figure, the
 `compare_c26_ec` one and the six-series one redraw to the byte with it.
+
 - `fq90` booted with its settings at 23:54Z (just-in-time, landing quantile 0.9, next-use eviction; no tracebacks, no
   client errors) and ends about 01:56Z on 2026-11-13.
 
@@ -890,16 +892,16 @@ runs; earlier `pairs_ec_ctl_18runs.out`), `pairs_ec_fq90.out` (the 11 leading ru
 this arm. It differs from the JIT p50 arm (`jit_p50_d`) and from rule 1 alone (`ec_r1`) in the read timing only: same
 build, same next-use eviction, same hints.
 
-| 6,715 shared returning turns | JIT p50 (lands at p10) | `fq90` (lands at p90) | rule 1 | rules 1, 3 | no gap forecast | no hints | JIT exact |
-|---|---|---|---|---|---|---|---|
-| mean TTFT | 1.60, 1.35, 1.48 s | 0.94 s | 0.67 s | 0.66, 0.78 s | 0.69, 0.80 s | 0.71, 0.72 s | 0.51, 0.54 s |
-| in the two load episodes | 5.24, 4.01, 4.33 s | 2.71 s | 1.75 s | 1.56, 2.31 s | 1.83, 2.21 s | 1.85, 1.84 s | 1.14, 1.31 s |
-| turns over 10 s | 246, 172, 183 | 98 | 55 | 30, 93 | 53, 66 | 25, 47 | 14, 27 |
-| recomputed tokens per turn | 970, 928, 1,007 | 446 | 181 | 214, 253 | 131, 193 | 145, 135 | 120, 151 |
-| SSD pages, whole run | 563K, 580K, 569K | 506K | 448K | 437K, 415K | 469K, 482K | 562K, 559K | 388K, 397K |
-| reads staged before arrival | 2,094, 2,202, 2,149 | 613 | 670 | 629, 560 | 0 | 0 | 1,202, 1,207 |
-| mean tokens pinned by reads | 30.2K, 31.5K, 28.8K | 15.3K | 4.8K | 4.2K, 4.6K | 2.6K, 2.4K | 2.5K, 2.5K | 5.9K, 6.0K |
-| turns sent before minute 115 | 10,043, 10,208, 10,050 | 11,204 | 11,580 | 11,690, 11,527 | 11,710, 11,654 | 11,680, 11,645 | 11,699, 11,703 |
+| 6,715 shared returning turns | JIT p50 (lands at p10) | `fq90` (lands at p90) | rule 1 | rules 1, 3     | no gap forecast | no hints       | JIT exact      |
+| ---------------------------- | ---------------------- | ----------------------- | ------ | -------------- | --------------- | -------------- | -------------- |
+| mean TTFT                    | 1.60, 1.35, 1.48 s     | 0.94 s                  | 0.67 s | 0.66, 0.78 s   | 0.69, 0.80 s    | 0.71, 0.72 s   | 0.51, 0.54 s   |
+| in the two load episodes     | 5.24, 4.01, 4.33 s     | 2.71 s                  | 1.75 s | 1.56, 2.31 s   | 1.83, 2.21 s    | 1.85, 1.84 s   | 1.14, 1.31 s   |
+| turns over 10 s              | 246, 172, 183          | 98                      | 55     | 30, 93         | 53, 66          | 25, 47         | 14, 27         |
+| recomputed tokens per turn   | 970, 928, 1,007        | 446                     | 181    | 214, 253       | 131, 193        | 145, 135       | 120, 151       |
+| SSD pages, whole run         | 563K, 580K, 569K       | 506K                    | 448K   | 437K, 415K     | 469K, 482K      | 562K, 559K     | 388K, 397K     |
+| reads staged before arrival  | 2,094, 2,202, 2,149    | 613                     | 670    | 629, 560       | 0               | 0              | 1,202, 1,207   |
+| mean tokens pinned by reads  | 30.2K, 31.5K, 28.8K    | 15.3K                   | 4.8K   | 4.2K, 4.6K     | 2.6K, 2.4K      | 2.5K, 2.5K     | 5.9K, 6.0K     |
+| turns sent before minute 115 | 10,043, 10,208, 10,050 | 11,204                  | 11,580 | 11,690, 11,527 | 11,710, 11,654  | 11,680, 11,645 | 11,699, 11,703 |
 
 - **Clean.** 11,740 turns in the 2 h, no client errors, no tracebacks, settings as queued (just-in-time, landing
   quantile 0.9, next-use eviction, no price learning, no soft pins). The engine times such a read past the p50 on
@@ -944,17 +946,17 @@ arm. It differs from the JIT p50 arm (`jit_p50_d`) in the eviction rule only, ch
 three quantiles instead of next use from the p50: same build, same just-in-time reads landing at the p10, same hints.
 With `ec_r1` and `ec_r13` it completes the two-by-two of rules 1 and 3.
 
-| 6,715 shared returning turns | neither rule (JIT p50) | rule 3 alone (`ec_r3`) | rule 1 alone | rules 1, 3 |
-|---|---|---|---|---|
-| mean TTFT | 1.60, 1.35, 1.48 s | 1.48 s | 0.67 s | 0.66, 0.78 s |
-| in the two load episodes | 5.24, 4.01, 4.33 s | 4.23 s | 1.75 s | 1.56, 2.31 s |
-| turns over 10 s | 246, 172, 183 | 186 | 55 | 30, 93 |
-| recomputed tokens per turn | 970, 928, 1,007 | 1,042 | 181 | 214, 253 |
-| SSD pages, whole run | 563K, 580K, 569K | 540K | 448K | 437K, 415K |
-| tokens evicted, GPU / host (M) | 62.4 / 52.3, 63.4 / 53.5, 63.5 / 52.4 | 60.6 / 51.0 | 52.4 / 40.5 | 51.4 / 39.6, 50.1 / 38.4 |
-| reads staged before arrival | 2,094, 2,202, 2,149 | 2,207 | 670 | 629, 560 |
-| mean tokens pinned by reads | 30.2K, 31.5K, 28.8K | 32.0K | 4.8K | 4.2K, 4.6K |
-| turns sent before minute 115 | 10,043, 10,208, 10,050 | 10,058 | 11,580 | 11,690, 11,527 |
+| 6,715 shared returning turns   | neither rule (JIT p50)                | rule 3 alone (`ec_r3`) | rule 1 alone | rules 1, 3               |
+| ------------------------------ | ------------------------------------- | ------------------------ | ------------ | ------------------------ |
+| mean TTFT                      | 1.60, 1.35, 1.48 s                    | 1.48 s                   | 0.67 s       | 0.66, 0.78 s             |
+| in the two load episodes       | 5.24, 4.01, 4.33 s                    | 4.23 s                   | 1.75 s       | 1.56, 2.31 s             |
+| turns over 10 s                | 246, 172, 183                         | 186                      | 55           | 30, 93                   |
+| recomputed tokens per turn     | 970, 928, 1,007                       | 1,042                    | 181          | 214, 253                 |
+| SSD pages, whole run           | 563K, 580K, 569K                      | 540K                     | 448K         | 437K, 415K               |
+| tokens evicted, GPU / host (M) | 62.4 / 52.3, 63.4 / 53.5, 63.5 / 52.4 | 60.6 / 51.0              | 52.4 / 40.5  | 51.4 / 39.6, 50.1 / 38.4 |
+| reads staged before arrival    | 2,094, 2,202, 2,149                   | 2,207                    | 670          | 629, 560                 |
+| mean tokens pinned by reads    | 30.2K, 31.5K, 28.8K                   | 32.0K                    | 4.8K         | 4.2K, 4.6K               |
+| turns sent before minute 115   | 10,043, 10,208, 10,050                | 10,058                   | 11,580       | 11,690, 11,527           |
 
 - **Clean.** 10,409 turns in the 2 h, no client errors, no tracebacks, settings as queued (just-in-time landing at the
   p10, return chance with a 30 s horizon, no price learning, no soft pins). Decode and first-turn prefill in line with
@@ -998,16 +1000,16 @@ that protect queued turns, 14,801 turns). Each run's first 6,900 s; one run per 
 order between arms is shown. The arm reads at arrival and evicts ended sessions first, queued turns
 last, LRU between; it differs from the no-hint rival (`nofc_noend_c128`) in using the end-of-session signal.
 
-| First 6,900 s | old oracle | old p50 | JIT exact | JIT p50 | rules 1, 3, 4 | no hints | no gap forecast |
-|---|---|---|---|---|---|---|---|
-| turns | 15,525 | 15,473 | 15,384 | 15,366 | 15,502 | 15,418 | 15,519 |
-| mean TTFT, all turns | 20.58 s | 20.68 s | 20.93 s | 20.98 s | 20.57 s | 20.84 s | 20.57 s |
-| mean TTFT, 8,001 shared returning turns | 11.73 s | 11.82 s | 12.12 s | 12.23 s | 11.70 s | 12.07 s | 11.75 s |
-| turn latency on them | 23.67 s | 23.78 s | 24.18 s | 24.32 s | 23.64 s | 24.13 s | 23.68 s |
-| SSD pages | 1,438K | 1,441K | 998K | 1,195K | 1,049K | 1,153K | 1,122K |
-| returning turns reading from SSD | 33.1 % | 32.7 % | 21.4 % | 25.5 % | 23.6 % | 25.9 % | 24.9 % |
-| turns with over one read | 36 | 162 | 0 | 120 | 0 | 0 | 0 |
-| reads staged before arrival | 4,643 | 4,556 | 2 | 462 | 0 | 0 | 0 |
+| First 6,900 s                           | old oracle | old p50 | JIT exact | JIT p50 | rules 1, 3, 4 | no hints | no gap forecast |
+| --------------------------------------- | ---------- | ------- | --------- | ------- | ------------- | -------- | --------------- |
+| turns                                   | 15,525     | 15,473  | 15,384    | 15,366  | 15,502        | 15,418   | 15,519          |
+| mean TTFT, all turns                    | 20.58 s    | 20.68 s | 20.93 s   | 20.98 s | 20.57 s       | 20.84 s  | 20.57 s         |
+| mean TTFT, 8,001 shared returning turns | 11.73 s    | 11.82 s | 12.12 s   | 12.23 s | 11.70 s       | 12.07 s  | 11.75 s         |
+| turn latency on them                    | 23.67 s    | 23.78 s | 24.18 s   | 24.32 s | 23.64 s       | 24.13 s  | 23.68 s         |
+| SSD pages                               | 1,438K     | 1,441K  | 998K      | 1,195K  | 1,049K        | 1,153K   | 1,122K          |
+| returning turns reading from SSD        | 33.1 %     | 32.7 %  | 21.4 %    | 25.5 %  | 23.6 %        | 25.9 %   | 24.9 %          |
+| turns with over one read                | 36         | 162     | 0         | 120     | 0             | 0        | 0               |
+| reads staged before arrival             | 4,643      | 4,556   | 2         | 462     | 0             | 0        | 0               |
 
 - **Clean.** 16,244 turns in the 2 h, no client errors, no tracebacks, settings as queued (reads at arrival, return
   chance with score `lru`, 160 GB host pool of 1,627,648 tokens). Nothing staged, no launch refused room.
@@ -1059,17 +1061,17 @@ with no hints reads from SSD on 0.7 % of returning turns and reaches 0.37 s, ahe
 `checks/latency_h100cut.out` (seven runs on the 8,030 returning turns they share: the cut run's first 79 min, which
 hold the first load episode and not the second). One run, cut; the rerun in progress is its repeat.
 
-| 8,030 shared returning turns | no hints, 100 GB (cut) | no hints, 70 GB | rules 1, 3, 70 GB | JIT exact, 70 GB |
-|---|---|---|---|---|
-| mean TTFT | 0.37 s | 0.65, 0.66 s | 0.60, 0.70 s | 0.48, 0.51 s |
-| in the first load episode (1,453 turns) | 0.51 s | 1.77, 1.77 s | 1.52, 2.21 s | 1.12, 1.25 s |
-| elsewhere (6,577 turns) | 0.34 s | 0.41, 0.41 s | 0.40, 0.37 s | 0.34, 0.34 s |
-| p99; turns over 10 s | 2.6 s; 0 | 7.2 s; 25 and 7.9 s; 47 | 6.8 s; 29 and 10.4 s; 94 | 5.0 s; 15 and 6.1 s; 27 |
-| read stall + rest of queue wait + after admission | 0.006 + 0.019 + 0.346 | 0.223 + 0.053 + 0.376, 0.230 + 0.060 + 0.367 | 0.141 + 0.072 + 0.390, 0.190 + 0.116 + 0.400 | 0.070 + 0.045 + 0.366, 0.072 + 0.052 + 0.383 |
-| turns reading from SSD | 56 | 1,125, 1,138 | 991, 1,006 | 691, 743 |
-| SSD pages | 17K | 329K, 328K | 266K, 258K | 210K, 223K |
-| recomputed tokens per turn | 34 | 127, 118 | 179, 217 | 106, 131 |
-| turn latency | 10.72 s | 11.35, 11.32 s | 11.52, 11.87 s | 11.26, 11.27 s |
+| 8,030 shared returning turns                      | no hints, 100 GB (cut) | no hints, 70 GB                              | rules 1, 3, 70 GB                            | JIT exact, 70 GB                             |
+| ------------------------------------------------- | ---------------------- | -------------------------------------------- | -------------------------------------------- | -------------------------------------------- |
+| mean TTFT                                         | 0.37 s                 | 0.65, 0.66 s                                 | 0.60, 0.70 s                                 | 0.48, 0.51 s                                 |
+| in the first load episode (1,453 turns)           | 0.51 s                 | 1.77, 1.77 s                                 | 1.52, 2.21 s                                 | 1.12, 1.25 s                                 |
+| elsewhere (6,577 turns)                           | 0.34 s                 | 0.41, 0.41 s                                 | 0.40, 0.37 s                                 | 0.34, 0.34 s                                 |
+| p99; turns over 10 s                              | 2.6 s; 0               | 7.2 s; 25 and 7.9 s; 47                      | 6.8 s; 29 and 10.4 s; 94                     | 5.0 s; 15 and 6.1 s; 27                      |
+| read stall + rest of queue wait + after admission | 0.006 + 0.019 + 0.346  | 0.223 + 0.053 + 0.376, 0.230 + 0.060 + 0.367 | 0.141 + 0.072 + 0.390, 0.190 + 0.116 + 0.400 | 0.070 + 0.045 + 0.366, 0.072 + 0.052 + 0.383 |
+| turns reading from SSD                            | 56                     | 1,125, 1,138                                 | 991, 1,006                                   | 691, 743                                     |
+| SSD pages                                         | 17K                    | 329K, 328K                                   | 266K, 258K                                   | 210K, 223K                                   |
+| recomputed tokens per turn                        | 34                     | 127, 118                                     | 179, 217                                     | 106, 131                                     |
+| turn latency                                      | 10.72 s                | 11.35, 11.32 s                               | 11.52, 11.87 s                               | 11.26, 11.27 s                               |
 
 - **Clean to the cut.** 8,800 turns in 83.7 min, no client errors, no tracebacks. Decode 36.3 ms per step at 8-15
   running and first-turn prefill 0.089 ms per token, in line with the other arms.
@@ -1097,13 +1099,13 @@ for every 5 GB above 70 GB, and the model fitted at 70 GB gives the 100 GB run's
 TTFT), fitted on `nofc_noend_rep` so that LRU gives its measured 17.0 % of returning turns reading from SSD. Another
 host size moves the model's pool by the host pool's ratio or by the tokens added; both are shown, as a range.
 
-| Host pool | 70 GB | 75 | 80 | 85 | 90 | 100 | 110 | 160 |
-|---|---|---|---|---|---|---|---|---|
-| LRU (no hints) | 17.0 % | 9.4-10.8 | 4.9-6.7 | 2.7-4.2 | 1.5-2.7 | 0.8-1.2 | 0.6-0.8 | 0.2-0.3 |
-| LRU, ended sessions first | 13.7 % | 6.7-8.0 | 3.0-4.4 | 1.3-2.4 | 0.6-1.3 | 0.0-0.3 | 0.0 | 0.0 |
-| next use from the p50 | 15.5 % | 9.1-10.5 | 4.5-6.6 | 2.2-3.9 | 1.5-2.1 | 0.8-1.1 | 0.6-0.8 | 0.2-0.3 |
-| return chance within 30 s (rule 3) | 13.6 % | 8.2-9.5 | 4.3-6.1 | 1.8-3.6 | 0.6-1.8 | 0.0-0.3 | 0.0 | 0.0 |
-| exact next use | 9.1 % | 4.8-5.5 | 2.1-3.3 | 0.9-1.7 | 0.4-0.9 | 0.1-0.2 | 0.0-0.1 | 0.0 |
+| Host pool                          | 70 GB  | 75       | 80      | 85      | 90      | 100     | 110     | 160     |
+| ---------------------------------- | ------ | -------- | ------- | ------- | ------- | ------- | ------- | ------- |
+| LRU (no hints)                     | 17.0 % | 9.4-10.8 | 4.9-6.7 | 2.7-4.2 | 1.5-2.7 | 0.8-1.2 | 0.6-0.8 | 0.2-0.3 |
+| LRU, ended sessions first          | 13.7 % | 6.7-8.0  | 3.0-4.4 | 1.3-2.4 | 0.6-1.3 | 0.0-0.3 | 0.0     | 0.0     |
+| next use from the p50              | 15.5 % | 9.1-10.5 | 4.5-6.6 | 2.2-3.9 | 1.5-2.1 | 0.8-1.1 | 0.6-0.8 | 0.2-0.3 |
+| return chance within 30 s (rule 3) | 13.6 % | 8.2-9.5  | 4.3-6.1 | 1.8-3.6 | 0.6-1.8 | 0.0-0.3 | 0.0     | 0.0     |
+| exact next use                     | 9.1 %  | 4.8-5.5  | 2.1-3.3 | 0.9-1.7 | 0.4-0.9 | 0.1-0.2 | 0.0-0.1 | 0.0     |
 
 - **Check.** On the 100 GB cut run's own timeline the model gives 0.7 % (by ratio) and 0.9 % (by tokens); measured
   0.7 %. The 70 GB run's first 84 min give 0.7-0.8 % at those pools and 12.6 % at 70 GB, so the fall is the pool's
@@ -1159,16 +1161,16 @@ host memory under 1 % of returning turns read from SSD, so there is nothing left
 `pairs_ec_h100_rep.out` (with the cut run), `checks/limits/pool_check_h100.out`. Figures:
 `results/compare_c26_designs_h100/` (`figs_designs_h100.sh`).
 
-| 9,716 shared returning turns | No hints | JIT p50 | JIT exact |
-|---|---|---|---|
-| mean TTFT at 100 GB | 0.41 s | 0.41 s | 0.42 s |
-| mean TTFT at 70 GB | 0.93, 0.93 s | 1.58 s | 0.72, 0.83 s |
-| p99 TTFT at 100 GB (70 GB) | 3.0 s (12.4, 12.5) | 3.0 s (14.5) | 4.1 s (11.5, 12.7) |
-| turns reading from SSD at 100 GB (70 GB) | 92 (1,598, 1,610) | 103 (2,361) | 62 (1,061, 1,110) |
-| SSD pages at 100 GB (70 GB) | 27K (469K, 470K) | 27K (568K) | 20K (324K, 335K) |
+| 9,716 shared returning turns                                 | No hints              | JIT p50               | JIT exact             |
+| ------------------------------------------------------------ | --------------------- | --------------------- | --------------------- |
+| mean TTFT at 100 GB                                          | 0.41 s                | 0.41 s                | 0.42 s                |
+| mean TTFT at 70 GB                                           | 0.93, 0.93 s          | 1.58 s                | 0.72, 0.83 s          |
+| p99 TTFT at 100 GB (70 GB)                                   | 3.0 s (12.4, 12.5)    | 3.0 s (14.5)          | 4.1 s (11.5, 12.7)    |
+| turns reading from SSD at 100 GB (70 GB)                     | 92 (1,598, 1,610)     | 103 (2,361)           | 62 (1,061, 1,110)     |
+| SSD pages at 100 GB (70 GB)                                  | 27K (469K, 470K)      | 27K (568K)            | 20K (324K, 335K)      |
 | wait at 100 GB: read stall + rest of queue + after admission | 0.011 + 0.056 + 0.343 | 0.009 + 0.055 + 0.347 | 0.002 + 0.074 + 0.343 |
-| turn latency at 100 GB (70 GB: `_rep`, `_d` runs) | 10.90 s (12.16) | 10.89 s (16.24) | 10.90 s (12.11) |
-| turns sent before minute 115 at 100 GB (70 GB) | 12,236 (11,645) | 12,237 (10,050) | 12,236 (11,703) |
+| turn latency at 100 GB (70 GB: `_rep`, `_d` runs)        | 10.90 s (12.16)       | 10.89 s (16.24)       | 10.90 s (12.11)       |
+| turns sent before minute 115 at 100 GB (70 GB)               | 12,236 (11,645)       | 12,237 (10,050)       | 12,236 (11,703)       |
 
 - **Clean.** 12,861-12,862 turns each, no client errors, no tracebacks, settings as queued. Hardware control in line
   with the 70 GB runs (decode 36.6-37.4 ms per step at 8-15 running, first-turn prefill 0.087-0.089 ms per token).
