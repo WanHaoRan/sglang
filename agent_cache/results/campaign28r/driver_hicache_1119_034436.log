@@ -1,0 +1,31 @@
+already stopped: 20261119_023825_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70 (pid 3233)
+L3 wiped: 0 files left
+arm: three_tier_wc  level: custom_L1nat_H160 (L1=natural tokens, host=160 GB)  model: Qwen/Qwen3-30B-A3B-Instruct-2507  ctx: 262144  run dir: /sgl-workspace/sglang/agent_cache/results/20261119_034437_three_tier_wc_custom_L1nat_H160  extra: none
+engine: /sgl-workspace/sglang/agent_cache/frozen/engine_ec_20261111d/python/sglang
+launched three_tier_wc: pid 4507   (watch: tail -f /sgl-workspace/sglang/agent_cache/results/20261119_034437_three_tier_wc_custom_L1nat_H160/server.log)
+READY: three_tier_wc after 115s
+template loaded:  0   (want 0: stock template)
+device pool:      max_total_num_tokens=668096   (want the profiled pool; record it)
+weight kernel:    mem usage=57.02 GB   marlin lines: 0 (want 0 on SM90)
+profiled warning: 0   (want 0)
+host pool:        host pool: 1627648 tokens, 160.00 GB   (want 160 GB)
+nixl backend:     1   (want 1)
+prefetch policy:  'hicache_storage_prefetch_policy': 'wait_complete'   (want wait_complete)
+L3 cleaner dir:   HiCacheL3Cleaner started: dirs=['/mnt/ssd/hicache_l3']   (want /mnt/ssd/hicache_l3)
+L3 cleaner marks: high=90.0% low=80.0%   (want 90,80)
+re-query cap:     'hicache_storage_prefetch_retry_max_attempts': 8   (want 8)
+next-turn mode:   'hicache_storage_next_turn_prefetch': 'off', prefetcher banner 0   (want off, banner 0)
+retry interval:   'hicache_storage_prefetch_retry_poll_interval': 8   (want 8)
+client: --trace /sgl-workspace/sglang/agent_cache/data/converted/freeinference_16w.programs.jsonl.gz --recipe none --hints none --max-context 65536 --seed 0 --tag hicache --arrival-rate 0.5 --max-active 128 --duration 180 --gap-scale 1 --gap-cap 1200 -> /sgl-workspace/sglang/agent_cache/results/20261119_034437_three_tier_wc_custom_L1nat_H160/programs_034641_hicache
+3787 trees from /sgl-workspace/sglang/agent_cache/data/converted/freeinference_16w.programs.jsonl.gz (freeinference, blocks); dropped over --max-context: 8215; recipe none: arrivals 0.5/s, max active 128, duration 180.0, hints none
+[60 s] live 23, in flight 15, requests 80 (+0 warmup), errors 0, idle skipped 0 s
+[120 s] live 58, in flight 47, requests 136 (+0 warmup), errors 0, idle skipped 0 s
+[180 s] live 81, in flight 81, requests 250 (+0 warmup), errors 0, idle skipped 0 s
+summary: {"kind": "summary", "tag": "hicache", "elapsed_s": 210.0, "wall_s": 210.0, "profile": 314, "warmup": 0, "errors": 0, "skipped": 2342, "plays": 99, "releases": 0, "mean_ttft_s": 7.1437, "idle_jumps": 0, "idle_skipped_s": 0.0}
+run | requests | errors | TTFT mean | p50 | p90 | p99 | out tok/s | req/min | device | host | storage | recomp | ideal | deliv/ideal
+/sgl-workspace/sglang/agent_cache/results/20261119_034437_three_tier_wc_custom_L1nat_H160/programs_034641_hicache/client.jsonl | 314 | 0 | 7.1437 | 4.6752 | 19.6708 | 23.7739 | 220.9 | 90.57 | 0.2588 | 0.3881 | 0.0 | 0.3531 | 0.6387 | 1.0129
+
+/sgl-workspace/sglang/agent_cache/results/20261119_034437_three_tier_wc_custom_L1nat_H160/programs_034641_hicache/client.jsonl: TTFT by wait {"0-1s": 7.1095, "1-10s": 7.2445, "10-60s": 7.0848, "60-300s": 6.5815, "300-1800s": null, "1800s+": null}
+client rc=0
+cleaner passes: 0; ssd used: 7%
+stopped: 20261119_034437_three_tier_wc_custom_L1nat_H160 (pid 4507); port 30000 free

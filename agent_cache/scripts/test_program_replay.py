@@ -323,6 +323,17 @@ class ReplayTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(req[0]["hint"]["reply_key"], "bash/ls")
         self.assertGreater(req[-1]["hint"]["list_len"], 1)   # gaps observed so far joined the table
 
+    async def test_no_call_key_gives_tool_less_replies_their_own_entry(self):
+        tree = _blocks_tree([0] + [0.05] * 7, sizes=list(range(2, 10)))   # no request of it names a tool call
+        common = ["--lanes", "1", "--plays", "1", "--duration", "30", "--hints", "dist"]
+        hints = [r["hint"] for r in await self.run_client(tree, common + ["--hint-no-call"]) if r["kind"] == "req"]
+        self.assertEqual([h["reply_key"] for h in hints], ["_no_call"] * 7 + ["_end"])
+        self.assertEqual([h["matched"] for h in hints[:5]], [None] * 5)   # an entry needs five gaps
+        self.assertEqual([h["matched"] for h in hints[5:7]], ["_no_call"] * 2)
+        plain = [r["hint"] for r in await self.run_client(tree, common) if r["kind"] == "req"]
+        self.assertEqual([h["reply_key"] for h in plain], [None] * 7 + ["_end"])
+        self.assertEqual([h["matched"] for h in plain[5:7]], ["*"] * 2)
+
     async def test_idle_guard_compresses_whole_system_idle(self):
         tree = _blocks_tree([0, 5.0, 5.0], sizes=[2, 3, 4])
         rows = await self.run_client(tree, ["--lanes", "1", "--plays", "1", "--duration", "60",

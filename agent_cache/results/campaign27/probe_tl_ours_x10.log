@@ -1,0 +1,43 @@
+already stopped: 20261118_221348_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70 (pid 5429)
+L3 wiped: 0 files left
+PROBE BOOT tl_ours_x10 2026-11-19T02:09:19Z gpu GPU-dcd42ca3
+arm: three_tier_wc_oracle_v2_nu_owned  level: custom_L1nat_H70 (L1=natural tokens, host=70 GB)  model: Qwen/Qwen3-30B-A3B-Instruct-2507  ctx: 262144  run dir: /sgl-workspace/sglang/agent_cache/results/20261119_020919_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70  extra: --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning harm --hicache-storage-next-turn-soft-pins on --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}
+engine: /sgl-workspace/sglang/agent_cache/frozen/engine_ec_20261111d/python/sglang
+launched three_tier_wc_oracle_v2_nu_owned: pid 497   (watch: tail -f /sgl-workspace/sglang/agent_cache/results/20261119_020919_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70/server.log)
+READY: three_tier_wc_oracle_v2_nu_owned after 241s
+template loaded:  0   (want 0: stock template)
+device pool:      max_total_num_tokens=668096   (want the profiled pool; record it)
+weight kernel:    mem usage=57.02 GB   marlin lines: 0 (want 0 on SM90)
+profiled warning: 0   (want 0)
+host pool:        host pool: 712128 tokens, 70.01 GB   (want 70 GB)
+nixl backend:     1   (want 1)
+prefetch policy:  'hicache_storage_prefetch_policy': 'wait_complete'   (want wait_complete)
+L3 cleaner dir:   HiCacheL3Cleaner started: dirs=['/mnt/ssd/hicache_l3']   (want /mnt/ssd/hicache_l3)
+L3 cleaner marks: high=70.0% low=60.0%   (want 70,60)
+re-query cap:     'hicache_storage_prefetch_retry_max_attempts': 8   (want 8)
+next-turn mode:   'hicache_storage_next_turn_prefetch': 'on', prefetcher banner 1   (want on, banner 1)
+retry interval:   'hicache_storage_prefetch_retry_poll_interval': 0   (want 0)
+read order:       'hicache_storage_read_order': 'deadline', 'hicache_storage_prefetch_pin_fraction': 0.3, srs banner 1 retry_poll_interval=0   (want deadline, pin 0.3, banner 1 retry_poll_interval=0)
+write policy:     'hicache_write_policy': 'write_through'   (want write_through)
+eviction policy:  'radix_eviction_policy': 'return_chance'   (want next_use)
+PROBE CLIENT tl_ours_x10 2026-11-19T02:13:41Z
+client: --trace /sgl-workspace/sglang/agent_cache/data/converted/tracelab_v0.0.2.programs.jsonl.gz --recipe none --hints dist --max-context 65536 --seed 0 --tag tl_ours_x10 --arrival-rate 0.5 --max-active 44 --duration 600 --gap-scale 10 --gap-cap 1200 -> /sgl-workspace/sglang/agent_cache/results/20261119_020919_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70/programs_021342_tl_ours_x10
+3679 trees from /sgl-workspace/sglang/agent_cache/data/converted/tracelab_v0.0.2.programs.jsonl.gz (tracelab, lengths); dropped over --max-context: 4379; recipe none: arrivals 0.5/s, max active 44, duration 600.0, hints dist
+[60 s] live 22, in flight 10, requests 30 (+0 warmup), errors 0, idle skipped 0 s
+[120 s] live 44, in flight 31, requests 61 (+0 warmup), errors 0, idle skipped 0 s
+[180 s] live 44, in flight 26, requests 118 (+0 warmup), errors 0, idle skipped 0 s
+[240 s] live 44, in flight 22, requests 172 (+0 warmup), errors 0, idle skipped 0 s
+[300 s] live 44, in flight 25, requests 204 (+0 warmup), errors 0, idle skipped 0 s
+[360 s] live 44, in flight 29, requests 230 (+0 warmup), errors 0, idle skipped 0 s
+[420 s] live 44, in flight 27, requests 249 (+0 warmup), errors 0, idle skipped 0 s
+[480 s] live 44, in flight 26, requests 272 (+0 warmup), errors 0, idle skipped 0 s
+[540 s] live 44, in flight 27, requests 293 (+0 warmup), errors 0, idle skipped 0 s
+[600 s] live 28, in flight 28, requests 307 (+0 warmup), errors 0, idle skipped 0 s
+summary: {"kind": "summary", "tag": "tl_ours_x10", "elapsed_s": 630.0, "wall_s": 630.0, "profile": 313, "warmup": 0, "errors": 0, "skipped": 154, "plays": 62, "releases": 0, "mean_ttft_s": 12.0139, "idle_jumps": 0, "idle_skipped_s": 0.0}
+run | requests | errors | TTFT mean | p50 | p90 | p99 | out tok/s | req/min | device | host | storage | recomp | ideal | deliv/ideal
+/sgl-workspace/sglang/agent_cache/results/20261119_020919_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70/programs_021342_tl_ours_x10/client.jsonl | 313 | 0 | 12.0139 | 6.9075 | 34.9436 | 52.0441 | 158.9 | 29.84 | 0.1477 | 0.2134 | 0.3209 | 0.318 | 0.7544 | 0.9041
+
+/sgl-workspace/sglang/agent_cache/results/20261119_020919_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70/programs_021342_tl_ours_x10/client.jsonl: TTFT by wait {"0-1s": 10.5562, "1-10s": 13.4117, "10-60s": 14.5726, "60-300s": 13.8017, "300-1800s": 38.0236, "1800s+": null}
+PROBE CLIENT DONE tl_ours_x10 2026-11-19T02:25:30Z rc=0
+stopped: 20261119_020919_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70 (pid 497); port 30000 free
+PROBE END tl_ours_x10 2026-11-19T02:25:42Z

@@ -20,7 +20,7 @@ import sys
 import tempfile
 import types
 import unittest
-from typing import Annotated, Optional
+from typing import Annotated, Optional, TypeVar
 from unittest import mock
 
 from gap_hints import (ANY_KEY, CALL_CAP, END_ENTRY, END_KEY, MIN_POOLED, GapHistory, GapTable, OnlineGapTable,
@@ -49,7 +49,8 @@ def load_engine_reader():
     path = os.path.join(ENGINE, "mem_cache", "next_turn_prefetch.py")
     with open(path) as f:
         src = f.read()
-    wanted = {"NEXT_TURN_ACTION_TYPE", "NEXT_TURN_ACTION_VERSION", "NextTurnHint", "read_next_turn_hint"}
+    wanted = {"NEXT_TURN_ACTION_TYPE", "NEXT_TURN_ACTION_VERSION", "NEXT_TURN_TABLE_VERSION", "NextTurnHint", "GapEntry",
+              "NextTurnTable", "_Payload", "_read_action", "read_next_turn_hint", "read_next_turn_table"}
     pieces, found = [], set()
     for node in ast.parse(src).body:
         if isinstance(node, (ast.ClassDef, ast.FunctionDef)):
@@ -65,10 +66,10 @@ def load_engine_reader():
         raise RuntimeError(f"{path} no longer defines {sorted(wanted - found)}: update this loader")
     reader = types.ModuleType("_engine_next_turn")
     sys.modules[reader.__name__] = reader
-    reader.__dict__.update(msgspec=msgspec, Annotated=Annotated, Optional=Optional,
+    reader.__dict__.update(msgspec=msgspec, Annotated=Annotated, Optional=Optional, TypeVar=TypeVar,
                            KvHintsEnvelope=kv_hints.KvHintsEnvelope, logger=logging.getLogger(reader.__name__))
     exec(compile("from __future__ import annotations\n" + "\n\n".join(pieces), path, "exec"), reader.__dict__)
-    return kv_hints.KvHintsEnvelope, reader.read_next_turn_hint
+    return kv_hints.KvHintsEnvelope, reader.read_next_turn_hint, reader.read_next_turn_table
 
 
 def turn(text: str, pre_gap: float = 1.0, output_length: int = 4) -> dict:
@@ -533,8 +534,9 @@ class EngineReaderTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.envelope_type, reader = load_engine_reader()
+        cls.envelope_type, reader, table_reader = load_engine_reader()
         cls.read_next_turn_hint = staticmethod(reader)
+        cls.read_next_turn_table = staticmethod(table_reader)
 
     def engine_reads(self, env: dict):
         return self.read_next_turn_hint(msgspec.convert(json.loads(json.dumps(env, allow_nan=False)),
@@ -544,6 +546,16 @@ class EngineReaderTest(unittest.TestCase):
         for t in range(n):
             h = hinter.step(t)
             yield h, next_turn_envelope(message_id=f"m{t}", session="s", next_rid=f"r{t + 1}", hint=h, v1_point="p50")
+
+    def test_engine_reads_the_table_as_sent(self):
+        """The version "2" action: every entry's key and quantiles, the end entry and the recorded reply's key."""
+        hinter = SessionHinter([turn("go", 0), bash(2), bash(4)], keys=["t/a", "t/a", None], gap_of=lambda t: t["pre_gap"],
+                               entries=[entry("t/a", 5.0), entry("*", 9.0), END_ENTRY])
+        h, env = next(self.envelopes(hinter, 3))
+        table = self.read_next_turn_table(msgspec.convert(json.loads(json.dumps(env, allow_nan=False)), self.envelope_type))
+        self.assertEqual((table.session, table.next_rid, table.replay_reply_key), ("s", "r1", "t/a"))
+        self.assertEqual([(e.key, e.p10, e.p50, e.p90, e.ended) for e in table.gaps],
+                         [(e["key"], e.get("p10"), e.get("p50"), e.get("p90"), e.get("ended", False)) for e in h.entries])
 
     def test_today_reads_the_picked_median_or_nothing(self):
         turns = [turn("go", 0)] + [bash(g) for g in (2.0, 4.0, 6.0, 3.0)]

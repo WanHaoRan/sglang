@@ -1,0 +1,43 @@
+already stopped: 20261118_215749_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70 (pid 4173)
+L3 wiped: 0 files left
+SMOKE BOOT 2026-11-18T22:13:48Z gpu GPU-c30fd37d
+arm: three_tier_wc_oracle_v2_nu_owned  level: custom_L1nat_H70 (L1=natural tokens, host=70 GB)  model: Qwen/Qwen3-30B-A3B-Instruct-2507  ctx: 262144  run dir: /sgl-workspace/sglang/agent_cache/results/20261118_221348_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70  extra: --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning harm --hicache-storage-next-turn-soft-pins on --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}
+engine: /sgl-workspace/sglang/agent_cache/frozen/engine_ec_20261111d/python/sglang
+launched three_tier_wc_oracle_v2_nu_owned: pid 5429   (watch: tail -f /sgl-workspace/sglang/agent_cache/results/20261118_221348_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70/server.log)
+READY: three_tier_wc_oracle_v2_nu_owned after 76s
+template loaded:  0   (want 0: stock template)
+device pool:      max_total_num_tokens=668096   (want the profiled pool; record it)
+weight kernel:    mem usage=57.02 GB   marlin lines: 0 (want 0 on SM90)
+profiled warning: 0   (want 0)
+host pool:        host pool: 712128 tokens, 70.01 GB   (want 70 GB)
+nixl backend:     1   (want 1)
+prefetch policy:  'hicache_storage_prefetch_policy': 'wait_complete'   (want wait_complete)
+L3 cleaner dir:   HiCacheL3Cleaner started: dirs=['/mnt/ssd/hicache_l3']   (want /mnt/ssd/hicache_l3)
+L3 cleaner marks: high=70.0% low=60.0%   (want 70,60)
+re-query cap:     'hicache_storage_prefetch_retry_max_attempts': 8   (want 8)
+next-turn mode:   'hicache_storage_next_turn_prefetch': 'on', prefetcher banner 1   (want on, banner 1)
+retry interval:   'hicache_storage_prefetch_retry_poll_interval': 0   (want 0)
+read order:       'hicache_storage_read_order': 'deadline', 'hicache_storage_prefetch_pin_fraction': 0.3, srs banner 1 retry_poll_interval=0   (want deadline, pin 0.3, banner 1 retry_poll_interval=0)
+write policy:     'hicache_write_policy': 'write_through'   (want write_through)
+eviction policy:  'radix_eviction_policy': 'return_chance'   (want next_use)
+SMOKE CLIENT 2026-11-18T22:15:09Z
+client: --trace /sgl-workspace/sglang/agent_cache/data/converted/freeinference_2026-07-12.programs.jsonl.gz --recipe mori --hints dist --max-context 65536 --seed 0 --tag fi_mori --lanes 40 --duration 600  -> /sgl-workspace/sglang/agent_cache/results/20261118_221348_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70/programs_221511_fi_mori
+287 trees from /sgl-workspace/sglang/agent_cache/data/converted/freeinference_2026-07-12.programs.jsonl.gz (freeinference, blocks); dropped over --max-context: 831; recipe mori: 40 lanes, duration 600.0, hints dist
+[60 s] live 40, in flight 36, requests 8 (+0 warmup), errors 0, idle skipped 0 s
+[120 s] live 40, in flight 24, requests 110 (+0 warmup), errors 0, idle skipped 0 s
+[180 s] live 40, in flight 17, requests 195 (+0 warmup), errors 0, idle skipped 0 s
+[240 s] live 40, in flight 15, requests 250 (+0 warmup), errors 0, idle skipped 0 s
+[300 s] live 40, in flight 18, requests 295 (+0 warmup), errors 0, idle skipped 0 s
+[360 s] live 40, in flight 8, requests 343 (+0 warmup), errors 0, idle skipped 0 s
+[420 s] live 40, in flight 12, requests 374 (+0 warmup), errors 0, idle skipped 0 s
+[480 s] live 40, in flight 11, requests 403 (+0 warmup), errors 0, idle skipped 0 s
+[540 s] live 40, in flight 11, requests 444 (+0 warmup), errors 0, idle skipped 0 s
+[600 s] live 16, in flight 16, requests 483 (+0 warmup), errors 0, idle skipped 0 s
+summary: {"kind": "summary", "tag": "fi_mori", "elapsed_s": 630.0, "wall_s": 630.0, "profile": 494, "warmup": 0, "errors": 0, "skipped": 349, "plays": 54, "releases": 0, "mean_ttft_s": 2.6581, "idle_jumps": 0, "idle_skipped_s": 0.0}
+run | requests | errors | TTFT mean | p50 | p90 | p99 | out tok/s | req/min | device | host | storage | recomp | ideal | deliv/ideal
+/sgl-workspace/sglang/agent_cache/results/20261118_221348_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70/programs_221511_fi_mori/client.jsonl | 494 | 0 | 2.6581 | 0.3462 | 4.7953 | 36.2619 | 263.1 | 47.4 | 0.8023 | 0.0382 | 0.0591 | 0.1004 | 0.8864 | 1.0149
+
+/sgl-workspace/sglang/agent_cache/results/20261118_221348_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70/programs_221511_fi_mori/client.jsonl: TTFT by wait {"0-1s": 5.0176, "1-10s": 0.6204, "10-60s": 1.0325, "60-300s": 1.4953, "300-1800s": 0.9095, "1800s+": null}
+SMOKE CLIENT DONE 2026-11-18T22:25:49Z rc=0
+stopped: 20261118_221348_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H70 (pid 5429); port 30000 free
+SMOKE END 2026-11-18T22:25:58Z

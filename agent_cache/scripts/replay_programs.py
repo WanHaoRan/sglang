@@ -42,7 +42,8 @@ import time
 
 import aiohttp
 
-from gap_hints import END_ENTRY, END_KEY, KEYS, OnlineGapTable, TurnHint, hint_record, next_turn_envelope, pick_entry
+from gap_hints import (END_ENTRY, END_KEY, KEYS, NO_CALL_KEY, OnlineGapTable, TurnHint, hint_record, next_turn_envelope,
+                       pick_entry)
 from program_trace import BlockPrompts, LengthPrompts, TokenSynth, end_of, iter_trees, read_header, split_programs
 
 MONITOR_S = 60.0
@@ -96,6 +97,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="dist: key the gap table by tool and word, tool, or nothing")
     ap.add_argument("--hint-point", choices=("none", "p50"), default="p50",
                     help="dist: also send the picked median (v1)")
+    ap.add_argument("--hint-no-call", action="store_true",
+                    help="dist: a reply the trace records no tool call for gets the key _no_call, as in replay_agentic.py, "
+                         "so the waits after such replies (a person's) have their own entry")
     ap.add_argument("--api", choices=("generate", "completions"), default="generate")
     ap.add_argument("--program-id-field", default=None,
                     help="completions only: also put the stream's id in this body field (MORI/ThunderAgent servers)")
@@ -392,13 +396,13 @@ class Replayer:
             system = tuple(play.tree.get("system") or ())
             table = self.tables.setdefault(system, OnlineGapTable(key_mode=self.args.hint_key))
             if k > 0:
-                table.observe(key=None if self.args.hint_key == "none" else reqs[k - 1].get("key"),
+                table.observe(key=None if self.args.hint_key == "none" else self._reply_key(reqs[k - 1]),
                               gap_s=self.scaled_wait(reqs[k]))
             entries = table.entries()
         if last and mode != "program":
             key = END_KEY
         elif mode == "dist" and self.args.hint_key != "none":
-            key = reqs[k].get("key")
+            key = self._reply_key(reqs[k])
         else:
             key = None
         hint = TurnHint(turn=k, reply_key=key, entries=entries, picked=pick_entry({e["key"]: e for e in entries}, key),
@@ -407,6 +411,10 @@ class Replayer:
         rec["hint"] = hint_record(hint, next_rid=next_rid, v1_point=point)
         return next_turn_envelope(message_id=self.rid(play, s, k), session=session, next_rid=next_rid, hint=hint,
                                   v1_point=point)
+
+    def _reply_key(self, r: dict) -> str | None:
+        """The key of a request's recorded reply; None when the trace names no tool call and --hint-no-call is off."""
+        return r.get("key") or (NO_CALL_KEY if self.args.hint_no_call else None)
 
     # ----- requests -----
 
@@ -700,7 +708,9 @@ async def replay(args: argparse.Namespace) -> None:
              f"{args.max_active or 'uncapped'}") + f", duration {args.duration or 'until done'}, hints {args.hints}",
           flush=True)
     timeout = aiohttp.ClientTimeout(total=None, sock_read=3600)
-    async with aiohttp.ClientSession(timeout=timeout, connector=aiohttp.TCPConnector(limit=0)) as http:
+    # /generate streams cumulatively: a line carries every output id so far, 250 KB at 20K tokens, past aiohttp's
+    # default line limit of twice a 64 KiB buffer.
+    async with aiohttp.ClientSession(timeout=timeout, connector=aiohttp.TCPConnector(limit=0), read_bufsize=1 << 24) as http:
         model = await served_model(http, args.url)
         with open(args.output, "a") as out:
             rep = Replayer(args, header=header, trees=trees, out=out, http=http, model=model)

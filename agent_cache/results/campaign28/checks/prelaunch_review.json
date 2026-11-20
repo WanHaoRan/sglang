@@ -1,0 +1,351 @@
+{
+  "summary": "Pre-launch review of the campaign 28/29 launcher, arm definitions and client change (static, read-only)",
+  "agentCount": 3,
+  "logs": [
+    "3 of 3 reviews returned"
+  ],
+  "result": {
+    "missing": [],
+    "verdicts": {
+      "launcher-shell": "fix_first",
+      "arm-semantics": "go",
+      "workload": "fix_first"
+    },
+    "findings": [
+      {
+        "lens": "launcher-shell",
+        "severity": "major",
+        "where": "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/run_campaigns.sh:19-25 (no start guard; first destructive lines are 40-41); compare /home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/c26.sh:14-15",
+        "problem": "No single-instance or stray-client guard. If it is started while another run_campaigns.sh or an old replay_programs.py is alive (a relaunch after a partial hand stop, or after a false 'launcher not running' alert), it stops the running arm's server, wipes its SSD store and boots a new server on port 30000. The other client keeps going: its requests fail while the port is down, then land on the new arm's server under the same tag, so the same rids and session names. Neither client's records show it, and the first launcher still finds a summary line and writes DONE (next finding). c26.sh refused to start in this situation; the new launcher dropped that protection. Nothing is running now (03:26Z: no server, client or launcher), so this bites on relaunches.",
+        "evidence": "c26.sh:14-15: `for i in $(seq 1 60); do pgrep -f '^bash run_compare.sh' > /dev/null || break; sleep 10; done` / `if pgrep -f '^bash run_compare.sh' > /dev/null; then echo \"C26 STOP ...: run_compare.sh is still running\"; exit 1; fi`. run_campaigns.sh goes from line 19 `cd \"$AC/scripts\" || exit 1` straight to the folder loop; every arm then runs line 40 `bash stop_server.sh` and line 41 `find /mnt/ssd/hicache_l3 -mindepth 1 -delete`. watch.sh:30 reads any failing `docker exec ... pgrep` as \"ALERT: launcher not running\", which invites a relaunch on top of a live launcher. Scratch test of the guard below (bash 5.2.21): second instance prints \"STOP: already running as pid 23354\"; a stale pid file, a pid file naming the wrapper parent, and a non-existent pid all pass. The `bash -c 'nohup bash ... >> log 2>&1'` wrapper stays alive as the parent with the script name in its command line, hence the $PPID exclusion.",
+        "fix": "Insert after line 19 of run_campaigns.sh:\nPIDF=$AC/results/.run_campaigns.pid; old=$(cat \"$PIDF\" 2>/dev/null)\nif [ -n \"$old\" ] && [ \"$old\" != \"$$\" ] && [ \"$old\" != \"$PPID\" ]; then\n  case \"$(tr '\\0' ' ' 2>/dev/null < \"/proc/$old/cmdline\")\" in *run_campaigns.sh*) echo \"STOP: run_campaigns.sh is already running as pid $old\"; exit 1 ;; esac\nfi\necho $$ > \"$PIDF\"\nif pgrep -f 'python[0-9.]* [r]eplay_(programs|agentic)\\.py' > /dev/null; then\n  echo \"STOP: a replay client is still running and would send to this campaign's servers (pkill -f '[r]eplay_programs.py')\"; exit 1\nfi\nAnd make watch.sh:30 ask twice before alerting:\n  docker exec sglang_hicache pgrep -f '[r]un_campaigns.sh' > /dev/null || { sleep 10; docker exec sglang_hicache pgrep -f '[r]un_campaigns.sh' > /dev/null; } || { echo \"ALERT: launcher not running\"; exit 0; }"
+      },
+      {
+        "lens": "launcher-shell",
+        "severity": "major",
+        "where": "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/run_campaigns.sh:54-56 (and the local list on line 30)",
+        "problem": "An arm is DONE as soon as client.jsonl holds a summary line, whatever the summary says. If the server dies or starts failing mid-arm, the client records one error per request, keeps going to the 7,200 s deadline and writes its summary; the launcher then writes DONE, adds the manifest line (so a resume never reruns the arm) and starts the next arm. The DONE line carries no request or error count, so the watcher's printout cannot show it either. Arms 1 and 2 are the likely place (see the finding on engine coverage).",
+        "evidence": "/home/wanhr/sglang/agent_cache/scripts/replay_programs.py:467-471: `except Exception as e:  # noqa: BLE001 - any failure is recorded on the request and the stream goes on` ... `self.counts[\"errors\"] += 1` / `return {}`; write_summary (685-692) always writes `{\"kind\":\"summary\",...,\"errors\":N,...}`. run_campaigns.sh:54: `if [ -n \"$OUT\" ] && grep -q '\"kind\":\"summary\"' \"$OUT/client.jsonl\" 2>/dev/null; then` followed by the manifest append and `say ... DONE`. Real summary line (today's probe): `{\"kind\":\"summary\",\"tag\":\"tl_ours_x10_a01\",...,\"profile\":621,\"warmup\":0,\"errors\":0,...}`. The replacement below, run on synthetic files: errors 0 -> `C28 hicache DONE ... requests 9120 errors 0 run ...` plus manifest line; errors 8731 -> `C28 oracle_v2 STOP ..., 8731 client errors in 9120 requests`, no manifest line; empty pointer -> STOP.",
+        "fix": "Line 30: add `SUM ERR REQ` to the local list. Replace lines 54-56 with:\n  if [ -n \"$OUT\" ] && grep -q '\"kind\":\"summary\"' \"$OUT/client.jsonl\" 2>/dev/null; then\n    SUM=$(grep -a '\"kind\":\"summary\"' \"$OUT/client.jsonl\" | tail -1)\n    ERR=$(grep -o '\"errors\":[0-9]*' <<< \"$SUM\" | cut -d: -f2); REQ=$(grep -o '\"profile\":[0-9]*' <<< \"$SUM\" | cut -d: -f2)\n    if [ \"${ERR:-x}\" != 0 ]; then\n      say \"$C\" \"C${C#campaign} $L STOP $(date -u +%FT%TZ), ${ERR:-?} client errors in ${REQ:-?} requests: read $LOG\"\n      return 1\n    fi\n    echo \"$L $RUN $(basename \"$OUT\")\" >> \"$CD/manifest.txt\"\n    say \"$C\" \"C${C#campaign} $L DONE $(date -u +%FT%TZ) requests $REQ errors 0 run $RUN/$(basename \"$OUT\")\"\n(the else branch stays). Ten clean client files since 18 Nov all have errors 0, including runs whose in-flight requests were cancelled at the deadline, so zero is the right bar; loosen it to a share only if the author prefers."
+      },
+      {
+        "lens": "workload",
+        "severity": "major",
+        "where": "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/run_campaigns.sh:42 (L3_CLEANER_PCT=70,60); cleaner at /home/wanhr/sglang/agent_cache/frozen/engine_ec_20261111d/python/sglang/srt/mem_cache/storage/nixl/nixl_cleaner.py:168-184",
+        "problem": "The SSD cleaner will probably fire inside the 2-hour window for the first time in these campaigns, at a time that differs by arm. It deletes the oldest-written pages first, whether or not a live session still needs them. Expected fill after 2 h: campaign 29 about 75-86 % of the volume (first pass near minute 98-112); campaign 28 about 57-73 % (only the faster arms cross 70 %, in the last minutes). A session admitted in the first quarter hour and still alive then loses its first pages on SSD and recomputes its whole prompt on return. The effect is small in aggregate but lands on long-lived returning sessions, and some arms would get a pass while others would not.",
+        "evidence": "Cleaner order: `ordered = sorted((group ...), key=lambda group: group.mtime)`, triggered when `pct >= self.high_watermark`; reads do not refresh mtime. Calibration from the probe that ended 03:06Z (TraceLab, 0.1 users/s, 44 users, x10): df showed 377.0 GB used for 3.92M new tokens (prompt - ideal_cached + output over its 621 requests) = 96 KB per new token, 246 MB/s. Campaign 26 never reached the mark: `grep -c 'NIXL L3 cleanup'` is 0 in its 128-user arms, and iostat_vdc.log sums to 1,400-1,410 GB written (57 %). New tokens from the traces (seed-0 arrival sets): TraceLab 17.3K per first prompt plus 3.4K per later request; FreeInference 10.8K plus 1.36K. At the throughput campaign 27 measured (30-35 requests/min TraceLab; 66-86/min FreeInference by a capacity model) that is 18.7-21.6M tokens (1.84-2.12 TB) and 14.3-18.2M (1.41-1.79 TB). The 70 % mark is 1.72 TB of 2,456 GB.",
+        "fix": "Line 42: change `L3_CLEANER_PCT=70,60` to `L3_CLEANER_PCT=90,80` (2.21 TB; 245 GB of headroom against at most 12 GB written per 30 s cleaner tick). Also make a pass visible per arm: on line 56 append ` cleaner_passes $(grep -ac 'NIXL L3 cleanup' \"$AC/results/$RUN/server.log\") ssd $(df --output=pcent /mnt/ssd | tail -1 | tr -d ' ')` to the DONE line. If 70,60 is kept, compare arms only on requests sent before the first 'NIXL L3 cleanup' line of any arm."
+      },
+      {
+        "lens": "workload",
+        "severity": "major",
+        "where": "/home/wanhr/sglang/agent_cache/scripts/replay_programs.py:711 (ClientSession) and :499 (`async for raw in resp.content`)",
+        "problem": "Conditional on the container's aiohttp version, which I could not read without docker. The server streams /generate cumulatively: every token sends one line carrying all output ids and all text so far. The client reads by line, and aiohttp refuses a line longer than twice read_bufsize. With a 64 KiB default (131,072-byte lines) outputs beyond roughly 10-21K tokens fail mid-generation after 10-25 minutes of decode; the request is recorded as an error and watch.sh exits at the first error, then exits again on every restart for the rest of that arm. No earlier run streamed more than 7,318 output tokens, so this path is untested either way.",
+        "evidence": "Server args of the 02:38Z boot: `'stream_interval': 1`, `'incremental_streaming_output': False`; tokenizer_manager.py:1892-1898 fills `out[\"text\"] = state.get_text()` on every chunk, with `\"output_ids\": state.output_ids`. The aiohttp 3.14.4 copy on this host: `self._high_water = limit * 2`, `if chunk_size > max_size: raise LineTooLong`, `read_bufsize: int = DEFAULT_CHUNK_SIZE` (2**18, so 512 KiB lines, safe); releases I know through 3.13 default to 2**16. Ids alone are at least 6 bytes a token. Outputs in the seed-0 arrival sets: FreeInference 21,209 and 18,360 (arrival #497 at 4,977 s), 17,546 (arrival #182 at 1,766 s, its fifth request), then 11,504 and 10,111; TraceLab 14,641 (arrival #257), 13,031 (arrival #151), and four between 10K and 12K. Largest completion_tokens in any earlier client.jsonl: 7,318.",
+        "fix": "Line 711: `aiohttp.ClientSession(timeout=timeout, connector=aiohttp.TCPConnector(limit=0), read_bufsize=2**22)` (8 MiB lines, valid on every version), then rerun `python3 -m unittest test_program_replay` in the container. To see whether it mattered: `docker exec sglang_hicache python3 -c \"import aiohttp, inspect; print(aiohttp.__version__, inspect.signature(aiohttp.ClientSession.__init__).parameters['read_bufsize'].default)\"`; 65536 means at risk, 262144 means safe for these traces."
+      },
+      {
+        "lens": "launcher-shell",
+        "severity": "minor",
+        "where": "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/run_campaigns.sh:40 and 52-53; watch.sh:16-28; /home/wanhr/sglang/agent_cache/scripts/stop_server.sh:15-17",
+        "problem": "Everything keys on results/.current_run, which names the previous run until this arm's start_server.sh rewrites it (its line 78), and which the launcher never clears. Three effects. (a) watch.sh started within seconds of a relaunch after an outage or hand stop reads the interrupted run and exits at once with 'has not grown for N s'. (b) After a reboot stop_server.sh and start_server.sh test, and may kill, whatever now owns the old server.pid number; server pids restart low in a fresh container. (c) If start_server.sh exits before rewriting the pointer (port still busy, 'a server is already running'), lines 52-56 look in the previous run: a rerun of the same label, or a label that is the tail of the previous one after an underscore (`full` after `ec_full`), is recorded DONE from the old run. c26 was immune to (c): its check read the compare dir this arm's own run_compare.sh had just created (c26.sh:32-33). Today's queues cannot hit the tail case, and prefix labels are safe everywhere: `grep -q \"^$L \"` is anchored with the trailing space, and `programs_*_L` must end in `_L`.",
+        "evidence": "Scratch reproduction of lines 52-56 with a stale pointer: `label ec_full -> DONE recorded as: ec_full RUN_PREV programs_051000_ec_full`, `label full -> DONE recorded as: full RUN_PREV programs_051000_ec_full`, `label hicache -> STOP (no summary)`. watch.sh lines 21-27 on an interrupted client 400 s old: `ALERT: results/RUN_CUT/programs_073000_jit_exact/client.jsonl has not grown for 400 s`; with the pointer emptied, 0 files checked. Manifest skip test: `jit: not in manifest (runs)`, `jit_p50: in manifest (skipped)`. campaign26/driver_nofc_noend_h100_1113_170329.log after the 13 Nov outage: `nothing to stop: no .current_run` (pointer emptied by hand) and `launched ...: pid 222`; today's probe: `pid 3233`. In c26 stop plus wipe took 3-6 s between arms (LAUNCH 07:00:09, run dir 070012), which is the width of window (a).",
+        "fix": "Line 40: `bash stop_server.sh; (exec 3<>/dev/tcp/127.0.0.1/30000) 2>/dev/null || : > \"$AC/results/.current_run\"` (clear the pointer once nothing listens; start_server.sh:74 already accepts an empty pointer). Lines 52-53: `RUN=$(cat \"$AC/results/.current_run\" 2>/dev/null); OUT=` then `[ -n \"$RUN\" ] && OUT=$(ls -d \"$AC/results/$RUN\"/programs_*_\"$L\" 2>/dev/null | tail -1)`. Header line 12: add 'after a host outage empty results/.current_run before rerunning' (the practice so far), which covers (b)."
+      },
+      {
+        "lens": "launcher-shell",
+        "severity": "minor",
+        "where": "/home/wanhr/sglang/agent_cache/results/campaign28/queue.txt:2-3 and campaign29/queue.txt:2-3 (field 5 = engine_ec_20261111d); run_campaigns.sh as a whole",
+        "problem": "The first execution of three things would be the 21-hour campaign itself. (1) Server arms three_tier_wc and three_tier_wc_oracle_v2_nu have never been booted on engine_ec_20261111d; every earlier HiCache and old-oracle-v2 number came from engine_5df71c4bf0_v2. Arm 1's path is the old one plus hooks that stay None. Arm 2 runs the default read timing 'horizon', gate and hold off, reply-key source 'reply' through a prefetcher that differs by 712 lines and has only ever run in the owned modes on this build. (2) The launcher's outer loop has never run: c27.sh, which it derives from, was never started; only its subshell body has run, as probe_ours.sh, on the four-rules arm. (3) --hint-no-call has never met a server: replay_programs.py was edited at 02:48Z, after the last probe's client started at 02:39Z. Arm 1's boot shows within about 6 minutes of launch, but arm 2 first boots at about 2 h 10 min and arms 4-5 at about 6.5 h.",
+        "evidence": "Census of run.txt over results/: `6 three_tier_wc engine_5df71c4bf0_v2` (plus 4 on engine_2abe005bb2, 9 older), `10 three_tier_wc_oracle_v2_nu engine_5df71c4bf0_v2`, `24 three_tier_wc_oracle_v2_nu_owned engine_ec_20261111d`; none of the first two on engine_ec_20261111d. `diff -rq` of the two engines: 11 files differ and 2 are new, all in arg_groups, scheduler.py (8 added kwargs), next_turn_prefetch.py (712 differing lines), next_use_eviction.py (186), storage_read_scheduler.py (26), unified_radix_cache.py (74, all behind `is not None` hooks or inside the deadline branch of _init_storage_read_scheduling). campaign27/DECISIONS.md:6: `Nothing is queued; queue.txt is empty and the launcher has not been started.` The last probe's run record has no hint_no_call key. Flag validation in arg_groups/hicache_hook.py passes for both arms by reading (fifo with pin 0.0; prefetch on with timing horizon).",
+        "fix": "Rehearse once before the real launch, from agent_cache/ on the host:\nmkdir results/campaign28r && sed 's/^DURATION=.*/DURATION=240/; s/^RATE=.*/RATE=0.5/' results/campaign28/settings.env > results/campaign28r/settings.env && cp results/campaign28/queue.txt results/campaign28r/ && touch results/campaign28r/END\ndocker exec -d sglang_hicache bash -c 'nohup bash /sgl-workspace/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/run_campaigns.sh campaign28r >> /sgl-workspace/sglang/agent_cache/results/c28r_runner.log 2>&1'\nExpect five `C28r <label> DONE` lines in results/campaign28r/launcher.log and `ALL DONE` in c28r_runner.log after about 35 minutes (about 15 with only the hicache and oracle_v2 lines). The watcher's pattern does not match `C28r`. If the author prefers the build the earlier numbers came from, put engine_5df71c4bf0_v2 in field 5 of the first two queue lines instead; its io_struct.py is identical, so /generate takes kv_hints there too."
+      },
+      {
+        "lens": "launcher-shell",
+        "severity": "minor",
+        "where": "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/watch.sh:16-30; run_campaigns.sh:76; /home/wanhr/sglang/agent_cache/scripts/start_server.sh:216-225",
+        "problem": "What the watcher misses or reports wrongly, beyond the stale pointer above. (a) A hung boot: start_server.sh's wait loop ends after 2,400 passes without failing (40 minutes, up to 160 if /health hangs for its 3 s each pass); only then does the client's health check fail and the launcher STOP. Until then there is no traceback and no client file, so the watcher is silent. The same holds for a client stuck before it creates client.jsonl, which exists only after the trace is loaded (about 1 minute for FreeInference 16w, about 75 s for TraceLab): line 22 `[ -f \"$c\" ] || continue`. (b) `ALL DONE` goes to stdout only, so a clean end reads as 'launcher not running'. (c) Run from any directory but agent_cache/ it sees no log and no pointer and loops silently for ever. (d) Once one traceback or one client error exists in the current run, every restart of the watcher exits at once until that arm ends (as c26's did), so the rest of the arm is unwatched.",
+        "evidence": "start_server.sh:216-225: `for i in $(seq 1 2400); do if curl -sf ... && grep -q 'fired up and ready to roll' ...; then echo \"READY...\"; break; fi; if ! alive ...; then ...; exit 1; fi; sleep 1; done` with no exit after the loop. run_campaigns.sh:76: `[ \"$ended\" = 1 ] && { echo \"ALL DONE $(date -u +%FT%TZ)\"; exit 0; }`. Load times measured on the host with the client's own load path (iter_trees + split_programs + cap): 16w 48 s for 9,847 of 12,002 trees; TraceLab 63 s for 6,371 of 8,058 (split_programs is quadratic per session; campaign27/DECISIONS.md:90 says about 75 s). The check below on synthetic logs: LAUNCH 50 min old with no client file -> `ALERT: no client file 50 min after: C28 oracle_v2 LAUNCH ...`; with a client file or a 10-minute-old LAUNCH -> no alert.",
+        "fix": "watch.sh, first line after the header: `[ -d results/campaign28 ] || { echo \"run from agent_cache/\"; exit 1; }`. After line 28 add:\n  last=$(cat results/campaign28/launcher.log results/campaign29/launcher.log 2>/dev/null | grep -E '^C2[89] [^ ]+ (LAUNCH|DONE|STOP) ' | sort -k4,4 | tail -1)\n  case \"$last\" in *\" LAUNCH \"*)\n    t=$(date -d \"$(awk '{print $4}' <<< \"$last\")\" +%s)\n    ls results/$R/programs_*/client.jsonl > /dev/null 2>&1 || [ $(( $(date +%s) - t )) -lt 2700 ] || { echo \"ALERT: no client file $(( ($(date +%s) - t) / 60 )) min after: ${last:0:80}\"; exit 0; } ;;\n  esac\nrun_campaigns.sh:76: `[ \"$ended\" = 1 ] && { for C in \"$@\"; do say \"$C\" \"C${C#campaign} ALL DONE $(date -u +%FT%TZ)\"; done; exit 0; }` (the watcher's pattern then matches it). For (d), take `tb0` and `e0` at watcher start for the run then current and alert only above them."
+      },
+      {
+        "lens": "launcher-shell",
+        "severity": "minor",
+        "where": "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/run_campaigns.sh:20-25",
+        "problem": "Nothing is checked before the first boot beyond the two files existing. A wrong TRACE path, a truncated trace, a missing settings name or a missing engine folder shows only after that arm's boot, and for campaign29 only about 11 hours in, after which the launcher exits and the GPU idles. run_compare.sh, which c26 drove, checked trace and hint knobs before any boot (its lines 50-68). I checked today's inputs by hand and they pass: both traces exist and are complete, the engine folder exists, the three arm names are in start_server.sh's case, every client flag is in the parser. One thing I could not check without docker: no iostat has run in the container since the 01:40Z host reboot, and a missing binary would only leave 'nohup: failed to run command' in iostat_vdc.log, which the figure scripts read.",
+        "evidence": "run_campaigns.sh:22: `[ -s \"$CD/settings.env\" ] && [ -f \"$CD/queue.txt\" ] || { echo \"STOP: $CD needs settings.env and queue.txt\"; exit 1; }` is the only start check. freeinference_16w.programs.jsonl.gz.stats.json (written 03:16:02Z, converter exited): weeks 16, files_verified 119, missing_files [], sessions 12002, requests 1222199; while the converter was still writing, reading the file raised `EOFError: Compressed file ended before the end-of-stream marker was reached`, which is what the client would have died on after a boot. The block below on synthetic folders: cut gzip -> `STOP: campB: trace ... is missing or not a complete gzip`; four-field line -> `STOP: campB queue line 'short': fewer than 5 fields or no frozen//python`; missing name -> `STOP: ... settings.env sets no GAP_CAP`.",
+        "fix": "Inside the `for C` loop, after line 22:\n  ( set -a; . \"$CD/settings.env\"; set +a\n    for v in TRACE RATE CAP HOST_GB DURATION MAX_CONTEXT GAP GAP_CAP SEED; do [ -n \"${!v:-}\" ] || { echo \"STOP: $CD/settings.env sets no $v\"; exit 1; }; done\n    [ -s \"$TRACE\" ] && gzip -t \"$TRACE\" 2>/dev/null || { echo \"STOP: $C: trace $TRACE is missing or not a complete gzip\"; exit 1; }\n  ) || exit 1\n  while read -r L A H CF E X || [ -n \"$L\" ]; do\n    case \"$L\" in ''|'#'*) continue ;; esac\n    [ -n \"$E\" ] && [ -d \"$AC/frozen/$E/python\" ] || { echo \"STOP: $C queue line '$L': fewer than 5 fields or no frozen/$E/python\"; exit 1; }\n  done < \"$CD/queue.txt\"\nand once before the loop: `for t in iostat pgrep ps curl findmnt nvidia-smi gzip; do command -v \"$t\" > /dev/null || { echo \"STOP: $t missing in the container\"; exit 1; }; done`. gzip -t of the 662 MB trace takes about 20 s."
+      },
+      {
+        "lens": "arm-semantics",
+        "severity": "minor",
+        "where": "/home/wanhr/sglang/agent_cache/scripts/replay_programs.py:396-401 with /home/wanhr/sglang/agent_cache/scripts/gap_hints.py:59,304; engine /home/wanhr/sglang/agent_cache/frozen/engine_ec_20261111d/python/sglang/srt/mem_cache/next_turn_prefetch.py:499-511,588",
+        "problem": "Arms 4 and 5 only: a turn whose table has no entry to pick is treated by the engine exactly like a session's last turn. It is registered as ended (first in line for eviction) and no read is planned. The client keeps one table per agent system (harness, model) and an entry needs 5 finished gaps, so the first turns of every system go out with only the `_end` entry. This is a handicap that arms 1 to 3 do not carry, and it is about 8 times more frequent than in campaign 26.",
+        "evidence": "Engine: `if entry is None or entry.ended or entry.p50 is None: return None`, then `# The session ended (or the client sends no hints): evict it first.` with `next_use=None`. Real log, probe 20261119_022542 (FreeInference x1, this engine): 162 of 632 picks were `entry=none`; all 162 were followed by `nue_register ... next_use_ms=ended` and none got an `ntp_plan` (449 of 449 entry picks did). Simulated 2 h arm, real client code on the real traces with seed 0 (729 arrivals; service time modelled, so shares are estimates): FreeInference 421 of 18,752 non-final hints (2.2 %; about 6 % of hints in the first 30 minutes, about 1 % after; 83 systems appear), TraceLab 118 of 6,546 (1.8 %; about 5 % then 0.4 %). Campaign 26 ec_full: 29 of 12,161 picks (0.25 %).",
+        "fix": "No change needed to launch. In the write-up, count per arm the non-final requests with `hint.matched == null` in client.jsonl and give TTFT for arms 4 and 5 with those turns excluded, or from minute 30 on. To remove it instead (a change of table scope, the author's call): in `hints_for`, also feed every gap to one run-wide OnlineGapTable and add its `*` entry whenever the system's own list has none."
+      },
+      {
+        "lens": "arm-semantics",
+        "severity": "minor",
+        "where": "/home/wanhr/sglang/agent_cache/scripts/replay_programs.py:387 (oracle) and :399-400 (table observe), against the sleep at :304-305",
+        "problem": "The exact gap of arms 2 and 3 is not the wait the client sleeps when the next request also waits for a subagent (a join). The hint carries the next request's `wait`, which the converter measures from the latest dependency's end (the subagent's last request), while the stream is really idle from its own reply until the subagent finishes plus that wait. The engine then expects the turn within about a second, the plan expires 60 s later and ends the session. In arms 4 and 5 the same short wait is filed under the spawning reply's key (`task`). FreeInference only; TraceLab has one stream per session.",
+        "evidence": "`gap = self.scaled_wait(reqs[k + 1])` versus `ready = max((self.end_at.get(tuple(d), ...) for d in r[\"deps\"]), ...)`; `sleep_until(min(ready + rep.scaled_wait(r), rep.deadline))`. Simulated FreeInference arm: 8 of 18,648 exact hints differ from the sleep, by up to 311 s (rid c12-t0: hinted 0.771 s, slept 311.5 s, next deps [[0,0],[1,20]], reply key task). In the trace: 51 such requests among the 107,107 requests of the 3,787 sessions under the cap. All other 18,640 hints, and all 6,503 in TraceLab, equal the sleep exactly.",
+        "fix": "Small enough (0.04 % of hints) to launch as is and state in the campaign's DECISIONS.md. If fixed: at :387 use the recorded span when the next request has other dependencies, `nxt = reqs[k + 1]; gap = self.scaled_wait(nxt) if nxt[\"deps\"] == [[s, k]] else min(self.args.gap_cap, max(0.0, nxt[\"t\"] - end_of(reqs[k])) * self.args.gap_scale)`, and at :398 observe only when `reqs[k][\"deps\"] == [[s, k - 1]]`."
+      },
+      {
+        "lens": "workload",
+        "severity": "minor",
+        "where": "/home/wanhr/sglang/agent_cache/scripts/replay_programs.py:445-455 (send) and :656-668 (_wait_all)",
+        "problem": "Requests still in flight 30 s after the deadline are cancelled without any record, and the `cancelled` record counts plays, not requests. In a saturated run about 80-120 users are waiting on the server at 7,200 s, so the slowest requests of the last minutes vanish, more of them in slower arms. Plays cancelled there also write no play record, and users still at the door leave no record at all, so the door wait and the number admitted cannot be read from play records.",
+        "evidence": "`send` writes `rec` only after `await self._post_with_retry(...)`, which catches `Exception`; CancelledError is not one. `_wait_all`: `for t in pending: t.cancel()` then `self.write({\"kind\": \"cancelled\", \"tasks\": len(pending), ...})`. Probe tl_ours_x10_a01: 30 in flight at 1,500 s, profile 602 -> 621 at the summary, `{'kind': 'cancelled', 'tasks': 11, 't': 1530.002}`, 87 play records for 98 plays started; so 11 requests left no record.",
+        "fix": "No code change needed before launch. Analysis rule: pair requests by (inst, k), compare arms only on requests with t_send < 6,900 s that exist in all five arms, and report per arm the users admitted (distinct `play` in req records) out of the 729 arrivals. Optional code change: in `send`, catch asyncio.CancelledError around the post, write the record with `\"cut\": true`, re-raise, and drop such records in program_summary.py."
+      },
+      {
+        "lens": "workload",
+        "severity": "minor",
+        "where": "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/run_campaigns.sh:24 and :46-47; /home/wanhr/sglang/agent_cache/scripts/start_programs.sh:48-49",
+        "problem": "The engine is frozen, but the client and the trace are read live from the working tree for about 22 hours. An edit to replay_programs.py, program_trace.py or gap_hints.py, or a re-run of the converter, between arms would silently change later arms: one changed tree in the kept list changes the whole shuffle and every instance id. scripts_at_launch.tgz only records the first state.",
+        "evidence": "`[ -f \"$CD/scripts_at_launch.tgz\" ] || tar czf ...` and then `cd \"$AC/scripts\"; python3 replay_programs.py ...` on every arm. replay_programs.py and test_program_replay.py are uncommitted edits made at 02:48Z today. Trace state at review: freeinference_16w sha256 993523059a84529b...bcfe (662,306,890 bytes), tracelab cf5ec714ec436bfc...78f1.",
+        "fix": "In the top loop after line 24: `[ -f \"$CD/inputs.sha256\" ] || ( . \"$CD/settings.env\"; sha256sum \"$TRACE\" \"$AC\"/scripts/{replay_programs.py,program_trace.py,gap_hints.py,program_summary.py,start_programs.sh,start_server.sh,stop_server.sh} > \"$CD/inputs.sha256\" )`. In run_arm after the LAUNCH line: `sha256sum --quiet -c \"$CD/inputs.sha256\" || { say \"$C\" \"C${C#campaign} $L STOP $(date -u +%FT%TZ): trace or client scripts changed since the first arm\"; return 1; }`. Afterwards check that every arm's run record says trees 3787 (campaign 28) or 3679 (campaign 29)."
+      },
+      {
+        "lens": "workload",
+        "severity": "minor",
+        "where": "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/watch.sh:26-27",
+        "problem": "The staleness check cannot see a server that stops serving without erroring (for example every queued turn waiting on an SSD read under wait_complete). The client's monitor appends a `lanes` record and flushes every 60 s whatever the server does, so client.jsonl never ages past 300 s while the client process lives. Such an arm would run its 2 hours, write a summary and be marked DONE.",
+        "evidence": "watch.sh: `age=$(( $(date +%s) - $(stat -c %Y \"$c\") )); [ \"$age\" -gt 300 ]`; replay_programs.py:673-683: `await asyncio.sleep(MONITOR_S); self.write({\"kind\": \"lanes\", ...}); ... self.out.flush()`. The launcher's DONE test is only `grep -q '\"kind\":\"summary\"'`.",
+        "fix": "Add inside the for loop after the errors test: `n=$(grep -ac '\"kind\":\"lanes\"' \"$c\"); u=$(grep -a '\"kind\":\"lanes\"' \"$c\" | tail -10 | grep -o '\"profile\":[0-9]*' | sort -u | wc -l); [ \"$n\" -ge 10 ] && [ \"$u\" -le 1 ] && { echo \"ALERT: no request finished in 10 min in $c\"; exit 0; }`"
+      },
+      {
+        "lens": "launcher-shell",
+        "severity": "note",
+        "where": "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/run_campaigns.sh:30, 68, 82",
+        "problem": "Two queue edge cases, neither present in today's files (both end in a newline, every line has 5 or more fields). A last line without a trailing newline is skipped silently and the launcher goes IDLE with that arm unrun. A line with fewer than five fields kills the launcher through `set -u` with only a bash message in c28_runner.log and no STOP line; the watcher then says 'launcher not running'. Also, the label is used as a regex in the manifest test, so a dot in a label would match any character.",
+        "evidence": "Scratch run of the same idioms: a queue of `hicache ...` plus `lastarm ...` without a final newline prints only `seen: hicache`; `f() { local A=$1 B=$2 E=$6; ...; }; f x y z || exit 1` prints `line 31: $6: unbound variable` and the shell exits 1.",
+        "fix": "Line 68: `while read -r L rest || [ -n \"$L\" ]; do`. The field count is covered by the preflight above. Line 70: `grep -qF -- \"$L \" ...` cannot anchor, so keep the regex and keep labels to [A-Za-z0-9_]."
+      },
+      {
+        "lens": "launcher-shell",
+        "severity": "note",
+        "where": "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/run_campaigns.sh:14-15, 24, 36",
+        "problem": "The arms share live inputs that nothing pins. agent_cache/scripts/ is used in place by every arm (replay_programs.py is uncommitted and was edited at 02:48Z today), settings.env is re-read per arm, and the trace is read per arm; scripts_at_launch.tgz is written once and never refreshed on a resume. An edit between arms changes the later arms and only the per-arm LAUNCH settings would hint at it. After an outage the remaining arms also run on another GPU unit, which the LAUNCH line does record. Separately, a hand stop leaves the arm's iostat running for ever, and a resume starts a second one writing into the same iostat_vdc.log.",
+        "evidence": "Line 24: `[ -f \"$CD/scripts_at_launch.tgz\" ] || tar czf ...`. `git status`: ` M agent_cache/scripts/replay_programs.py`. Line 15 stop line: `pkill -f \"[r]un_campaigns.sh\"; pkill -f \"[r]eplay_programs.py\"; bash agent_cache/scripts/stop_server.sh` has nothing for the iostat started on line 35.",
+        "fix": "Add to the LAUNCH line (36): ` scripts $(cat start_server.sh stop_server.sh start_programs.sh replay_programs.py program_trace.py gap_hints.py program_summary.py | md5sum | cut -c1-8) trace $(. \"$CD/settings.env\"; stat -c %s \"$TRACE\")`, so a change between arms is visible in launcher.log. Add `pkill -f \"[i]ostat -dxt vdc\"` to the stop line on 15."
+      },
+      {
+        "lens": "launcher-shell",
+        "severity": "note",
+        "where": "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/c26.sh versus c28_users/run_campaigns.sh and watch.sh",
+        "problem": "Behavioural differences from c26, for the record. (1) No start guard (first finding). (2) Success is read through results/.current_run and a label glob instead of the arm's own compare dir (stale-pointer finding). (3) Settings reach the arm by `set -a` in a subshell instead of an env prefix on one `bash run_compare.sh`; the server process now also inherits RATE, CAP, DURATION, MAX_CONTEXT and GAP_CAP, which nothing reads. (4) HOST_GB is always set, so run dirs are named ..._custom_L1nat_H160; c26's 128-user arms left it empty and were named ..._NAT160. Same pools, but anything matching run dirs by name must use the new name. (5) End of arm: c26's client stopped sending at 7,200 s and let requests in flight finish; replay_programs.py cancels them 30 s after the deadline and they leave no record. (6) No checks before the first boot (preflight finding). (7) The DONE line has no rc and there is no per-arm config file; the LAUNCH line and the client's run record carry the settings. (8) The watcher has no run-dir name filter, skips clients that already have a summary, checks the launcher process, and greps the new client's compact JSON.",
+        "evidence": "c26.sh:26-29 env prefix on `bash run_compare.sh`; c26.sh:32-33 `CMP=$(grep -a '^compare dir: ' \"$LOG\" | cut -d' ' -f3)` / `[ -n \"$CMP\" ] && [ -s \"$CMP/manifest.txt\" ]`; campaign26/manifest.txt has `..._owned_NAT160` for the 128-user arms; c26 watch.sh:11 `case \"$R\" in *_NAT160|*custom_L1nat_H70*)` and :18 `'\"error\": \"'` against the new watch.sh:24 `'\"error\":\"'`; today's client records end with `{\"kind\":\"cancelled\",\"tasks\":11,\"t\":1530.002}` before the summary.",
+        "fix": "Nothing beyond the fixes above; (3), (4), (5), (7) and (8) are sound as they stand."
+      },
+      {
+        "lens": "arm-semantics",
+        "severity": "note",
+        "where": "/home/wanhr/sglang/agent_cache/results/campaign28/queue.txt lines 2-3 (hicache, oracle_v2); same in campaign29",
+        "problem": "The server arms of arms 1 and 2 have never been booted on engine_ec_20261111d. Reading the code says both pass the argument checks and run the old paths, but the first real boot of arm 2 comes about 2 h 15 min into the campaign, and a failed boot makes the launcher exit, so nothing after it runs.",
+        "evidence": "run.txt census over results/: `three_tier_wc_oracle_v2_nu` 10 runs, all on engine_5df71c4bf0_v2; `three_tier_wc` on engine_5df71c4bf0_v2, engine_2abe005bb2 and the working tree, never on engine_ec_20261111d; `three_tier_wc_oracle_v2_nu_owned` on engine_ec_20261111d 24 runs. Diff of engine_5df71c4bf0_v2 against engine_ec_20261111d (next_turn_prefetch.py, unified_radix_cache.py, storage_read_scheduler.py, scheduler.py): every addition sits behind a flag whose default is off or a hook that is None; the read scheduler's rewritten dispatch loop gives the same order when `not_before_of` is None.",
+        "fix": "Optional insurance, about 5 minutes per arm before launch, in the container from agent_cache/scripts: `HOST_GB=160 MODEL=Qwen/Qwen3-30B-A3B-Instruct-2507 CTX=262144 KV_DTYPE=auto TEMPLATE= L3_CLEANER_PCT=70,60 ENGINE_PYTHONPATH=/sgl-workspace/sglang/agent_cache/frozen/engine_ec_20261111d/python bash start_server.sh three_tier_wc_oracle_v2_nu NAT160; bash stop_server.sh` (and the same for three_tier_wc). Otherwise accept: the failure would be loud (a STOP line), not silent."
+      },
+      {
+        "lens": "arm-semantics",
+        "severity": "note",
+        "where": "/home/wanhr/sglang/agent_cache/scripts/replay_programs.py (uncommitted; `git status` shows ` M agent_cache/scripts/replay_programs.py`), used by queue lines jit_p50 and ec_full",
+        "problem": "`--hint-no-call` exists only in the working tree, and the launcher runs the client from the live scripts/ folder. A stash, checkout or edit of that file during the 22 hours would make arms 4 and 5 fail on an unknown flag (first at about hour 6.5), or silently change the client between arms.",
+        "evidence": "run_campaigns.sh:19 `cd \"$AC/scripts\"` and :47 `bash start_programs.sh --gap-scale \"$GAP\" --gap-cap \"$GAP_CAP\" ${CF//,/ }`; the diff of replay_programs.py against HEAD is the flag and `_reply_key`. The launcher only archives scripts_at_launch.tgz; it does not run from it.",
+        "fix": "Ask the user to commit the client change before launch (or leave agent_cache/scripts untouched until both campaigns end). Cheap drift check: add `scripts $(cat replay_programs.py gap_hints.py program_trace.py start_server.sh start_programs.sh | sha256sum | cut -c1-12)` to the LAUNCH line at run_campaigns.sh:36."
+      },
+      {
+        "lens": "arm-semantics",
+        "severity": "note",
+        "where": "/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/run_campaigns.sh:54-56",
+        "problem": "Outside my lens, seen while tracing an arm end to end: an arm counts as DONE when client.jsonl holds a summary line, whatever its error count. If the server dies mid-arm the client records an error per request, still writes the summary at 7,200 s, and the arm enters the manifest (so a resume skips it). Only watch.sh, if it is running, reports the errors.",
+        "evidence": "`if [ -n \"$OUT\" ] && grep -q '\"kind\":\"summary\"' \"$OUT/client.jsonl\"` then manifest and DONE; replay_programs.py:467-471 records any request failure and goes on; the summary carries `\"errors\":N`.",
+        "fix": "Put the count in the DONE line: `E=$(grep -a '\"kind\":\"summary\"' \"$OUT/client.jsonl\" | tail -1 | grep -o '\"errors\":[0-9]*' | cut -d: -f2)` and `say ... DONE ... errors ${E:-?}`; optionally write STOP and skip the manifest line when E is above 1 % of the requests."
+      },
+      {
+        "lens": "arm-semantics",
+        "severity": "note",
+        "where": "/home/wanhr/sglang/agent_cache/data/converted/freeinference_16w.programs.jsonl.gz under MAX_CONTEXT=65536 (campaign28/settings.env)",
+        "problem": "Workload composition, for the write-up: about a quarter of campaign 28's users are a benchmark harness, not people. The 65,536-token cap keeps `eval:swe-bench` sessions far more often than the others.",
+        "evidence": "Converter stats: eval:swe-bench is 1,035 of 12,002 sessions (8.6 %). Under the cap: 942 of 3,787 kept (25 %). Of the 729 sessions that arrive in 7,200 s with seed 0: 189 (26 %); hermes 193, pi 82, opencode 66.",
+        "fix": "No change to launch. State it next to the results, or drop the harness with a filter if the claim is about real users (the author's call)."
+      },
+      {
+        "lens": "arm-semantics",
+        "severity": "note",
+        "where": "/home/wanhr/sglang/agent_cache/scripts/start_server.sh:247",
+        "problem": "The startup check line prints `(want next_use)` for the ec_full boot, where the queue's extra flags rightly set return_chance. Nothing gates on it, but a reader of the driver log may take it for a wrong boot.",
+        "evidence": "Probe log results/campaign27/probe_fi_ours_x1.log: `eviction policy:  'radix_eviction_policy': 'return_chance'   (want next_use)`.",
+        "fix": "Ignore for arm ec_full; the resolved value return_chance with config {'horizon_s': 30} is the right one (as in campaign 26's ec_full server_args.txt)."
+      },
+      {
+        "lens": "workload",
+        "severity": "note",
+        "where": "/home/wanhr/sglang/agent_cache/results/campaign28/settings.env and campaign29/settings.env (RATE=0.1, CAP=128, HOST_GB=160)",
+        "problem": "Expect both campaigns saturated, in the regime of campaign 26's 128-user arms where the queue decided. FreeInference offers about twice the box's decode capacity and TraceLab about twice the request rate it served when saturated. TTFT will not show the door wait, so each arm must also report users admitted.",
+        "evidence": "GPU pool 668,096 tokens on these boots (668,160 in campaign 26), host pool 1,627,648. Seed-0 arrival sets: FreeInference 729 users, 21,258 requests, mean prompt 26.6K, output 281, think time 25.9 s; at the recorded pace 165 requests/min and 758-829 output tok/s against about 400 sustained (342 in campaign 26, 294-460 in the probes). TraceLab 729 users, 7,599 requests, mean prompt 32.5K, output 436; 61-67 requests/min and 440-480 tok/s offered, against 32.5 requests/min measured at x1 with 32 lanes (20 running, 8 queued, token usage 0.97, 99 ms a token, TTFT 15.8 s). Live context at 128 users: 3.40M tokens (5.1x GPU pool, 2.1x host) and 4.16M (6.2x, 2.6x); at 29K a user 3.71M (5.6x, 2.3x). The GPU pool holds about 20-25 such contexts, so --max-running-requests 64 never binds and the rest queue (`max_queued_requests: None`). Capacity-model estimate (closedloop.py, decode only, so optimistic): FreeInference hits the 128 cap at 24-29 min, then 83-106 users wait on the server, response time 65-100 s, 8.0-10.3K requests served of 21,258, 371-446 users admitted, 283-358 at the door at the end; TraceLab at 300 tok/s hits the cap near 50 min with response time 2-2.7 min. our_setup_cap128.out (one week) said 156 % and 115 % of capacity; the 16-week file is heavier, 29.2 requests a user against 19.8.",
+        "fix": "None required by the order. Report per arm the users admitted and the door wait next to TTFT, and compare on shared requests. If an unsaturated cell is wanted later, about 0.04-0.05 users/s is this box's capacity on either trace."
+      },
+      {
+        "lens": "workload",
+        "severity": "note",
+        "where": "/home/wanhr/sglang/agent_cache/data/converted/freeinference_16w.programs.jsonl.gz under --max-context 65536",
+        "problem": "The 65,536 cap changes what the FreeInference workload is: nearly half the requests of the arrival set are SWE-bench evaluation agents, not people. The one-week sample campaign 27 measured is not representative of the 16-week file.",
+        "evidence": "Kept 3,787 of 12,002 sessions (107,107 requests). Three weeks keep most of their sessions: 2026-06-14 371 of 475, 06-21 421 of 672, 07-05 522 of 832, at about 43 requests a session. Arrival set by harness: eval:swe-bench 189 users, 9,864 requests (46.4 %), 2 of them after a person; hermes 193 users, 3,704 requests; pi 82; opencode 66. The largest hint table, (eval:swe-bench, qwen3.6-35b), holds 139 users. Waits after a person: 1,724 requests (358 over 300 s, 162 at the 1,200 s cap).",
+        "fix": "Report results by harness, or at least with and without eval:swe-bench. The client has no harness filter today; excluding it would need a converter or client flag and is the author's call."
+      },
+      {
+        "lens": "workload",
+        "severity": "note",
+        "where": "/home/wanhr/sglang/agent_cache/scripts/convert_tracelab.py:101-107 and the TraceLab arrival set",
+        "problem": "On TraceLab the turns that tiering targets are few and only partly reusable in any arm. The prompt prefix is the provider's cached prefix, so a provider-side cache expiry replays as new content.",
+        "evidence": "`prefix = max(0, int(r[\"prefix_tokens\"] or 0))`, `append=total - prefix`. Share of the prompt an infinite cache could hold by the wait before the request (tl_reuse.py): 92 % under 10 s, 88 % for 60-300 s, 69 % for 300-1,200 s (81 requests), 41 % over 1,200 s (34 requests). Only 115 of 7,599 requests follow a wait over 300 s, and a saturated arm serves about half.",
+        "fix": "None for launch. Read the long-wait bins of campaign 29 with their request counts; do not expect them to separate the arms."
+      },
+      {
+        "lens": "workload",
+        "severity": "note",
+        "where": "/home/wanhr/sglang/agent_cache/scripts/replay_programs.py:384-393 (oracle hint) with convert_freeinference.py:114-122 (joins)",
+        "problem": "After a reply that launches a subagent, the exact-gap hint carries the wait measured from the subagent's end, not from the reply, so arms 2 and 3 are told the user returns in about a second when it returns after the subagent's run. The table arms learn the same short gap for that tool. Rare.",
+        "evidence": "`gap = self.scaled_wait(reqs[k + 1])`; the converter sets `wait=(r[\"start_ms\"] - ready) / 1000` with `ready` the latest dependency's end, including the subagent's last request. FreeInference arrival set: 13 users with 30 subagent streams (298 of 21,258 requests), 10 joins. TraceLab has none.",
+        "fix": "None for launch; mention it if a subagent session shows up as an outlier."
+      },
+      {
+        "lens": "workload",
+        "severity": "note",
+        "where": "/home/wanhr/sglang/agent_cache/scripts/replay_programs.py:158-160 and :623-628; program_trace.py:219-248",
+        "problem": "Two small behaviours to know. (1) With no split asked, load_trees still runs the quadratic split test on every tree, including those it then drops: about 34 s of a 61 s load on the 16-week file and most of TraceLab's 75 s, per arm. (2) If the kept trees run out before the deadline, arrivals stop with no message or record. Neither campaign is exposed: 3,787 and 3,679 kept against 729 arrivals.",
+        "evidence": "`for prog in split_programs(tree, idle_s=args.split_idle, compaction=bool(args.split_compaction), ...)`; `_is_cut` builds `before = [end_of(r) for st in tree[\"streams\"] for r in st[\"requests\"] if r[\"t\"] < t_k]` per root request. splitcost.py: 6.8e8 units at 50 ns. `for tree in self.trees: if t >= self.deadline: break`. The one-week file alone (194 kept) would stop arriving at 1,839 s.",
+        "fix": "Optional: `progs = [tree] if args.split_idle is None and not args.split_compaction else split_programs(...)`. For scheduling, count about 2 h 8-12 min an arm (boot 80-240 s, load 60-75 s, 7,230 s, stop, SSD wipe), so about 21.5-22 h for the ten arms rather than 20."
+      }
+    ],
+    "checked_ok": [
+      "launcher-shell: bash -n passes for run_campaigns.sh, watch.sh, start_server.sh, stop_server.sh and start_programs.sh; campaign28 and campaign29 queue.txt are identical, settings.env differ only in TRACE; no CRLF, both files end in a newline.",
+      "launcher-shell: Field split of all five campaign28 lines, reproduced with the launcher's own idioms: hicache -> A=three_tier_wc H=none CF empty X empty; oracle_v2 -> three_tier_wc_oracle_v2_nu, oracle; jit_exact -> ..._nu_owned, oracle; jit_p50 -> ..._nu_owned, dist, client args `--gap-scale 1 --gap-cap 1200 --hint-no-call`; ec_full -> same plus 12 extra words.",
+      "launcher-shell: The JSON value survives both splits as one argv word with its quotes (`<{\"horizon_s\":30}>`); the ec_full extra flags are character-for-character c26's ec_full flags, and today's 02:38Z boot with the same SERVER_EXTRA resolved `'radix_eviction_policy_config': {'horizon_s': 30}`, read timing expected_cost, price learning harm, soft pins on.",
+      "launcher-shell: Client command per arm: --recipe none --hints <none|oracle|dist> --max-context 65536 --seed 0 --tag <label> --arrival-rate 0.1 --max-active 128 --duration 7200 --gap-scale 1 --gap-cap 1200 [--hint-no-call]; every flag exists in parse_args and resolve() accepts the combination.",
+      "launcher-shell: Settings export: the subshell exports TRACE RATE CAP HOST_GB DURATION MAX_CONTEXT GAP GAP_CAP SEED. start_server.sh reads only HOST_GB (intended); start_programs.sh reads TRACE RATE DURATION MAX_CONTEXT SEED, each also passed explicitly with the same value; the frozen engine has no environment read of any of the nine names, and the client scripts read no environment at all. LANES and POOL are not set by anything.",
+      "launcher-shell: Manifest line is `<label> <YYYYMMDD_HHMMSS_<arm>_custom_L1nat_H160> programs_<HHMMSS>_<label>`; the summary pattern `\"kind\":\"summary\"` matches the new client's compact JSON in real output.",
+      "launcher-shell: Main loop (lines 63-83 verbatim, arm stubbed): runs campaign28 top to bottom, exits at a failing arm, the same command resumes at that arm, moves to campaign29 with no IDLE in between, writes one IDLE line per log, and needs END in both folders to exit.",
+      "launcher-shell: Boot failure, client death and missing engine all end in a `C2x <label> STOP` line and exit 1; a boot that fails after start_server.sh line 78 leaves the pointer on the new empty run dir, so no stale match.",
+      "launcher-shell: Watcher pattern against the launcher's lines: LAUNCH lines do not match (settings, extra flags, GPU uuid and log path hold no DONE/STOP/IDLE); DONE, both STOP forms and IDLE match; 10 DONE + 1 STOP + 2 IDLE counted 13.",
+      "launcher-shell: Watcher in normal operation gives no false exit: no client.jsonl while the trace loads, the client flushes a status record every 60 s, a finished client is skipped, and the 7 server logs on this engine since 18 Nov (SIGTERM stops and deadline cancels included) hold 0 'Traceback' and the 10 client files 0 `\"error\":\"`.",
+      "launcher-shell: State at 03:26Z: no server, client, launcher or converter running; .current_run names the finished probe (summary present, 0 tracebacks), so the first stop_server.sh is a no-op and the watcher's first pass is clean.",
+      "launcher-shell: FreeInference 16w trace is complete: 16 weeks, 119 of 119 day files on disk and verified, 12,002 sessions, 3,787 under 65,536 tokens (107,107 requests); TraceLab keeps 3,679. About 720 arrivals are needed per arm.",
+      "launcher-shell: Memory: loading the 16w trace under the cap peaks at 0.7 GB; the host has 196.6 GiB, so a 160 GB pool (149 GiB) plus about 11 GiB of server and host processes leaves roughly 35 GiB.",
+      "launcher-shell: SSD is mounted (/dev/vdc on /mnt/ssd, 352 GB left by the probe, wiped at arm 1's start); server children die with the parent (kill_itself_when_parent_died in scheduler and detokenizer), so the SIGKILL path in stop_server.sh leaves no orphan holding the GPU.",
+      "launcher-shell: Time: c26 arms took 2 h 04 to 2 h 06 from LAUNCH to DONE; ten arms come to about 21.5 hours.",
+      "launcher-shell: Scratch test scripts for the proposed blocks are under /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/shell_review/ (sim/rc_toy.sh guard, fx/tail_fix.sh success check, pf/pre.sh preflight, w/t3.sh watcher check, loop/harness.sh main loop); nothing under agent_cache was written.",
+      "arm-semantics: Queue order and labels are the user's five arms (hicache, oracle_v2, jit_exact, jit_p50, ec_full); campaign29/queue.txt is identical; the two settings.env differ only in TRACE (rate 0.1, cap 128, 160 GB, 7,200 s, context cap 65,536, gap x1, gap cap 1,200, seed 0).",
+      "arm-semantics: Reproduced the launcher's field split and start_server.sh's argument list for all five lines under bash without launching (40, 54, 62, 62, 74 arguments); the JSON `{\"horizon_s\":30}` arrives as one argument and the later flags override the arm's own.",
+      "arm-semantics: Arm 1 confirmed: server arm three_tier_wc passes no next-turn flag, so `maybe_init_next_turn_prefetch` leaves the prefetcher None (lru, fifo read order, default retry 8/8); the client under `--hints none` attaches no kv_hints.",
+      "arm-semantics: Arm 2 confirmed: three_tier_wc_oracle_v2_nu passes hicache_hook.py and kv_cache_hook.py (deadline order, pin 0.3, next_use with prefetch on). The client sends only the version 1 action; `_resolve_hint` turns it into a point at the exact gap; horizon timing issues the lookup once the predicted admission is within 120 s; next-use eviction registers that admission.",
+      "arm-semantics: Arm 3 confirmed: the _owned arm adds read timing just_in_time, arrival gate and arrival hold; with an exact hint early_s is 0, so the read starts at predicted admission minus load minus 1 s.",
+      "arm-semantics: Arm 4 confirmed: reply-key source `hint`, so the engine takes `replay_reply_key`, picks that key's entry, else its tool's, else `*`, and plans on its p50 (the read is timed p50 minus p10 earlier, as campaign 26's jit_p50). The version 1 companion the new client adds is not read when a table is present.",
+      "arm-semantics: Arm 5 confirmed: its extra flags are character for character campaign 26's ec_full line, on the same base arm and engine; they satisfy every precondition (soft pins and price learning need expected_cost; expected_cost needs prefetch on, deadline order and a pin fraction above 0). Campaign 26's server_args.txt shows the resolved values: expected_cost, price 5e-05, harm, soft pins on, return_chance {'horizon_s': 30}, gate and hold on.",
+      "arm-semantics: `--hint-no-call` is consistent: the same `_reply_key` is used when a gap is observed (:399) and when the entry is picked (:405). A stream's last request still gets `_end`. Under `--hint-key tool` the key keeps its own entry; under `--hint-key none` the flag is a no-op. Simulated on TraceLab: 526 replies keyed `_no_call`, 454 picked that entry, 62 fell to `*`.",
+      "arm-semantics: The engine accepts `_no_call`: it is the engine's own constant (reply_key.py:15), fits `GapEntry.key: str` and `replay_reply_key: Optional[str]`, and passes the event grammar unchanged. Campaign 26's ec_full log on this build has `ntp_pick ... key=_no_call entry=_no_call` (4) and `entry=any` (6).",
+      "arm-semantics: Requests go to `/generate` with `rid` = `<tag>-c<instance>-t<k>` chosen by the client; the hint's next_rid is the rid the next request carries (25,151 simulated pairs, no mismatch; in the 18 Nov smoke the engine matched 74 of 75 exact-hint plans to arrivals).",
+      "arm-semantics: Oracle gap equals the sleep under `--gap-cap 1200` wherever the next request depends on its own stream only: both use `scaled_wait`. Real engine evidence (smoke fi_oracle): arrival minus commit minus hinted gap was 7 to 44 ms over 74 turns. No hint is sent when the next send would fall past the deadline (71 FreeInference and 31 TraceLab requests in the simulated arm); the record still carries oracle_gap_s.",
+      "arm-semantics: The engine's own `pick_gap_entry` (run from the frozen file) agreed with the client's pick on every simulated hint (19,403 FreeInference and 7,232 TraceLab requests); envelope fields and types match KvHintsEnvelope, NextTurnHint, NextTurnTable and GapEntry.",
+      "arm-semantics: All recorded keys fit the engine's event grammar `[\\w./-]+` (1,386 distinct in FreeInference, 426 in TraceLab); no recorded key is `_no_call` or `_end`; no empty prompt and no negative wait among the sessions kept.",
+      "arm-semantics: The 16-week trace is complete and stable: sha256 993523059a84529b..., 662,306,890 bytes, unchanged since 03:10:21Z, `gzip -t` passes; 12,002 sessions (the sum of the 16 manifests), 119 files verified, none missing. 3,787 sessions are under the cap and 729 arrive in 7,200 s, so the trees do not run out (TraceLab: 3,679 kept, 729 arrive).",
+      "arm-semantics: The client's argument list as start_programs.sh builds it parses and resolves to arrivals 0.1/s, max active 128, duration 7,200, gap scale 1, gap cap 1,200, wait field `wait`, key mode `command`, no lanes, no cache bust, no warm-up; arrivals and tree order depend only on the seed, so all five arms draw the same schedule.",
+      "arm-semantics: The frozen engine is untouched since its freeze (no .py newer than changes_vs_HEAD.patch of 2026-11-11 06:03Z), and it reads none of the names that `set -a` exports from settings.env.",
+      "arm-semantics: Not done here: no GPU run, no docker, and the unit tests were not run (the host python has no aiohttp). The simulations and scratch scripts are under /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/review_arms/ (sim.py, scan.py, drive_args.sh, who.py).",
+      "workload: The 16-week trace is complete: the gzip stream ends cleanly, 12,002 trees equal the 16 manifests' session count, stats.json (03:16Z) says files_verified 119 and missing_files [], and no session id occurs twice. sha256 993523059a84529b12ac37fbd4dab20037afc38a904da499d1a4d3f294afbcfe, 662,306,890 bytes.",
+      "workload: Trees surviving --max-context 65536, counted as the client does (prompt + output): FreeInference one week 194 of 699 (3,841 requests); FreeInference 16 weeks 3,787 of 12,002 (107,107 requests), an actual count since the file finished during the review (194 x 16 would have said 3,104); TraceLab 3,679 of 8,058 (40,476 requests).",
+      "workload: Seed 0 at 0.1 users/s gives exactly 729 arrivals before 7,200 s (first at 0, last at 7,198.5 s), so both traces have about five times the trees needed.",
+      "workload: Same users, order and arrival times in every arm: the shuffle and the arrival draw use string-seeded generators (same values under a different PYTHONHASHSEED), the shuffle follows the filter, and arrival times are drawn independently of the server. My host replication reproduces the finished probe's first trees (claude:97ee4fac, c6e8dbc8, ffb9d19c) and its arrival_s values 0.0, 4.904, 18.82, 51.564, 65.07.",
+      "workload: Request ids pair across arms: play and instance ids are assigned at admission (replay_programs.py:260, :637-638) in arrival order, because the container runs Python 3.12 (cpython-312 bytecode) whose asyncio.Semaphore is FIFO. A request is c<inst>-t<k> (the rid minus the arm label) or (tree, stream, k); tree ids are unique in both arrival sets. The probe's play ids follow arrival order with a binding cap. When the cap binds, admission times and the number admitted differ by arm; the ids do not.",
+      "workload: After 7,200 s: no sleep crosses the deadline, sleeping streams wake and count their remaining requests as skipped, requests in flight get 30 s, the rest are cancelled, then a `cancelled` record and the summary are written (elapsed 7,230 s). The launcher's DONE test needs only the summary line.",
+      "workload: Offline dry run of the client's own code over both full arrival sets (dryrun.py, aiohttp stubbed, nothing sent): 21,258 FreeInference and 7,599 TraceLab requests built their prompts (lengths equal the recorded ones), table hints with --hint-no-call, exact-gap hints and request bodies with 0 exceptions. Largest body 0.37 MB, largest hint envelope 3.8 KB, 759 instances for 729 FreeInference plays.",
+      "workload: The launcher's argv resolves as ordered (parse_args): lanes 0, arrival rate 0.1, max active 128, duration 7200, grace 30, wait field `wait`, shuffle, gap scale 1, gap cap 1200, no splitting, no cache bust, --hint-no-call on arms 4 and 5 only.",
+      "workload: The 1,200 s cap is consistent with the hints: the sleep, the exact gap and the table observations all go through scaled_wait. 172 FreeInference waits (0.84 %) and 34 TraceLab waits (0.49 %) hit the cap; the engine keeps an expected-cost plan 1,800 s.",
+      "workload: Client load time and memory on the 16-week file, measured on the host: 27 s to parse and filter plus about 34 s for the split pass; peak RSS 0.67 GB (the largest line is 25 MB). Runtime estimate 1-1.5 GB; the TraceLab probe client held 170 MB at 44 users. The host has 196 GiB, of which the 160 GB pool takes 149 GiB, so the client fits.",
+      "workload: aiohttp timeouts cannot end an arm: total=None, sock_read=3600 s, unlimited connections, server keep-alive 3,600 s; expected waits are minutes.",
+      "workload: The 262,144 context length is only an upper bound: the server checks prompt + max_new_tokens against it and every request is at most 65,536. No empty prompt, no bad dependency, no first-request wait in either arrival set.",
+      "workload: Sessions across weeks: block ids are scoped by week; some ids do recur across weeks (22,308 of 474,704 first-prompt ids), so week scoping loses 1.6 % of first-prompt sharing against 23.7 % kept within a week. Negligible and equal in every arm.",
+      "workload: Launcher inputs: bash -n passes on run_campaigns.sh, watch.sh, start_programs.sh, start_server.sh and stop_server.sh; the two queues are identical; the settings differ only in TRACE; each queue line splits into label, arm, hints, client flags, engine and extra flags as intended, and the ec_full extra flags equal campaign 26's.",
+      "workload: A deleted SSD page does not crash the server: hicache_nixl.py returns False on a failed transfer and the turn recomputes.",
+      "workload: Nothing was edited or launched; scratch scripts are under /tmp/claude-1001/-home-wanhr-sglang/7c93b1d5-dc1c-431d-8d3e-efb4ae23a30d/scratchpad/c28rev/ (workload.py, dryrun.py, closedloop.py, scan_partial.py, bigout.py, tl_reuse.py, crossweek.py, edge.py, load_like_client.py, splitcost.py)."
+    ]
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "review:launcher-shell",
+      "phaseIndex": 1,
+      "phaseTitle": "Review",
+      "agentId": "a13f8e4bdfdd32660",
+      "model": "claude-fable-5-2",
+      "state": "done",
+      "startedAt": 1795056670788,
+      "queuedAt": 1795056670759,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "fix_first",
+      "promptPreview": "You are reviewing, before launch, a 20-hour GPU experiment campaign on one H200 box. Your job is to find anything that would make it fail, silently do the wrong thing, or make its five arms incomparable. Be adversarial and concrete: cite file and line, quote the code, and give the exact fix. Do not pad with style remarks.\n\nWhat the campaign is supposed to do (the user's order): replay public agent…",
+      "promptFramed": true,
+      "lastProgressAt": 1795058987895,
+      "tokens": 360793,
+      "toolCalls": 80,
+      "durationMs": 2317106,
+      "resultPreview": "{\"verdict\":\"fix_first\",\"findings\":[{\"severity\":\"major\",\"where\":\"/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/run_campaigns.sh:19-25 (no start guard; first destructive lines are 40-41); compare /home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c26_ec/c26.sh:14-15\",\"problem\":\"No single-instance or stray-client guard. If it is started while another run_campaigns.s…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "review:arm-semantics",
+      "phaseIndex": 1,
+      "phaseTitle": "Review",
+      "agentId": "a723a0b88c3d986a9",
+      "model": "claude-fable-5-2",
+      "state": "done",
+      "startedAt": 1795056670788,
+      "queuedAt": 1795056670759,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "go",
+      "promptPreview": "You are reviewing, before launch, a 20-hour GPU experiment campaign on one H200 box. Your job is to find anything that would make it fail, silently do the wrong thing, or make its five arms incomparable. Be adversarial and concrete: cite file and line, quote the code, and give the exact fix. Do not pad with style remarks.\n\nWhat the campaign is supposed to do (the user's order): replay public agent…",
+      "promptFramed": true,
+      "lastProgressAt": 1795058387672,
+      "tokens": 407060,
+      "toolCalls": 95,
+      "durationMs": 1715044,
+      "resultPreview": "{\"verdict\":\"go\",\"findings\":[{\"severity\":\"minor\",\"where\":\"/home/wanhr/sglang/agent_cache/scripts/replay_programs.py:396-401 with /home/wanhr/sglang/agent_cache/scripts/gap_hints.py:59,304; engine /home/wanhr/sglang/agent_cache/frozen/engine_ec_20261111d/python/sglang/srt/mem_cache/next_turn_prefetch.py:499-511,588\",\"problem\":\"Arms 4 and 5 only: a turn whose table has no entry to pick is treated by …"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "review:workload",
+      "phaseIndex": 1,
+      "phaseTitle": "Review",
+      "agentId": "a91a4177563d97a08",
+      "model": "claude-fable-5-2",
+      "state": "done",
+      "startedAt": 1795056670788,
+      "queuedAt": 1795056670759,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "fix_first",
+      "promptPreview": "You are reviewing, before launch, a 20-hour GPU experiment campaign on one H200 box. Your job is to find anything that would make it fail, silently do the wrong thing, or make its five arms incomparable. Be adversarial and concrete: cite file and line, quote the code, and give the exact fix. Do not pad with style remarks.\n\nWhat the campaign is supposed to do (the user's order): replay public agent…",
+      "promptFramed": true,
+      "lastProgressAt": 1795059187626,
+      "tokens": 389621,
+      "toolCalls": 91,
+      "durationMs": 2514994,
+      "resultPreview": "{\"verdict\":\"fix_first\",\"findings\":[{\"severity\":\"major\",\"where\":\"/home/wanhr/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/run_campaigns.sh:42 (L3_CLEANER_PCT=70,60); cleaner at /home/wanhr/sglang/agent_cache/frozen/engine_ec_20261111d/python/sglang/srt/mem_cache/storage/nixl/nixl_cleaner.py:168-184\",\"problem\":\"The SSD cleaner will probably fire inside the 2-hour window for the first t…"
+    }
+  ],
+  "totalTokens": 1157474,
+  "totalToolCalls": 266
+}
