@@ -490,3 +490,6 @@ What the two say together:
    rank of queued turns. Both inflate the differences between the hinted arms on TraceLab.
 
 One run per arm; intervals are over users within a run and leave out the spread between runs.
+
+What both campaigns leave open (the two engine defects with code anchors and counts, the decisions that wait for
+the author, the steps to pick the work up) is in `agent_cache/OPEN_ITEMS.md`, written 2026-11-20.

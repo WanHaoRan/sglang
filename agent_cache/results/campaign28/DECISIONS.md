@@ -548,3 +548,7 @@ shows. Outputs `checks/start_state.out`, `checks/start_state_proposal.out`, `res
   one. The second is a client change, to make after campaign 29 (its inputs are pinned until then).
 - Limits: one arrival draw; the settled levels move by about a fifth between hours (heavy-tailed session lengths);
   main streams only.
+
+**Open after both campaigns (2026-11-20).** The two engine defects (the lookup cap, the `next_use` overdue rank of
+queued turns), the decisions that wait for the author (the fix, the follow-up setting, the start state) and the
+steps to pick the work up are in `agent_cache/OPEN_ITEMS.md`.
