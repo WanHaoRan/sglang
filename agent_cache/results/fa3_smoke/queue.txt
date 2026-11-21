@@ -1,0 +1,11 @@
+# <label> <system> <hints> <client flags joined by commas, or -> [arguments]   (baselines/common/run_baselines.sh)
+# Campaign 28's SGLang arms with FlashAttention 3 instead of the Triton attention every campaign pinned: the cookbook's
+# deployment for this model on H200 (no explicit backend, SGLang's SM90 default for bf16 KV). Everything else as
+# campaign 28 (same engine copy, arms, hints, pools), 20 minutes, so requests pair with campaign 28 and the baselines.
+# --max-total-tokens 668096 keeps the GPU pool the campaigns profiled with Triton.
+hicache_fa3 sglang none - three_tier_wc engine_ec_20261111d --attention-backend fa3 --max-total-tokens 668096
+jit_p50_fa3 sglang dist --hint-no-call three_tier_wc_oracle_v2_nu_owned engine_ec_20261111d --attention-backend fa3 --max-total-tokens 668096
+ec_full_fa3 sglang dist --hint-no-call three_tier_wc_oracle_v2_nu_owned engine_ec_20261111d --attention-backend fa3 --max-total-tokens 668096 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning harm --hicache-storage-next-turn-soft-pins on --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}
+jit_exact_fa3 sglang oracle - three_tier_wc_oracle_v2_nu_owned engine_ec_20261111d --attention-backend fa3 --max-total-tokens 668096
+oracle_v2_fa3 sglang oracle - three_tier_wc_oracle_v2_nu engine_ec_20261111d --attention-backend fa3 --max-total-tokens 668096
+sglang_vanilla_fa3 sglang none - hbm_lru engine_ec_20261111d --attention-backend fa3 --max-total-tokens 668096
