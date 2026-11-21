@@ -46,7 +46,8 @@ FILL_PROMPT = 16384     # tokens per filler prompt
 
 
 class Result(dict):
-    """One request's outcome: ttft, latency, cached, prompt_tokens, completion_tokens, ids, top (first-token logprobs)."""
+    """One request's outcome: ttft, latency, cached, prompt_tokens, completion_tokens, ids, top (first-token
+    logprobs)."""
 
 
 async def ask(http, *, url: str, backend, model: str, ids: list, out: int, rid: str, session: str,
@@ -151,7 +152,8 @@ class Checker:
         self.verdict("cold", cold["cached"] == 0 and cold["completion_tokens"] == a.out
                      and cold["prompt_tokens"] == a.prompt_tokens and ids_ok,
                      f"prompt {cold['prompt_tokens']}, cached {cold['cached']} (want 0), output "
-                     f"{cold['completion_tokens']} with {len(cold['ids'])} ids (want {a.out}), TTFT {cold['ttft']:.3f} s",
+                     f"{cold['completion_tokens']} with {len(cold['ids'])} ids (want {a.out}), "
+                     f"TTFT {cold['ttft']:.3f} s",
                      ttft=cold["ttft"], cached=cold["cached"])
         warm = await self.send("A", prompt)
         same, worst = same_first_token(cold["top"], warm["top"], tol=WARM_TOL)

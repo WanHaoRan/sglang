@@ -6,7 +6,8 @@
 Turn 0 (a prompt of --prompt-tokens) is sent with the fields the backend adds (Continuum's job and tool, TokenCake's
 lifecycle metadata). When it completes, the backend's after-reply hook runs (TokenCake's stall_started) and --fill
 unrelated requests arrive at once, outgrowing a small GPU pool, so the session's now idle prefix is what an LRU cache
-drops first. The session waits --wait-s, the before-request hook runs (stall_finished), and turn 1 extends turn 0. The output is turn 1's cached tokens and TTFT. Run it twice, with the system's signals and without
+drops first. The session waits --wait-s, the before-request hook runs (stall_finished), and turn 1 extends turn 0.
+The output is turn 1's cached tokens and TTFT. Run it twice, with the system's signals and without
 (Continuum: --backend-opt func=off; TokenCake: events=off): the difference is what the mechanism kept. Boot the server
 with a small GPU pool (each baseline's README gives the line); --metrics adds the moved series of an endpoint.
 """

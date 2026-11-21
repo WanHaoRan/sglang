@@ -89,3 +89,11 @@ changing vLLM's allocator would no longer be the released code.
   UUID when `nvidia-smi` answers, which vLLM 0.22 then fails to parse as an integer, so `official/nosmi/nvidia-smi` (a
   stub that fails) makes it pass the index; and nothing else may hold the GPU, since vLLM's memory profiling aborts
   when free memory changes under it (the first native case failed so).
+
+## The trace replay (2026-11-21, GPU)
+
+20 minutes at campaign 28's setting, full sizes (668,096-token GPU pool, 120 GiB CPU; `results/baseline_smoke2/`,
+run `20261121_204835_tokencake_offload-agent`): 2,292 requests, 0 errors, mean TTFT 1.34 s (p50 0.24 s, p90 3.98 s),
+10 % of prompt tokens recomputed. Its counters at the end: 1,379 stalled sessions selected for preservation (the
+benefit test's other outcomes mostly `no_waiting_demand` and `backoff`), 228,385 blocks saved to CPU memory, 18.0 M
+prompt tokens served from CPU (`external_prefix_cache_hits_total`) beside 62.7 M from the GPU cache.
