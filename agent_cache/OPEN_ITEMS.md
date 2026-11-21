@@ -59,25 +59,25 @@ be fixed. At its end the reader can find the code, the log lines and the counts.
 
 **One request** (measured: `jit_p50-c58-t11`, campaign 29; §5.2 prints its log lines):
 
-| after arrival | event |
-|---|---|
-| 0 s | the prompt matches 19,328 tokens in memory and the chain is 22,144, so the gate allows a read; lookup 1 asks for 3,008 tokens and finds 0 |
-| 61.0 s | 2,496 tokens of the chain's tail leave memory, a second after the registration made at arrival turns overdue (§2); lookup 2 finds 0 |
-| 61.5 s | lookup 3 finds 0 |
-| 62.0 s | `ntp_reevict ... refetches=2 capped=1`: the allowance is used up |
-| 185.7 s | the history itself leaves memory ("device prefix shrank ... current_match=0"); the gate answers `capped` |
-| 187.1 s | admitted with `cached_input_len=0`: all 22,338 prompt tokens are computed, no lookup was left to ask the SSD for them |
+| after arrival | event                                                                                                                                     |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 s           | the prompt matches 19,328 tokens in memory and the chain is 22,144, so the gate allows a read; lookup 1 asks for 3,008 tokens and finds 0 |
+| 61.0 s        | 2,496 tokens of the chain's tail leave memory, a second after the registration made at arrival turns overdue (§2); lookup 2 finds 0      |
+| 61.5 s        | lookup 3 finds 0                                                                                                                          |
+| 62.0 s        | `ntp_reevict ... refetches=2 capped=1`: the allowance is used up                                                                        |
+| 185.7 s       | the history itself leaves memory ("device prefix shrank ... current_match=0"); the gate answers `capped`                                |
+| 187.1 s       | admitted with `cached_input_len=0`: all 22,338 prompt tokens are computed, no lookup was left to ask the SSD for them                   |
 
 **How often.**
 
-| the three arms with the gate: `jit_exact`, `jit_p50`, `ec_full` | FreeInference (campaign 28) | TraceLab (campaign 29) |
-|---|---|---|
-| queue wait, median | 55, 54, 54 s | 193, 185, 171 s |
-| lookups that found nothing, of all lookups | 52, 47, 53 % | 63, 61, 60 % |
-| returning requests refused a read at the cap | 97 of 8,048; 93 of 8,145; 33 of 8,257 | 333 of 2,924; 313 of 2,982; 175 of 3,228 |
-| history computed again, of the history | 1.4, 1.2, 0.4 % | 11.8, 10.8, 5.7 % |
-| of it, by the refused requests | 93, 91, 77 % | 99.4, 99.3, 98.7 % |
-| GPU time spent computing history again, minutes 30 to 110 | 5.6, 5.0, 1.9 % | 19.2, 19.4, 11.6 % |
+| the three arms with the gate: `jit_exact`, `jit_p50`, `ec_full` | FreeInference (campaign 28)           | TraceLab (campaign 29)                   |
+| --------------------------------------------------------------------- | ------------------------------------- | ---------------------------------------- |
+| queue wait, median                                                    | 55, 54, 54 s                          | 193, 185, 171 s                          |
+| lookups that found nothing, of all lookups                            | 52, 47, 53 %                          | 63, 61, 60 %                             |
+| returning requests refused a read at the cap                          | 97 of 8,048; 93 of 8,145; 33 of 8,257 | 333 of 2,924; 313 of 2,982; 175 of 3,228 |
+| history computed again, of the history                                | 1.4, 1.2, 0.4 %                       | 11.8, 10.8, 5.7 %                        |
+| of it, by the refused requests                                        | 93, 91, 77 %                          | 99.4, 99.3, 98.7 %                       |
+| GPU time spent computing history again, minutes 30 to 110             | 5.6, 5.0, 1.9 %                       | 19.2, 19.4, 11.6 %                       |
 
 Measured 2026-11-19 and 20, returning requests sent before 6,600 s: `checks/cap_share_<arm>.out`, `checks/cap_path.out`
 and `checks/gpu_work.out` under each campaign's folder; the lookup row from the `s2h_query` lines of each server log
@@ -128,12 +128,12 @@ into a lost history.
 **How often.** Requests that used up their allowance on empty lookups 30 s or more before admission ("at risk"), by
 the time after arrival at which it was used up:
 
-| `jit_exact`, `jit_p50`, `ec_full` | FreeInference (campaign 28) | TraceLab (campaign 29) |
-|---|---|---|
-| at risk | 53, 52, 84 | 369, 329, 236 |
-| of them, used up 55 to 70 s after arrival | 4, 4, 1 | 291, 252, 29 |
-| of those, later refused a read | 4, 4, 0 | 275, 243, 14 |
-| of them, used up in the first 5 s | 47, 42, 64 | 59, 62, 137 |
+| `jit_exact`, `jit_p50`, `ec_full`   | FreeInference (campaign 28) | TraceLab (campaign 29) |
+| ----------------------------------------- | --------------------------- | ---------------------- |
+| at risk                                   | 53, 52, 84                  | 369, 329, 236          |
+| of them, used up 55 to 70 s after arrival | 4, 4, 1                     | 291, 252, 29           |
+| of those, later refused a read            | 4, 4, 0                     | 275, 243, 14           |
+| of them, used up in the first 5 s         | 47, 42, 64                  | 59, 62, 137            |
 
 Measured 2026-11-20: `results/campaign28/checks/cap_path.out`, `results/campaign29/checks/cap_path.out` (§5.2).
 
@@ -161,14 +161,14 @@ Measured 2026-11-20: `results/campaign28/checks/cap_path.out`, `results/campaign
 This section sorts the findings of the two campaigns into those that stand, those whose size is not clean and those
 the defects produce. One run per arm throughout; the findings are the last section of campaign 29's record.
 
-| finding | with the defects in mind |
-|---|---|
-| every next-turn design beats original HiCache at saturation (80 s on FreeInference, 98 to 175 s on TraceLab) | stands; on TraceLab the three just-in-time arms are held back by defect 1, so their lead is understated |
-| the old oracle ties just-in-time at a 54 s queue (+3.0 s for `jit_exact`) | the +3.0 s is defect 1: 93 % of the history `jit_exact` computed again belongs to its 97 refused requests |
-| the old oracle loses 78 s to just-in-time at a three-minute queue | the direction stands (its reads land two minutes early); the size is not clean: the old oracle carries defect 2, just-in-time carries both |
-| exact and table hints tie (-0.9 s and -3.7 s) | stands; the -3.7 s on TraceLab is defect 1's draw while the queue forms |
-| the four-rules arm leads `jit_p50` by 15.6 s on TraceLab (1.7 s on FreeInference) | produced by the defects: the rules made no decision, and `return_chance` avoids defect 2, so defect 1 refuses 175 requests instead of 313 |
-| price, read timing and soft pins decided nothing | stands; a saturated setting gives them nothing to decide |
+| finding                                                                                                      | with the defects in mind                                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| every next-turn design beats original HiCache at saturation (80 s on FreeInference, 98 to 175 s on TraceLab) | stands; on TraceLab the three just-in-time arms are held back by defect 1, so their lead is understated                                     |
+| the old oracle ties just-in-time at a 54 s queue (+3.0 s for `jit_exact`)                                  | the +3.0 s is defect 1: 93 % of the history `jit_exact` computed again belongs to its 97 refused requests                                 |
+| the old oracle loses 78 s to just-in-time at a three-minute queue                                            | the direction stands (its reads land two minutes early); the size is not clean: the old oracle carries defect 2, just-in-time carries both  |
+| exact and table hints tie (-0.9 s and -3.7 s)                                                                | stands; the -3.7 s on TraceLab is defect 1's draw while the queue forms                                                                     |
+| the four-rules arm leads `jit_p50` by 15.6 s on TraceLab (1.7 s on FreeInference)                          | produced by the defects: the rules made no decision, and `return_chance` avoids defect 2, so defect 1 refuses 175 requests instead of 313 |
+| price, read timing and soft pins decided nothing                                                             | stands; a saturated setting gives them nothing to decide                                                                                    |
 
 Estimate, not run: with defect 1 fixed the three just-in-time arms on TraceLab stop spending 19, 19 and 12 % of GPU
 time on refused histories. By the arithmetic that matched `ec_full` against `jit_p50` ((1 - 0.116) / (1 - 0.194) =
@@ -207,15 +207,15 @@ None has been acted on.
 - Why: both campaigns ran saturated (about 20 requests running, 77 to 102 queued). The server then times every read
   from the queue position, so neither a hint's precision nor a rule has anything to decide.
 
-| setting | proposal | reason |
-|---|---|---|
-| trace | FreeInference without the SWE-bench agents, 65,536-token limit | those agents wait 2.3 s a turn and almost never idle; the other harnesses wait 44.6 s (68.4 s under the cap below) |
-| waits | x1, capped at 3,600 s (1,200 s in campaigns 28 and 29) | idle sessions are what reaches the SSD |
-| load | 0.032 users/s, cap 128 kept as a guard | 80 % of the GPU by the model; with the cap not binding every arm gets the same users |
-| host pool | 100 GB | the session KV settles at 132 to 165 GB by the two models on record, so 17 to 39 % of it lies past the pool |
-| arms | the five, and the just-in-time engine with no hints | the sixth says whether hints are needed at all |
-| first | a 30-minute trial | |
-| to report | TTFT after waits over 60 s beside the mean, p99, host room held by early reads, SSD bytes read and not used | 88 % of turns follow a wait under a minute and stay in GPU memory |
+| setting   | proposal                                                                                                    | reason                                                                                                             |
+| --------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| trace     | FreeInference without the SWE-bench agents, 65,536-token limit                                              | those agents wait 2.3 s a turn and almost never idle; the other harnesses wait 44.6 s (68.4 s under the cap below) |
+| waits     | x1, capped at 3,600 s (1,200 s in campaigns 28 and 29)                                                      | idle sessions are what reaches the SSD                                                                             |
+| load      | 0.032 users/s, cap 128 kept as a guard                                                                      | 80 % of the GPU by the model; with the cap not binding every arm gets the same users                               |
+| host pool | 100 GB                                                                                                      | the session KV settles at 132 to 165 GB by the two models on record, so 17 to 39 % of it lies past the pool        |
+| arms      | the five, and the just-in-time engine with no hints                                                         | the sixth says whether hints are needed at all                                                                     |
+| first     | a 30-minute trial                                                                                           |                                                                                                                    |
+| to report | TTFT after waits over 60 s beside the mean, p99, host room held by early reads, SSD bytes read and not used | 88 % of turns follow a wait under a minute and stay in GPU memory                                                  |
 
 - What to expect (estimate): little on the mean (campaign 26 measured 0.14 to 0.21 s for exact hints) and the read's
   worth on turns after a long wait: a 30 K history reads in 1.5 s and computes in 3.3 s (speeds measured in
@@ -263,6 +263,7 @@ echo "server processes: $(docker exec sglang_hicache pgrep -f '[s]glang.launch_s
 echo "ssd used: $(df --output=pcent /mnt/ssd | tail -1 | tr -d ' ')"
 echo "last launcher line: $(tail -1 /home/wanhr/sglang/agent_cache/results/campaign29/launcher.log)"
 ```
+
 -> prints `sglang_hicache Up ...`, `0 MiB`, `2` launcher processes (the `bash -c` wrapper and the script; `0` after
 a host restart), `1` helper (or `0`), `0` server processes, a percentage, and a launcher line with `IDLE`. Pass: no
 server process and under 1,000 MiB on the GPU.
@@ -273,6 +274,7 @@ cd /home/wanhr/sglang/agent_cache && tail -1 results/campaign29/launcher.log | g
   && touch results/campaign28/END results/campaign29/END && echo "END files written" \
   || echo "STOP: the last launcher line is not IDLE (an arm is running, or it has ended); nothing written"
 ```
+
 -> prints `END files written`; a minute later the first block shows `0` launcher processes and both launcher logs
 end with `ALL DONE`. Needed only before another launcher starts (a second instance is refused). §5.5 does not need
 it: it uses the idle launcher, or starts it again.
@@ -296,6 +298,7 @@ cd /home/wanhr/sglang/agent_cache \
   && python3 -I -B results/campaign29/checks/cap_path.py results/campaign29 jit_exact jit_p50 ec_full \
   && python3 -I -B results/campaign29/checks/cap_path.py results/campaign28 jit_exact jit_p50 ec_full
 ```
+
 -> prints a header and three rows for each campaign. Pass: the TraceLab rows show `369`, `329`, `236` under "at
 risk" and `291, 275`, `252, 243`, `29, 14` under "marked 55-70 s: n, refused" (the table of §2).
 
@@ -304,6 +307,7 @@ risk" and `291, 275`, `252, 243`, `29, 14` under "marked 55-70 s: n, refused" (t
 cd /home/wanhr/sglang/agent_cache && grep -a -E "(rid|req)=jit_p50-c58-t11[ ,]" \
   results/20261119_211511_three_tier_wc_oracle_v2_nu_owned_custom_L1nat_H160/server.log | cut -c1-200
 ```
+
 -> prints 24 lines. Pass: three `s2h_query ... storage_hit=0` lines, then `ntp_reevict ... refetches=2 capped=1`,
 then `ntp_gate ... decision=capped matched=0`, and a last line with `cached_input_len=0` (the table of §1).
 
@@ -314,6 +318,7 @@ cd /home/wanhr/sglang/agent_cache && for a in jit_exact jit_p50 ec_full; do
   echo "$a: $(grep -a 's2h_query' $log | grep -a -c 'storage_hit=0$') of $(grep -a -c 's2h_query' $log) lookups found nothing"
 done
 ```
+
 -> prints `jit_exact: 4006 of 6390`, `jit_p50: 3917 of 6409`, `ec_full: 4212 of 6994`. Pass: those numbers.
 
 **Expected result:** the three blocks print the numbers above.
@@ -338,6 +343,7 @@ docker exec -e PYTHONDONTWRITEBYTECODE=1 sglang_hicache bash -c 'cd /sgl-workspa
   test/registered/unit/mem_cache/test_next_use_eviction.py test/registered/unit/mem_cache/test_next_turn_prefetch.py; do
   echo "== $t: $(python3 -m pytest -q -p no:cacheprovider "$t" 2>&1 | tail -1)"; done'
 ```
+
 -> prints two lines. Pass today: `18 passed` and `67 passed ... 52 subtests passed`, with no `failed` or `error`.
 After a fix the counts rise by the tests added.
 
@@ -368,6 +374,7 @@ docker exec sglang_hicache bash -c 'cd /sgl-workspace/sglang && F=agent_cache/fr
   && echo "frozen: $F, $(wc -l < "$F/changes_vs_HEAD.patch") diff lines against $(git -c safe.directory="*" rev-parse --short HEAD)" \
   || echo "STOP: $F exists or the copy failed; nothing overwritten"'
 ```
+
 -> prints `frozen: agent_cache/frozen/<FIXED_ENGINE>, N diff lines against <commit>`; N is 0 when the fix is
 committed. Pass: the line starts with `frozen:`.
 
@@ -393,6 +400,7 @@ empties `results/.current_run`.
 docker exec sglang_hicache bash -c 'cd /sgl-workspace/sglang/agent_cache/scripts \
   && sha256sum --quiet -c ../results/campaign29/inputs.sha256 && echo "inputs of campaign 29: unchanged"'
 ```
+
 -> prints `inputs of campaign 29: unchanged`. A `FAILED` line names a changed script: restore it, or run the arm in
 a new campaign folder.
 
@@ -403,6 +411,7 @@ cd /home/wanhr/sglang/agent_cache && [ -d frozen/<FIXED_ENGINE>/python ] && ! gr
   && echo "queued: $(tail -1 results/campaign29/queue.txt)" \
   || echo "STOP: frozen/<FIXED_ENGINE>/python is missing or the label is already queued; nothing written"
 ```
+
 -> prints `queued: jit_p50_fix three_tier_wc_oracle_v2_nu_owned dist --hint-no-call <FIXED_ENGINE>`.
 
 ```bash
@@ -411,6 +420,7 @@ cd /home/wanhr/sglang/agent_cache && : > results/.current_run && docker start sg
   bash -c 'nohup bash /sgl-workspace/sglang/agent_cache/frozen/oracle_scripts_staging/c28_users/run_campaigns.sh campaign28 campaign29 >> /sgl-workspace/sglang/agent_cache/results/c28_runner.log 2>&1' \
   && echo "launcher started"
 ```
+
 -> prints `sglang_hicache` and `launcher started`; the launch of 2026-11-19 used the same `docker exec` line.
 
 ```bash
@@ -418,6 +428,7 @@ cd /home/wanhr/sglang/agent_cache && : > results/.current_run && docker start sg
 cd /home/wanhr/sglang/agent_cache && { setsid nohup bash frozen/oracle_scripts_staging/c28_users/warm_weights.sh \
   >> results/c28_warm.log 2>&1 < /dev/null & } && echo "helper started"
 ```
+
 -> prints `helper started`. Without it a boot can crawl at 9 MB/s and miss the launcher's 40-minute limit.
 
 ```bash
@@ -425,6 +436,7 @@ cd /home/wanhr/sglang/agent_cache && { setsid nohup bash frozen/oracle_scripts_s
 cd /home/wanhr/sglang/agent_cache && echo "launcher: $(tail -1 results/campaign29/launcher.log | cut -c1-160)" \
   && echo "refused so far: $(grep -a 'ntp_gate' results/$(cat results/.current_run)/server.log | grep -a -c 'decision=capped')"
 ```
+
 -> campaign 29's `jit_p50` had 39, 88 and 145 refusals about 30, 40 and 60 minutes into the client's run and 334 at
 its end (measured). Pass: far fewer; under 20 at the end (derived: 332 requests were refused there, 316 of them on
 empty lookups). To stop the arm, for errors only (a slowdown is a result):
@@ -435,6 +447,7 @@ empty lookups). To stop the arm, for errors only (a slowdown is a result):
 cd /home/wanhr/sglang/agent_cache && bash frozen/oracle_scripts_staging/c28_users/arm_checks.sh campaign29 jit_p50_fix jit_p50 ec_full \
   && python3 -I -B results/campaign29/checks/cap_path.py results/campaign29 jit_p50 jit_p50_fix ec_full
 ```
+
 -> prints one `ok` line per check, then the cap-path rows of the old and the new run. The figure step may print
 `FAIL` (Traps); the checks before it do not depend on it.
 
