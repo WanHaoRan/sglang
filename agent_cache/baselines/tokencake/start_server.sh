@@ -61,4 +61,4 @@ bl_wait_ready "$RUN" 1800 || { bl_stop; exit 1; }
 echo "versions:         $(echo "$VERSIONS" | tr '\n' ' ')"
 echo "GPU KV cache:     $(grep -aoE 'GPU KV cache size: [0-9,]+ tokens' "$RUN/server.log" | head -1)   (want $BL_GPU_KV_TOKENS tokens)"
 echo "TokenCake:        $(grep -aoiE "tokencake[^\n]{0,100}(enabled|config|scheduling|offload)[^\n]{0,80}" "$RUN/server.log" | head -1)"
-echo "events route:     $(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' "http://127.0.0.1:$BL_PORT/v1/tokencake/events")   (want 422 when the route exists: an empty event is rejected)"
+echo "events route:     $(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' "http://127.0.0.1:$BL_PORT/v1/tokencake/events")   (want 400: the route exists and rejects an empty event)"

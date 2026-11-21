@@ -7,7 +7,7 @@ The authors' code (github.com/pku-lemonade/TokenCake, commit `1901ebf`, 2026-09-
 | step | host command (from `agent_cache/baselines/`) | takes |
 |---|---|---|
 | build | `bash tokencake/setup.sh` | 2 min (clone, 249 MB wheel, uv) |
-| boot | `bash tokencake/start_server.sh` (`MODE=offload-agent` by default) | 2-3 min |
+| boot | `bash tokencake/start_server.sh` (`MODE=offload-agent` by default) | 1 min (35 min the first time: kernel build) |
 | checks | `common/run_check.sh` lines below | 5 min each |
 | official evaluation | `bash tokencake/official/dag.sh` | 30-60 min |
 | stop | `bash common/stop_server.sh` | 20 s |
@@ -43,3 +43,20 @@ TokenCake learn per kind); `stall_finished` when the wait is over, just before t
 | `--kv-offloading-size`, `--kv-offloading-backend` | 149.01 (GiB), `native` | our host pool in bytes; the backend its driver uses |
 | environment | `VLLM_USE_SIMPLE_KV_OFFLOAD=0`, `VLLM_WORKER_MULTIPROC_METHOD=spawn`, `TOKENIZERS_PARALLELISM=false`, `VLLM_SERVER_DEV_MODE=1`, `VLLM_USE_V1=1` | its driver's server environment |
 | dependencies | resolved as PyPI stood on 2026-09-29 (torch 2.11.0, transformers 4.57.6) | its commit day |
+
+## Checks (2026-11-21, GPU)
+
+- First boot: vLLM 0.22.0 picks FlashInfer's CUTLASS MoE backend for this model and JIT-builds its kernels (182
+  objects, about 35 minutes on this box's 16 cores); they are cached in `~/.cache/flashinfer/0.6.11.post2/` and later
+  boots take about a minute. pip's FlashInfer ships no prebuilt kernels; the vLLM Docker image would.
+- `check_server.py` (GPU 100K tokens, CPU 30 GB; `results/20261121_192707_tokencake_offload-agent/`): cold 0 cached
+  (1.290 s); warm 19,984 (0.035 s); extended 20,000; after 150,000 filler tokens recomputed (0 cached: TokenCake
+  keeps nothing in CPU memory without a stall event). 4 of 4 passed with `--recompute-tol 0.25`: the recomputed
+  prompt's logprobs differ from the cold run's by 0.06, since TokenCake's scheduler sets each step's prefill budget
+  and so chunks the same prompt differently (same tokens, different bf16 arithmetic).
+- `check_session.py`, its preservation (GPU 100K tokens; a 20,000-token turn, 8 x 16,000 filler tokens arriving as
+  it completes, the next turn after a 10 s wait; `results/20261121_184959_tokencake_offload-agent/`): with stall
+  events the benefit test selected the session once the fill raised pressure (`tokencake_decision_total`: 8
+  low_pressure, 1 no_waiting_demand, then 1 selected), saved its 1,250 blocks (`tokencake_saved_blocks_total`), and
+  the next turn found 20,000 of 20,528 tokens cached, all from CPU memory (`cpu_hit_tokens` and
+  `external_prefix_cache_hits_total` +20,000; TTFT 0.123 s). Without events: 0 cached, 0.767 s.

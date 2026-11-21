@@ -192,7 +192,7 @@ class Checker:
                         f"{ref_name} ({ref['cached']} cached) {'equal' if same else 'DIFFER'} (largest difference "
                         f"{worst}, tolerance {tol})")
             else:
-                same, worst = same_first_token(cold["top"], back["top"], tol=EXACT_TOL)
+                same, worst = same_first_token(cold["top"], back["top"], tol=a.recompute_tol)
                 ok = back["cached"] < block and same
                 text = (f"after {int(fill):,} filler tokens ({took:.0f} s): cached {back['cached']} (want 0: "
                         f"recomputed), TTFT {back['ttft']:.3f} s against {cold['ttft']:.3f} s cold, first-token "
@@ -249,6 +249,9 @@ def main(argv=None) -> int:
                     help="largest cache granule of the system (a prefix is cached up to a multiple of it)")
     ap.add_argument("--stage", action="append", default=[], metavar="NAME:FILL_TOKENS:cached|recomputed")
     ap.add_argument("--salt", default=None, help="fix the synthetic tokens (default: new ones every run)")
+    ap.add_argument("--recompute-tol", type=float, default=EXACT_TOL,
+                    help="logprob tolerance of a recomputed prompt against the cold run: exact by default; a scheduler "
+                         "that chunks a prefill by its own budget (TokenCake) needs the cold-against-warm tolerance")
     ap.add_argument("--metrics", action="append", default=[], metavar="URL",
                     help="a Prometheus endpoint whose matching series are read around each stage's checked request")
     ap.add_argument("--metric-match", default=r"hit|load|retriev|prefetch",
