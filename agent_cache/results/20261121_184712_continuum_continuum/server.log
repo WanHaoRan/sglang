@@ -1,0 +1,234 @@
+INFO 11-21 18:47:15 [__init__.py:216] Automatically detected platform cuda.
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:16 [api_server.py:1896] vLLM API server version 0.10.2
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:16 [utils.py:328] non-default args: {'model_tag': 'Qwen/Qwen3-30B-A3B-Instruct-2507', 'host': '0.0.0.0', 'port': 30000, 'enable_prompt_tokens_details': True, 'model': 'Qwen/Qwen3-30B-A3B-Instruct-2507', 'max_model_len': 65536, 'generation_config': 'vllm', 'kv_cache_memory_bytes': 9830400000, 'max_num_batched_tokens': 8192, 'max_num_seqs': 64, 'scheduling_policy': 'continuum'}
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:22 [__init__.py:742] Resolved architecture: Qwen3MoeForCausalLM
+[1;36m(APIServer pid=44703)[0;0m `torch_dtype` is deprecated! Use `dtype` instead!
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:22 [__init__.py:1815] Using max model len 65536
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:22 [scheduler.py:222] Chunked prefill is enabled with max_num_batched_tokens=8192.
+INFO 11-21 18:47:26 [__init__.py:216] Automatically detected platform cuda.
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:27 [core.py:654] Waiting for init message from front-end.
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:27 [core.py:76] Initializing a V1 LLM engine (v0.10.2) with config: model='Qwen/Qwen3-30B-A3B-Instruct-2507', speculative_config=None, tokenizer='Qwen/Qwen3-30B-A3B-Instruct-2507', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=65536, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, kv_cache_dtype=auto, device_config=cuda, decoding_config=DecodingConfig(backend='auto', disable_fallback=False, disable_any_whitespace=False, disable_additional_properties=False, reasoning_backend=''), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None), seed=0, served_model_name=Qwen/Qwen3-30B-A3B-Instruct-2507, enable_prefix_caching=True, chunked_prefill_enabled=True, use_async_output_proc=True, pooler_config=None, compilation_config={"level":3,"debug_dump_path":"","cache_dir":"","backend":"","custom_ops":[],"splitting_ops":["vllm.unified_attention","vllm.unified_attention_with_output","vllm.mamba_mixer2","vllm.mamba_mixer","vllm.short_conv","vllm.linear_attention","vllm.plamo2_mamba_mixer","vllm.gdn_attention"],"use_inductor":true,"compile_sizes":[],"inductor_compile_config":{"enable_auto_functionalized_v2":false},"inductor_passes":{},"cudagraph_mode":1,"use_cudagraph":true,"cudagraph_num_of_warmups":1,"cudagraph_capture_sizes":[128,120,112,104,96,88,80,72,64,56,48,40,32,24,16,8,4,2,1],"cudagraph_copy_inputs":false,"full_cuda_graph":false,"pass_config":{},"max_capture_size":128,"local_cache_dir":null}
+[W1121 18:47:29.323749620 ProcessGroupNCCL.cpp:981] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:29 [parallel_state.py:1165] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+[1;36m(EngineCore_DP0 pid=44806)[0;0m WARNING 11-21 18:47:29 [topk_topp_sampler.py:69] FlashInfer is not available. Falling back to the PyTorch-native implementation of top-p & top-k sampling. For the best performance, please install FlashInfer.
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:29 [gpu_model_runner.py:2338] Starting to load model Qwen/Qwen3-30B-A3B-Instruct-2507...
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:29 [gpu_model_runner.py:2370] Loading model from scratch...
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:29 [cuda.py:362] Using Flash Attention backend on V1 engine.
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:29 [weight_utils.py:348] Using model weights format ['*.safetensors']
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:   0% Completed | 0/16 [00:00<?, ?it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:   6% Completed | 1/16 [00:00<00:11,  1.32it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:  12% Completed | 2/16 [00:01<00:11,  1.25it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:  19% Completed | 3/16 [00:02<00:10,  1.23it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:  25% Completed | 4/16 [00:03<00:09,  1.23it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:  31% Completed | 5/16 [00:04<00:08,  1.23it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:  38% Completed | 6/16 [00:04<00:08,  1.22it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:  44% Completed | 7/16 [00:05<00:07,  1.24it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:  50% Completed | 8/16 [00:06<00:06,  1.24it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:  56% Completed | 9/16 [00:07<00:05,  1.23it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:  62% Completed | 10/16 [00:08<00:04,  1.23it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:  69% Completed | 11/16 [00:08<00:04,  1.23it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:  75% Completed | 12/16 [00:09<00:03,  1.23it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:  81% Completed | 13/16 [00:10<00:02,  1.23it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:  88% Completed | 14/16 [00:10<00:01,  1.57it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards:  94% Completed | 15/16 [00:11<00:00,  1.47it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards: 100% Completed | 16/16 [00:12<00:00,  1.38it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Loading safetensors checkpoint shards: 100% Completed | 16/16 [00:12<00:00,  1.29it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m 
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:42 [default_loader.py:268] Loading weights took 12.44 seconds
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:42 [gpu_model_runner.py:2392] Model loading took 56.9342 GiB and 12.891088 seconds
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:49 [backends.py:539] Using cache directory: /home/wanhr/.cache/vllm/torch_compile_cache/ffdd7c582a/rank_0_0/backbone for vLLM's torch.compile
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:49 [backends.py:550] Dynamo bytecode transform time: 6.91 s
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:52 [backends.py:161] Directly load the compiled graph(s) for dynamic shape from the cache, took 2.414 s
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:53 [fused_moe.py:720] Using configuration from /home/wanhr/sglang/agent_cache/baselines/continuum/src/vllm-continuum/vllm/model_executor/layers/fused_moe/configs/E=128,N=768,device_name=NVIDIA_H200.json for MoE layer.
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:53 [monitor.py:34] torch.compile takes 6.91 s in total
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:54 [gpu_worker.py:251] Initial free memory 139.1964111328125 GiB, reserved 9.16GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config when you want manual control of KV cache memory size. If OOM'ed, check the difference of initial free memory between the current run and the previous run where kv_cache_memory_bytes is suggested and update it correspondingly.
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:54 [kv_cache_utils.py:864] GPU KV cache size: 100,000 tokens
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:54 [kv_cache_utils.py:868] Maximum concurrency for 65,536 tokens per request: 1.53x
+[1;36m(EngineCore_DP0 pid=44806)[0;0m Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):   0%|          | 0/19 [00:00<?, ?it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):   5%|▌         | 1/19 [00:00<00:01,  9.76it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  16%|█▌        | 3/19 [00:00<00:01, 11.04it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  26%|██▋       | 5/19 [00:00<00:01, 10.78it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  37%|███▋      | 7/19 [00:00<00:01, 10.81it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  47%|████▋     | 9/19 [00:00<00:00, 10.98it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  58%|█████▊    | 11/19 [00:01<00:00, 10.98it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  68%|██████▊   | 13/19 [00:01<00:00, 11.02it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  79%|███████▉  | 15/19 [00:01<00:00, 10.91it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  89%|████████▉ | 17/19 [00:01<00:00, 10.94it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|██████████| 19/19 [00:01<00:00, 10.78it/s]Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|██████████| 19/19 [00:01<00:00, 10.86it/s]
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:56 [gpu_model_runner.py:3118] Graph capturing finished in 2 secs, took -0.06 GiB
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:56 [core.py:218] init engine (profile, create kv cache, warmup model) took 13.82 seconds
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:57 [estimate_with_func.py:120] Initialized tokenizer for model: Qwen/Qwen3-30B-A3B-Instruct-2507
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [loggers.py:142] Engine 000: vllm cache_config_info with initialization after num_gpu_blocks is: 6250
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [async_llm.py:180] Torch profiler disabled. AsyncLLM CPU traces will not be collected.
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [api_server.py:1692] Supported_tasks: ['generate']
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [api_server.py:1971] Starting vLLM API server 0 on http://0.0.0.0:30000
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:36] Available routes are:
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /openapi.json, Methods: GET, HEAD
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /docs, Methods: GET, HEAD
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /docs/oauth2-redirect, Methods: GET, HEAD
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /redoc, Methods: GET, HEAD
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /health, Methods: GET
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /load, Methods: GET
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /ping, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /ping, Methods: GET
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /tokenize, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /detokenize, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /v1/models, Methods: GET
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /version, Methods: GET
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /v1/responses, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /v1/responses/{response_id}, Methods: GET
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /v1/responses/{response_id}/cancel, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /v1/chat/completions, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /v1/completions, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /v1/embeddings, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /pooling, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /classify, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /score, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /v1/score, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /v1/audio/transcriptions, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /v1/audio/translations, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /rerank, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /v1/rerank, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /v2/rerank, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /scale_elastic_ep, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /is_scaling_elastic_ep, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /invocations, Methods: POST
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:47:57 [launcher.py:44] Route: /metrics, Methods: GET
+[1;36m(APIServer pid=44703)[0;0m INFO:     Started server process [44703]
+[1;36m(APIServer pid=44703)[0;0m INFO:     Waiting for application startup.
+[1;36m(APIServer pid=44703)[0;0m INFO:     Application startup complete.
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42312 - "GET /health HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42314 - "GET /v1/models HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42316 - "GET /v1/models HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42316 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:58 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e76774cf29-c0, time is 1795286878.264458
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:59 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e76774cf29-c0, time is 1795286879.0201352
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42316 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:59 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e76774cf29-f0, time is 1795286879.0300138
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42322 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42336 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42340 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42342 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42354 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42360 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42370 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:59 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e76774cf29-f1, time is 1795286879.183745
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:59 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e76774cf29-f2, time is 1795286879.183868
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:59 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e76774cf29-f3, time is 1795286879.1839063
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:59 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e76774cf29-f4, time is 1795286879.1839356
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:59 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e76774cf29-f5, time is 1795286879.1839595
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:59 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e76774cf29-f6, time is 1795286879.1839945
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:47:59 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e76774cf29-f7, time is 1795286879.1840186
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42376 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:00 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e76774cf29-c0, time is 1795286880.0454571
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:00 [estimate_with_func.py:170] Request job id: cs-18ea23e76774cf29-c0, last func call: ls
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:01 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e76774cf29-c0, time is 1795286881.0138454
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:02 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e76774cf29-f0, time is 1795286882.0888374
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:02 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e76774cf29-f1, time is 1795286882.4892902
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:02 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e76774cf29-f2, time is 1795286882.8635318
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:02 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e76774cf29-f3, time is 1795286882.887133
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:03 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e76774cf29-f4, time is 1795286883.0077908
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:03 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e76774cf29-f5, time is 1795286883.024514
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:03 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e76774cf29-f6, time is 1795286883.3153746
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:03 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e76774cf29-f7, time is 1795286883.3281379
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42386 - "GET /v1/models HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42386 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:03 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e8a4bbba72-c0, time is 1795286883.576219
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:04 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e8a4bbba72-c0, time is 1795286884.2140331
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42386 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:04 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e8a4bbba72-f0, time is 1795286884.2240167
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42390 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42400 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42416 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42428 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42434 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42438 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42452 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:04 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e8a4bbba72-f1, time is 1795286884.3788877
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:04 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e8a4bbba72-f2, time is 1795286884.3790145
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:04 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e8a4bbba72-f3, time is 1795286884.379052
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:04 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e8a4bbba72-f4, time is 1795286884.3790789
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:04 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e8a4bbba72-f5, time is 1795286884.379103
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:04 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e8a4bbba72-f6, time is 1795286884.3791263
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:04 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e8a4bbba72-f7, time is 1795286884.379149
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:42462 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:05 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e8a4bbba72-c0, time is 1795286885.4386122
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:05 [estimate_with_func.py:170] Request job id: cs-18ea23e8a4bbba72-c0, last func call: None
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:06 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e8a4bbba72-c0, time is 1795286886.1837459
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:07 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e8a4bbba72-f0, time is 1795286887.2266195
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:07 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e8a4bbba72-f1, time is 1795286887.6251144
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:07 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e8a4bbba72-f2, time is 1795286887.995539
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:48:08 [loggers.py:123] Engine 000: Avg prompt throughput: 32622.6 tokens/s, Avg generation throughput: 89.9 tokens/s, Running: 5 reqs, Waiting: 0 reqs, GPU KV cache usage: 80.2%, Prefix cache hit rate: 20.5%
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:08 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e8a4bbba72-f3, time is 1795286888.019454
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:08 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e8a4bbba72-f4, time is 1795286888.1518505
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:08 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e8a4bbba72-f5, time is 1795286888.1684253
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:08 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e8a4bbba72-f6, time is 1795286888.445532
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:08 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e8a4bbba72-f7, time is 1795286888.4583607
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47854 - "GET /v1/models HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47854 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:08 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e9d6b2d767-c0, time is 1795286888.7090638
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:09 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e9d6b2d767-c0, time is 1795286889.3466072
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47854 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:09 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e9d6b2d767-f0, time is 1795286889.3563242
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47870 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47886 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47898 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47906 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47920 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47930 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47934 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:09 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e9d6b2d767-f1, time is 1795286889.5145516
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:09 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e9d6b2d767-f2, time is 1795286889.5147302
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:09 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e9d6b2d767-f3, time is 1795286889.5147781
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:09 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e9d6b2d767-f4, time is 1795286889.5148053
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:09 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e9d6b2d767-f5, time is 1795286889.514828
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:09 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e9d6b2d767-f6, time is 1795286889.5148513
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:09 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e9d6b2d767-f7, time is 1795286889.514872
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47946 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:10 [estimate_with_func.py:162] Request job id arriving: cs-18ea23e9d6b2d767-c0, time is 1795286890.5661302
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:10 [estimate_with_func.py:170] Request job id: cs-18ea23e9d6b2d767-c0, last func call: ls
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:11 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e9d6b2d767-c0, time is 1795286891.321948
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:12 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e9d6b2d767-f0, time is 1795286892.3670967
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:12 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e9d6b2d767-f1, time is 1795286892.7678769
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:13 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e9d6b2d767-f2, time is 1795286893.139389
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:13 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e9d6b2d767-f3, time is 1795286893.1635554
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:13 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e9d6b2d767-f4, time is 1795286893.3057227
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:13 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e9d6b2d767-f5, time is 1795286893.3234093
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:13 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e9d6b2d767-f6, time is 1795286893.6192055
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:13 [estimate_with_func.py:178] Request job id finishing: cs-18ea23e9d6b2d767-f7, time is 1795286893.6320457
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47948 - "GET /v1/models HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47948 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:13 [estimate_with_func.py:162] Request job id arriving: cs-18ea23eb0b15d0d2-c0, time is 1795286893.883183
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:14 [estimate_with_func.py:178] Request job id finishing: cs-18ea23eb0b15d0d2-c0, time is 1795286894.5250373
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47948 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:14 [estimate_with_func.py:162] Request job id arriving: cs-18ea23eb0b15d0d2-f0, time is 1795286894.5347717
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47956 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47958 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47960 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47972 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47986 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:47996 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:48012 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:14 [estimate_with_func.py:162] Request job id arriving: cs-18ea23eb0b15d0d2-f1, time is 1795286894.6928847
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:14 [estimate_with_func.py:162] Request job id arriving: cs-18ea23eb0b15d0d2-f2, time is 1795286894.693004
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:14 [estimate_with_func.py:162] Request job id arriving: cs-18ea23eb0b15d0d2-f3, time is 1795286894.693041
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:14 [estimate_with_func.py:162] Request job id arriving: cs-18ea23eb0b15d0d2-f4, time is 1795286894.6930666
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:14 [estimate_with_func.py:162] Request job id arriving: cs-18ea23eb0b15d0d2-f5, time is 1795286894.6930902
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:14 [estimate_with_func.py:162] Request job id arriving: cs-18ea23eb0b15d0d2-f6, time is 1795286894.6931126
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:14 [estimate_with_func.py:162] Request job id arriving: cs-18ea23eb0b15d0d2-f7, time is 1795286894.6931329
+[1;36m(APIServer pid=44703)[0;0m INFO:     127.0.0.1:48576 - "POST /v1/completions HTTP/1.1" 200 OK
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:15 [estimate_with_func.py:162] Request job id arriving: cs-18ea23eb0b15d0d2-c0, time is 1795286895.7448442
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:15 [estimate_with_func.py:170] Request job id: cs-18ea23eb0b15d0d2-c0, last func call: None
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:16 [estimate_with_func.py:178] Request job id finishing: cs-18ea23eb0b15d0d2-c0, time is 1795286896.5014906
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:17 [estimate_with_func.py:178] Request job id finishing: cs-18ea23eb0b15d0d2-f0, time is 1795286897.559947
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:17 [estimate_with_func.py:178] Request job id finishing: cs-18ea23eb0b15d0d2-f1, time is 1795286897.9605224
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:48:18 [loggers.py:123] Engine 000: Avg prompt throughput: 32105.6 tokens/s, Avg generation throughput: 107.2 tokens/s, Running: 6 reqs, Waiting: 0 reqs, GPU KV cache usage: 82.3%, Prefix cache hit rate: 20.9%
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:18 [estimate_with_func.py:178] Request job id finishing: cs-18ea23eb0b15d0d2-f2, time is 1795286898.331635
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:18 [estimate_with_func.py:178] Request job id finishing: cs-18ea23eb0b15d0d2-f3, time is 1795286898.3550777
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:18 [estimate_with_func.py:178] Request job id finishing: cs-18ea23eb0b15d0d2-f4, time is 1795286898.4915226
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:18 [estimate_with_func.py:178] Request job id finishing: cs-18ea23eb0b15d0d2-f5, time is 1795286898.5085301
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:18 [estimate_with_func.py:178] Request job id finishing: cs-18ea23eb0b15d0d2-f6, time is 1795286898.7995644
+[1;36m(EngineCore_DP0 pid=44806)[0;0m INFO 11-21 18:48:18 [estimate_with_func.py:178] Request job id finishing: cs-18ea23eb0b15d0d2-f7, time is 1795286898.8124204
+[1;36m(APIServer pid=44703)[0;0m WARNING 11-21 18:48:18 [launcher.py:98] port 30000 is used by process psutil.Process(pid=44703, name='vllm', status='running', started='18:47:11') launched with command:
+[1;36m(APIServer pid=44703)[0;0m WARNING 11-21 18:48:18 [launcher.py:98] /home/wanhr/sglang/agent_cache/baselines/continuum/src/vllm-continuum/../../.venv/bin/python /home/wanhr/sglang/agent_cache/baselines/continuum/.venv/bin/vllm serve Qwen/Qwen3-30B-A3B-Instruct-2507 --host 0.0.0.0 --port 30000 --max-model-len 65536 --kv-cache-memory-bytes 9830400000 --max-num-batched-tokens 8192 --max-num-seqs 64 --enable-prompt-tokens-details --generation-config vllm --scheduling-policy continuum
+[1;36m(APIServer pid=44703)[0;0m INFO 11-21 18:48:18 [launcher.py:101] Shutting down FastAPI HTTP server.
+[rank0]:[W1121 18:48:18.096936851 ProcessGroupNCCL.cpp:1538] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+[1;36m(APIServer pid=44703)[0;0m INFO:     Shutting down
+[1;36m(APIServer pid=44703)[0;0m INFO:     Waiting for application shutdown.
+[1;36m(APIServer pid=44703)[0;0m INFO:     Application shutdown complete.

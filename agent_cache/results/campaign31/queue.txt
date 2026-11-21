@@ -1,0 +1,11 @@
+# <label> <system> <hints> <client flags joined by commas, or -> [arguments]   (baselines/common/run_baselines.sh)
+# The baselines at the setting of the campaign this folder copies (settings.env); our own arms are that campaign's.
+# Prepared 2026-11-21, not launched: about 2 h 10 min an arm.
+sglang_vanilla sglang_vanilla - -
+vllm_vanilla vllm_vanilla - -
+vllm_lmcache vllm_lmcache - -
+continuum continuum - - POLICY=continuum LMCACHE=on
+tokencake tokencake - - MODE=offload-agent
+# each fork's own stock base, for its gain over its own engine:
+# continuum_fcfs continuum - - POLICY=fcfs LMCACHE=on
+# tokencake_native tokencake - --backend-opt,meta=off,--backend-opt,events=off MODE=native

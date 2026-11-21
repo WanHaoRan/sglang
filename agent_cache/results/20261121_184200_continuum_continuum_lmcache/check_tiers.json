@@ -1,0 +1,57 @@
+{
+ "url": "http://127.0.0.1:30000",
+ "backend": "continuum",
+ "model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+ "prompt_tokens": 20000,
+ "stages": [
+  "l1_cpu:150000:cached",
+  "l2_ssd:400000:cached"
+ ],
+ "failed": 0,
+ "checks": [
+  {
+   "check": "cold",
+   "ok": true,
+   "text": "prompt 20000, cached 0 (want 0), output 16 with 16 ids (want 16), TTFT 1.371 s",
+   "ttft": 1.3707203489993844,
+   "cached": 0
+  },
+  {
+   "check": "warm",
+   "ok": true,
+   "text": "cached 19999 of 20000 (want all but one block of 256), TTFT 0.021 s against 1.371 s cold, first-token logprobs equal (largest difference 0.0659)",
+   "ttft": 0.021477053000126034,
+   "cached": 19999,
+   "logprob_diff": 0.0659
+  },
+  {
+   "check": "extend",
+   "ok": true,
+   "text": "prompt 22064, cached 20000 (want at least 19744), TTFT 1.216 s",
+   "ttft": 1.2156932470006723,
+   "cached": 20000
+  },
+  {
+   "check": "l1_cpu",
+   "ok": true,
+   "text": "after 150,000 filler tokens (4 s): cached 19999 of 20000 (want all but one block), TTFT 0.061 s against 0.021 s warm and 1.371 s cold, first-token logprobs against warm (19999 cached) equal (largest difference 0.0, tolerance 0.02)",
+   "ttft": 0.06137698599923169,
+   "cached": 19999,
+   "logprob_diff": 0.0,
+   "fill_s": 4.207921691999218,
+   "metrics_moved": {},
+   "tiers": null
+  },
+  {
+   "check": "l2_ssd",
+   "ok": true,
+   "text": "after 400,000 filler tokens (11 s): cached 19999 of 20000 (want all but one block), TTFT 3.527 s against 0.021 s warm and 1.371 s cold, first-token logprobs against warm (19999 cached) equal (largest difference 0.0, tolerance 0.02)",
+   "ttft": 3.526837359999263,
+   "cached": 19999,
+   "logprob_diff": 0.0,
+   "fill_s": 11.331744434000939,
+   "metrics_moved": {},
+   "tiers": null
+  }
+ ]
+}

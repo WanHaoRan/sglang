@@ -86,6 +86,22 @@ users); stock vLLM to vLLM + LMCache -4.77 s [-6.02, -3.78]; SGLang + HiCache to
 - Before a comparison of tiering policies across engines means anything, our engine needs its deployed attention
   backend (FA3 on H200), the first item of the paper-strategy document's GPU plan.
 
+## The full comparison, prepared and not launched
+
+`results/campaign30/` (FreeInference) and `results/campaign31/` (TraceLab) copy the settings of campaigns 28 and 29
+(0.1 users/s, cap 128, 160 GB host, x1 gaps, 2 h) and queue the five baselines; each fork's own stock base is a
+commented line. Our own arms are those campaigns' (same users, paired by request). About 2 h 10 min an arm, 11 h a
+trace:
+
+```bash
+# host: both traces, one after the other; the launcher's log names each arm's LAUNCH and DONE
+cd /home/wanhr/sglang/agent_cache && : > results/.current_run && setsid nohup bash baselines/common/run_baselines.sh \
+  campaign30 campaign31 >> results/campaign30/runner.log 2>&1 < /dev/null &
+```
+
+Then `python3 -I -B frozen/oracle_scripts_staging/c28_users/compare_arms.py results/campaign30` with campaign 28's arms
+added to its manifest, as `results/baseline_smoke_compare/` does.
+
 ## Traps
 
 - Port 5555 was briefly taken by another process on this box; LMCache's server listens on 6555 and 6580 here.

@@ -1,0 +1,60 @@
+{
+ "url": "http://127.0.0.1:30000",
+ "backend": "vllm",
+ "model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+ "prompt_tokens": 20000,
+ "stages": [
+  "l1_cpu:150000:cached",
+  "l2_ssd:400000:cached"
+ ],
+ "failed": 0,
+ "checks": [
+  {
+   "check": "cold",
+   "ok": true,
+   "text": "prompt 20000, cached 0 (want 0), output 16 with 16 ids (want 16), TTFT 0.557 s",
+   "ttft": 0.5572588140003063,
+   "cached": 0
+  },
+  {
+   "check": "warm",
+   "ok": true,
+   "text": "cached 19984 of 20000 (want all but one block of 256), TTFT 0.041 s against 0.557 s cold, first-token logprobs equal (largest difference 0.0744)",
+   "ttft": 0.04128251099973568,
+   "cached": 19984,
+   "logprob_diff": 0.0744
+  },
+  {
+   "check": "extend",
+   "ok": true,
+   "text": "prompt 22064, cached 20000 (want at least 19744), TTFT 0.200 s",
+   "ttft": 0.1996335240000917,
+   "cached": 20000
+  },
+  {
+   "check": "l1_cpu",
+   "ok": true,
+   "text": "after 150,000 filler tokens (6 s): cached 19968 of 20000 (want all but one block), TTFT 0.083 s against 0.041 s warm and 0.557 s cold, first-token logprobs against warm (19984 cached) equal (largest difference 0.0569, tolerance 0.25)",
+   "ttft": 0.08269054800075537,
+   "cached": 19968,
+   "logprob_diff": 0.0569,
+   "fill_s": 6.132137557000533,
+   "metrics_moved": {
+    "lmcache_mp_lookup_hit_l1_tokens_total{cache_salt=\"\",model_name=\"Qwen/Qwen3-30B-A3B-Instruct-2507\"}": 19968.0
+   }
+  },
+  {
+   "check": "l2_ssd",
+   "ok": true,
+   "text": "after 400,000 filler tokens (18 s): cached 19968 of 20000 (want all but one block), TTFT 1.217 s against 0.041 s warm and 0.557 s cold, first-token logprobs against l1_cpu (19968 cached) equal (largest difference 0.0, tolerance 0.02)",
+   "ttft": 1.2173816009999427,
+   "cached": 19968,
+   "logprob_diff": 0.0,
+   "fill_s": 18.369536955999138,
+   "metrics_moved": {
+    "lmcache_mp_l2_load_completed_requests_total{l2_name=\"fs_native\"}": 1.0,
+    "lmcache_mp_lookup_hit_l2_tokens_total{cache_salt=\"\",model_name=\"Qwen/Qwen3-30B-A3B-Instruct-2507\"}": 19968.0
+   }
+  }
+ ]
+}

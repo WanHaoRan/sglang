@@ -1,0 +1,7 @@
+server http://127.0.0.1:30000, model Qwen/Qwen3-30B-A3B-Instruct-2507, backend continuum, prompt 20000 tokens, salt 18ea23b058550509
+ok    cold       prompt 20000, cached 0 (want 0), output 16 with 16 ids (want 16), TTFT 1.371 s
+ok    warm       cached 19999 of 20000 (want all but one block of 256), TTFT 0.021 s against 1.371 s cold, first-token logprobs equal (largest difference 0.0659)
+ok    extend     prompt 22064, cached 20000 (want at least 19744), TTFT 1.216 s
+ok    l1_cpu     after 150,000 filler tokens (4 s): cached 19999 of 20000 (want all but one block), TTFT 0.061 s against 0.021 s warm and 1.371 s cold, first-token logprobs against warm (19999 cached) equal (largest difference 0.0, tolerance 0.02)
+ok    l2_ssd     after 400,000 filler tokens (11 s): cached 19999 of 20000 (want all but one block), TTFT 3.527 s against 0.021 s warm and 1.371 s cold, first-token logprobs against warm (19999 cached) equal (largest difference 0.0, tolerance 0.02)
+PASS: 5 of 5 checks passed

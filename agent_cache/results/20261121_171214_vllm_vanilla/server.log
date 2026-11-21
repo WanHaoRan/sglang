@@ -1,0 +1,188 @@
+W1121 17:12:15.333000 18939 torch/_opaque_base.py:6] torch._opaque_base is deprecated, use torch._custom_class_base instead
+W1121 17:12:15.333000 18939 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1121 17:12:15.334000 18939 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+FlashInfer kernels are disabled: flashinfer-cubin is not installed and nvcc (CUDA_HOME, CUDA_PATH, PATH or /usr/local/cuda) or ninja (PATH) is missing. Set CUDA_HOME to a CUDA toolkit and put ninja on PATH, or run `vllm download-kernels`.
+(APIServer pid=18939) INFO 11-21 17:12:21 [startup.py:38] 
+(APIServer pid=18939) INFO 11-21 17:12:21 [startup.py:38]        █     █     █▄   ▄█
+(APIServer pid=18939) INFO 11-21 17:12:21 [startup.py:38]  ▄▄ ▄█ █     █     █ ▀▄▀ █  version 0.34.0
+(APIServer pid=18939) INFO 11-21 17:12:21 [startup.py:38]   █▄█▀ █     █     █     █  model   Qwen/Qwen3-30B-A3B-Instruct-2507
+(APIServer pid=18939) INFO 11-21 17:12:21 [startup.py:38]    ▀▀  ▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀
+(APIServer pid=18939) INFO 11-21 17:12:21 [startup.py:38] 
+(APIServer pid=18939) INFO 11-21 17:12:21 [startup.py:96] non-default args: {'model_tag': 'Qwen/Qwen3-30B-A3B-Instruct-2507', 'enable_prompt_tokens_details': True, 'host': '0.0.0.0', 'port': 30000, 'model': 'Qwen/Qwen3-30B-A3B-Instruct-2507', 'max_model_len': 262144, 'generation_config': 'vllm', 'kv_cache_memory_bytes': 9830400000, 'max_num_batched_tokens': 8192, 'max_num_seqs': 64}
+(APIServer pid=18939) INFO 11-21 17:12:28 [model.py:761] Resolved architecture: Qwen3MoeForCausalLM
+(APIServer pid=18939) INFO 11-21 17:12:28 [model.py:2214] Using max model len 262144
+(APIServer pid=18939) INFO 11-21 17:12:28 [scheduler.py:354] Chunked prefill is enabled with max_num_batched_tokens=8192.
+(APIServer pid=18939) INFO 11-21 17:12:28 [kernel.py:517] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native'], gelu_and_mul_sparse=['triton', 'native'])
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 3390.46it/s]
+(APIServer pid=18939) INFO 11-21 17:12:31 [numa_utils.py:575] Automatic NUMA binding unavailable on this host; starting unbound. Enable debug logging for the skip reason.
+W1121 17:12:32.574000 19144 torch/_opaque_base.py:6] torch._opaque_base is deprecated, use torch._custom_class_base instead
+W1121 17:12:32.576000 19144 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1121 17:12:32.576000 19144 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+(EngineCore pid=19144) INFO 11-21 17:12:37 [core.py:153] Initializing a V1 LLM engine (v0.34.0) with config: model='Qwen/Qwen3-30B-A3B-Instruct-2507', speculative_config=None, tokenizer='Qwen/Qwen3-30B-A3B-Instruct-2507', skip_tokenizer_init=False, tokenizer_mode=auto, revision=main, tokenizer_revision=main, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=262144, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, quantization_config=None, enforce_eager=False, aux_output_config=AuxOutputConfig(enable_return_routed_experts=False, max_bytes=None), kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, per_request_spec_decode_metrics='none', kv_cache_metrics=False, kv_cache_metrics_sample=0.01, custom_histogram_buckets=None, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False, jit_monitor_mode='warn', jit_monitor_verbose=False), seed=0, served_model_name=Qwen/Qwen3-30B-A3B-Instruct-2507, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'ir_enable_torch_wrap': True, 'splitting_ops': ['vllm::unified_attention_with_output', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::zaya_cca', 'vllm::qwen4_exp_ple_short_conv', 'vllm::qwen4_exp_qsa_with_output', 'vllm::qwen4_exp_qsa_prepare_with_output', 'vllm::linear_attention', 'vllm::qwen_gdn_attention_core', 'vllm::qwen_gdn_attention_core_fused_norm_packed', 'vllm::gdn_attention_core_xpu', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::deepseek_v4_attention', 'vllm::hpc_rope_norm_forward', 'vllm::step5_csa_attention', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_token_budget': 5120, 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'cudagraph_decoder_replay': True, 'decoder_replay_cudagraph_capture_sizes': [], 'decoder_replay_trim_threshold': 768, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'use_breakable_cudagraph': False, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128], 'prefill_cudagraph_capture_token_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128], 'max_prefill_cudagraph_capture_tokens': 128, 'decode_cudagraph_capture_request_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64], 'max_decode_cudagraph_capture_requests': 64, 'max_decode_cudagraph_capture_tokens': None, 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'fuse_allreduce_rms': False, 'enable_qk_norm_rope_fusion': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False, 'fuse_qk_norm_rope_kvcache': False}, 'max_cudagraph_capture_size': 128, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['native'], fused_add_rms_norm=['native'], gelu_and_mul_sparse=['triton', 'native']), enable_flashinfer_autotune=True, enable_rocm_segmented_attn_autotune=False, enable_rocm_aiter_gemm_warmup=False, enable_cutedsl_warmup=True, enable_jit_warmup=True, monokernel=False, moe_backend='auto', sparse_indexer_topk_backend='auto', linear_backend='auto', linear_backend_per_quant=None, rdna_hybrid_w4a16_prefill_dequant='disable')
+(EngineCore pid=19144) WARNING 11-21 17:12:37 [flashinfer.py:107] FlashInfer kernels are disabled: flashinfer-cubin is not installed and nvcc (CUDA_HOME, CUDA_PATH, PATH or /usr/local/cuda) or ninja (PATH) is missing. Set CUDA_HOME to a CUDA toolkit and put ninja on PATH, or run `vllm download-kernels`.
+(EngineCore pid=19144) INFO 11-21 17:12:40 [parallel_state.py:1935] world_size=1 rank=0 local_rank=0 distributed_init_method=file:///tmp/vllm_dist_422b2b5d820c47c0b9161190261bf073 backend=nccl
+(EngineCore pid=19144) INFO 11-21 17:12:40 [parallel_state.py:2394] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, ETP rank 0, EP rank 0, EPLB rank N/A
+(EngineCore pid=19144) INFO 11-21 17:12:40 [cuda.py:239] NVIDIA Confidential Computing not detected via NVML
+(EngineCore pid=19144) INFO 11-21 17:12:40 [model_runner.py:412] Loading model from scratch...
+(EngineCore pid=19144) INFO 11-21 17:12:43 [cuda.py:549] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore pid=19144) INFO 11-21 17:12:43 [flash_attn.py:1131] Using FlashAttention version 3
+(EngineCore pid=19144) INFO 11-21 17:12:43 [unquantized.py:335] Using TRITON Unquantized MoE backend out of potential backends: ['TRITON', 'BATCHED_TRITON', 'FlashInfer TRTLLM', 'FlashInfer CUTLASS'].
+(EngineCore pid=19144) INFO 11-21 17:12:44 [base_loader.py:95] Initializing model took 3.115027 seconds
+(EngineCore pid=19144) INFO 11-21 17:12:44 [weight_utils.py:1154] Filesystem type for checkpoints: EXT4. Checkpoint size: 56.87 GiB. Available RAM: 191.63 GiB.
+(EngineCore pid=19144) INFO 11-21 17:12:44 [weight_utils.py:1177] Auto-prefetch is disabled because the filesystem (EXT4) is not a recognized network FS (NFS/Lustre). If you want to force prefetching, start vLLM with --safetensors-load-strategy=prefetch.
+Loading safetensors checkpoint shards:   0% Completed | 0/16 [00:00<?, ?it/s]
+Loading safetensors checkpoint shards:   6% Completed | 1/16 [00:00<00:11,  1.33it/s]
+Loading safetensors checkpoint shards:  12% Completed | 2/16 [00:01<00:11,  1.24it/s]
+Loading safetensors checkpoint shards:  19% Completed | 3/16 [00:02<00:10,  1.22it/s]
+Loading safetensors checkpoint shards:  25% Completed | 4/16 [00:03<00:09,  1.21it/s]
+Loading safetensors checkpoint shards:  31% Completed | 5/16 [00:04<00:09,  1.20it/s]
+Loading safetensors checkpoint shards:  38% Completed | 6/16 [00:04<00:08,  1.19it/s]
+Loading safetensors checkpoint shards:  44% Completed | 7/16 [00:05<00:07,  1.19it/s]
+Loading safetensors checkpoint shards:  50% Completed | 8/16 [00:06<00:06,  1.19it/s]
+Loading safetensors checkpoint shards:  56% Completed | 9/16 [00:07<00:05,  1.19it/s]
+Loading safetensors checkpoint shards:  62% Completed | 10/16 [00:08<00:05,  1.19it/s]
+Loading safetensors checkpoint shards:  69% Completed | 11/16 [00:09<00:04,  1.18it/s]
+Loading safetensors checkpoint shards:  75% Completed | 12/16 [00:10<00:03,  1.18it/s]
+Loading safetensors checkpoint shards:  81% Completed | 13/16 [00:10<00:02,  1.19it/s]
+Loading safetensors checkpoint shards:  88% Completed | 14/16 [00:11<00:01,  1.18it/s]
+Loading safetensors checkpoint shards:  94% Completed | 15/16 [00:12<00:00,  1.18it/s]
+Loading safetensors checkpoint shards: 100% Completed | 16/16 [00:12<00:00,  1.50it/s]
+Loading safetensors checkpoint shards: 100% Completed | 16/16 [00:12<00:00,  1.25it/s]
+
+(EngineCore pid=19144) INFO 11-21 17:12:57 [default_loader.py:543] Loading weights took 12.83 seconds
+(EngineCore pid=19144) INFO 11-21 17:12:57 [base.py:286] Using MoEPrepareAndFinalizeNoDPEPModular
+(EngineCore pid=19144) INFO 11-21 17:12:57 [base.py:288] Using TritonExperts MoE backend
+(EngineCore pid=19144) INFO 11-21 17:12:58 [model_runner.py:441] Model loading took 56.93 GiB memory and 17.645506 seconds
+(EngineCore pid=19144) WARNING 11-21 17:12:58 [topk_topp_sampler.py:126] FlashInfer top-p/top-k sampling unavailable: FlashInfer kernels are disabled; falling back. Set VLLM_USE_FLASHINFER_SAMPLER=0 to silence.
+(EngineCore pid=19144) INFO 11-21 17:12:58 [torch_utils.py:301] Reducing Torch threads from 8 to 1 for serving. Set OMP_NUM_THREADS in the external environment to override.
+(EngineCore pid=19144) INFO 11-21 17:12:58 [utils.py:419] Using LBNHC KV cache layout.
+(EngineCore pid=19144) INFO 11-21 17:12:58 [monitor.py:40] [backbone] Starting torch.compile
+(EngineCore pid=19144) INFO 11-21 17:13:07 [backends.py:1110] [backbone] Using cache directory: /home/wanhr/.cache/vllm/torch_compile_cache/9905d20e76/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=19144) INFO 11-21 17:13:07 [backends.py:1167] [backbone] Dynamo bytecode transform time: 8.89 s
+(EngineCore pid=19144) INFO 11-21 17:13:17 [backends.py:421] [backbone] Compiling a graph for compile range (1, 8192) takes 9.37 s
+(EngineCore pid=19144) INFO 11-21 17:13:22 [backends.py:952] collected artifacts: 49 entries, 3 artifacts, 5565630 bytes total
+(EngineCore pid=19144) INFO 11-21 17:13:22 [decorators.py:752] [backbone] saved AOT compiled function to /home/wanhr/.cache/vllm/torch_compile_cache/torch_aot_compile/6cf2042f121b82638d1a0ce51231ba68e599cc5900e68f5c8e6a10e0a2ed43d6/rank_0_0/model
+(EngineCore pid=19144) INFO 11-21 17:13:22 [monitor.py:62] [backbone] torch.compile took 23.21 s in total
+(EngineCore pid=19144) INFO 11-21 17:13:22 [fused_moe.py:1239] Using configuration from /home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/model_executor/layers/fused_moe/configs/E=128,N=768,device_name=NVIDIA_H200.json for MoE layer.
+(EngineCore pid=19144) INFO 11-21 17:13:23 [monitor.py:91] [backbone] Initial profiling/warmup run took 1.15 s
+(EngineCore pid=19144) INFO 11-21 17:13:29 [gpu_worker.py:708] Initial free memory 139.1 GiB, reserved 9.16 GiB memory for KV Cache as specified by kv_cache_memory_bytes config and skipped memory profiling. This does not respect the gpu_memory_utilization config. Only use kv_cache_memory_bytes config when you want manual control of KV cache memory size. If OOM'ed, check the difference of initial free memory between the current run and the previous run where kv_cache_memory_bytes is suggested and update it correspondingly.
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757] EngineCore failed to start.
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757] Traceback (most recent call last):
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]   File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1728, in run_engine_core
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]     engine_core = EngineCoreProc(*args, engine_index=dp_rank, **kwargs)
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]   File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]     return func(*args, **kwargs)
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]   File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1399, in __init__
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]     super().__init__(
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]   File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 177, in __init__
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]     kv_cache_config = self._initialize_kv_caches(vllm_config)
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]   File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]     return func(*args, **kwargs)
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]   File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 349, in _initialize_kv_caches
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]     kv_cache_configs = get_kv_cache_configs(
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]                        ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]   File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/core/kv_cache_planning.py", line 1656, in get_kv_cache_configs
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]     _check_enough_kv_cache_memory(
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]   File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/core/kv_cache_planning.py", line 124, in _check_enough_kv_cache_memory
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757]     raise ValueError(
+(EngineCore pid=19144) ERROR 11-21 17:13:29 [core.py:1757] ValueError: To serve at least one request with the model's max seq len (262144), (24.0 GiB KV cache is needed, which is larger than the available KV cache memory (9.15 GiB). Based on the available memory, the estimated maximum model length is 99904. Try increasing `gpu_memory_utilization` when initializing the engine (this flag also controls CPU memory reservation on the CPU backend, despite its name). Decreasing `max_model_len` also reduces what is needed. See https://docs.vllm.ai/en/latest/configuration/conserving_memory/ for more details.
+Process EngineCore:
+Traceback (most recent call last):
+  File "/home/wanhr/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/wanhr/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1761, in run_engine_core
+    raise e
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1728, in run_engine_core
+    engine_core = EngineCoreProc(*args, engine_index=dp_rank, **kwargs)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1399, in __init__
+    super().__init__(
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 177, in __init__
+    kv_cache_config = self._initialize_kv_caches(vllm_config)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 349, in _initialize_kv_caches
+    kv_cache_configs = get_kv_cache_configs(
+                       ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/core/kv_cache_planning.py", line 1656, in get_kv_cache_configs
+    _check_enough_kv_cache_memory(
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/core/kv_cache_planning.py", line 124, in _check_enough_kv_cache_memory
+    raise ValueError(
+ValueError: To serve at least one request with the model's max seq len (262144), (24.0 GiB KV cache is needed, which is larger than the available KV cache memory (9.15 GiB). Based on the available memory, the estimated maximum model length is 99904. Try increasing `gpu_memory_utilization` when initializing the engine (this flag also controls CPU memory reservation on the CPU backend, despite its name). Decreasing `max_model_len` also reduces what is needed. See https://docs.vllm.ai/en/latest/configuration/conserving_memory/ for more details.
+(APIServer pid=18939) INFO 11-21 17:13:31 [utils.py:628] [shutdown] Process manager: send sigterm to process EngineCore
+Traceback (most recent call last):
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/bin/vllm", line 10, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/entrypoints/cli/main.py", line 117, in main
+    args.dispatch_function(args)
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/entrypoints/cli/serve.py", line 156, in cmd
+    uvloop.run(run_server(args))
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/uvloop/__init__.py", line 96, in run
+    return __asyncio.run(
+           ^^^^^^^^^^^^^^
+  File "/home/wanhr/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/home/wanhr/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "uvloop/loop.pyx", line 1515, in uvloop.loop.Loop.run_until_complete
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/uvloop/__init__.py", line 48, in wrapper
+    return await main
+           ^^^^^^^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/entrypoints/launchers/api_server/entry.py", line 176, in run_server
+    await run_server_worker(listen_address, sock, args, **uvicorn_kwargs)
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/entrypoints/launchers/api_server/entry.py", line 190, in run_server_worker
+    async with build_async_engine_client(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 210, in __aenter__
+    return await anext(self.gen)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/entrypoints/launchers/api_server/entry.py", line 60, in build_async_engine_client
+    async with build_async_engine_client_from_engine_args(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 210, in __aenter__
+    return await anext(self.gen)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/entrypoints/launchers/api_server/entry.py", line 94, in build_async_engine_client_from_engine_args
+    async_llm = AsyncLLM.from_vllm_config(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/async_llm.py", line 265, in from_vllm_config
+    return cls(
+           ^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/async_llm.py", line 194, in __init__
+    self.engine_core = EngineCoreClient.make_async_mp_client(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 183, in make_async_mp_client
+    return AsyncMPClient(
+           ^^^^^^^^^^^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/tracing/otel.py", line 175, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 1195, in __init__
+    super().__init__(
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 729, in __init__
+    with launch_core_engines(
+         ^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 144, in __exit__
+    next(self.gen)
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/utils.py", line 1393, in launch_core_engines
+    wait_for_engine_startup(
+  File "/home/wanhr/sglang/agent_cache/baselines/vllm_vanilla/.venv/lib/python3.12/site-packages/vllm/v1/engine/utils.py", line 1477, in wait_for_engine_startup
+    raise RuntimeError(
+RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
