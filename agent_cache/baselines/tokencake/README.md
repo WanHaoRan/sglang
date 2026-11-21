@@ -97,3 +97,8 @@ run `20261121_204835_tokencake_offload-agent`): 2,292 requests, 0 errors, mean T
 10 % of prompt tokens recomputed. Its counters at the end: 1,379 stalled sessions selected for preservation (the
 benefit test's other outcomes mostly `no_waiting_demand` and `backoff`), 228,385 blocks saved to CPU memory, 18.0 M
 prompt tokens served from CPU (`external_prefix_cache_hits_total`) beside 62.7 M from the GPU cache.
+- Against its own base on the same users (`tokencake_native`: the same build with TokenCake and CPU offloading off,
+  no metadata or events; run `20261121_220435_tokencake_native`): 1,537 requests, mean TTFT 9.11 s (p90 34.1 s), 42 %
+  of prompt tokens recomputed. Paired on the 1,537 requests both sent, its base minus TokenCake: +8.63 s
+  [+6.81, +10.97] (`results/baseline_smoke_compare/compare_arms.out`): on this trace TokenCake's preservation and
+  scheduling carry it from slower than stock vLLM 0.33.0 (its vLLM 0.22.0 base: +6.18 s [+4.90, +7.84]) to faster.

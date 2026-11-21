@@ -83,3 +83,8 @@ once, step limit 50, GPU-only fork with a 100K-token pool, once with `--scheduli
   both runs (mean 3 ms and 1 ms), so the pressure the pin is meant to relieve hardly arose.
 - The controlled comparison is the trace replay: Continuum against its own FCFS base on the same users
   (`results/baseline_smoke2/`, arms `continuum` and `continuum_fcfs`).
+- Against its own base on the same users (`continuum_fcfs`: the same build and LMCache, `--scheduling-policy fcfs`;
+  run `20261121_213738_continuum_fcfs_lmcache`): 2,185 requests, mean TTFT 1.78 s (p90 6.57 s), 0 pins, 23
+  preemptions. Paired on the 2,133 requests both sent, Continuum minus its base: -0.06 s [-0.53, +0.33], a tie
+  (`results/baseline_smoke_compare/compare_arms.out`). Its 1.3 s gap to vLLM 0.33.0 + LMCache 0.5.7 is the older
+  engine and LMCache, not its policy.

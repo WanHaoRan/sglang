@@ -75,7 +75,9 @@ requests pair across systems by (play, stream, k). `results/baseline_smoke_compa
 | SGLang + HiCache again, through `run_baselines.sh` | 1,670 | 83.5 | 9.22 s | 2.93 | 23.70 | 10 % |
 | our JIT p50 (campaign 28 `jit_p50`) | 1,675 | 83.8 | 9.20 s | 2.93 | 24.60 | 10 % |
 | vLLM 0.33.0, prefix cache only | 1,855 | 92.8 | 5.06 s | 0.13 | 22.31 | 34 % |
+| Continuum's own base: the same build, FCFS | 2,185 | 109.2 | 1.78 s | 0.17 | 6.57 | 8 % |
 | Continuum (vLLM 0.10.2 fork) + LMCache 0.3.6 | 2,263 | 113.2 | 1.66 s | 0.12 | 2.64 | 7 % |
+| TokenCake's own base: the same build, native | 1,537 | 76.8 | 9.11 s | 0.26 | 34.13 | 42 % |
 | TokenCake (vLLM 0.22.0 fork), full system | 2,292 | 114.6 | 1.34 s | 0.24 | 3.98 | 10 % |
 | vLLM 0.33.0 + LMCache 0.5.7.post1 | 2,658 | 132.9 | 0.32 s | 0.14 | 0.76 | 7 % |
 
@@ -91,8 +93,12 @@ Paired on the requests both sent (95 % intervals over users):
 | vLLM 0.33.0 | vLLM + LMCache | 1,855 | -4.77 s [-6.14, -3.77] |
 | vLLM + LMCache | Continuum | 2,263 | +1.35 s [+0.94, +1.88] |
 | vLLM + LMCache | TokenCake | 2,292 | +1.03 s [+0.82, +1.27] |
+| Continuum | its FCFS base (same build) | 2,133 | -0.06 s [-0.53, +0.33] |
+| TokenCake | its native base (same build) | 1,537 | +8.63 s [+6.81, +10.97] |
 
 - The rerun reproduces the campaign's HiCache arm, so these 20-minute comparisons resolve about 0.2 s.
+- Against their own stock engines: Continuum's pin ties its FCFS base; TokenCake's preservation and scheduling cut
+  8.6 s from its native base, which recomputes 42 % of prompt tokens.
 - The largest gap is the engine's speed, not its cache: a cold 20,000-token prefill takes 1.454 s on our SGLang
   (Triton attention, as every campaign), 1.371 s on Continuum's vLLM 0.10.2, 1.290 s on TokenCake's vLLM 0.22.0 and
   0.557 s on vLLM 0.33.0. Stock vLLM 0.33.0 with no lower tier out-serves SGLang with three, and every vLLM-based
@@ -123,5 +129,15 @@ added to its manifest, as `results/baseline_smoke_compare/` does.
   put the venv's `bin` first on PATH, as `source .venv/bin/activate` would.
 - A vLLM server refuses a GPU pool smaller than one request at `--max-model-len`: small-pool checks boot with
   `CTX=65536`.
+- One server on the GPU at a time: vLLM's memory profiling aborts when another process allocates during a boot, so
+  two runners must never share the box (`common/run_official.sh` refuses a busy GPU and waits for a live launcher).
+- A single pinned host allocation fails above about 122 GiB on this host: TokenCake (vLLM 0.22's CPU offloading pins
+  its tier as one tensor) gets 120 GiB; LMCache and SGLang pin in pieces and get the full 160 GB.
+- TokenCake's experiment driver sets `CUDA_VISIBLE_DEVICES` to the GPU's UUID, which vLLM 0.22 cannot parse;
+  `tokencake/official/dag.sh` puts a failing `nvidia-smi` stub first on its PATH so it passes the index.
+- TokenCake's first boot builds FlashInfer kernels for about 35 minutes (cached afterwards); its driver keeps vLLM's
+  compile caches in its run folder, which `.gitignore` leaves out.
+- Continuum's agent runner takes `--port` into a config field its vLLM model class does not have; its config's
+  `model.base_url` is set instead (`continuum/official/swebench.sh`).
 - `run_baselines.sh` pins its inputs (`inputs.sha256`, including `common/backends.py`): an edit there while a folder
   runs stops its next arm, unless the folder is re-pinned deliberately (and noted in its `launcher.log`).
