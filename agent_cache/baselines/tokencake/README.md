@@ -80,11 +80,15 @@ changing vLLM's allocator would no longer be the released code.
 |---|---|---|---|---|
 | first 8 of its 24 applications (`results/20261121_204138_tokencake_official/`) | native | 68.7 s | 61.5 s | 0 |
 | the same | offload-agent | 72.0 s | 65.5 s | 0 |
+| all 24 applications, its README's scale (`results/20261121_222828_tokencake_official/`) | native | 189.3 s | 154.6 s | 0 |
+| the same | offload-agent | 154.0 s | 115.2 s | 0 |
 
 - The driver's report: E2E reduction -4.9 % (TokenCake slower) at this scale. Its README's gain (-34 % at QPS 1.0 on
   24 applications, Qwen2.5-14B on an A800) comes with memory pressure (41 preemptions natively); 8 applications on
   this H200 create none, so there is nothing for its preservation to save.
-- Its full 24-application workload follows in `results/baseline_official.log`.
+- At its full 24 applications TokenCake cuts application end to end by 18.7 % and mean application latency by
+  25.5 % against native on this box: the direction of its README's -34 %, at a smaller size, with no preemption in
+  either run.
 - Two fixes to run the driver here, neither in TokenCake's code: the driver sets `CUDA_VISIBLE_DEVICES` to the GPU's
   UUID when `nvidia-smi` answers, which vLLM 0.22 then fails to parse as an integer, so `official/nosmi/nvidia-smi` (a
   stub that fails) makes it pass the index; and nothing else may hold the GPU, since vLLM's memory profiling aborts
