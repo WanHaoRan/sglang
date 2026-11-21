@@ -69,3 +69,23 @@ succeeds at 122 GiB and fails at 130 and 149 GiB with "CUDA error: out of memory
 own environment; the full-size boot failed the same way). The other systems pin in pieces (LMCache, 10 GiB at a
 time) or as SGLang does, and get 160 GB. TokenCake gets 120 GiB (129 GB), `CPU_GIB_MAX` in `start_server.sh`;
 changing vLLM's allocator would no longer be the released code.
+
+## TokenCake's own evaluation, scaled down (2026-11-21, GPU)
+
+`official/dag.sh`: its experiment driver (`tools/tokencake_experiments`) on its fixed multi-agent DAG workload
+(`conversation-tools`), launching the server itself with its own sizing (GPU memory utilization 0.5, which leaves a
+106,736-token KV pool here; context 32,768; CPU KV 100 GiB), native mode then the full system, at QPS 1.0.
+
+| workload | mode | application end to end | mean application latency | finished preemptions |
+|---|---|---|---|---|
+| first 8 of its 24 applications (`results/20261121_204138_tokencake_official/`) | native | 68.7 s | 61.5 s | 0 |
+| the same | offload-agent | 72.0 s | 65.5 s | 0 |
+
+- The driver's report: E2E reduction -4.9 % (TokenCake slower) at this scale. Its README's gain (-34 % at QPS 1.0 on
+  24 applications, Qwen2.5-14B on an A800) comes with memory pressure (41 preemptions natively); 8 applications on
+  this H200 create none, so there is nothing for its preservation to save.
+- Its full 24-application workload follows in `results/baseline_official.log`.
+- Two fixes to run the driver here, neither in TokenCake's code: the driver sets `CUDA_VISIBLE_DEVICES` to the GPU's
+  UUID when `nvidia-smi` answers, which vLLM 0.22 then fails to parse as an integer, so `official/nosmi/nvidia-smi` (a
+  stub that fails) makes it pass the index; and nothing else may hold the GPU, since vLLM's memory profiling aborts
+  when free memory changes under it (the first native case failed so).
