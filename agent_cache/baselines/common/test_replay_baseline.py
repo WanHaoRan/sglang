@@ -190,6 +190,51 @@ class BaselineReplayTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(r["completion_tokens"] == r["out_target"] for r in req))
         self.assertTrue(all(r["ttft"] is not None and r["cached_tokens"] is not None for r in req))
 
+    async def test_continuum_fields_follow_the_trace(self):
+        rows, bodies = await self.run_baseline(_tree(), ["--lanes", "1", "--plays", "1", "--duration", "30"],
+                                               backend="continuum")
+        got = {rid: (b["job_id"], b["is_last_step"], b.get("this_func_call")) for rid, b in bodies.items()}
+        self.assertEqual(got["t-c0-t0"], ("t-c0", False, "ls"))      # Bash/ls: the command word
+        self.assertEqual(got["t-c0-t1"], ("t-c0", False, "Task"))    # another tool: its own name
+        self.assertEqual(got["t-c0-t3"], ("t-c0", True, None))       # the last request: no pin
+        self.assertEqual(got["t-c1-t0"], ("t-c1", False, "Read"))    # the subagent is its own job
+        req = {r["rid"]: r for r in rows if r["kind"] == "req"}
+        self.assertEqual(req["t-c0-t0"]["bl"], {"job_id": "t-c0", "is_last_step": False, "this_func_call": "ls"})
+        _, off = await self.run_baseline(_tree(), ["--lanes", "1", "--plays", "1", "--duration", "30",
+                                                   "--backend-opt", "func=off"], backend="continuum")
+        self.assertFalse([b for b in off.values() if "this_func_call" in b])
+
+    async def test_tokencake_ids_metadata_and_stall_events(self):
+        from aiohttp import web
+        events = []
+
+        async def tokencake_events(request):
+            events.append(await request.json())
+            return web.json_response({"disposition": "applied"})
+        self.runner.app.router._frozen = False   # the mock's app was started; a test route is added for this test
+        self.runner.app.router.add_post("/v1/tokencake/events", tokencake_events)
+        rows, bodies = await self.run_baseline(_tree(), ["--lanes", "1", "--plays", "1", "--duration", "30"],
+                                               backend="tokencake")
+        import backends as be
+        body = bodies["t-c0-t1"]
+        self.assertEqual(body["request_id"], be.lifecycle_id("t-c0-t1"))
+        self.assertTrue(body["request_id"].startswith("tc-") and len(body["request_id"]) == 35)
+        self.assertEqual(uuid_version(body["request_id"][3:]), 4)
+        meta = body["vllm_xargs"]["tokencake"]
+        self.assertEqual((meta["lifecycle_id"], meta["offload_eligible"], meta["reusable_prefix"], meta["agent_type"]),
+                         (body["request_id"], True, True, "main"))
+        self.assertFalse(bodies["t-c0-t3"]["vllm_xargs"]["tokencake"]["offload_eligible"])   # the last turn
+        main = [e for e in events if e["lifecycle_id"] in {be.lifecycle_id(f"t-c0-t{k}") for k in range(4)}]
+        self.assertEqual([e["event"] for e in main], ["stall_started", "stall_finished"] * 3)   # none after the last
+        self.assertEqual(main[0]["kind"], "Bash/ls")
+        self.assertNotIn("estimated_duration_s", main[0])   # the table has no entry before five waits
+        self.assertEqual(len(events), len(main) + 2)   # the subagent's stream has one wait: two events
+        _, quiet = await self.run_baseline(_tree(), ["--lanes", "1", "--plays", "1", "--duration", "30",
+                                                     "--backend-opt", "events=off", "--backend-opt", "meta=off"],
+                                           backend="tokencake")
+        self.assertEqual(len(events), len(main) + 2)   # events=off: none sent
+        self.assertFalse([b for b in quiet.values() if "vllm_xargs" in b])
+
     async def test_lengths_carry_the_servers_reply(self):
         reqs = [pt.request(t=0, dur=0.05, deps=[], wait=0, out=4, prefix=0, append=8),
                 pt.request(t=0.1, dur=0.05, deps=[[0, 0]], wait=0.05, out=4, prefix=12, append=4)]
@@ -199,6 +244,11 @@ class BaselineReplayTest(unittest.IsolatedAsyncioTestCase):
         req = [r for r in rows if r["kind"] == "req"]
         self.assertEqual([r["prompt_sent"] for r in req], [8, 16])
         self.assertEqual(req[1]["cached_tokens"], 12)   # prompt 8 + the server's 4 output tokens, page-aligned
+
+
+def uuid_version(hex32: str) -> int:
+    import uuid
+    return uuid.UUID(hex=hex32).version
 
 
 class TurnTest(unittest.TestCase):

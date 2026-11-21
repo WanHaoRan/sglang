@@ -49,9 +49,11 @@ class Result(dict):
     """One request's outcome: ttft, latency, cached, prompt_tokens, completion_tokens, ids, top (first-token logprobs)."""
 
 
-async def ask(http, *, url: str, backend, model: str, ids: list, out: int, rid: str, session: str) -> Result:
-    turn = Turn(rid=rid, session=session, k=0, last=False, reply_key=None, next_gap=None, next_wait_s=None,
-                est_wait_s=None, role="main")
+async def ask(http, *, url: str, backend, model: str, ids: list, out: int, rid: str, session: str,
+              turn: Turn | None = None) -> Result:
+    if turn is None:
+        turn = Turn(rid=rid, session=session, k=0, last=False, reply_key=None, next_gap=None, next_wait_s=None,
+                    est_wait_s=None, role="main")
     body = backend.body(model=model, out=out, turn=turn, want_ids=True)
     body["logprobs"] = TOP
     body["prompt"] = ids

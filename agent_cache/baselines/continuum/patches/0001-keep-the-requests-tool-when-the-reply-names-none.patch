@@ -1,0 +1,15 @@
+diff --git a/vllm/v1/core/estimate_with_func.py b/vllm/v1/core/estimate_with_func.py
+index af13868..dee53c3 100644
+--- a/vllm/v1/core/estimate_with_func.py
++++ b/vllm/v1/core/estimate_with_func.py
+@@ -197,7 +197,9 @@ class ToolCallEstimator:
+             except Exception as e:
+                 logger.warning(f"Error detokenizing/parsing output for request {request.request_id}: {e}")
+ 
+-        request.this_func_call = this_func_call
++        # Replay patch (agent_cache/baselines/continuum): keep the tool the request names (the authors' emulation
++        # field) when the reply text names none, as a replay's synthetic replies never do.
++        request.this_func_call = this_func_call or request.this_func_call
+         self.job_to_history[request.job_id].append({
+             "departure_time": time.time(),
+             "func_call": request.this_func_call
