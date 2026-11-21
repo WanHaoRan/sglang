@@ -63,3 +63,23 @@ the release runs unpatched, and Continuum is then its queue order alone.
   `20261121_192849_continuum_continuum_lmcache`): 2,263 requests, 0 errors, mean TTFT 1.66 s (p50 0.12 s, p90
   2.64 s), 7.5 % of prompt tokens recomputed; the scheduler's record (`scheduler_timestamps`) has 1,093 pins and
   1,091 releases over 128 jobs, and 23 preemptions.
+
+## Continuum's own evaluation, scaled down (2026-11-21, GPU)
+
+`official/swebench.sh`: its vendored mini-swe-agent on the first 8 SWE-bench Verified tasks (all astropy), 8 jobs at
+once, step limit 50, GPU-only fork with a 100K-token pool, once with `--scheduling-policy fcfs` and once with
+`continuum`; job durations by the authors' `continuum_exp/analyze.py` from the scheduler's own record.
+
+| policy | jobs | model calls | average job | median | max | pins | call time mean, p90 |
+|---|---|---|---|---|---|---|---|
+| fcfs (`results/20261121_202314_continuum_fcfs/`) | 8 | 224 | 39.3 s | 35.1 s | 80.1 s | 0 | 1.19 s, 1.72 s |
+| continuum (`results/20261121_202634_continuum_continuum/`) | 8 | 245 | 92.4 s | 72.7 s | 402.6 s | 214 | 2.76 s, 12.30 s |
+
+- The release's parser read the real agent's replies (218 and 224 tool calls extracted), so this run needs no patch,
+  and the pin acted (214 pins).
+- The authors' shipped result (500 jobs, Llama-3.1-70B, 4 H100: 215.5 s against 465.2 s) does not reproduce at this
+  scale. Eight live jobs diverge from run to run (224 against 245 calls, 4 of 8 tasks submitted in each, different
+  output lengths), so job and call times mix the policy with the paths the agents took; queue waits were near zero in
+  both runs (mean 3 ms and 1 ms), so the pressure the pin is meant to relieve hardly arose.
+- The controlled comparison is the trace replay: Continuum against its own FCFS base on the same users
+  (`results/baseline_smoke2/`, arms `continuum` and `continuum_fcfs`).

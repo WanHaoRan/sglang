@@ -13,8 +13,10 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 OUT="$BL_RESULTS/$(date -u +%Y%m%d_%H%M%S)_tokencake_official"
 MODES=(); for m in ${MODES:-native offload-agent}; do MODES+=(--mode "$m"); done
 cd "$HERE/src/TokenCake"
-"$HERE/.venv/bin/python" -m tools.tokencake_experiments.driver prepare "$OUT" \
+PATH="$HERE/official/nosmi:$PATH" "$HERE/.venv/bin/python" -m tools.tokencake_experiments.driver prepare "$OUT" \
   --model "$BL_MODEL" --gpus 0 --python "$HERE/.venv/bin/python" "${MODES[@]}" --qps "${QPS:-1.0}" \
   --workload-dataset "$HERE/official/conversation-tools-8apps.json" 2>&1 | grep -v " INFO " | tail -5
-PATH="$HERE/.venv/bin:$PATH" "$HERE/.venv/bin/python" -m tools.tokencake_experiments.driver run-cases "$OUT" 2>&1 | tee "$OUT/run-cases.log" | grep -v " INFO " | tail -20
+# official/nosmi/nvidia-smi fails, so the driver passes CUDA_VISIBLE_DEVICES=0, not the GPU UUID, which vLLM 0.22
+# cannot parse (its README: GPU discovery is optional and a missing nvidia-smi does not block launching).
+PATH="$HERE/official/nosmi:$HERE/.venv/bin:$PATH" "$HERE/.venv/bin/python" -m tools.tokencake_experiments.driver run-cases "$OUT" 2>&1 | tee "$OUT/run-cases.log" | grep -v " INFO " | tail -20
 "$HERE/.venv/bin/python" -m tools.tokencake_experiments.driver report "$OUT" 2>&1 | tee "$OUT/report.log" | grep -v " INFO " | tail -40

@@ -1,0 +1,42 @@
+{
+  "astropy__astropy-13977": {
+    "model_name_or_path": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "instance_id": "astropy__astropy-13977",
+    "model_patch": "diff --git a/astropy/units/quantity.py b/astropy/units/quantity.py\nindex b98abfafb..abffbb04b 100644\n--- a/astropy/units/quantity.py\n+++ b/astropy/units/quantity.py\n@@ -668,6 +668,8 @@ class Quantity(np.ndarray):\n         for input_, converter in zip(inputs, converters):\n             input_ = getattr(input_, \"value\", input_)\n             arrays.append(converter(input_) if converter else input_)\n+    except ValueError:\n+        return NotImplemented\n \n         # Call our superclass's __array_ufunc__\n         result = super().__array_ufunc__(function, method, *arrays, **kwargs)\n"
+  },
+  "astropy__astropy-13236": {
+    "model_name_or_path": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "instance_id": "astropy__astropy-13236",
+    "model_patch": "diff --git a/astropy/table/table.py b/astropy/table/table.py\nindex 5afe2127a..68169b872 100644\n--- a/astropy/table/table.py\n+++ b/astropy/table/table.py\n@@ -1241,6 +1241,7 @@ class Table:\n \n         # Structured ndarray gets viewed as a mixin unless already a valid\n         # mixin class\n+    warnings.warn(\"Structured arrays will be added as Column objects in future versions; wrap your data in Column to avoid this warning.\", FutureWarning, stacklevel=2)\n         if (not isinstance(data, Column) and not data_is_mixin\n                 and isinstance(data, np.ndarray) and len(data.dtype) > 1):\n             data = data.view(NdarrayMixin)\n"
+  },
+  "astropy__astropy-12907": {
+    "model_name_or_path": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "instance_id": "astropy__astropy-12907",
+    "model_patch": "diff --git a/astropy/modeling/separable.py b/astropy/modeling/separable.py\nindex a308e2729..100b73cb4 100755\n--- a/astropy/modeling/separable.py\n+++ b/astropy/modeling/separable.py\n@@ -239,7 +239,7 @@ def _cstack(left, right):\n         cleft = np.zeros((noutp, left.shape[1]))\n         cleft[: left.shape[0], : left.shape[1]] = left\n     if isinstance(right, Model):\n-        cright = _coord_matrix(right, 'right', noutp)\n+        cright = _separable(right)\n     else:\n         cright = np.zeros((noutp, right.shape[1]))\n         cright[-right.shape[0]:, -right.shape[1]:] = 1\ndiff --git a/test_separability.py b/test_separability.py\nnew file mode 100644\nindex 000000000..0b8603c9a\n--- /dev/null\n+++ b/test_separability.py\n@@ -0,0 +1,15 @@\n+from astropy.modeling import models as m\n+from astropy.modeling.separable import separability_matrix\n+\n+# Create the nested compound model as described in the PR\n+cm = m.Linear1D(10) & m.Linear1D(5)\n+nested_model = m.Pix2Sky_TAN() & cm\n+\n+# Compute the separability matrix\n+result = separability_matrix(nested_model)\n+print(\"Separability matrix for nested model:\")\n+print(result)\n+\n+# Expected output should have separable blocks for each component\n+# The first two rows should correspond to Pix2Sky_TAN() and be [True, True, False, False]\n+# The last two rows should correspond to the nested Linear1D models and be [False, False, True, True]\n"
+  },
+  "astropy__astropy-13398": {
+    "model_name_or_path": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "instance_id": "astropy__astropy-13398",
+    "model_patch": "diff --git a/astropy/coordinates/builtin_frames/itrs_observed_transforms.py b/astropy/coordinates/builtin_frames/itrs_observed_transforms.py\nnew file mode 100644\nindex 000000000..2582ad3f1\n--- /dev/null\n+++ b/astropy/coordinates/builtin_frames/itrs_observed_transforms.py\n@@ -0,0 +1,52 @@\n+# Licensed under a 3-clause BSD style license - see LICENSE.rst\n+\n+from astropy import units as u\n+from astropy.coordinates.matrix_utilities import rotation_matrix, matrix_transpose\n+from astropy.coordinates.baseframe import frame_transform_graph\n+from astropy.coordinates.transformations import FunctionTransformWithFiniteDifference\n+from .altaz import AltAz\n+from .hadec import HADec\n+from .itrs import ITRS\n+from .utils import PIOVER2\n+\n+def itrs_to_observed_mat(observed_frame):\n+    \"\"\"Compute the transformation matrix from ITRS to observed frame (AltAz or HADec).\"\"\"\n+    lon, lat, height = observed_frame.location.to_geodetic('WGS84')\n+    elong = lon.to_value(u.radian)\n+\n+    if isinstance(observed_frame, AltAz):\n+        # Form ITRS to AltAz matrix (left-handed)\n+        elat = lat.to_value(u.radian)\n+        minus_x = np.eye(3)\n+        minus_x[0][0] = -1.0\n+        mat = (minus_x\n+               @ rotation_matrix(PIOVER2 - elat, 'y', unit=u.radian)\n+               @ rotation_matrix(elong, 'z', unit=u.radian))\n+    else:\n+        # Form ITRS to HADec matrix (left-handed)\n+        minus_y = np.eye(3)\n+        minus_y[1][1] = -1.0\n+        mat = (minus_y\n+               @ rotation_matrix(elong, 'z', unit=u.radian))\n+    return mat\n+\n+@frame_transform_graph.transform(FunctionTransformWithFiniteDifference, ITRS, AltAz)\n+@frame_transform_graph.transform(FunctionTransformWithFiniteDifference, ITRS, HADec)\n+def itrs_to_observed(itrs_coo, observed_frame):\n+    \"\"\"Transform ITRS coordinates to AltAz or HADec frame.\"\"\"\n+    # Treat ITRS coordinates as time invariant; adopt the output frame's obstime\n+    topocentric_itrs_repr = (itrs_coo.cartesian\n+                             - observed_frame.location.get_itrs().cartesian)\n+    rep = topocentric_itrs_repr.transform(itrs_to_observed_mat(observed_frame))\n+    return observed_frame.realize_frame(rep)\n+\n+@frame_transform_graph.transform(FunctionTransformWithFiniteDifference, AltAz, ITRS)\n+@frame_transform_graph.transform(FunctionTransformWithFiniteDifference, HADec, ITRS)\n+def observed_to_itrs(observed_coo, itrs_frame):\n+    \"\"\"Transform AltAz or HADec coordinates to ITRS frame.\"\"\"\n+    # Compute topocentric ITRS position\n+    topocentric_itrs_repr = observed_coo.cartesian.transform(matrix_transpose(\n+                            itrs_to_observed_mat(observed_coo)))\n+    # Compute geocentric ITRS position\n+    rep = topocentric_itrs_repr + observed_coo.location.get_itrs().cartesian\n+    return itrs_frame.realize_frame(rep)\n"
+  },
+  "astropy__astropy-13453": {
+    "model_name_or_path": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "instance_id": "astropy__astropy-13453",
+    "model_patch": ""
+  },
+  "astropy__astropy-13033": {
+    "model_name_or_path": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "instance_id": "astropy__astropy-13033",
+    "model_patch": ""
+  },
+  "astropy__astropy-13579": {
+    "model_name_or_path": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "instance_id": "astropy__astropy-13579",
+    "model_patch": ""
+  },
+  "astropy__astropy-14096": {
+    "model_name_or_path": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "instance_id": "astropy__astropy-14096",
+    "model_patch": ""
+  }
+}

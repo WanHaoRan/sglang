@@ -1,0 +1,156 @@
+2026-11-21T19:29:24Z waiting for baseline_smoke2 to finish
+2026-11-21T19:56:54Z == lmcache
+max concurrency:  Maximum concurrency for 262,144 tokens per request: 2.55x
+prefix caching:   enable_prefix_caching=True   (want True)
+attention:        Using FLASH_ATTN attention backend out of potential backend
+vllm_vanilla run dir: 20261121_195654_vllm_vanilla
+  [33mConfig QPS: [32m1.2000 reqs/s[0m
+  [33mActual QPS: [32m1.3314 reqs/s[0m
+  [33mAverage generation throughput (per request): [32m43.0161 tokens/req/s[0m
+  [33mAverage TTFT: [32m1.3114s[0m
+  [33mConfig QPS: [32m1.2000 reqs/s[0m
+  [33mActual QPS: [32m1.3312 reqs/s[0m
+  [33mAverage generation throughput (per request): [32m42.6189 tokens/req/s[0m
+  [33mAverage TTFT: [32m1.3105s[0m
+  [33mConfig QPS: [32m1.2000 reqs/s[0m
+  [33mActual QPS: [32m1.3255 reqs/s[0m
+  [33mAverage generation throughput (per request): [32m49.3301 tokens/req/s[0m
+  [33mAverage TTFT: [32m1.2729s[0m
+saved /home/wanhr/sglang/agent_cache/results/20261121_195654_vllm_vanilla/metrics_end_vllm.txt (659 lines)
+stopped: 20261121_195654_vllm_vanilla (pid 61110); port 30000 free; GPU used 0 MiB
+connector:        kv_connector_module_path='lmcache.integration.vllm.lmcache_mp_connector'   (want lmcache.integration.vllm.lmcache_mp_connector unless CONNECTOR=bundled)
+LMCache L1:       now total is 152640 MB / 152640 MB   (want / 152586 MB: L1 pins memory as it grows)
+LMCache L2:       Created FS native L2 adapter: /mnt/ssd/baselines/lmcache (workers=4, odirect=True
+vllm_lmcache run dir: 20261121_200921_vllm_lmcache
+  [33mConfig QPS: [32m1.2000 reqs/s[0m
+  [33mActual QPS: [32m1.3317 reqs/s[0m
+  [33mAverage generation throughput (per request): [32m133.7823 tokens/req/s[0m
+  [33mAverage TTFT: [32m0.2776s[0m
+  [33mConfig QPS: [32m1.2000 reqs/s[0m
+  [33mActual QPS: [32m1.3315 reqs/s[0m
+  [33mAverage generation throughput (per request): [32m130.1275 tokens/req/s[0m
+  [33mAverage TTFT: [32m0.2515s[0m
+  [33mConfig QPS: [32m1.2000 reqs/s[0m
+  [33mActual QPS: [32m1.3283 reqs/s[0m
+  [33mAverage generation throughput (per request): [32m128.4578 tokens/req/s[0m
+  [33mAverage TTFT: [32m0.5715s[0m
+saved /home/wanhr/sglang/agent_cache/results/20261121_200921_vllm_lmcache/metrics_end_vllm.txt (686 lines)
+saved /home/wanhr/sglang/agent_cache/results/20261121_200921_vllm_lmcache/metrics_end_lmcache.txt (413 lines)
+stopped: 20261121_200921_vllm_lmcache (pid 63535); port 30000 free; GPU used 0 MiB
+2026-11-21T20:23:14Z == continuum
+== policy fcfs: boot
+versions:         vllm=0.10.2+precompiled lmcache=0.3.6 transformers=4.56.1 
+GPU KV cache:     GPU KV cache size: 100,000 tokens   (want 100000 tokens)
+policy:              (want fcfs; absent when fcfs, vLLM's default)
+LMCache:          
+== policy fcfs: 0:8 tasks, 8 at once -> /home/wanhr/sglang/agent_cache/results/20261121_202314_continuum_fcfs/swebench_output
+agent rc=0 after 87 s
+stopped: 20261121_202314_continuum_fcfs (pid 65607); port 30000 free; GPU used 0 MiB
+Results saved to /home/wanhr/sglang/agent_cache/results/20261121_202314_continuum_fcfs/results.json
+
+=== Job Duration Statistics ===
+Number of jobs: 8
+Average duration: 39.29 seconds
+Total duration: 80.28 seconds
+Min duration: 5.94 seconds
+Max duration: 80.14 seconds
+Median duration: 35.07 seconds
+95th percentile duration: 75.96 seconds
+99th percentile duration: 79.31 seconds
+===================================
+pins: 0  parsed tool calls: 224
+== policy continuum: boot
+versions:         vllm=0.10.2+precompiled lmcache=0.3.6 transformers=4.56.1 
+GPU KV cache:     GPU KV cache size: 100,000 tokens   (want 100000 tokens)
+policy:           'scheduling_policy': 'continuum'   (want continuum; absent when fcfs, vLLM's default)
+LMCache:          
+== policy continuum: 0:8 tasks, 8 at once -> /home/wanhr/sglang/agent_cache/results/20261121_202634_continuum_continuum/swebench_output
+agent rc=0 after 406 s
+stopped: 20261121_202634_continuum_continuum (pid 77285); port 30000 free; GPU used 0 MiB
+Results saved to /home/wanhr/sglang/agent_cache/results/20261121_202634_continuum_continuum/results.json
+
+=== Job Duration Statistics ===
+Number of jobs: 8
+Average duration: 92.37 seconds
+Total duration: 402.67 seconds
+Min duration: 7.44 seconds
+Max duration: 402.56 seconds
+Median duration: 72.65 seconds
+95th percentile duration: 291.54 seconds
+99th percentile duration: 380.35 seconds
+===================================
+pins: 428  parsed tool calls: 218
+2026-11-21T20:34:09Z == tokencake
+    "python": "/home/wanhr/sglang/agent_cache/baselines/tokencake/.venv/bin/python"
+  },
+  "workload_profile": "conversation-tools",
+  "workload_sha256": "8506ca16517afbad85c33b48580e65b35e5f859ae35ee41a93d365364cc78888"
+}
+        },
+        "config_sha256": "9fbce654ba4b9aab04962223229ab697cf75080ffe54f1c0c5822f7731bb7329",
+        "environment_sha256": "02d3ffc087386d17280f7ba46f62523e547e82064924b575ebfbe4dcc539884d",
+        "key": "69417de07f1ee2b00cd78fb14c848ab83e1b8751e865217df15a37808da55fb7",
+        "launcher_sha256": "d7d22bb5aa54517f569e9ab9b56375fe971c149ebaf0930c2450a2707c5e46f1",
+        "workload_sha256": "0f8730de5a95b3c990737abace7f2cac4d629ac7d063c0510990b56963040331"
+      },
+      "launch": 0,
+      "native_metrics": [],
+      "performance": {
+        "total_e2e_s": 0.0
+      },
+      "qualifying": false,
+      "result_path": "/home/wanhr/sglang/agent_cache/results/20261121_203409_tokencake_official/cases/phase-1/offload-agent/qps-1.0/gpu-0/launch-0/result.json",
+      "server_alive": false,
+      "started_at": 1795293273.6606276,
+      "status": "excluded"
+    }
+  ]
+}
+        "mode": "offload-agent",
+        "name": "phase-1/offload-agent/qps-1.0/gpu-0",
+        "phase": "phase-1",
+        "qps": 1.0
+      },
+      "excluded_launches": [
+        {
+          "launch": 0,
+          "reasons": [
+            "client_failure",
+            "execution_failure",
+            "missing_complete_dag_evidence",
+            "server_failure"
+          ]
+        }
+      ],
+      "launches": 1,
+      "measured_launches": 0,
+      "median_e2e_s": null,
+      "result_paths": [
+        "/home/wanhr/sglang/agent_cache/results/20261121_203409_tokencake_official/cases/phase-1/offload-agent/qps-1.0/gpu-0/launch-0/result.json"
+      ]
+    }
+  ],
+  "comparisons": [
+    {
+      "case": {
+        "gpu_index": 0,
+        "mode": "offload-agent",
+        "name": "phase-1/offload-agent/qps-1.0/gpu-0",
+        "phase": "phase-1",
+        "qps": 1.0
+      },
+      "e2e_reduction_pct": null,
+      "median_e2e_s": null,
+      "native_median_e2e_s": null,
+      "speedup": null
+    }
+  ]
+}
+2026-11-21T20:34:46Z == all done
+2026-11-21T20:35:53Z waiting for baseline_smoke2 to finish
+2026-11-21T20:36:23Z == tokencake
+    "python": "/home/wanhr/sglang/agent_cache/baselines/tokencake/.venv/bin/python"
+  },
+  "workload_profile": "conversation-tools",
+  "workload_sha256": "8506ca16517afbad85c33b48580e65b35e5f859ae35ee41a93d365364cc78888"
+}

@@ -4,3 +4,7 @@
 continuum continuum - - POLICY=continuum LMCACHE=on
 tokencake tokencake - - MODE=offload-agent
 sglang_hicache sglang_hicache - -
+# each fork's own stock base on the same users, for its gain over its own engine (added 2026-11-21 20:4x after
+# Continuum's scaled-down SWE-bench run proved too small and too divergent to show the paper's effect)
+continuum_fcfs continuum - - POLICY=fcfs LMCACHE=on
+tokencake_native tokencake - --backend-opt,meta=off,--backend-opt,events=off MODE=native

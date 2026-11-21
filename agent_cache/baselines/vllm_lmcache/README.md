@@ -49,3 +49,17 @@ together on torch 2.14.0, the torch LMCache's wheel is built for, with no depend
   logprobs identical (difference 0.0) to the L1-restored request: the SSD copy is bit-exact.
 - On this box an SSD load of 20,000 tokens (1.96 GB at about 1.8 GB/s) takes longer than recomputing them on vLLM
   (0.56 s cold): the SSD tier pays only where the GPU is busy.
+
+## LMCache's own benchmark (2026-11-21, GPU)
+
+`official/multi_round_qa.sh`: LMCache's `benchmarks/multi_round_qa` at the release tag, 48 users each returning
+every 40 s with a 1,000-token shared system prompt and a 20,000-token history, 100-token answers, about 1.33
+requests a second for 600 s, against the full-size servers (668,096-token GPU pool; 149.01 GiB L1, SSD L2).
+
+| server | mean TTFT | generation, tokens a second per request | prompt tokens served from cache |
+|---|---|---|---|
+| stock vLLM 0.33.0 (`results/20261121_195654_vllm_vanilla/`) | 1.27 s | 49.3 | GPU 0.80 M of 17.1 M queried (4.7 %) |
+| vLLM 0.33.0 + LMCache (`results/20261121_200921_vllm_lmcache/`) | 0.57 s | 128.5 | GPU 0.80 M, LMCache 13.6 M (L1 13.1 M, SSD 0.63 M) |
+
+The histories outgrow the GPU pool, so stock vLLM recomputes almost every returning user's history and LMCache
+serves it from CPU memory: the CPU-offloading result LMCache documents, reproduced on our model and box.
