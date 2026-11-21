@@ -12,6 +12,9 @@ BL_KV_BYTES_PER_TOKEN=98304
 # The GPU KV pool our SGLang arms profile on this H200 (campaigns 28 and 29); every system gets the same bytes.
 BL_GPU_KV_TOKENS=${GPU_KV_TOKENS:-668096}
 
+# vLLM and LMCache report usage to their projects' servers unless told not to; nothing leaves this box.
+export DO_NOT_TRACK=1 VLLM_NO_USAGE_STATS=1 LMCACHE_TRACK_USAGE=false
+
 bl_port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$BL_PORT") 2>/dev/null; }
 
 # bl_new_run NAME: make results/<UTC>_NAME, point .current_run at it, print its path. Refuses a busy port.
@@ -43,6 +46,38 @@ bl_launch() {
 
 bl_alive() { kill -0 "$1" 2>/dev/null; }
 
+# bl_launch_aux RUN NAME [VAR=VALUE ...] -- COMMAND...: a helper process the server needs (LMCache's cache server),
+# detached, output in RUN/NAME.log; its pid joins RUN/aux.pids, which bl_stop stops after the server.
+bl_launch_aux() {
+  local run=$1 name=$2; shift 2
+  local envv=()
+  while [ "$1" != "--" ]; do envv+=("$1"); shift; done
+  shift
+  printf '%q ' env "${envv[@]}" "$@" > "$run/$name.command.txt"; echo >> "$run/$name.command.txt"
+  env "${envv[@]}" setsid nohup "$@" > "$run/$name.log" 2>&1 < /dev/null &
+  echo "$! $name" >> "$run/aux.pids"
+}
+
+# bl_wait_port PORT SECONDS PID: until something listens on PORT; fails when PID dies first.
+bl_wait_port() {
+  local port=$1 limit=$2 pid=$3 i
+  for i in $(seq 1 "$limit"); do
+    (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && { echo "port $port open after ${i}s"; return 0; }
+    bl_alive "$pid" || { echo "STOP: pid $pid died before port $port opened"; return 1; }
+    sleep 1
+  done
+  echo "STOP: port $port not open after ${limit}s"; return 1
+}
+
+# bl_stop_group PID LABEL: TERM the process group a setsid launch made, then KILL after 90 s.
+bl_stop_group() {
+  local pid=$1 label=$2 i
+  bl_alive "$pid" || return 0
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+  for i in $(seq 1 90); do bl_alive "$pid" || return 0; sleep 1; done
+  echo "$label pid $pid still alive after 90 s, SIGKILL"; kill -KILL -- "-$pid" 2>/dev/null; sleep 3
+}
+
 # bl_wait_ready RUN SECONDS: until /health answers and /v1/models lists a model; fails when the server dies first.
 bl_wait_ready() {
   local run=$1 limit=$2 pid i
@@ -66,11 +101,10 @@ bl_stop() {
   local run="$BL_RESULTS/$(cat "$BL_RESULTS/.current_run")" pid i
   [ -f "$run/server.pid" ] && [ -f "$run/command.txt" ] || { echo "nothing to stop here: $(basename "$run") is not a host-side baseline boot"; return 0; }
   pid=$(cat "$run/server.pid")
-  if bl_alive "$pid"; then
-    # setsid made the server a session leader: signal its whole group, engine core and workers included
-    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
-    for i in $(seq 1 90); do bl_alive "$pid" || break; sleep 1; done
-    if bl_alive "$pid"; then echo "pid $pid still alive after 90 s, SIGKILL"; kill -KILL -- "-$pid" 2>/dev/null; sleep 3; fi
+  # setsid made the server a session leader: signal its whole group, engine core and workers included
+  bl_stop_group "$pid" server
+  if [ -f "$run/aux.pids" ]; then
+    while read -r apid aname; do bl_stop_group "$apid" "$aname"; done < "$run/aux.pids"
   fi
   for i in $(seq 1 30); do bl_port_busy || break; sleep 1; done
   for i in $(seq 1 60); do
