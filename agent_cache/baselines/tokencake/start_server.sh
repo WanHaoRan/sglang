@@ -10,7 +10,7 @@
 #   host: bash /home/wanhr/sglang/agent_cache/baselines/tokencake/start_server.sh
 #
 # Knobs (environment): MODE (above), HOST_GB (160: the CPU KV capacity in decimal GB, as SGLang's host pool; passed
-#   to --kv-offloading-size in GiB), GPU_KV_TOKENS (668096), MAX_SEQS (64), BATCH_TOKENS (8192), CTX (262144),
+#   to --kv-offloading-size in GiB, at most CPU_GIB_MAX: 120, below), GPU_KV_TOKENS (668096), MAX_SEQS (64), BATCH_TOKENS (8192), CTX (262144),
 #   MEM_CAP_GB, SERVER_EXTRA, VENV (this directory's .venv, built by setup.sh).
 # The client (baselines/common/backends.py, TokenCakeBackend) sends request ids tc-<uuid4>, the metadata in
 # vllm_xargs.tokencake and stall_started/stall_finished to /v1/tokencake/events around every wait.
@@ -23,6 +23,12 @@ VENV=${VENV:-$HERE/.venv}
 [ -x "$VENV/bin/vllm" ] || { echo "STOP: no TokenCake build in $VENV (bash $HERE/setup.sh)"; exit 1; }
 MODE=${MODE:-offload-agent}; HOST_GB=${HOST_GB:-160}
 HOST_GIB=$(awk -v g="$HOST_GB" 'BEGIN { printf "%.2f", g * 1e9 / 2^30 }')
+# vLLM 0.22's native CPU offloading allocates its CPU tier as one pinned tensor (kv_offload/cpu/gpu_worker.py,
+# torch.zeros(..., pin_memory=True)); on this host one pinned allocation succeeds at 122 GiB and fails at 130 and 149
+# GiB ("CUDA error: out of memory", tested 2026-11-21), so the tier is capped at CPU_GIB_MAX: a deviation from the
+# 160 GB the other systems get, which pin in pieces or register memory.
+CPU_GIB_MAX=${CPU_GIB_MAX:-120}
+HOST_GIB=$(awk -v g="$HOST_GIB" -v m="$CPU_GIB_MAX" 'BEGIN { printf "%.2f", (g > m ? m : g) }')
 KV_BYTES=$((BL_GPU_KV_TOKENS * BL_KV_BYTES_PER_TOKEN))
 
 ARGS=(

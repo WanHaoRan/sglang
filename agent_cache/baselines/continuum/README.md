@@ -59,3 +59,7 @@ the release runs unpatched, and Continuum is then its queue order alone.
   record has 2 pins and 2 unpins. A larger pool hides the pin: vLLM's chunked prefill allocates 8,192 tokens of
   blocks a step, so within the 2 s pin a fill never reached the idle prefix in a 100K-token pool.
 - Cold prefill of 20,000 tokens takes 1.371 s on this fork's vLLM 0.10.2 against 0.557 s on vLLM 0.33.0.
+- 20-minute replay at campaign 28's setting with LMCache (`results/baseline_smoke2/`, run
+  `20261121_192849_continuum_continuum_lmcache`): 2,263 requests, 0 errors, mean TTFT 1.66 s (p50 0.12 s, p90
+  2.64 s), 7.5 % of prompt tokens recomputed; the scheduler's record (`scheduler_timestamps`) has 1,093 pins and
+  1,091 releases over 128 jobs, and 23 preemptions.

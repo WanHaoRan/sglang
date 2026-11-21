@@ -40,7 +40,7 @@ TokenCake learn per kind); `stall_finished` when the wait is over, just before t
 |---|---|---|
 | vLLM flags | as `vllm_vanilla` (GPU pool in bytes, 8,192, 64, 262,144) | the same pools and batching |
 | `--additional-config` | `{"tokencake":{}}` (scheduling and offload on) | its full system |
-| `--kv-offloading-size`, `--kv-offloading-backend` | 149.01 (GiB), `native` | our host pool in bytes; the backend its driver uses |
+| `--kv-offloading-size`, `--kv-offloading-backend` | 120 (GiB, 129 GB), `native` | the largest CPU tier this host can give it (below); the backend its driver uses |
 | environment | `VLLM_USE_SIMPLE_KV_OFFLOAD=0`, `VLLM_WORKER_MULTIPROC_METHOD=spawn`, `TOKENIZERS_PARALLELISM=false`, `VLLM_SERVER_DEV_MODE=1`, `VLLM_USE_V1=1` | its driver's server environment |
 | dependencies | resolved as PyPI stood on 2026-09-29 (torch 2.11.0, transformers 4.57.6) | its commit day |
 
@@ -60,3 +60,12 @@ TokenCake learn per kind); `stall_finished` when the wait is over, just before t
   low_pressure, 1 no_waiting_demand, then 1 selected), saved its 1,250 blocks (`tokencake_saved_blocks_total`), and
   the next turn found 20,000 of 20,528 tokens cached, all from CPU memory (`cpu_hit_tokens` and
   `external_prefix_cache_hits_total` +20,000; TTFT 0.123 s). Without events: 0 cached, 0.767 s.
+
+## Deviation: a smaller CPU tier
+
+vLLM 0.22.0's native CPU offloading allocates the whole CPU tier as one pinned tensor
+(`vllm/v1/kv_offload/cpu/gpu_worker.py`, `torch.zeros(..., pin_memory=True)`). On this host one pinned allocation
+succeeds at 122 GiB and fails at 130 and 149 GiB with "CUDA error: out of memory" (tested 2026-11-21 in TokenCake's
+own environment; the full-size boot failed the same way). The other systems pin in pieces (LMCache, 10 GiB at a
+time) or as SGLang does, and get 160 GB. TokenCake gets 120 GiB (129 GB), `CPU_GIB_MAX` in `start_server.sh`;
+changing vLLM's allocator would no longer be the released code.
