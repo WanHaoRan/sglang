@@ -26,7 +26,8 @@ class Turn(NamedTuple):
 
 
 class OpenAIBackend:
-    """Plain /v1/completions, the fields replay_programs.py's own completions mode sends."""
+    """Plain /v1/completions, the fields replay_programs.py's own completions mode sends. Option details=on asks our
+    SGLang for the cached tokens by tier (return_cached_tokens_details, answered under "sglext")."""
 
     name = "openai"
 
@@ -35,8 +36,11 @@ class OpenAIBackend:
 
     def body(self, *, model: str, out: int, turn: Turn, want_ids: bool) -> dict:
         """Every body field but the prompt."""
-        return {"model": model, "max_tokens": out, "stream": True, "stream_options": {"include_usage": True},
+        body = {"model": model, "max_tokens": out, "stream": True, "stream_options": {"include_usage": True},
                 "ignore_eos": True, "temperature": 0.0, "rid": turn.rid, "return_token_ids": want_ids}
+        if self.opts.get("details") == "on":
+            body["return_cached_tokens_details"] = True
+        return body
 
     def reply_ids(self, choice: dict) -> list:
         """The generated token ids one streamed choice carries."""

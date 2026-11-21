@@ -79,11 +79,24 @@ async def ask(http, *, url: str, backend, model: str, ids: list, out: int, rid: 
                     res["top"] = tops[0]
             if d.get("usage"):
                 res["usage"] = d["usage"]
+            tiers = tier_details(d)
+            if tiers:
+                res["tiers"] = tiers
     res["latency"] = time.perf_counter() - t0
     u = res["usage"]
     res["prompt_tokens"], res["completion_tokens"] = u.get("prompt_tokens"), u.get("completion_tokens")
     res["cached"] = (u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
     return res
+
+
+def tier_details(chunk: dict) -> dict | None:
+    """Cached tokens by tier when the server reports them: our SGLang's sglext.cached_tokens_details."""
+    for holder in [chunk] + list(chunk.get("choices") or []):
+        ext = holder.get("sglext") or {}
+        details = ext.get("cached_tokens_details") or holder.get("cached_tokens_details")
+        if details:
+            return {k: v for k, v in details.items() if isinstance(v, (int, float))}
+    return None
 
 
 def same_first_token(a: dict | None, b: dict | None, *, tol: float) -> tuple:
@@ -184,8 +197,10 @@ class Checker:
                 text = (f"after {int(fill):,} filler tokens ({took:.0f} s): cached {back['cached']} (want 0: "
                         f"recomputed), TTFT {back['ttft']:.3f} s against {cold['ttft']:.3f} s cold, first-token "
                         f"logprobs {'equal' if same else 'DIFFER'} (largest difference {worst})")
+            if back.get("tiers"):
+                text += f"; by tier {back['tiers']}"
             self.verdict(name, ok, text, ttft=back["ttft"], cached=back["cached"], logprob_diff=worst, fill_s=took,
-                         metrics_moved=moved)
+                         metrics_moved=moved, tiers=back.get("tiers"))
         return self.failed
 
     async def metrics(self) -> dict:

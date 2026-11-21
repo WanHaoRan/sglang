@@ -21,8 +21,11 @@ for POLICY in ${POLICIES:-fcfs continuum}; do
   RUN="$BL_RESULTS/$(cat "$BL_RESULTS/.current_run")"
   echo "== policy $POLICY: ${SLICE:-0:8} tasks, ${WORKERS:-8} at once -> $RUN/swebench_output"
   t0=$(date +%s)
-  "$AGENT/mini-extra" swebench --model-class vllm --model "$BL_MODEL" --port "$BL_PORT" --subset verified --split test \
-    --slice "${SLICE:-0:8}" --workers "${WORKERS:-8}" --output "$RUN/swebench_output" > "$RUN/swebench.log" 2>&1
+  # The runner's --port reaches VllmModelConfig as an unknown "port" field; its config's model.base_url is the way in.
+  "$AGENT/python" -c 'import sys, yaml; c = yaml.safe_load(open(sys.argv[1])); c["model"]["base_url"] = sys.argv[2]; yaml.safe_dump(c, open(sys.argv[3], "w"))' \
+    "$SRC/mini-swe-agent/src/minisweagent/config/extra/swebench.yaml" "http://127.0.0.1:$BL_PORT/v1" "$RUN/swebench_config.yaml"
+  "$AGENT/mini-extra" swebench --model-class vllm --model "$BL_MODEL" -c "$RUN/swebench_config.yaml" --subset verified \
+    --split test --slice "${SLICE:-0:8}" --workers "${WORKERS:-8}" --output "$RUN/swebench_output" > "$RUN/swebench.log" 2>&1
   echo "agent rc=$? after $(( $(date +%s) - t0 )) s"
   bash "$HERE/../common/stop_server.sh"            # the scheduler writes scheduler_timestamps at shutdown
   "$AGENT/python" "$SRC/continuum_exp/analyze.py" --input-dir "$RUN" --output-dir "$RUN" > "$RUN/official_summary.txt" 2>&1

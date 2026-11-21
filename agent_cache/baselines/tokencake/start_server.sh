@@ -47,7 +47,7 @@ ENVV=(VLLM_LOGGING_LEVEL=INFO PATH="$VENV/bin:$PATH" VIRTUAL_ENV="$VENV" VLLM_US
       VLLM_WORKER_MULTIPROC_METHOD=spawn TOKENIZERS_PARALLELISM=false VLLM_SERVER_DEV_MODE=1 VLLM_USE_V1=1)
 
 RUN=$(bl_new_run "tokencake_$MODE") || exit 1
-VERSIONS=$("$VENV/bin/python" -c 'import importlib.metadata as m; print(f"vllm={m.version(\"vllm\")}\ntorch={m.version(\"torch\")}\ntransformers={m.version(\"transformers\")}")' 2>/dev/null)
+VERSIONS=$("$VENV/bin/python" -c "import importlib.metadata as m; print('vllm=' + m.version('vllm')); print('torch=' + m.version('torch')); print('transformers=' + m.version('transformers'))" 2>/dev/null)
 FORK=$(git -C "$HERE/src/TokenCake" rev-parse --short HEAD 2>/dev/null)
 echo "system: tokencake (fork $FORK)  mode: $MODE  CPU KV: $HOST_GB GB ($HOST_GIB GiB)  run dir: $RUN"
 bl_launch "$RUN" "${ENVV[@]}" -- "$VENV/bin/vllm" "${ARGS[@]}"

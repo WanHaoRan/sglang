@@ -4,10 +4,9 @@
       [--fill 8x16000] [--wait-s 1.0] [--reply-key Bash/ls] [--metrics URL] [--json out.json]
 
 Turn 0 (a prompt of --prompt-tokens) is sent with the fields the backend adds (Continuum's job and tool, TokenCake's
-lifecycle metadata). As it decodes, --fill unrelated requests arrive at once and outgrow a small GPU pool, so the
-session's prefix is the first thing an LRU cache would drop. When turn 0 completes, the backend's after-reply hook
-runs (TokenCake's stall_started), the session waits --wait-s, the before-request hook runs (stall_finished), and turn
-1 extends turn 0. The output is turn 1's cached tokens and TTFT. Run it twice, with the system's signals and without
+lifecycle metadata). When it completes, the backend's after-reply hook runs (TokenCake's stall_started) and --fill
+unrelated requests arrive at once, outgrowing a small GPU pool, so the session's now idle prefix is what an LRU cache
+drops first. The session waits --wait-s, the before-request hook runs (stall_finished), and turn 1 extends turn 0. The output is turn 1's cached tokens and TTFT. Run it twice, with the system's signals and without
 (Continuum: --backend-opt func=off; TokenCake: events=off): the difference is what the mechanism kept. Boot the server
 with a small GPU pool (each baseline's README gives the line); --metrics adds the moved series of an endpoint.
 """
@@ -92,11 +91,16 @@ async def main_async(args: argparse.Namespace) -> int:
 
         first = asyncio.create_task(ask(http, **common, ids=prompt0, out=args.out, rid=turn0.rid, session=session,
                                         turn=turn0))
-        await asyncio.sleep(args.fill_after_s)   # turn 0 is admitted first; the fill lands while it decodes
-        fills = [asyncio.create_task(filler(i)) for i in range(n_fill)]
+        fills = []
+        if args.fill_at == "decode":   # the fill lands while turn 0 decodes
+            await asyncio.sleep(args.fill_after_s)
+            fills = [asyncio.create_task(filler(i)) for i in range(n_fill)]
         r0 = await first
         t_done = time.perf_counter()
         await backend.after_reply(rep, turn0)
+        if args.fill_at == "wait":     # the fill lands as the session's wait starts: its prefix is idle by then
+            await asyncio.sleep(args.fill_after_s)
+            fills = [asyncio.create_task(filler(i)) for i in range(n_fill)]
         await asyncio.sleep(max(0.0, args.wait_s - (time.perf_counter() - t_done)))
         await backend.before_request(rep, turn1)
         prompt1 = prompt0 + (r0["ids"] or synth.ids(f"cs|{salt}|r0", args.out)) + synth.ids(f"cs|{salt}|p1", 512)
@@ -129,7 +133,10 @@ def main(argv=None) -> int:
     ap.add_argument("--out", type=int, default=16)
     ap.add_argument("--fill", default="8x16000", help="N x TOKENS unrelated requests sent while turn 0 decodes")
     ap.add_argument("--fill-out", type=int, default=64, help="output tokens of each filler (how long it holds blocks)")
-    ap.add_argument("--fill-after-s", type=float, default=0.3, help="delay of the fill after turn 0 is sent")
+    ap.add_argument("--fill-at", choices=("wait", "decode"), default="wait",
+                    help="wait: the fill arrives as turn 0 completes, so an LRU cache drops the idle prefix first; "
+                         "decode: while turn 0 still decodes")
+    ap.add_argument("--fill-after-s", type=float, default=0.0, help="delay of the fill after that point")
     ap.add_argument("--wait-s", type=float, default=1.0, help="the session's wait between its two turns")
     ap.add_argument("--reply-key", default="Bash/ls", help="tool key of turn 0's reply")
     ap.add_argument("--metrics", action="append", default=[], metavar="URL")

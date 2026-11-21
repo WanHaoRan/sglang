@@ -50,7 +50,7 @@ ARGS+=("${EXTRA[@]}")
 
 RUN=$(bl_new_run "continuum_${POLICY}$([ "$LMCACHE" = on ] && echo _lmcache)") || exit 1
 ENVV+=(RUN_OUTPUT_DIR="$RUN")
-VERSIONS=$("$VENV/bin/python" -c 'import importlib.metadata as m; print(f"vllm={m.version(\"vllm\")}\nlmcache={m.version(\"lmcache\")}\ntransformers={m.version(\"transformers\")}")' 2>/dev/null)
+VERSIONS=$("$VENV/bin/python" -c "import importlib.metadata as m; print('vllm=' + m.version('vllm')); print('lmcache=' + m.version('lmcache')); print('transformers=' + m.version('transformers'))" 2>/dev/null)
 FORK=$(git -C "$HERE/src/vllm-continuum" rev-parse --short HEAD 2>/dev/null)
 PATCHED=$(git -C "$HERE/src/vllm-continuum" diff --stat 2>/dev/null | tail -1)
 echo "system: continuum (fork $FORK; ${PATCHED:-unpatched})  policy: $POLICY  LMCache: $LMCACHE (CPU $HOST_GB GB = $HOST_GIB GiB, disk ${SSD_CAP_GB} GB)  run dir: $RUN"
@@ -65,5 +65,5 @@ bl_wait_ready "$RUN" 1800 || { bl_stop; exit 1; }
 # startup facts, each labelled
 echo "versions:         $(echo "$VERSIONS" | tr '\n' ' ')"
 echo "GPU KV cache:     $(grep -aoE 'GPU KV cache size: [0-9,]+ tokens' "$RUN/server.log" | head -1)   (want $BL_GPU_KV_TOKENS tokens)"
-echo "policy:           $(grep -aoE "scheduler_config=[^)]*policy='[a-z]+'|'policy': '[a-z]+'|policy=[a-z]+" "$RUN/server.log" | head -1)   (want $POLICY)"
+echo "policy:           $(grep -aoE "'scheduling_policy': '[a-z]+'" "$RUN/server.log" | head -1)   (want $POLICY; absent when fcfs, vLLM's default)"
 echo "LMCache:          $(grep -aoE "LMCache[^\n]{0,40}(initialized|Initializing|engine)[^\n]{0,60}" "$RUN/server.log" | head -1)"
