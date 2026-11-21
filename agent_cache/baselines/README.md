@@ -64,27 +64,41 @@ Started 2026-11-21. `results/` paths are under `agent_cache/results/`.
 
 ## First results: 20 minutes of campaign 28's setting (2026-11-21)
 
-FreeInference, 0.1 users/s, cap 128, 160 GB host, x1 gaps; requests sent before 1,200 s; requests pair across
-systems by (play, stream, k). `results/baseline_smoke_compare/compare_arms.out` (campaign 28's `hicache` and
-`jit_p50` arms are counted to the same 1,200 s).
+FreeInference, 0.1 users/s, cap 128, 160 GB host (TokenCake 129 GB, below), x1 gaps; requests sent before 1,200 s;
+requests pair across systems by (play, stream, k). `results/baseline_smoke_compare/compare_arms.out`; campaign 28's
+`hicache` and `jit_p50` arms are counted to the same 1,200 s.
 
 | system | requests | a minute | TTFT mean | p50 | p90 | prompt tokens recomputed |
 |---|---|---|---|---|---|---|
 | SGLang, radix cache only | 907 | 45.4 | 24.91 s | 1.61 | 88.60 | 50 % |
 | SGLang + HiCache (campaign 28 `hicache`) | 1,676 | 83.8 | 9.19 s | 3.02 | 23.81 | 10 % |
+| SGLang + HiCache again, through `run_baselines.sh` | 1,670 | 83.5 | 9.22 s | 2.93 | 23.70 | 10 % |
 | our JIT p50 (campaign 28 `jit_p50`) | 1,675 | 83.8 | 9.20 s | 2.93 | 24.60 | 10 % |
 | vLLM 0.33.0, prefix cache only | 1,855 | 92.8 | 5.06 s | 0.13 | 22.31 | 34 % |
+| Continuum (vLLM 0.10.2 fork) + LMCache 0.3.6 | 2,263 | 113.2 | 1.66 s | 0.12 | 2.64 | 7 % |
+| TokenCake (vLLM 0.22.0 fork), full system | 2,292 | 114.6 | 1.34 s | 0.24 | 3.98 | 10 % |
 | vLLM 0.33.0 + LMCache 0.5.7.post1 | 2,658 | 132.9 | 0.32 s | 0.14 | 0.76 | 7 % |
 
-Paired on the requests both sent: SGLang + HiCache to vLLM + LMCache -8.89 s [-10.34, -7.67] (1,676 requests, 127
-users); stock vLLM to vLLM + LMCache -4.77 s [-6.02, -3.78]; SGLang + HiCache to stock vLLM -4.84 s [-5.64, -4.01].
+Paired on the requests both sent (95 % intervals over users):
 
-- The gap is first the engine's speed: a cold 20,000-token prefill takes 1.454 s on our SGLang (Triton attention,
-  as every campaign) against 0.557 s on vLLM 0.33.0 (FlashAttention), so vLLM without any lower tier out-serves
-  SGLang with three. vLLM + LMCache is still unsaturated in minutes 10 to 30 (0.40 s), where the SGLang arms are at
-  15.6 s and climbing.
-- Before a comparison of tiering policies across engines means anything, our engine needs its deployed attention
-  backend (FA3 on H200), the first item of the paper-strategy document's GPU plan.
+| A | B | requests | B - A |
+|---|---|---|---|
+| SGLang + HiCache | the same, rerun | 1,661 | +0.07 s [-0.10, +0.25] |
+| SGLang + HiCache | vLLM 0.33.0 | 1,642 | -4.84 s [-5.64, -4.01] |
+| SGLang + HiCache | vLLM + LMCache | 1,676 | -8.89 s [-10.34, -7.67] |
+| SGLang + HiCache | Continuum | 1,665 | -7.67 s [-8.93, -6.56] |
+| SGLang + HiCache | TokenCake | 1,676 | -8.55 s [-9.93, -7.40] |
+| vLLM 0.33.0 | vLLM + LMCache | 1,855 | -4.77 s [-6.14, -3.77] |
+| vLLM + LMCache | Continuum | 2,263 | +1.35 s [+0.94, +1.88] |
+| vLLM + LMCache | TokenCake | 2,292 | +1.03 s [+0.82, +1.27] |
+
+- The rerun reproduces the campaign's HiCache arm, so these 20-minute comparisons resolve about 0.2 s.
+- The largest gap is the engine's speed, not its cache: a cold 20,000-token prefill takes 1.454 s on our SGLang
+  (Triton attention, as every campaign), 1.371 s on Continuum's vLLM 0.10.2, 1.290 s on TokenCake's vLLM 0.22.0 and
+  0.557 s on vLLM 0.33.0. Stock vLLM 0.33.0 with no lower tier out-serves SGLang with three, and every vLLM-based
+  system is still below 2 s mean TTFT where the SGLang arms reach 15.6 s in minutes 10 to 30.
+- Before tiering policies are compared across engines, our engine needs its deployed attention backend (FA3 on
+  H200), the first item of the paper-strategy document's GPU plan.
 
 ## The full comparison, prepared and not launched
 

@@ -16,3 +16,7 @@ store on `/mnt/ssd/hicache_l3` with prefetch policy `wait_complete`, its cleaner
   cold 0 cached (1.371 s); warm 19,968 (0.092 s); extended 19,968; after 150,000 filler tokens 19,968 cached, by
   SGLang's own tier counts all from host memory (0.091 s); after 400,000 more all from the SSD (1.954 s); first-token
   logprobs equal to the warm run's (0.0) at both. 5 of 5 passed. The SSD load takes longer than recomputing (1.371 s).
+- 20-minute replay through `common/run_baselines.sh` (`results/baseline_smoke2/`, run
+  `20261121_211207_three_tier_wc_custom_L1nat_H160`): 1,670 requests, 0 errors, mean TTFT 9.22 s, against 1,676 at
+  9.19 s for campaign 28's `hicache` arm over the same 1,200 s. Paired on the 1,661 requests both sent: +0.07 s
+  [-0.09, +0.25] (2,000 draws over users): the launcher's SGLang path reproduces the campaign's arm.
