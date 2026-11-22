@@ -21,3 +21,6 @@ The trace replay drives it with our own client (`scripts/start_programs.sh`, nat
   recomputed (`results/baseline_smoke_compare/`).
 - The same cold 20,000-token prompt takes 1.454 s here and 0.557 s on vLLM 0.33.0: this engine's prefill is 2.6x
   slower on this box, which outweighs every cache effect in the early minutes of a replay.
+- On FA3 (`--attention-backend fa3`, 2026-11-22, `results/fa3_smoke/`, run `20261122_010139_hbm_lru_custom_L1nat_H160`):
+  1,892 requests, 0 errors, mean TTFT 4.38 s, 33 % recomputed; 1.08 s [0.80, 1.39] below stock vLLM 0.33.0 on the
+  1,851 requests both sent. The cold 20,000-token prefill takes 0.637 s on FA3 (`../sglang_hicache/README.md`).

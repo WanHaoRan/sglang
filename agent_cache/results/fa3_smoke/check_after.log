@@ -1,0 +1,17 @@
+2026-11-21T23:00:57Z waiting for fa3_smoke to finish
+2026-11-22T01:25:01Z == hicache tiers on fa3
+prefetch policy:  'hicache_storage_prefetch_policy': 'wait_complete'   (want wait_complete)
+L3 cleaner dir:   HiCacheL3Cleaner started: dirs=['/mnt/ssd/hicache_l3']   (want /mnt/ssd/hicache_l3)
+L3 cleaner marks: high=90.0% low=80.0%   (want 90,80)
+re-query cap:     'hicache_storage_prefetch_retry_max_attempts': 8   (want 8)
+next-turn mode:   'hicache_storage_next_turn_prefetch': 'off', prefetcher banner 0   (want off, banner 0)
+retry interval:   'hicache_storage_prefetch_retry_poll_interval': 8   (want 8)
+server http://127.0.0.1:30000, model Qwen/Qwen3-30B-A3B-Instruct-2507, backend openai, prompt 20000 tokens, salt 18ea39a39c99704c
+ok    cold       prompt 20000, cached 0 (want 0), output 16 with 16 ids (want 16), TTFT 0.637 s
+ok    warm       cached 19968 of 20000 (want all but one block of 64), TTFT 0.027 s against 0.637 s cold, first-token logprobs equal (largest difference 0.0672)
+ok    extend     prompt 22064, cached 19968 (want at least 19936), TTFT 0.103 s
+ok    host       after 150,000 filler tokens (4 s): cached 19968 of 20000 (want all but one block), TTFT 0.052 s against 0.027 s warm and 0.637 s cold, first-token logprobs against warm (19968 cached) equal (largest difference 0.0, tolerance 0.02); by tier {'device': 0, 'host': 19968, 'storage': 0}
+ok    ssd        after 400,000 filler tokens (10 s): cached 19968 of 20000 (want all but one block), TTFT 2.032 s against 0.027 s warm and 0.637 s cold, first-token logprobs against warm (19968 cached) equal (largest difference 0.0, tolerance 0.02); by tier {'device': 0, 'host': 0, 'storage': 19968}
+PASS: 5 of 5 checks passed
+stopped: 20261122_012501_three_tier_wc_custom_L1100000_H30 (pid 12767); port 30000 free
+2026-11-22T01:26:37Z == check exit 0 run 20261122_012501_three_tier_wc_custom_L1100000_H30

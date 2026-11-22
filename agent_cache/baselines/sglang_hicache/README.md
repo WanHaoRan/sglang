@@ -20,3 +20,16 @@ store on `/mnt/ssd/hicache_l3` with prefetch policy `wait_complete`, its cleaner
   `20261121_211207_three_tier_wc_custom_L1nat_H160`): 1,670 requests, 0 errors, mean TTFT 9.22 s, against 1,676 at
   9.19 s for campaign 28's `hicache` arm over the same 1,200 s. Paired on the 1,661 requests both sent: +0.07 s
   [-0.09, +0.25] (2,000 draws over users): the launcher's SGLang path reproduces the campaign's arm.
+
+## FA3 (2026-11-22, GPU)
+
+`SERVER_EXTRA=--attention-backend fa3` (the last `--attention-backend` wins over the script's Triton pin; bf16 KV on
+both).
+
+- The same check (`results/20261122_012501_three_tier_wc_custom_L1100000_H30/`): cold 0.637 s; warm 19,968 cached,
+  0.027 s; extended 19,968; after 150,000 filler tokens 19,968 from host memory (0.052 s); after 400,000 more all
+  from the SSD (2.032 s); logprobs equal to the warm run's (0.0) at both. 5 of 5 passed. The SSD load takes 3.2 times
+  the recompute here (1.4 times on Triton).
+- 20-minute replay at campaign 28's setting (`results/fa3_smoke/`, run
+  `20261121_225638_three_tier_wc_custom_L1nat_H160`): 2,666 requests, 0 errors, mean TTFT 0.22 s against 9.19 s on
+  Triton, and 0.10 s [0.08, 0.12] below vLLM + LMCache on the same requests (`../README.md`, FA3).

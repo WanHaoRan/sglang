@@ -104,7 +104,60 @@ Paired on the requests both sent (95 % intervals over users):
   0.557 s on vLLM 0.33.0. Stock vLLM 0.33.0 with no lower tier out-serves SGLang with three, and every vLLM-based
   system is still below 2 s mean TTFT where the SGLang arms reach 15.6 s in minutes 10 to 30.
 - Before tiering policies are compared across engines, our engine needs its deployed attention backend (FA3 on
-  H200), the first item of the paper-strategy document's GPU plan.
+  H200), the first item of the paper-strategy document's GPU plan: done below.
+
+## FA3: our SGLang arms on the deployed attention backend (2026-11-22)
+
+Campaign 28's six SGLang arms rerun for the same 20 minutes with `--attention-backend fa3` and nothing else changed
+(`results/fa3_smoke/`; server logs show bf16 KV and the 668,096-token pool on both backends). Paired with the Triton
+runs and the baselines in `results/fa3_compare/compare_arms.out` (`--cut 1200`).
+
+| system | requests | a minute | TTFT mean | p50 | p90 | prompt tokens recomputed |
+|---|---|---|---|---|---|---|
+| SGLang + HiCache, Triton (campaign 28 `hicache`) | 1,676 | 83.8 | 9.19 s | 3.02 | 23.81 | 10 % |
+| SGLang + HiCache, FA3 | 2,666 | 133.3 | 0.22 s | 0.09 | 0.42 | 7 % |
+| our JIT p50, FA3 | 2,665 | 133.2 | 0.20 s | 0.08 | 0.42 | 7 % |
+| our four rules (`ec_full`), FA3 | 2,667 | 133.3 | 0.22 s | 0.08 | 0.45 | 7 % |
+| JIT exact, FA3 | 2,668 | 133.4 | 0.21 s | 0.08 | 0.42 | 7 % |
+| old oracle v2, FA3 | 2,668 | 133.4 | 0.22 s | 0.08 | 0.41 | 7 % |
+| SGLang, radix cache only, Triton | 907 | 45.4 | 24.91 s | 1.61 | 88.60 | 50 % |
+| SGLang, radix cache only, FA3 | 1,892 | 94.6 | 4.38 s | 0.09 | 18.39 | 33 % |
+| vLLM 0.33.0, prefix cache only | 1,855 | 92.8 | 5.06 s | 0.13 | 22.31 | 34 % |
+| vLLM 0.33.0 + LMCache 0.5.7.post1 | 2,658 | 132.9 | 0.32 s | 0.14 | 0.76 | 7 % |
+
+| A | B | requests | B - A |
+|---|---|---|---|
+| SGLang + HiCache, Triton | the same, FA3 | 1,676 | -8.96 s [-10.38, -7.80] |
+| vLLM + LMCache | SGLang + HiCache, FA3 | 2,658 | -0.10 s [-0.12, -0.08] |
+| vLLM + LMCache | our JIT p50, FA3 | 2,657 | -0.12 s [-0.15, -0.11] |
+| TokenCake | SGLang + HiCache, FA3 | 2,292 | -1.11 s [-1.35, -0.89] |
+| Continuum | SGLang + HiCache, FA3 | 2,263 | -1.43 s [-2.01, -1.05] |
+| vLLM 0.33.0 | SGLang radix cache only, FA3 | 1,851 | -1.08 s [-1.39, -0.80] |
+| SGLang + HiCache, FA3 | our JIT p50, FA3 | 2,664 | -0.02 s [-0.04, -0.01] |
+| SGLang + HiCache, FA3 | JIT exact, FA3 | 2,665 | -0.01 s [-0.03, -0.00] |
+| SGLang + HiCache, FA3 | our four rules, FA3 | 2,666 | -0.00 s [-0.01, +0.01] |
+| SGLang + HiCache, FA3 | old oracle v2, FA3 | 2,666 | -0.01 s [-0.02, +0.00] |
+
+Mean TTFT by send time, 5-minute windows:
+
+| minutes | HiCache, Triton | HiCache, FA3 | JIT p50, FA3 | rules, FA3 | vLLM + LMCache | TokenCake | Continuum | vLLM | SGLang radix, FA3 |
+|---|---|---|---|---|---|---|---|---|---|
+| 0-5 | 0.29 | 0.08 | 0.08 | 0.08 | 0.14 | 0.14 | 0.13 | 0.13 | 0.08 |
+| 5-10 | 1.00 | 0.19 | 0.17 | 0.19 | 0.24 | 0.38 | 0.21 | 0.34 | 0.28 |
+| 10-15 | 11.26 | 0.33 | 0.29 | 0.34 | 0.42 | 0.90 | 0.95 | 3.43 | 2.98 |
+| 15-20 | 20.11 | 0.21 | 0.21 | 0.21 | 0.38 | 3.20 | 4.78 | 22.64 | 19.24 |
+
+- FA3 turns our engine from the slowest system to the fastest: the HiCache arms deliver what vLLM + LMCache does
+  (133 requests a minute, 7 % recomputed) at 0.10 s lower mean TTFT, mostly on returning requests (0.19-0.20 s
+  against 0.31; a user's first request 0.53-0.65 s against 0.61). Stock SGLang on FA3 beats stock vLLM by 1.08 s.
+- On FA3 the box keeps up for these 20 minutes, so the tiering policies have nothing to separate: GPU hits 75-82 % of
+  prompt tokens, host 11-18 %, the SSD at most 1 %, and the five arms tie within 0.02 s. Campaigns 28 and 29 measured
+  the policies in a queue that Triton's prefill built; whether the full 2 h saturates on FA3 is untested.
+- A cold 20,000-token prefill: 0.637 s on FA3, against 1.371-1.454 s on Triton and 0.557 s on vLLM 0.33.0
+  (`sglang_hicache/README.md`). The same prompt read back from the SSD takes 2.032 s, 3.2 times its recompute.
+- Why every campaign ran Triton: `scripts/start_server.sh` pins `--attention-backend triton` with a note that the
+  fp8_e5m2 KV rule rewrites fa3 to triton anyway; campaigns 28 and 29 run bf16 KV (`KV_DTYPE=auto`), where the
+  automatic resolution is fa3 (`model_override_base.py`), so the pin no longer matches it.
 
 ## The full comparison, prepared and not launched
 
