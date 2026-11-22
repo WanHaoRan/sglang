@@ -33,6 +33,9 @@ anchors sit one or two lines higher in copy d).
    GPU idle). §5.3 CPU tests around a fix (container, 30 s, GPU idle). §5.4 freeze the fixed engine (container,
    1 min, GPU idle). §5.5 run `jit_p50` again on TraceLab (2 h 6 min, GPU busy).
 6. **Smaller items (§6)**, one line each.
+7. **Found on FA3 (§7, campaign 32, 2026-11-22), not fixed.** Reads refused host memory start a loop: the history
+   is computed again, written to the SSD again, the one write thread falls behind and its pending pages hold host
+   memory, so more reads are refused. Every FA3 arm ends in it; the policies decide when it starts.
 
 ## 1. Defect 1: the read allowance goes on lookups that find nothing
 
@@ -40,7 +43,8 @@ This section says what the engine does, why that costs a request its history, ho
 be fixed. At its end the reader can find the code, the log lines and the counts. The records call it "the cap" or
 "the three-lookup cap".
 
-**Status:** not fixed; the engine is unchanged. The fix is decision D1 (§4).
+**Status:** not fixed; the engine is unchanged. The fix is decision D1 (§4). On FA3 reads refused host memory
+spend the same allowance (§7).
 
 **What the engine does.**
 
@@ -515,6 +519,31 @@ A list to return to, one line each, not evaluated here.
 - `results/_trial_c128/` is a leftover of a trial; a safety check refused my `rm`, so removing it is the author's.
 - Campaign 26's parked items: `results/campaign26/checks/audit/items.tsv`.
 - Held until asked: bringing `PAPER_PLAN.md`, the findings docs and the deck up to campaigns 28 and 29.
+
+## 7. Found on FA3 (campaign 32, 2026-11-22)
+
+Campaign 28's arms on FA3 for 2 h (`results/campaign32/DECISIONS.md`, "Why the arms separate on FA3", where the
+counts are; analysis scripts in `results/campaign32/checks/mechanisms.tgz`). Engine items it found; none is fixed.
+
+- **Reads refused host room.** A read goes to the SSD only when host pages can be allocated for it
+  (`_launch_storage_hit`; `srs_dispatch launched=0` otherwise). On FA3 refused and cut reads carry 82 to 95 % of the
+  history the hinted arms computed again in minutes 60 to 110; on Triton no read was refused.
+- **Refused reads spend defect 1's allowance.** 93 to 99 % of the refused requests end at `MAX_REFETCHES` and are
+  admitted without their history. Fix A of §1 (count only reads that land) would cover them (inferred).
+- **Recomputed history is written to the SSD again.** Write-through has no check for pages the store holds
+  (`_page_backup`, `batch_set_v1`); in the loop 74 to 93 % of the writes are such pages, and `hicache` wrote
+  8.30 TB to the 2.46 TB volume in 2 h.
+- **One write thread, and its pending pages hold host memory.** A page keeps a host lock until its SSD write is done
+  (`write_backup_storage`, `_drain_backup`). Once reads take the disk (about 2.1 GB/s reads plus writes) the thread
+  writes 3.8 to 7.0 K tokens a second; FA3's arms need 4.2 to 5.3 K, Triton's needed about 2 to 3 K.
+- **Host locks are not logged by reason.** At the first refusals the logged locks (pins, reads in flight, pending
+  writes) come to 0.2 to 0.5 M of the 0.98 M tokens of host room beyond the GPU mirror; a census by reason would
+  name the rest.
+- **Early reads on a short queue.** The old oracle's 120 s lead and the just-in-time engine's reads on p50 hints pin
+  208 to 267 K tokens of host memory for 27 to 32 s on average and start the loop 8 to 17 minutes early; the
+  expected-cost timing does not read early.
+- **A check script:** `results/campaign28/checks/gpu_work.py` converts tokens at Triton's 0.11 ms a token; FA3's is
+  0.042 to 0.047 ms.
 
 ## Traps
 
