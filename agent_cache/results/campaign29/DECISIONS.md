@@ -452,6 +452,37 @@ Pairs on the requests both arms sent (final run of `compare_arms.py`, `compare_a
 - Figures: `results/compare_c29_designs/`, five arms.
 - The launcher is idle after the last arm ("queues done, waiting for more lines or END"); the server is stopped.
 
+**The oracle arm `ec_exact` (2026-11-22).** The design is in campaign 28's record: `ec_full`'s flags with `oracle`
+hints on `ec_full`'s copy d, so the pair differs by the hint alone. Started by `results/qfix_check/chain.sh` after
+campaign 28's: launched 03:31:56Z, DONE 05:36:43Z, 4,103 requests, 0 errors, no traceback, no cleaner pass, SSD 86 %
+full at the end; 3,424 exact hints of the 3,763 requests sent before 6,600 s.
+
+| A | `ec_exact` - A, requests both sent before 6,600 s | interval |
+|---|---|---|
+| `hicache` | -174.54 s | [-188.46, -159.49] |
+| `oracle_v2` | -96.59 s | [-105.00, -88.65] |
+| `jit_exact` | -21.20 s | [-22.72, -19.78] |
+| `jit_p50` | -17.34 s | [-18.83, -15.98] |
+| `ec_full` | -1.82 s | [-2.82, -0.88] |
+
+- `ec_exact` is 1.8 s (1.2 %) ahead of `ec_full`, one run each, and the lead sits on users' first requests, which no
+  hint names: -11.7 s [-15.7, -7.7] over 453 first requests, against -0.4 s [-1.4, +0.5] over 3,258 returning ones
+  (the same pairing as `compare_arms.py`, split by first request). By the wait before the request every bucket's
+  interval holds zero (`checks/hint_effect_ec_full_ec_exact.out`).
+- What differs is throughput: the oracle is refused a read at the cap less often (152 of 3,263 returning requests
+  against 175 of 3,228, `checks/cap_share_ec_exact.out`), computes 4.37 M history tokens again in minutes 30 to 110
+  against 5.08 M (10.0 % of the window's GPU time against 11.6 %, `checks/gpu_work.out`) and sends 34.1 requests a
+  minute against 33.5. Not a better-timed read. Why the gain lands on first requests and not on returning ones is
+  not checked. On campaign 28 the same pair went the other way (33 refusals each, 0.93 M against 0.81 M computed
+  again, +0.5 s).
+- The rules decide nothing with exact hints (`checks/rules_activity_ec_exact.out`): the price stays at 5e-05
+  through 1,375 updates, no room is refused, no early-read pin, no release or bump; 787 of 791 timing decisions
+  leave the read to the arrival (queue wait estimate 163 s at the median against a 5.7 s read), the other four come
+  in the run's last minutes.
+- Figures redrawn with six series (`results/compare_c29_designs/`, the oracle dashed in the rules' colour). Over the
+  1,680 returning requests every arm sent before minute 110: HiCache 286.05, old oracle 185.54, JIT p50 123.09, JIT
+  exact 130.80, the rules 113.61, the oracle 114.41 s.
+
 ## Both campaigns side by side
 
 Same setting (0.1 users/s, cap 128, 160 GB, x1, 2 h, one run per arm), requests sent before 6,600 s.
@@ -472,6 +503,7 @@ Same setting (0.1 users/s, cap 128, 160 GB, x1, 2 h, one run per arm), requests 
 | `oracle_v2` to `jit_exact` | +3.0 s [+2.6, +3.5] | -77.7 s [-85.1, -70.4] |
 | `jit_exact` to `jit_p50` | -0.9 s [-1.4, -0.4] | -3.7 s [-4.8, -2.6] |
 | `jit_p50` to `ec_full` | -1.7 s [-2.1, -1.3] | -15.6 s [-17.0, -14.3] |
+| `ec_full` to `ec_exact` (2026-11-22) | +0.5 s [+0.2, +0.8] | -1.8 s [-2.8, -0.9]; returning -0.4 s [-1.4, +0.5] |
 
 What the two say together:
 
@@ -481,7 +513,9 @@ What the two say together:
    minutes the old oracle's reads land two minutes early and find no room to stay pinned, and just-in-time is 78 s
    ahead with a third more requests served.
 3. Exact and table hints tie on both traces. At saturation a request is queued long before it can run, so the
-   server times its read from the queue and a hint's precision has nothing to add.
+   server times its read from the queue and a hint's precision has nothing to add. The same holds under the rules
+   (`ec_exact`, 2026-11-22): +0.5 s on FreeInference; on TraceLab -1.8 s, all of it on first requests, which carry
+   no hint.
 4. The rules arm ties `jit_p50` on FreeInference and leads by 16 s on TraceLab. On both the price, the timing rule
    and the soft pins made no decision; the lead is the eviction order's handling of queued turns, through the cap.
 5. Neither campaign tests what a hint or a price is worth: both run saturated (the GPU pool is full with about 20

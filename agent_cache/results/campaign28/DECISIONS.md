@@ -578,3 +578,5 @@ traceback; 8,357 exact hints of the 8,644 requests sent before 6,600 s.
 - Figures redrawn with six series (`results/compare_c28_designs/`, the oracle dashed in the rules' colour). Over the
   4,174 returning requests every arm sent before minute 110: HiCache 113.50, old oracle 34.20, JIT p50 35.44, JIT
   exact 34.78, the rules 33.84, the oracle 34.60 s.
+- On TraceLab (campaign 29's record) the oracle is 1.8 s ahead of `ec_full`, all of it on first requests, which no
+  hint names; returning requests tie (-0.4 s [-1.4, +0.5]).

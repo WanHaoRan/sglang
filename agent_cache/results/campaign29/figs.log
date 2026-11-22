@@ -3,15 +3,17 @@ oracle_v2: tag oracle_v2, client ran 7230 s, server lines kept 115136 of 115364,
 jit_exact: tag jit_exact, client ran 7230 s, server lines kept 135822 of 136049, host pool held 0 tokens before -> results/compare_c29_designs/runs/jit_exact
 jit_p50: tag jit_p50, client ran 7230 s, server lines kept 140326 of 140616, host pool held 0 tokens before -> results/compare_c29_designs/runs/jit_p50
 ec_full: tag ec_full, client ran 7230 s, server lines kept 152351 of 152593, host pool held 0 tokens before -> results/compare_c29_designs/runs/ec_full
+ec_exact: tag ec_exact, client ran 7230 s, server lines kept 150590 of 150840, host pool held 0 tokens before -> results/compare_c29_designs/runs/ec_exact
 hicache: 2090 requests / 292 streams; returning TTFT mean 300.666 p50 384.474 p90 468.486 s; device/host/storage/recompute 158/255/87/1298
 oracle_v2: 2611 requests / 338 streams; returning TTFT mean 238.099 p50 259.505 p90 399.601 s; device/host/storage/recompute 159/272/936/906
 jit_p50: 3683 requests / 455 streams; returning TTFT mean 171.095 p50 183.815 p90 253.988 s; device/host/storage/recompute 158/288/2300/482
 jit_exact: 3598 requests / 440 streams; returning TTFT mean 174.131 p50 193.632 p90 253.264 s; device/host/storage/recompute 162/271/2215/510
 ec_full: 4016 requests / 479 streams; returning TTFT mean 156.06 p50 171.538 p90 227.265 s; device/host/storage/recompute 155/404/2609/369
+ec_exact: 4103 requests / 488 streams; returning TTFT mean 154.137 p50 167.854 p90 228.94 s; device/host/storage/recompute 161/479/2630/345
 wrote ../results/compare_c29_designs/ec_wait_split.png
-Over the 1,680 returning requests all five arms sent before minute 110 (HiCache, Old oracle, JIT p50, JIT exact, All four rules):
-mean TTFT 286.05, 185.54, 123.09, 130.80 and 113.61 s. Requests served in 2 h: 2,090, 2,611, 3,683, 3,598 and 4,016; users admitted:
-303, 346, 459, 450 and 484 of the 729 that arrive.
+Over the 1,680 returning requests all six arms sent before minute 110 (HiCache, Old oracle, JIT p50, JIT exact, All four rules,
+Oracle): mean TTFT 286.05, 185.54, 123.09, 130.80, 113.61 and 114.41 s. Requests served in 2 h: 2,090, 2,611, 3,683, 3,598, 4,016
+and 4,103; users admitted: 303, 346, 459, 450, 484 and 492 of the 729 that arrive.
 Recorded waits at x1, one run per arm. 0.1 users arrive a second and at most 128 are in session; the others wait for a slot, a wait
 TTFT leaves out. Prompts are synthetic token ids of the recorded lengths and outputs have the recorded length; sessions with a
 request over 65,536 tokens are left out. Exact hints are the true next-request times; p50 hints are the median wait after the tool
@@ -19,10 +21,13 @@ call the reply makes, from a table the client keeps online for each harness and 
 history once its admission is expected within 120 s, and at once when the request is already queued; just-in-time starts the read so
 that it lands as the request is admitted. The rules arm gets that table's p10, p50 and p90 and an end-of-session signal: it starts
 reads by expected cost at a learned price on host memory, evicts by chance of return, and lets an arrived request's read take room
-from early reads.
+from early reads. The oracle is the rules arm given each true next-request time as its distribution, so its reads land as the
+request is due and it evicts the session that returns last first. The old oracle and just-in-time arms ran an eviction that took a
+request queued for over 60 s for one not coming, a defect fixed after these runs; the rules arms did not have it.
   original HiCache: 286.05 = after admission 3.25 + queue 264.68 + read and GPU 17.87 + read only 0.24
   old oracle v2, exact hints: 185.54 = after admission 2.18 + queue 96.41 + read and GPU 86.22 + read only 0.74
   JIT, p50 hints: 123.09 = after admission 1.37 + queue 22.83 + read and GPU 97.83 + read only 1.06
   JIT, exact hints: 130.80 = after admission 1.34 + queue 26.32 + read and GPU 101.73 + read only 1.41
   all four rules: 113.61 = after admission 1.13 + queue 19.50 + read and GPU 91.40 + read only 1.58
+  oracle: the four rules on exact hints: 114.41 = after admission 1.27 + queue 21.33 + read and GPU 90.35 + read only 1.46
 wrote ../results/compare_c29_designs
