@@ -19,7 +19,8 @@ anchors sit one or two lines higher in copy d).
 1. **Defect 1 (§1), not fixed.** A queued request may look up the SSD three times, and a lookup that finds nothing
    counts. In the replay most returning requests spend all three on text that no tier holds; when their real history
    later leaves memory, the engine refuses to read it back and computes it again.
-2. **Defect 2 (§2), fixed 2026-11-22 (commit `94c3dd0c85`, copy `frozen/engine_queuedfix_20261122`).** The `next_use`
+2. **Defect 2 (§2), fixed 2026-11-22 (commit `94c3dd0c85`, copy `frozen/engine_queuedfix_20261122`; the run check
+   passed: 88 requests hit at 55 to 70 s and 57 refused in campaign 29's first 30 minutes, 6 and 1 on the fix).** The `next_use`
    eviction ranked a request that has waited over 60 s in the queue as "not coming" and evicted its session's tail
    right after ended sessions. With TraceLab's three-minute queue this set off defect 1 for 250 to 290 requests an arm.
 3. **What they change (§3).** On TraceLab 99 % of the history the three just-in-time arms computed again is defect 1,
@@ -119,6 +120,26 @@ node at `TIER_OVERDUE`. Frozen as `frozen/engine_queuedfix_20261122` (copy e plu
 arms and `ec_exact` keep copy d; the run check is `results/qfix_check/` (30 min of TraceLab's `jit_exact` on the fixed
 copy, against the 88 marks at 55 to 70 s and 57 refusals of campaign 29's first 30 minutes). Lines below describe the
 engine the campaigns ran.
+
+**Run check: passed 2026-11-22** (05:38 to 06:14Z, 949 requests, 0 errors; the one traceback is the known one at the
+server's stop). Among requests that reached the server in the first 30 minutes (`results/qfix_check/signature.txt`,
+`signature.py`):
+
+| | campaign 29 `jit_exact` (copy d) | `jit_exact_qfix` (fixed copy) |
+|---|---|---|
+| requests | 788 | 841 |
+| allowance used up 55 to 70 s after arrival | 88 | 6 |
+| of them refused a read | 57 | 1 |
+| refused a read, all | 62 | 23 |
+
+- Paired TTFT on the requests both sent (`results/qfix_check/compare/compare_arms.txt`): -1.1 s [-2.0, -0.3] before
+  1,200 s (695 requests, 35.7 against 34.5 s), -6.0 s [-7.7, -4.4] before 1,500 s (843 requests), where the queue
+  wait first passes 60 s. Returning requests that read from SSD in minutes 10 to 30: 17 % against 28 %.
+- What is left is defect 1: 140 requests still used up the allowance and 23 were refused. Of the 6 marks at 55 to 70
+  s, 5 come 0.1 to 7.4 s before an admission at 64 to 70 s: the read had landed and two lookups for the tail found
+  nothing; the history loads from host memory and none is refused. The sixth (`jit_exact_qfix-c6-t7`, 61,440-token
+  chain) is marked at 58.5 s and refused at its admission at 91.4 s; not traced further.
+- The arms of campaigns 32 and 33 (FA3) run on this copy.
 
 **What the engine does.**
 

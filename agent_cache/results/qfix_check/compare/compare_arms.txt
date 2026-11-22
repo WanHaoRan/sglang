@@ -1,0 +1,86 @@
+===== compare: tracelab_v0.0.2.programs.jsonl.gz; 0.1 users/s, cap 128, 160 GB, gaps x1, 1800 s; requests sent before 1200 s
+play numbers name one session across arms: yes
+
+arm            | users in finished | requests req/min out tok/s | TTFT mean     p50     p90     p99 |   first returning |   GPU  host   SSD recomputed delivered/ideal | errors longest s
+jit_exact      |      127       54 |      697    34.9       272 |     35.95   28.62   87.89  135.51 |   33.83     36.42 |  0.25  0.44  0.07       0.24           0.979 |      0       794
+jit_exact_qfix |      127       54 |      705    35.2       273 |     35.73   29.07   88.35  124.89 |   32.80     36.37 |  0.25  0.48  0.04       0.23           0.994 |      0       698
+users in: users with a request sent before the cut; finished: sessions that ended before it; first: a user's first request; longest: the slowest recorded request (over 600 s means some sent before the cut may be missing)
+
+by send time: requests | TTFT mean s | returning requests that read from SSD | prompt tokens recomputed
+  minutes |            jit_exact            |         jit_exact_qfix         
+     0-10 |    333     8.38    0.0%   22.4% |    332     9.00    0.0%   22.4%
+    10-30 |    364    61.17   28.4%   25.4% |    373    59.52   17.0%   23.1%
+
+users: wait for a slot (first send - arrival) and session length; 127 users started before the cut in every arm, 54 sessions ended before it in every arm
+arm            | slot wait mean     p50     max | shared users mean     p50 | session mean, shared     p50
+jit_exact      |            0.0     0.0     0.0 |               0.0     0.0 |                255.9   245.9
+jit_exact_qfix |            0.0     0.0     0.0 |               0.0     0.0 |                259.8   261.0
+
+requests sent before the cut in every arm: 695, of 127 users
+arm            | TTFT mean     p50     p90
+jit_exact      |     35.66   28.61   87.69
+jit_exact_qfix |     34.54   28.94   82.74
+
+pairs (B - A on the requests both sent before the cut; interval over users, 95 %)
+A              B              | requests users |   A mean   B mean |    B - A            interval | B faster
+jit_exact      jit_exact_qfix |      695   127 |    35.66    34.54 |    -1.13 [   -2.00,    -0.27] |    49.9%
+
+by harness: requests, TTFT mean s (each arm's own requests before the cut)
+harness              |    jit_exact     |  jit_exact_qfix 
+claude-code          |    537    34.35  |    542    33.80 
+codex                |    160    41.32  |    163    42.16 
+all but claude-code  |    160    41.32  |    163    42.16 
+
+by harness, on the requests every arm sent before the cut: requests, TTFT mean s
+harness              | requests | jit_exact | jit_exact_qfix
+claude-code          |      535 |     33.97 |     32.68
+codex                |      160 |     41.32 |     40.74
+all but claude-code  |      160 |     41.32 |     40.74
+
+hints sent (requests before the cut that name a next request)
+jit_exact      | exact: 636 hints of 697 requests
+jit_exact_qfix | exact: 644 hints of 705 requests
+
+== cut 1500 s
+===== compare: tracelab_v0.0.2.programs.jsonl.gz; 0.1 users/s, cap 128, 160 GB, gaps x1, 1800 s; requests sent before 1500 s
+play numbers name one session across arms: yes
+
+arm            | users in finished | requests req/min out tok/s | TTFT mean     p50     p90     p99 |   first returning |   GPU  host   SSD recomputed delivered/ideal | errors longest s
+jit_exact      |      156       62 |      844    33.8       265 |     52.61   34.25  130.59  180.43 |   51.45     52.87 |  0.21  0.39  0.13       0.27           0.942 |      0       796
+jit_exact_qfix |      156       64 |      873    34.9       269 |     50.06   37.36  119.85  152.65 |   46.97     50.73 |  0.20  0.42  0.14       0.23           0.985 |      0       698
+users in: users with a request sent before the cut; finished: sessions that ended before it; first: a user's first request; longest: the slowest recorded request (over 600 s means some sent before the cut may be missing)
+
+by send time: requests | TTFT mean s | returning requests that read from SSD | prompt tokens recomputed
+  minutes |            jit_exact            |         jit_exact_qfix         
+     0-10 |    333     8.38    0.0%   22.4% |    332     9.00    0.0%   22.4%
+    10-30 |    511    81.43   42.5%   30.1% |    541    75.25   39.4%   23.9%
+
+users: wait for a slot (first send - arrival) and session length; 156 users started before the cut in every arm, 62 sessions ended before it in every arm
+arm            | slot wait mean     p50     max | shared users mean     p50 | session mean, shared     p50
+jit_exact      |            0.0     0.0     0.0 |               0.0     0.0 |                293.6   285.2
+jit_exact_qfix |            0.0     0.0     0.0 |               0.0     0.0 |                295.2   284.9
+
+requests sent before the cut in every arm: 843, of 156 users
+arm            | TTFT mean     p50     p90
+jit_exact      |     52.53   34.23  130.59
+jit_exact_qfix |     46.53   35.49  107.01
+
+pairs (B - A on the requests both sent before the cut; interval over users, 95 %)
+A              B              | requests users |   A mean   B mean |    B - A            interval | B faster
+jit_exact      jit_exact_qfix |      843   156 |    52.53    46.53 |    -5.99 [   -7.67,    -4.41] |    57.3%
+
+by harness: requests, TTFT mean s (each arm's own requests before the cut)
+harness              |    jit_exact     |  jit_exact_qfix 
+claude-code          |    658    52.34  |    680    49.31 
+codex                |    186    53.55  |    193    52.68 
+all but claude-code  |    186    53.55  |    193    52.68 
+
+by harness, on the requests every arm sent before the cut: requests, TTFT mean s
+harness              | requests | jit_exact | jit_exact_qfix
+claude-code          |      657 |     52.24 |     45.86
+codex                |      186 |     53.55 |     48.90
+all but claude-code  |      186 |     53.55 |     48.90
+
+hints sent (requests before the cut that name a next request)
+jit_exact      | exact: 771 hints of 844 requests
+jit_exact_qfix | exact: 800 hints of 873 requests

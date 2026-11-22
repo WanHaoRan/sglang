@@ -467,8 +467,8 @@ full at the end; 3,424 exact hints of the 3,763 requests sent before 6,600 s.
 
 - `ec_exact` is 1.8 s (1.2 %) ahead of `ec_full`, one run each, and the lead sits on users' first requests, which no
   hint names: -11.7 s [-15.7, -7.7] over 453 first requests, against -0.4 s [-1.4, +0.5] over 3,258 returning ones
-  (the same pairing as `compare_arms.py`, split by first request). By the wait before the request every bucket's
-  interval holds zero (`checks/hint_effect_ec_full_ec_exact.out`).
+  (`checks/first_split.py`, `compare_arms.py`'s pairing split by first request). By the wait before the request every
+  bucket's interval holds zero (`checks/hint_effect_ec_full_ec_exact.out`).
 - What differs is throughput: the oracle is refused a read at the cap less often (152 of 3,263 returning requests
   against 175 of 3,228, `checks/cap_share_ec_exact.out`), computes 4.37 M history tokens again in minutes 30 to 110
   against 5.08 M (10.0 % of the window's GPU time against 11.6 %, `checks/gpu_work.out`) and sends 34.1 requests a

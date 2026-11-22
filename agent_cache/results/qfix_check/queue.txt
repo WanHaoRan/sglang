@@ -1,0 +1,6 @@
+# <label> <system> <hints> <client flags joined by commas, or -> [arguments]   (baselines/common/run_baselines.sh)
+# The next_use fix in a real run (commit 94c3dd0c85, engine frozen/engine_queuedfix_20261122): campaign 29's jit_exact
+# arm (TraceLab, the same users and seed) for its first 30 minutes on the fixed engine. Judged against campaign 29's
+# jit_exact on the requests both sent: requests that used up their read allowance 55 to 70 s into a queue wait and were
+# then refused a read (88 and 57 among arrivals in the first 30 minutes of campaign 29's run; want about 0).
+jit_exact_qfix sglang oracle - three_tier_wc_oracle_v2_nu_owned engine_queuedfix_20261122
