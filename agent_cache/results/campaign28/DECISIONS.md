@@ -30,6 +30,7 @@ of the launcher, then the watcher from `agent_cache/`. Finished arms are skipped
 | `jit_exact` | `three_tier_wc_oracle_v2_nu_owned`: just-in-time reads, arrival gate and hold | the exact gap |
 | `jit_p50` | the same | the gap table of the session's harness and model, and the recorded reply's key |
 | `ec_full` | the same with the four rules (campaign 26's `ec_full` flags) | the gap table |
+| `ec_exact` | `ec_full`'s server, the oracle arm (added 2026-11-22, Results) | the exact gap |
 
 Choices the order left open, as launched:
 
@@ -552,3 +553,28 @@ shows. Outputs `checks/start_state.out`, `checks/start_state_proposal.out`, `res
 **Open after both campaigns (2026-11-20).** The two engine defects (the lookup cap, the `next_use` overdue rank of
 queued turns), the decisions that wait for the author (the fix, the follow-up setting, the start state) and the
 steps to pick the work up are in `agent_cache/OPEN_ITEMS.md`.
+
+**The oracle arm `ec_exact` (2026-11-22).** Ordered by the author with the `next_use` fix: the oracle is the four
+rules given each true next-request time as their distribution (a point), not just-in-time on exact hints, which stays
+as the arm with exact hints and no rules, so the arms form {just-in-time, rules} x {p50, exact}. Queue line: `ec_full`'s
+flags with `oracle` hints, on `ec_full`'s copy d (the fix does not touch the rules' eviction), so the pair differs by
+the hint alone; the server arguments match `ec_full`'s but for the run path and the random seed. Started by
+`results/qfix_check/chain.sh` after the FA3 batch: launched 01:27:48Z, DONE 03:31:56Z, 9,228 requests, 0 errors, no
+traceback; 8,357 exact hints of the 8,644 requests sent before 6,600 s.
+
+| A | `ec_exact` - A, requests both sent before 6,600 s | interval |
+|---|---|---|
+| `hicache` | -80.86 s | [-88.90, -72.65] |
+| `oracle_v2` | +1.15 s | [+0.78, +1.56] |
+| `jit_exact` | -2.02 s | [-2.45, -1.59] |
+| `jit_p50` | -1.21 s | [-1.58, -0.83] |
+| `ec_full` | +0.50 s | [+0.16, +0.82] |
+
+- Exact hints add nothing to the rules here: `ec_exact` is 0.5 s (1 %) behind `ec_full`, one run each, and behind it
+  in every wait bucket but the waits over 300 s (`checks/hint_effect_ec_full_ec_exact.out`: +0.20 to +1.14 s).
+- The rules decide nothing with exact hints either (`checks/rules_activity_ec_exact.out`): the price stays at
+  5e-05, no room is refused, no release or bump; 2,406 of 2,415 read starts are at arrival, the queue wait estimate
+  (median 59.6 s) covering the read (5.8 s). A saturated queue leaves the timing nothing to decide, as for `ec_full`.
+- Figures redrawn with six series (`results/compare_c28_designs/`, the oracle dashed in the rules' colour). Over the
+  4,174 returning requests every arm sent before minute 110: HiCache 113.50, old oracle 34.20, JIT p50 35.44, JIT
+  exact 34.78, the rules 33.84, the oracle 34.60 s.

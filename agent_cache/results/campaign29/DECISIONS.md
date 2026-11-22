@@ -30,6 +30,7 @@ of the launcher, then the watcher from `agent_cache/`. Finished arms are skipped
 | `jit_exact` | `three_tier_wc_oracle_v2_nu_owned`: just-in-time reads, arrival gate and hold | the exact gap |
 | `jit_p50` | the same | the gap table of the session's harness and model, and the recorded reply's key |
 | `ec_full` | the same with the four rules (campaign 26's `ec_full` flags) | the gap table |
+| `ec_exact` | `ec_full`'s server, the oracle arm (added 2026-11-22, Results) | the exact gap |
 
 Choices the order left open, as launched:
 
