@@ -74,6 +74,7 @@ from sglang.srt.mem_cache.next_turn_policy import (
 )
 from sglang.srt.mem_cache.next_use_eviction import (
     NextUseStrategy,
+    Queued,
     Registration,
     ReturnChanceStrategy,
     ReturnForecast,
@@ -771,7 +772,7 @@ class NextTurnPrefetcher:
             rid=plan.next_rid,
             session=plan.session,
             tail_node_id=self._session_tail.get(plan.session),
-            next_use=now,
+            next_use=Queued(since=now),
             now=now,
         )
         plan.pred_wait_ql, plan.pred_wait_ewma = wait_at_arrival(
@@ -1428,6 +1429,8 @@ class NextTurnPrefetcher:
             due = "ended"
         elif isinstance(next_use, ReturnForecast):
             due = _ms(next_use.idle_from + next_use.dist.median_s - now)
+        elif isinstance(next_use, Queued):
+            due = _ms(next_use.since - now)
         else:
             due = _ms(next_use - now)
         _log_event("nue_register", rid, node=tail_node_id, next_use_ms=due)

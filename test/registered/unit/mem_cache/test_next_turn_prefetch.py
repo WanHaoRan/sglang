@@ -44,6 +44,7 @@ from sglang.srt.mem_cache.next_turn_prefetch import (
 )
 from sglang.srt.mem_cache.next_use_eviction import (
     NextUseStrategy,
+    Queued,
     ReturnChanceStrategy,
     ReturnForecast,
 )
@@ -1024,16 +1025,22 @@ class TestDeadlineMode(PrefetcherTestCase):
         req = make_req("u-t1", entered=100.0 + self.arrival)
         req.__dict__["kv_hints"] = hints("u-t2", payload={"session": "u", "next_rid": "u-t2", "next_gap_s": 5.0})
         self.ntp.tick(waiting_queue=[req], now=100.0 + self.arrival)
-        self.assertEqual(self.registry().lookup(9), (True, 100.0 + self.arrival))
+        self.assertEqual(
+            self.registry().lookup(9), (True, Queued(since=100.0 + self.arrival))
+        )
         self.ntp.tick(waiting_queue=[], now=101.0 + self.arrival)
         self.assertEqual(self.registry().lookup(9), (True, None))
 
-    def test_arrival_marks_the_tail_as_in_use_now(self):
+    def test_arrival_registers_the_tail_as_queued_not_as_a_time(self):
+        """Under next_use a plain time is a predicted next use, overdue once the turn
+        has waited past the grace: the arrival needs its own marker."""
         self.commit_tail("s-t0", "s-t1", now=0.0, tail_node_id=7)
         self.tick(0.01)
         req = make_req("s-t1", entered=self.arrival + 1.0)
         self.tick(self.arrival + 1.0, queue=[req])
-        self.assertEqual(self.registry().lookup(7), (True, self.arrival + 1.0))
+        self.assertEqual(
+            self.registry().lookup(7), (True, Queued(since=self.arrival + 1.0))
+        )
 
 
 class PricedCache(DeadlineCache):

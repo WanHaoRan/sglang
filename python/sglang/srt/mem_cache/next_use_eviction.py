@@ -2,13 +2,14 @@
 (agent_cache/ORACLE_V2_PLAN.md section 4.5).
 
 The next-turn prefetcher registers each committed turn's tail node with the
-predicted admission of the session's next turn, None when the session ended.
-Eviction then takes, in order: ended sessions, sessions whose predicted turn
-is overdue by more than the grace (oldest first: the turn is not coming),
-sessions returning beyond the horizon (farthest first), unregistered nodes by
-plain LRU, and last the sessions returning within the horizon (farthest
-first). Priorities compare as tuples, smallest evicted first, like every other
-EvictionStrategy.
+predicted admission of the session's next turn, None when the session ended,
+and Queued once that turn has arrived and waits for admission. Eviction then
+takes, in order: ended sessions, sessions whose predicted turn is overdue by
+more than the grace (oldest first: the turn is not coming), sessions returning
+beyond the horizon (farthest first), unregistered nodes by plain LRU, the
+sessions returning within the horizon (farthest first), and last the sessions
+whose turn waits in the queue. Priorities compare as tuples, smallest evicted
+first, like every other EvictionStrategy.
 
 ReturnChanceStrategy orders the same registrations by a distribution instead of a
 point (agent_cache/PAPER_PLAN.md, "Formulation", rule 3): a tail registered with a
@@ -42,6 +43,7 @@ TIER_OVERDUE = 1
 TIER_FAR = 2
 TIER_UNKNOWN = 3
 TIER_SOON = 4
+TIER_QUEUED = 5
 # Arbitrary; one ended entry per finished request under un-hinted traffic, so
 # the bound, not the request count, sizes the registry (~100 B per entry).
 REGISTRY_MAX_ENTRIES = 1 << 16
@@ -72,7 +74,14 @@ class ReturnForecast(msgspec.Struct, frozen=True):
     all_gaps: tuple[float, ...] = ()
 
 
-Registration = Union[None, float, ReturnForecast]
+class Queued(msgspec.Struct, frozen=True):
+    """The session's next turn arrived at `since` (perf_counter seconds) and waits for
+    admission. Its own type, since a plain time is a predicted next use."""
+
+    since: float
+
+
+Registration = Union[None, float, ReturnForecast, Queued]
 
 
 class NextUseRegistry:
@@ -151,6 +160,10 @@ class NextUseStrategy(EvictionStrategy):
             return (TIER_UNKNOWN, node.last_access_time)
         if next_use is None:
             return (TIER_ENDED, node.last_access_time)
+        if isinstance(next_use, Queued):
+            if self._clock() - next_use.since > QUEUED_MAX_AGE_S:
+                return (TIER_UNKNOWN, node.last_access_time)
+            return (TIER_QUEUED, node.last_access_time)
         delta = next_use - self._clock()
         if delta < -self.overdue_grace_s:
             return (TIER_OVERDUE, next_use)
@@ -161,7 +174,7 @@ class NextUseStrategy(EvictionStrategy):
 
 class ReturnChanceStrategy(EvictionStrategy):
     """Evicts first the session least likely back within horizon_s given its idle
-    time. A session registered with a time has a turn that has arrived and goes last;
+    time. A session registered as Queued has a turn that has arrived and goes last;
     a node of no registered session (un-hinted traffic, a shared prefix) goes by LRU
     before any scored session.
 
@@ -237,8 +250,8 @@ class ReturnChanceStrategy(EvictionStrategy):
         if forecast is None:
             tier = RETURN_TIER_UNKNOWN if self.score == "queue" else RETURN_TIER_ENDED
             return (tier, node.last_access_time, 0.0)
-        if not isinstance(forecast, ReturnForecast):
-            if self._clock() - forecast > QUEUED_MAX_AGE_S:
+        if isinstance(forecast, Queued):
+            if self._clock() - forecast.since > QUEUED_MAX_AGE_S:
                 return (RETURN_TIER_UNKNOWN, node.last_access_time, 0.0)
             return (RETURN_TIER_QUEUED, node.last_access_time, 0.0)
         if self.score in ("lru", "queue"):

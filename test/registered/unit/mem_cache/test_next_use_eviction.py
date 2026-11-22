@@ -30,9 +30,12 @@ from sglang.srt.mem_cache.next_use_eviction import (
     RETURN_TIER_UNKNOWN,
     TIER_FAR,
     TIER_OVERDUE,
+    TIER_QUEUED,
     TIER_SOON,
+    TIER_UNKNOWN,
     NextUseRegistry,
     NextUseStrategy,
+    Queued,
     ReturnChanceStrategy,
     ReturnForecast,
 )
@@ -91,6 +94,35 @@ class TestNextUseStrategy(CustomTestCase):
         self.assertEqual(order, [9, 1, 8, 10, 2, 3, 4, 7, 5, 6, 11])
         self.assertEqual(strategy.get_priority(node(8))[0], TIER_OVERDUE)
 
+    def test_a_turn_queued_past_the_grace_outlasts_every_session_not_yet_back(self):
+        """A turn that waited in the queue longer than the grace ranked as overdue (its
+        session not coming) and lost its tail while it waited. An arrived turn is
+        needed before any turn still to come, however long it has waited."""
+        strategy = NextUseStrategy(
+            horizon_s=100.0, overdue_grace_s=60.0, clock=lambda: 1000.0
+        )
+        registry = strategy.registry
+        registry.register(1, None)
+        registry.register(2, 100.0)
+        registry.register(3, 1500.0)
+        registry.register(5, 1010.0)
+        registry.register(6, Queued(since=880.0))
+        registry.register(7, Queued(since=990.0))
+        nodes = [node(7, 2.0), node(6, 1.0), node(5), node(4), node(3), node(2), node(1)]
+        order = [n.id for n in sorted(nodes, key=strategy.get_priority)]
+        self.assertEqual(order, [1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual(strategy.get_priority(node(6))[0], TIER_QUEUED)
+
+    def test_a_queued_registration_does_not_outlive_its_turn_for_ever(self):
+        """A turn aborted before it commits leaves its tail registered as queued;
+        past the bound it ranks as un-hinted, as under return_chance."""
+        clock = [1000.0]
+        strategy = NextUseStrategy(clock=lambda: clock[0])
+        strategy.registry.register(1, Queued(since=1000.0))
+        self.assertEqual(strategy.get_priority(node(1))[0], TIER_QUEUED)
+        clock[0] += QUEUED_MAX_AGE_S + 1.0
+        self.assertEqual(strategy.get_priority(node(1, 3.0)), (TIER_UNKNOWN, 3.0))
+
     def test_registry_is_bounded_oldest_registration_first(self):
         registry = NextUseRegistry(max_entries=3)
         for node_id in (1, 2, 3):
@@ -134,7 +166,7 @@ class TestReturnChanceStrategy(CustomTestCase):
     def test_order_is_ended_unhinted_rising_chance_then_queued(self):
         """A session scored from a distribution is never ended by it: one idle for
         ten times its median only ranks below one still inside its entry. A turn
-        that has arrived (registered with a time) goes last."""
+        that has arrived (registered as Queued) goes last."""
         now = 1000.0
         strategy = ReturnChanceStrategy(horizon_s=30.0, clock=lambda: now)
         wide = GapDistribution.from_quantiles(p10=0.85, p50=22.0, p90=58.0)
@@ -142,7 +174,7 @@ class TestReturnChanceStrategy(CustomTestCase):
         registry.register(1, None)
         registry.register(2, ReturnForecast(dist=wide, idle_from=now - 300.0))
         registry.register(3, ReturnForecast(dist=wide, idle_from=now - 5.0))
-        registry.register(4, now)
+        registry.register(4, Queued(since=now))
         nodes = [node(4), node(3), node(2), node(1), node(5, 2.0), node(6, 1.0)]
         order = [n.id for n in sorted(nodes, key=strategy.get_priority)]
         self.assertEqual(order, [1, 6, 5, 2, 3, 4])
@@ -191,7 +223,7 @@ class TestReturnChanceStrategy(CustomTestCase):
         self.assertEqual(strategy.get_priority(reread), scored)
         self.assertEqual(strategy.get_priority(shared)[0], RETURN_TIER_UNKNOWN)
         self.assertEqual(strategy.get_priority(other)[0], RETURN_TIER_UNKNOWN)
-        strategy.registry.register(3, now)
+        strategy.registry.register(3, Queued(since=now))
         for member in (body, reread):
             self.assertEqual(strategy.get_priority(member)[0], RETURN_TIER_QUEUED)
         strategy.registry.forget(3)
@@ -213,7 +245,7 @@ class TestReturnChanceStrategy(CustomTestCase):
         registry.move(3, 7)
         registry.register(7, ReturnForecast(dist=entry, idle_from=now - 1.0))
         registry.move(7, 9)
-        registry.register(9, now)
+        registry.register(9, Queued(since=now))
         self.assertEqual(strategy.get_priority(body)[0], RETURN_TIER_QUEUED)
 
     def test_a_span_read_back_under_a_shared_prompt_is_adopted_at_landing(self):
@@ -230,7 +262,7 @@ class TestReturnChanceStrategy(CustomTestCase):
         span = node(3, parent=prompt)
         self.assertEqual(strategy.get_priority(span)[0], RETURN_TIER_UNKNOWN)
         self.assertEqual(strategy.get_priority(prompt)[0], RETURN_TIER_UNKNOWN)
-        strategy.registry.register(8, now)
+        strategy.registry.register(8, Queued(since=now))
         strategy.adopt(3, 8)
         self.assertEqual(strategy.get_priority(span)[0], RETURN_TIER_QUEUED)
 
@@ -239,7 +271,7 @@ class TestReturnChanceStrategy(CustomTestCase):
         past the bound its path ranks as un-hinted instead of last."""
         clock = [1000.0]
         strategy = ReturnChanceStrategy(clock=lambda: clock[0])
-        strategy.registry.register(1, 1000.0)
+        strategy.registry.register(1, Queued(since=1000.0))
         self.assertEqual(strategy.get_priority(node(1))[0], RETURN_TIER_QUEUED)
         clock[0] += QUEUED_MAX_AGE_S + 1.0
         self.assertEqual(strategy.get_priority(node(1))[0], RETURN_TIER_UNKNOWN)
@@ -286,7 +318,7 @@ class TestReturnChanceStrategy(CustomTestCase):
         strategy.registry.register(1, None)
         strategy.registry.register(2, ReturnForecast(dist=entry, idle_from=now - 5.0))
         strategy.registry.register(3, ReturnForecast(dist=entry, idle_from=now - 900.0))
-        strategy.registry.register(4, now)
+        strategy.registry.register(4, Queued(since=now))
         nodes = [node(4, 0.0), node(3, 9.0), node(2, 1.0), node(1, 5.0), node(5, 4.0)]
         order = [n.id for n in sorted(nodes, key=strategy.get_priority)]
         self.assertEqual(order, [1, 2, 5, 3, 4])
@@ -299,7 +331,7 @@ class TestReturnChanceStrategy(CustomTestCase):
         entry = GapDistribution.from_quantiles(p10=0.85, p50=22.0, p90=58.0)
         strategy.registry.register(1, None)
         strategy.registry.register(2, ReturnForecast(dist=entry, idle_from=now - 5.0))
-        strategy.registry.register(4, now)
+        strategy.registry.register(4, Queued(since=now))
         nodes = [node(4, 0.0), node(2, 1.0), node(1, 5.0), node(5, 4.0)]
         order = [n.id for n in sorted(nodes, key=strategy.get_priority)]
         self.assertEqual(order, [2, 5, 1, 4])
@@ -448,7 +480,7 @@ class TestNextUseOnACpuTree(CustomTestCase):
 
         cache.evict(EvictParams(num_tokens=2))
         self.assertEqual((device_tokens(whole), device_tokens(other)), (2, 2))
-        strategy.registry.register(tail_a, time.perf_counter())
+        strategy.registry.register(tail_a, Queued(since=time.perf_counter()))
         cache.evict(EvictParams(num_tokens=2))
         self.assertEqual((device_tokens(whole), device_tokens(other)), (2, 0))
 
