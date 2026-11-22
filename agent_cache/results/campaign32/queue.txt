@@ -1,0 +1,14 @@
+# <label> <server arm> <hints> <client flags joined by commas, or -> <engine folder in frozen/> [extra server flags ...]
+# Campaign 28's arms and its oracle arm (ec_exact) on FlashAttention 3 for the full 2 h, at the author's request
+# (2026-11-22), after the 20-minute check in which every arm kept up and the policies tied (results/fa3_smoke/,
+# baselines/README.md "FA3"). --attention-backend fa3 overrides start_server.sh's Triton pin; --max-total-tokens 668096
+# keeps the GPU pool of campaigns 28 and 29. Engine: frozen/engine_queuedfix_20261122 (copy e plus the next_use fix of
+# commit 94c3dd0c85; defect 1 of OPEN_ITEMS.md is still in it), one engine for every arm.
+# Order: the stock baseline and the two rules arms first; the next_use arms, the ones the fix changes, after the fix
+# check (results/qfix_check/) has landed.
+hicache three_tier_wc none - engine_queuedfix_20261122 --attention-backend fa3 --max-total-tokens 668096
+ec_full three_tier_wc_oracle_v2_nu_owned dist --hint-no-call engine_queuedfix_20261122 --attention-backend fa3 --max-total-tokens 668096 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning harm --hicache-storage-next-turn-soft-pins on --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}
+ec_exact three_tier_wc_oracle_v2_nu_owned oracle - engine_queuedfix_20261122 --attention-backend fa3 --max-total-tokens 668096 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning harm --hicache-storage-next-turn-soft-pins on --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}
+jit_p50 three_tier_wc_oracle_v2_nu_owned dist --hint-no-call engine_queuedfix_20261122 --attention-backend fa3 --max-total-tokens 668096
+jit_exact three_tier_wc_oracle_v2_nu_owned oracle - engine_queuedfix_20261122 --attention-backend fa3 --max-total-tokens 668096
+oracle_v2 three_tier_wc_oracle_v2_nu oracle - engine_queuedfix_20261122 --attention-backend fa3 --max-total-tokens 668096

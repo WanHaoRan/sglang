@@ -3,8 +3,9 @@
 Written 2026-11-20, after the last arm of campaign 29 (01:25:51Z). Campaigns 28 (FreeInference) and 29 (TraceLab) are
 complete; their records are `results/campaign28/DECISIONS.md` and `results/campaign29/DECISIONS.md`. This file holds
 what they left open: two defects found in the engine, what each does to the numbers, the decisions that wait for the
-author, and the steps to pick the work up. Nothing described here has been applied: no engine fix, no client change,
-no queue change.
+author, and the steps to pick the work up. Nothing described here was applied until 2026-11-22, when the author asked
+for defect 2's fix (§2, way (a)) and for an oracle arm of the four rules on exact hints (`ec_exact`, both campaigns'
+records); defect 1 is still open.
 
 Paths: host `/home/wanhr/sglang/agent_cache` is container `/sgl-workspace/sglang/agent_cache` (container
 `sglang_hicache`); every command says which side it runs on. Code anchors are `path:line` at commit `fe7d9a10bc`,
@@ -18,9 +19,9 @@ anchors sit one or two lines higher in copy d).
 1. **Defect 1 (§1), not fixed.** A queued request may look up the SSD three times, and a lookup that finds nothing
    counts. In the replay most returning requests spend all three on text that no tier holds; when their real history
    later leaves memory, the engine refuses to read it back and computes it again.
-2. **Defect 2 (§2), not fixed.** The `next_use` eviction ranks a request that has waited over 60 s in the queue as
-   "not coming" and evicts its session's tail right after ended sessions. With TraceLab's three-minute queue this
-   sets off defect 1 for 250 to 290 requests an arm.
+2. **Defect 2 (§2), fixed 2026-11-22 (commit `94c3dd0c85`, copy `frozen/engine_queuedfix_20261122`).** The `next_use`
+   eviction ranked a request that has waited over 60 s in the queue as "not coming" and evicted its session's tail
+   right after ended sessions. With TraceLab's three-minute queue this set off defect 1 for 250 to 290 requests an arm.
 3. **What they change (§3).** On TraceLab 99 % of the history the three just-in-time arms computed again is defect 1,
    and the 16 s lead of the four-rules arm is defect 2 acting through defect 1, not the rules. The ranking against
    original HiCache stands.
@@ -109,7 +110,15 @@ This section says what the eviction order does to a queued turn, where, how ofte
 defects meet in one place: defect 2 decides when the tail of a queued session leaves memory, defect 1 turns that
 into a lost history.
 
-**Status:** not fixed; the engine is unchanged. The fix is decision D1 (§4).
+**Status:** fixed 2026-11-22 by way (a) below, at the author's request (commit `94c3dd0c85`): the arrival registers
+`Queued(since=now)` (`next_use_eviction.py`, a type of its own), which `NextUseStrategy` ranks last (`TIER_QUEUED`) and
+`ReturnChanceStrategy` ranks queued as before, both back to unknown after `QUEUED_MAX_AGE_S`; the log line stays
+`nue_register ... next_use_ms=0`. Unit tests: the eight mem_cache files pass, two new `next_use` tests (a turn queued
+past the grace outlasts every session not yet back; the 600 s backstop); on copy e the first fails with the queued
+node at `TIER_OVERDUE`. Frozen as `frozen/engine_queuedfix_20261122` (copy e plus the two fixed files). The campaigns'
+arms and `ec_exact` keep copy d; the run check is `results/qfix_check/` (30 min of TraceLab's `jit_exact` on the fixed
+copy, against the 88 marks at 55 to 70 s and 57 refusals of campaign 29's first 30 minutes). Lines below describe the
+engine the campaigns ran.
 
 **What the engine does.**
 
