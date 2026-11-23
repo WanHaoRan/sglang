@@ -1,0 +1,14 @@
+# <label> <server arm> <hints> <client flags joined by commas, or -> <engine folder in frozen/> [extra server flags ...]
+# Campaign 34: the verification of the FA3 engine fixes (agent_cache/OPEN_ITEMS.md section 7), ordered by the author on
+# 2026-11-22 ("prototype the engine fixes while campaign 33 runs, after campaign 33 finishes, verify the fixes").
+# Campaign 32's setting (FreeInference on FA3, same users, settings.env adds the fix switches) on the fixed engine copy,
+# every fix on: skip rewrites of stored pages, write coalescing (128 pages), read write-hold (50,000 tokens), room retry
+# for refused reads, host census every 10 s. Three of campaign 32's arms: jit_p50 (the earliest loop, minute 67), ec_full
+# (the best arm, minute 84) and jit_exact (minute 80); pairs with campaign 32 by (play, stream, k).
+# --host 127.0.0.1 (added 2026-11-23 07:3xZ, before the first arm): start_server.sh binds 0.0.0.0 with no API key, and
+# a scanner's POST /update_weights_from_disk drained campaign 32's ec_exact and campaign 33's oracle_v2 servers for
+# 20 to 44 s (results/campaign33/DECISIONS.md, "Outside requests"). Every client and probe uses 127.0.0.1, and a later
+# --host overrides the script's, so only the bind address changes.
+jit_p50 three_tier_wc_oracle_v2_nu_owned dist --hint-no-call engine_fa3fix_20261122 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1
+ec_full three_tier_wc_oracle_v2_nu_owned dist --hint-no-call engine_fa3fix_20261122 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning harm --hicache-storage-next-turn-soft-pins on --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}
+jit_exact three_tier_wc_oracle_v2_nu_owned oracle - engine_fa3fix_20261122 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1

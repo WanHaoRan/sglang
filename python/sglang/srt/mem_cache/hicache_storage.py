@@ -343,6 +343,10 @@ class HiCacheStorage(ABC):
     def get_stats(self):
         return None
 
+    def take_stored_write_skips(self) -> int:
+        """Pages a set call found already stored and did not write, since the last call."""
+        return 0
+
 
 class MetadataCache:
     def __init__(self, ttl_seconds: float):

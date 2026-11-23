@@ -16,6 +16,7 @@ _SGLANG_NIXL_CONFIG_KEYS = {
     "l3_cleaner_enabled",
     "l3_cleaner_high_watermark",
     "l3_cleaner_low_watermark",
+    "skip_stored_writes",
 }
 
 
@@ -45,6 +46,17 @@ class NixlBackendConfig:
         if "use_direct_io" in self.config:
             return bool(self.config["use_direct_io"])
         return envs.SGLANG_HICACHE_NIXL_USE_DIRECT_IO.get()
+
+    def get_skip_stored_writes(self) -> bool:
+        """Return True if a page whose files the store already holds is only touched, not
+        written again: the top-level ``skip_stored_writes`` key, else
+        ``SGLANG_HICACHE_NIXL_SKIP_STORED_WRITES`` (default: off)."""
+        if "skip_stored_writes" in self.config:
+            skip = self.config["skip_stored_writes"]
+            if not isinstance(skip, bool):
+                raise ValueError("skip_stored_writes must be a boolean")
+            return skip
+        return envs.SGLANG_HICACHE_NIXL_SKIP_STORED_WRITES.get()
 
     def get_l3_cleaner_config(self) -> dict:
         """Return typed NIXL FILE L3 cleaner options from top-level config."""
@@ -304,6 +316,21 @@ class NixlFileManager:
         except Exception as e:
             logger.error(f"Failed to open file {file_path}: {e}")
             return None
+
+    def touch_if_stored(self, file_path: str, size: int) -> bool:
+        """Refresh the mtime of a stored file of ``size`` bytes and return True.
+
+        A missing or short file returns False; nothing is ever created. The L3
+        cleaner deletes the oldest mtime first, so a page that is skipped
+        instead of rewritten must still look recently written.
+        """
+        try:
+            if os.stat(file_path).st_size != size:
+                return False
+            os.utime(file_path)
+            return True
+        except OSError:
+            return False
 
     def close_file(self, fd: int) -> bool:
         """Close a file descriptor."""

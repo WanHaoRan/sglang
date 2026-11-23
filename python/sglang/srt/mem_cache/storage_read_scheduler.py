@@ -9,7 +9,11 @@ deadline; a timed deadline is the predicted admission of a next-turn prefetch.
 The I/O thread holds at most `window_pages` of dispatched work and dispatched
 plus landed-and-pinned pages stay within `budget_tokens`. A "now" read ignores
 both limits, as the FIFO path allocates it unconditionally and an admission may
-be waiting on it. An optional hold passes a read over until its start time.
+be waiting on it. An optional hold passes a read over until its start time. An
+optional write hold stops timed reads while pending SSD writes hold at least
+`write_hold_tokens` host tokens, until they fall to half of it: a pending write
+keeps its host pages locked, so the write thread must catch up before reads can
+find room. "Now" reads are never write-held.
 
 Pure policy: no clock, no tree, no controller; every time is passed in.
 """
@@ -41,21 +45,35 @@ class ReadSchedulerStats(msgspec.Struct):
     window_holds: int = 0
     budget_holds: int = 0
     hold_skips: int = 0
+    write_holds: int = 0
     max_wait_s: float = 0.0
 
 
 class StorageReadScheduler:
     """Parked storage hits and the rule that hands them to the I/O thread."""
 
-    def __init__(self, *, window_pages: int, budget_tokens: int, page_size: int):
+    def __init__(
+        self,
+        *,
+        window_pages: int,
+        budget_tokens: int,
+        page_size: int,
+        write_hold_tokens: int = 0,
+    ):
         if window_pages < 1 or page_size < 1 or budget_tokens < 0:
             raise ValueError(
                 f"window_pages {window_pages}, page_size {page_size} and "
                 f"budget_tokens {budget_tokens} must be positive"
             )
+        if write_hold_tokens < 0:
+            raise ValueError(f"write_hold_tokens {write_hold_tokens} is negative")
         self.window_pages = window_pages
         self.budget_tokens = budget_tokens
         self.page_size = page_size
+        # 0 disables the write hold; the resume level at half is arbitrary.
+        self.write_hold_tokens = write_hold_tokens
+        self.write_resume_tokens = write_hold_tokens // 2
+        self.write_held = False
         # Insertion order is the tiebreak among equal deadlines (park order).
         self._parked: dict[Hashable, ParkedRead] = {}
         self.stats = ReadSchedulerStats()
@@ -105,6 +123,7 @@ class StorageReadScheduler:
         `not_before_of(handle, read, ahead_pages)` gives a read's start time. A held
         read is passed over, unlike the window and budget holds that stop the loop,
         so it never blocks a due read, but its pages still count as ahead of the next.
+        The write hold is whatever update_write_hold() last set.
         """
         decisions: list[DispatchDecision] = []
         if not self._parked:
@@ -126,6 +145,9 @@ class StorageReadScheduler:
                     self.stats.hold_skips += 1
                     continue
             if deadline is not None:
+                if self.write_held:
+                    self.stats.write_holds += 1
+                    break
                 if in_flight_pages >= self.window_pages:
                     self.stats.window_holds += 1
                     break
@@ -144,3 +166,16 @@ class StorageReadScheduler:
                 DispatchDecision(read=read, deadline=deadline, waited_s=waited)
             )
         return decisions
+
+    def update_write_hold(self, write_backlog_tokens: int) -> bool:
+        """Apply the write hold's hysteresis to the host memory pending SSD writes hold;
+        True if the hold flipped. The cache calls it every pass, before dispatch, so a
+        crossing while nothing is parked still counts."""
+        if self.write_hold_tokens <= 0:
+            return False
+        was_held = self.write_held
+        if write_backlog_tokens >= self.write_hold_tokens:
+            self.write_held = True
+        elif write_backlog_tokens <= self.write_resume_tokens:
+            self.write_held = False
+        return self.write_held != was_held

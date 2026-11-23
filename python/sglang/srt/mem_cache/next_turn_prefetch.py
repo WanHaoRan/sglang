@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, Annotated, Optional, TypeVar
 import msgspec
 import msgspec.structs
 
+from sglang.srt.environ import envs
 from sglang.srt.mem_cache.base_prefix_cache import (
     CacheRequestHandle,
     CacheRequestOutcome,
@@ -107,6 +108,12 @@ TRIGGER_MARGIN_S = 0.0
 # Reads per queued request: under heavy eviction a refetch for one request can
 # evict the next one's pages, so re-evicted pages are fetched again only once.
 MAX_REFETCHES = 2
+# With SGLANG_HICACHE_NEXT_TURN_ROOM_RETRY a lookup at least this long after a refusal of the
+# turn's read retries it outside MAX_REFETCHES, at most this many times per turn; a sooner one
+# (any trigger, or the queue head, which cannot wait) is charged as before. Arbitrary: in
+# campaign 32 a refused request was admitted a median 6 to 7.5 s after its last refusal.
+NTP_ROOM_RETRY_S = 2.0
+NTP_MAX_ROOM_RETRIES = 8
 # Deadline read order: a lookup is issued at most this long before the predicted
 # admission, and at most this many parked reads may wait for dispatch.
 # 120 s is about three drains of the prefetch cap (42 s at 302 pages/s, measured
@@ -246,6 +253,8 @@ class RefetchDecision(msgspec.Struct, frozen=True):
     position: int
     wait_s: float
     load_s: float
+    # A retry of a read refused host room, which spends no refetch.
+    room_retry: bool = False
 
 
 class TurnPlan(msgspec.Struct):
@@ -282,6 +291,11 @@ class TurnPlan(msgspec.Struct):
     refetch_capped: bool = False
     # Arrival gate: SSD lookups let through for this turn, by any trigger.
     lookups: int = 0
+    # Room retry: a read for the turn was refused or cut for host room and not retried
+    # yet, when (the Scheduler's perf_counter clock), and the free retries taken.
+    room_refused: bool = False
+    room_refused_at: float = -math.inf
+    room_retries: int = 0
     # Handed to the Scheduler this tick; reported back by on_refetch_result.
     pending_refetch: Optional[RefetchDecision] = None
     dist: Optional[GapDistribution] = None
@@ -377,6 +391,12 @@ class NextTurnPrefetcher:
             tree_cache.read_not_before_fn = self.read_not_before
         if mode == "on" and soft_pins == "on" and self._deadline_mode:
             tree_cache.soft_pin_victims_fn = self.soft_pin_victims
+        self._room_retry = (
+            mode == "on" and envs.SGLANG_HICACHE_NEXT_TURN_ROOM_RETRY.get()
+        )
+        if self._room_retry:
+            tree_cache.prefetch_refused_fn = self.on_read_refused
+        tree_cache.census_staged_fn = self.is_staged_handle
         # rid -> when the queued turn was first seen with no read of its own under way.
         self._ready_since: dict[str, float] = {}
         # Requests with an ntp_hold event logged: one per request, not one per pass.
@@ -636,7 +656,15 @@ class NextTurnPrefetcher:
             self._follow_room(queue_ahead=queue_ahead, now=now)
         backlog_pages = self._tree_cache.storage_read_backlog_pages()
         refetch = []
+        # Turns ahead that admission could take: under wait_complete it passes over a
+        # turn whose own read is under way (room retry only).
+        admissible = 0
         for position, req in enumerate(waiting_queue):
+            admissible_ahead = admissible
+            if self._room_retry and not self._tree_cache.has_ongoing_prefetch(
+                req.cache_request_handle
+            ):
+                admissible += 1
             plan = self._plans.get(req.rid)
             if plan is None:
                 continue
@@ -653,6 +681,7 @@ class NextTurnPrefetcher:
                 plan,
                 req=req,
                 position=position,
+                admissible_ahead=admissible_ahead,
                 rate=rate,
                 backlog_pages=backlog_pages,
                 now=now,
@@ -690,7 +719,13 @@ class NextTurnPrefetcher:
             return
         decision, plan.pending_refetch = plan.pending_refetch, None
         if issued:
-            plan.refetches += 1
+            if decision.room_retry:
+                # Without the arrival gate nothing else takes the retry.
+                self._take_room_retry(plan)
+            else:
+                plan.refetches += 1
+                plan.room_refused = False
+        room = {"room": int(decision.room_retry)} if self._room_retry else {}
         _log_event(
             "ntp_refetch",
             req.rid,
@@ -699,6 +734,7 @@ class NextTurnPrefetcher:
             pos=decision.position,
             resid_ms=_ms(decision.wait_s),
             load_ms=_ms(decision.load_s),
+            **room,
         )
 
     def _on_departure(self, req: Req, *, now: float) -> None:
@@ -793,6 +829,7 @@ class NextTurnPrefetcher:
         *,
         req: Req,
         position: int,
+        admissible_ahead: int,
         rate: Optional[Rate],
         backlog_pages: int,
         now: float,
@@ -817,6 +854,9 @@ class NextTurnPrefetcher:
             return False
         if now - plan.last_probe_t >= PROBE_INTERVAL_S:
             plan.missing_tokens = baseline - self._resident_tokens(plan, now=now)
+            if plan.missing_tokens < self._tree_cache.prefetch_threshold:
+                # The history came back by another read: nothing left to retry.
+                plan.room_refused = False
         load_s = self._load_seconds(plan.missing_tokens, backlog_pages)
         trigger_at = trigger_time(
             admission_at=admission_at, load_s=load_s, margin_s=TRIGGER_MARGIN_S
@@ -844,6 +884,7 @@ class NextTurnPrefetcher:
             req=req,
             baseline=baseline,
             position=position,
+            admissible_ahead=admissible_ahead,
             wait_s=wait,
             load_s=load_s,
             now=now,
@@ -856,25 +897,31 @@ class NextTurnPrefetcher:
         req: Req,
         baseline: int,
         position: int,
+        admissible_ahead: int,
         wait_s: float,
         load_s: float,
         now: float,
     ) -> bool:
         cache = self._tree_cache
+        room = self._room_retry_due(plan, now=now)
+        if not room and self._room_retry_open(plan) and admissible_ahead > 1:
+            # Wait for room before retrying: admission has two turns to take first.
+            return False
         # Any read for the request (its own, a re-query or a staged one) joins
         # admission's wait; a second one would fetch the same pages twice.
         if (
             cache.has_ongoing_prefetch(req.cache_request_handle)
             or now - plan.last_refetch_t < PROBE_INTERVAL_S
-            or plan.refetch_capped
+            or (plan.refetch_capped and not room)
             or cache.cache_controller.prefetch_rate_limited()
         ):
             return False
         # The last probe may predate a read that has since landed.
         plan.missing_tokens = baseline - self._resident_tokens(plan, now=now)
         if plan.missing_tokens < cache.prefetch_threshold:
+            plan.room_refused = False
             return False
-        if plan.refetches > 0:
+        if plan.refetches > 0 and not room:
             # The fetched pages were evicted again before admission.
             plan.refetch_capped = plan.refetches >= MAX_REFETCHES
             _log_event(
@@ -892,6 +939,7 @@ class NextTurnPrefetcher:
             position=position,
             wait_s=wait_s,
             load_s=load_s,
+            room_retry=room,
         )
         return True
 
@@ -1163,6 +1211,48 @@ class NextTurnPrefetcher:
         if tail_id is not None:
             self._return_chance.adopt(node_id, tail_id)
 
+    def on_read_refused(
+        self, handle: CacheRequestHandle, *, tokens: int, cut: bool, now: float
+    ) -> None:
+        """A storage read for handle was revoked or cut for host room at now. Called inside
+        the cache's dispatch, so it only marks the plan: a later lookup retries the read."""
+        plan = self._plans.get(handle.rid)
+        if plan is None:
+            return
+        plan.room_refused = True
+        plan.room_refused_at = now
+        _log_event(
+            "ntp_room",
+            handle.rid,
+            tokens=tokens,
+            cut=int(cut),
+            retries=plan.room_retries,
+        )
+
+    def _room_retry_open(self, plan: TurnPlan) -> bool:
+        return (
+            self._room_retry
+            and plan.room_refused
+            and plan.room_retries < NTP_MAX_ROOM_RETRIES
+        )
+
+    def _room_retry_due(self, plan: TurnPlan, *, now: float) -> bool:
+        return (
+            self._room_retry_open(plan)
+            and now - plan.room_refused_at >= NTP_ROOM_RETRY_S
+        )
+
+    @staticmethod
+    def _take_room_retry(plan: TurnPlan) -> None:
+        if plan.room_refused:
+            plan.room_refused = False
+            plan.room_retries += 1
+
+    def is_staged_handle(self, handle: CacheRequestHandle) -> bool:
+        """A planned turn that has not reached the queue: its reads are early reads."""
+        plan = self._plans.get(handle.rid)
+        return plan is not None and plan.arrival_t is None
+
     def _read_seconds(self, tokens: int, backlog_pages: int) -> float:
         """From issuing a staged read to its pages being usable, margin included."""
         return self._load_seconds(tokens, backlog_pages) + NTP_JIT_MARGIN_S
@@ -1330,6 +1420,11 @@ class NextTurnPrefetcher:
             # The history is resident and the rest is new. It is on the SSD only if
             # another session shares this prefix, which is not worth a lookup per turn.
             decision = "covered"
+            plan.room_refused = False
+        elif self._room_retry_due(plan, now=self._last_now):
+            # The read before it found no host room a while ago: retrying spends no lookup.
+            decision = "retry"
+            self._take_room_retry(plan)
         elif plan.lookups > MAX_REFETCHES:
             # A re-read beats a recompute, but not without limit: reads that keep being
             # evicted before admission only evict others.
@@ -1338,6 +1433,8 @@ class NextTurnPrefetcher:
         else:
             decision = "read" if plan.lookups == 0 else "reread"
             plan.lookups += 1
+            # A charged lookup retries any refused read; a new refusal marks the plan again.
+            plan.room_refused = False
         _log_event(
             "ntp_gate",
             handle.rid,
@@ -1346,7 +1443,7 @@ class NextTurnPrefetcher:
             chain=chain,
             lookups=plan.lookups,
         )
-        return decision in ("read", "reread")
+        return decision in ("read", "reread", "retry")
 
     def read_not_before(
         self, handle: CacheRequestHandle, read: ParkedRead, ahead_pages: int

@@ -1,6 +1,8 @@
 """Cache-mode storage hits under the deadline read order: park without host
 memory, dispatch by deadline into the read window, allocate at dispatch, pin the
-landed span until admission (agent_cache/ORACLE_V2_PLAN.md 4.2-4.3). No GPU."""
+landed span until admission (agent_cache/ORACLE_V2_PLAN.md 4.2-4.3). Timed reads
+wait while pending SSD writes lock host memory, which the write thread drains in
+merged transfers (agent_cache/OPEN_ITEMS.md section 7). No GPU."""
 
 from sglang.test.ci.ci_register import register_cpu_ci
 
@@ -10,8 +12,9 @@ import logging
 import unittest
 from array import array
 from collections import defaultdict
+from contextlib import nullcontext
 from queue import Queue
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from unittest.mock import Mock
 
 import torch
@@ -21,10 +24,21 @@ from sglang.srt.managers.cache_controller import (
     HiCacheController,
 )
 from sglang.srt.mem_cache.base_prefix_cache import CacheRequestHandle
-from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import PrefetchSubmission
+from sglang.srt.mem_cache.hicache_storage import (
+    STORAGE_BATCH_SIZE,
+    PoolName,
+    PoolTransfer,
+)
+from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
+    HybridCacheController,
+    PrefetchSubmission,
+    StorageOperation,
+)
 from sglang.srt.mem_cache.radix_cache import RadixKey
 from sglang.srt.mem_cache.storage_prefetch import StoragePrefetchRetries
 from sglang.srt.mem_cache.storage_read_scheduler import StorageReadScheduler
+from sglang.srt.mem_cache.unified_cache.storage_attachment import StorageAttachment
+from sglang.srt.mem_cache.unified_cache.unified_tree_core import StorageBackupSpec
 from sglang.srt.mem_cache.unified_radix_cache import (
     PREFETCH_PIN_MAX_AGE_S,
     UnifiedRadixCache,
@@ -73,7 +87,12 @@ class _LockedTreeCore:
 
 
 def cache_mode_fixture(
-    *, order="deadline", window_pages=10**6, budget_tokens=10**9, pin_fraction=0.0
+    *,
+    order="deadline",
+    window_pages=10**6,
+    budget_tokens=10**9,
+    pin_fraction=0.0,
+    write_hold_tokens=0,
 ):
     cache = UnifiedRadixCache.__new__(UnifiedRadixCache)
     cache.disable = False
@@ -123,12 +142,19 @@ def cache_mode_fixture(
         None
         if order == "fifo"
         else StorageReadScheduler(
-            window_pages=window_pages, budget_tokens=budget_tokens, page_size=PAGE
+            window_pages=window_pages,
+            budget_tokens=budget_tokens,
+            page_size=PAGE,
+            write_hold_tokens=write_hold_tokens,
         )
     )
     cache.pinned_prefetch = {}
     cache.pinned_prefetch_tokens = 0
     cache.prefetch_pin_budget_tokens = int(pin_fraction * HOST_POOL_TOKENS)
+    cache.ongoing_backup = {}
+    cache.pending_backup_tokens = 0
+    cache.prefetch_refused_fn = None
+    cache.host_census = None
     return cache
 
 
@@ -153,11 +179,11 @@ def hit(cache, rid, tokens):
     return handle, operation
 
 
-def drain(cache, n):
+def drain(cache, n, *, write_acks=0):
     cache._drain_storage_control_queues_impl(
         n_storage_hit=n,
         n_ack_prefetch=0,
-        n_backup=0,
+        n_backup=write_acks,
         n_release=0,
         extra_release_counts={},
         log_metrics=False,
@@ -505,6 +531,87 @@ class TestPinnedStaging(CustomTestCase):
         self.assertEqual((cache.tree_core.locks[3], cache.pinned_prefetch_tokens), (0, 0))
 
 
+def backup_ready_cache(node_pages):
+    """A cache whose tree backs up each node of `node_pages` (node id -> pages), queued
+    by the controller's own write_storage."""
+    cache = cache_mode_fixture()
+    cache.enable_storage = True
+    cache.hicache_storage_pass_prefix_keys = False
+    cache.sidecar_pool_specs = []
+    specs = {
+        node_id: StorageBackupSpec(
+            host_value=torch.arange(pages * PAGE),
+            token_ids=array("q", range(pages * PAGE)),
+            hash_value=[f"n{node_id}-{p}" for p in range(pages)],
+            prefix_keys=None,
+            comp_xfers={},
+        )
+        for node_id, pages in node_pages.items()
+    }
+    cache.tree_core.build_storage_backup_spec = lambda node_id, _: specs[node_id]
+    cc = cache.cache_controller
+    cc.backup_queue = Queue()
+    cc.write_storage = MethodType(HybridCacheController.write_storage, cc)
+    return cache
+
+
+def finish_writes(cache, *written_tokens):
+    """The write thread acks its oldest writes, each with the tokens it wrote."""
+    cc = cache.cache_controller
+    for tokens in written_tokens:
+        operation = cc.backup_queue.get_nowait()
+        operation.completed_tokens = tokens
+        cc.ack_backup_queue.put(operation)
+
+
+class TestWriteBacklogHold(CustomTestCase):
+    """Host tokens locked by SSD writes not yet acked, and the read hold they drive."""
+
+    def test_pending_write_tokens_leave_with_each_acked_or_released_write(self):
+        """The write hold reads this count, so a release path that forgot it would keep
+        the hold on for good. An ack returns what its write locked, not what it wrote:
+        a write cut short still unlocks all its pages."""
+        cache = backup_ready_cache({1: 4, 2: 6, 3: 2})
+        for node_id in (1, 2, 3):
+            cache.write_backup_storage(node_id)
+        self.assertEqual(cache.pending_backup_tokens, 12 * PAGE)
+        self.assertEqual(dict(cache.tree_core.locks), {1: 1, 2: 1, 3: 1})
+        finish_writes(cache, 2 * PAGE)
+        drain(cache, 0, write_acks=1)
+        self.assertEqual(cache.pending_backup_tokens, 8 * PAGE)
+        self.assertEqual(dict(cache.tree_core.locks), {1: 0, 2: 1, 3: 1})
+        # Detach and exit drop the writes a stopped write thread never acks.
+        StorageAttachment(cache)._release_pending_storage_ops()
+        self.assertEqual((cache.pending_backup_tokens, cache.ongoing_backup), (0, {}))
+        self.assertEqual(dict(cache.tree_core.locks), {1: 0, 2: 0, 3: 0})
+
+    def test_timed_read_stays_parked_until_the_write_backlog_halves(self):
+        """Fed the cache's pending write tokens, the hold parks a timed read from the
+        threshold down to half while a "now" read launches, logging one line coming on
+        and one going off."""
+        hold = 10 * PAGE
+        cache = cache_mode_fixture(write_hold_tokens=hold)
+        timed, _ = hit(cache, "timed", 2 * PAGE)
+        cache.deadlines[timed] = 60.0
+        hit(cache, "urgent", 2 * PAGE)
+        drain(cache, 2)
+        cache.pending_backup_tokens = hold
+        with self.assertLogs(LOGGER, level="INFO") as logs:
+            cache._dispatch_storage_reads()
+            self.assertEqual(launched(cache), ["urgent"])
+            cache._dispatch_storage_reads()
+            self.assertEqual(cache.read_scheduler.parked_handles(), [timed])
+            cache.pending_backup_tokens = hold // 2
+            cache._dispatch_storage_reads()
+            self.assertEqual(launched(cache), ["timed"])
+        states = [
+            line.split("srs_write_hold state=")[1].split()[0]
+            for line in logs.output
+            if "srs_write_hold" in line
+        ]
+        self.assertEqual(states, ["on", "off"])
+
+
 class TestAdmitSiteReleasesThePin(CustomTestCase):
     def test_cache_finished_req_releases_the_requests_pin(self):
         """The landed span's host lock must go when its request takes the span,
@@ -586,6 +693,177 @@ class TestControllerReadRate(CustomTestCase):
         self.assertFalse(cc.prefetch_rate_limited())
         cc.extra_occupancy_fn = lambda: 6
         self.assertTrue(cc.prefetch_rate_limited())
+
+
+class _RecordingStore:
+    """The store as the write thread sees it: records each batch_set_v1 call as (keys,
+    host indices, prefix keys) and fails the calls whose index is listed."""
+
+    def __init__(self, *, fail_calls=(), on_call=None):
+        self.calls = []
+        self.sidecar_calls = []
+        self.fail_calls = set(fail_calls)
+        self.on_call = on_call
+
+    def batch_set_v1(self, keys, host_indices, extra_info=None):
+        if self.on_call is not None:
+            self.on_call()
+        ok = len(self.calls) not in self.fail_calls
+        self.calls.append((list(keys), host_indices.tolist(), extra_info.prefix_keys))
+        return [ok] * len(keys)
+
+    def batch_set_v2(self, transfers, extra_info=None):
+        self.sidecar_calls.append([transfer.name for transfer in transfers])
+        return {transfer.name: [True] * len(transfer.keys) for transfer in transfers}
+
+    def take_stored_write_skips(self):
+        return 0
+
+
+def write_controller(*, coalesce_pages, store, backend="nixl"):
+    """Only the state the storage write thread reads."""
+    cc = HybridCacheController.__new__(HybridCacheController)
+    cc.page_size = PAGE
+    cc.storage_backend_type = backend
+    cc.storage_backend = store
+    cc.backup_skip = False
+    cc.write_coalesce_pages = coalesce_pages
+    cc.page_set_func = cc._page_set_zero_copy
+    cc.mem_pool_host = SimpleNamespace(layout_lease=nullcontext)
+    cc.backup_queue = Queue()
+    cc.ack_backup_queue = Queue()
+    return cc
+
+
+def queue_write(cc, name, pages, *, first_host_index=0, pool_transfers=None):
+    tokens = pages * PAGE
+    operation = StorageOperation(
+        host_indices=torch.arange(first_host_index, first_host_index + tokens),
+        token_ids=list(range(tokens)),
+        hash_value=[f"{name}{p}" for p in range(pages)],
+        prefix_keys=[f"{name}-prefix"],
+        pool_transfers=pool_transfers,
+    )
+    cc.backup_queue.put(operation)
+    return operation
+
+
+def run_write_thread(cc):
+    """The write thread's own loop, run here until its queue is empty."""
+    cc.storage_stop_event = SimpleNamespace(is_set=cc.backup_queue.empty)
+    cc.backup_thread_func()
+
+
+def acked(cc):
+    operations = []
+    while not cc.ack_backup_queue.empty():
+        operations.append(cc.ack_backup_queue.get())
+    return operations
+
+
+class TestStorageWriteCoalescing(CustomTestCase):
+    """The write thread merges queued NIXL writes into one page stream."""
+
+    def test_queued_writes_merge_into_one_stream_in_queue_order(self):
+        """Each page's hash must stay on its own host page and each op is credited only
+        its own pages, with acks in queue order; a group stops once it holds the cap."""
+        store = _RecordingStore()
+        cc = write_controller(coalesce_pages=6, store=store)
+        ops = [
+            queue_write(cc, "a", 2, first_host_index=0),
+            queue_write(cc, "b", 3, first_host_index=100),
+            queue_write(cc, "c", 1, first_host_index=200),
+            queue_write(cc, "d", 1, first_host_index=300),
+        ]
+        run_write_thread(cc)
+        a, b, c, d = (op.host_indices.tolist() for op in ops)
+        self.assertEqual(
+            [(keys, host_indices) for keys, host_indices, _ in store.calls],
+            [(["a0", "a1", "b0", "b1", "b2", "c0"], a + b + c), (["d0"], d)],
+        )
+        done = acked(cc)
+        self.assertEqual([op.id for op in done], [op.id for op in ops])
+        self.assertEqual(
+            [op.completed_tokens for op in done], [2 * PAGE, 3 * PAGE, PAGE, PAGE]
+        )
+
+    def test_a_failed_batch_costs_the_other_ops_nothing(self):
+        """After a failed batch of the merged stream every op not yet written goes alone,
+        as it would unmerged: ops wholly before the failure are done, the op it cuts and
+        the later ops get their own writes, and acks keep queue order. Stopping the stream
+        instead would drop up to write_coalesce_pages pages of other sessions' writes."""
+        half = STORAGE_BATCH_SIZE // 2
+        store = _RecordingStore(fail_calls={1})
+        cc = write_controller(coalesce_pages=4 * STORAGE_BATCH_SIZE, store=store)
+        # Merged batches: a and half of b; then the rest of b and half of c, which fails.
+        ops = [
+            queue_write(cc, "a", half),
+            queue_write(cc, "b", STORAGE_BATCH_SIZE),
+            queue_write(cc, "c", STORAGE_BATCH_SIZE),
+        ]
+        run_write_thread(cc)
+        self.assertEqual(
+            [keys[0] for keys, _, _ in store.calls], ["a0", f"b{half}", "b0", "c0"]
+        )
+        done = acked(cc)
+        self.assertEqual([op.id for op in done], [op.id for op in ops])
+        self.assertEqual(
+            [op.completed_tokens for op in done],
+            [half * PAGE, STORAGE_BATCH_SIZE * PAGE, STORAGE_BATCH_SIZE * PAGE],
+        )
+
+    def test_an_op_is_acked_once_its_own_pages_are_written(self):
+        """A merged op's ack, which releases its host lock and its share of the pending
+        writes, does not wait for the group's later batches: when the second batch goes
+        out, the op that filled the first is already acked."""
+        acks_at_call = []
+        store = _RecordingStore()
+        cc = write_controller(coalesce_pages=4 * STORAGE_BATCH_SIZE, store=store)
+        store.on_call = lambda: acks_at_call.append(cc.ack_backup_queue.qsize())
+        queue_write(cc, "a", STORAGE_BATCH_SIZE)
+        queue_write(cc, "b", STORAGE_BATCH_SIZE)
+        run_write_thread(cc)
+        self.assertEqual(acks_at_call, [0, 1])
+        self.assertEqual(len(acked(cc)), 2)
+
+    def test_a_write_with_sidecar_pools_ends_the_group_and_goes_next_alone(self):
+        """Merged writes skip batch_set_v2, so a write carrying sidecar pools must close
+        the group and be written whole right after it: merged, its sidecars would be
+        lost; passed over, acks would leave queue order."""
+        store = _RecordingStore()
+        cc = write_controller(coalesce_pages=64, store=store)
+        state = PoolTransfer(
+            name=PoolName.MAMBA, host_indices=torch.arange(1), keys=["s-state"]
+        )
+        ops = [
+            queue_write(cc, "a", 2),
+            queue_write(cc, "b", 1),
+            queue_write(cc, "s", 1, pool_transfers=[state]),
+            queue_write(cc, "c", 1),
+        ]
+        run_write_thread(cc)
+        self.assertEqual(
+            [keys for keys, _, _ in store.calls], [["a0", "a1", "b0"], ["s0"], ["c0"]]
+        )
+        self.assertEqual(store.sidecar_calls, [[PoolName.MAMBA]])
+        self.assertEqual([op.id for op in acked(cc)], [op.id for op in ops])
+
+    def test_writes_go_one_per_call_when_off_or_the_store_reads_prefix_keys(self):
+        """The default 0 and any store but NIXL keep the old path: each op is written
+        alone with its own prefix keys, which a store such as UMBP ("mori") reads."""
+        for backend, coalesce_pages in (("nixl", 0), ("mori", 64)):
+            with self.subTest(backend=backend, coalesce_pages=coalesce_pages):
+                store = _RecordingStore()
+                cc = write_controller(
+                    coalesce_pages=coalesce_pages, store=store, backend=backend
+                )
+                queue_write(cc, "a", 2)
+                queue_write(cc, "b", 3)
+                run_write_thread(cc)
+                self.assertEqual(
+                    [(keys, prefix_keys) for keys, _, prefix_keys in store.calls],
+                    [(["a0", "a1"], ["a-prefix"]), (["b0", "b1", "b2"], ["b-prefix"])],
+                )
 
 
 if __name__ == "__main__":

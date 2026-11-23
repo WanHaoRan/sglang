@@ -12,14 +12,21 @@ from sglang.test.test_utils import CustomTestCase
 PAGE = 64
 
 
-def scheduler(window_pages=100, budget_tokens=10**9):
+def scheduler(window_pages=100, budget_tokens=10**9, write_hold_tokens=0):
     return StorageReadScheduler(
-        window_pages=window_pages, budget_tokens=budget_tokens, page_size=PAGE
+        window_pages=window_pages,
+        budget_tokens=budget_tokens,
+        page_size=PAGE,
+        write_hold_tokens=write_hold_tokens,
     )
 
 
 class TestStorageReadScheduler(CustomTestCase):
-    def dispatch(self, srs, deadlines, *, now=100.0, in_flight=0, held=0):
+    def dispatch(
+        self, srs, deadlines, *, now=100.0, in_flight=0, held=0, write_backlog=0
+    ):
+        """One pass as the cache runs it: the write hold's update, then dispatch."""
+        srs.update_write_hold(write_backlog)
         return [
             d.read.handle
             for d in srs.dispatch(
@@ -109,6 +116,32 @@ class TestStorageReadScheduler(CustomTestCase):
         self.assertEqual(srs.stats.window_holds, 1)
         self.assertEqual(dispatch(150.0), ["held"])
 
+    def test_write_hold_stops_timed_reads_from_the_threshold_until_half_of_it(self):
+        """Timed reads let through while SSD writes still lock host pages find no room.
+        The hold has memory both ways (60 neither starts nor ends it); a "now" read,
+        which an admission waits on, is never held."""
+        srs = scheduler(write_hold_tokens=100)
+        srs.park(handle="first", operation=None, pages=1, now=0.0)
+        self.assertEqual(
+            self.dispatch(srs, {"first": 110.0}, write_backlog=60), ["first"]
+        )
+        for handle in ("late", "early", "now"):
+            srs.park(handle=handle, operation=None, pages=1, now=0.0)
+        deadlines = {"late": 300.0, "early": 120.0, "now": None}
+        self.assertEqual(self.dispatch(srs, deadlines, write_backlog=100), ["now"])
+        self.assertEqual(srs.stats.write_holds, 1)
+        self.assertEqual(self.dispatch(srs, deadlines, write_backlog=60), [])
+        self.assertEqual(
+            self.dispatch(srs, deadlines, write_backlog=50), ["early", "late"]
+        )
+
+    def test_write_hold_off_ignores_any_write_backlog(self):
+        """0 is the default and must leave dispatch as it was: off, not a threshold
+        that every pending write reaches."""
+        srs = scheduler()
+        srs.park(handle="a", operation=None, pages=1, now=0.0)
+        self.assertEqual(self.dispatch(srs, {"a": 110.0}, write_backlog=10**9), ["a"])
+
     def test_discard_clear_and_duplicate_park(self):
         srs = scheduler()
         srs.park(handle="a", operation=None, pages=1, now=0.0)
@@ -135,6 +168,9 @@ class TestStorageReadScheduler(CustomTestCase):
     def test_rejects_bad_limits(self):
         with self.assertRaises(ValueError):
             StorageReadScheduler(window_pages=0, budget_tokens=1, page_size=PAGE)
+        # A negative write hold would otherwise pass silently as off.
+        with self.assertRaises(ValueError):
+            scheduler(write_hold_tokens=-1)
 
 
 if __name__ == "__main__":

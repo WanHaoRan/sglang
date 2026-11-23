@@ -33,9 +33,17 @@ anchors sit one or two lines higher in copy d).
    GPU idle). §5.3 CPU tests around a fix (container, 30 s, GPU idle). §5.4 freeze the fixed engine (container,
    1 min, GPU idle). §5.5 run `jit_p50` again on TraceLab (2 h 6 min, GPU busy).
 6. **Smaller items (§6)**, one line each.
-7. **Found on FA3 (§7, campaign 32, 2026-11-22), not fixed.** Reads refused host memory start a loop: the history
-   is computed again, written to the SSD again, the one write thread falls behind and its pending pages hold host
-   memory, so more reads are refused. Every FA3 arm ends in it; the policies decide when it starts.
+7. **Found on FA3 (§7, campaign 32, 2026-11-22); fixed behind switches, verified 2026-11-23 (campaign 34).** Reads
+   refused host memory start a loop: the history is computed again, written to the SSD again, the one write thread
+   falls behind and its pending pages hold host memory, so more reads are refused. Every FA3 arm ends in it; the
+   policies decide when it starts. With the four fixes on, no arm refuses a read, and each is 5.8 to 9.5 s faster on
+   the same users (`results/campaign34/DECISIONS.md`). The switches are still off by default (the author's call).
+8. **The server is reachable from the internet (2026-11-23; `results/campaign33/DECISIONS.md`, "Outside
+   requests").** `scripts/start_server.sh` binds `0.0.0.0:30000` with no key, on the host's network. Scanners reached
+   26 of 209 runs since 2026-09-18, and one address's `POST /update_weights_from_disk` drained campaign 32's
+   `ec_exact` (three times, 0.08 s of its mean) and campaign 33's `oracle_v2` (44 s, most of its 0.13 s gap).
+   Campaign 34 binds `127.0.0.1` through its queue lines; `start_server.sh` and the baselines' launch scripts still
+   bind `0.0.0.0` (the author's call: `--host 127.0.0.1`, an admin key, or a firewall rule).
 
 ## 1. Defect 1: the read allowance goes on lookups that find nothing
 
@@ -519,11 +527,24 @@ A list to return to, one line each, not evaluated here.
 - `results/_trial_c128/` is a leftover of a trial; a safety check refused my `rm`, so removing it is the author's.
 - Campaign 26's parked items: `results/campaign26/checks/audit/items.tsv`.
 - Held until asked: bringing `PAPER_PLAN.md`, the findings docs and the deck up to campaigns 28 and 29.
+- `EnvField.override` (`python/sglang/srt/environ.py`) has no try/finally around its yield, so an exception in the
+  with-body leaves the variable set for the rest of the process (found while writing the fixes' tests, 2026-11-22;
+  those tests enter it through an ExitStack closed in cleanup). Pre-existing, not fixed.
 
 ## 7. Found on FA3 (campaign 32, 2026-11-22)
 
 Campaign 28's arms on FA3 for 2 h (`results/campaign32/DECISIONS.md`, "Why the arms separate on FA3", where the
-counts are; analysis scripts in `results/campaign32/checks/mechanisms.tgz`). Engine items it found; none is fixed.
+counts are; analysis scripts in `results/campaign32/checks/mechanisms.tgz`). Engine items it found. On 2026-11-22 the
+first four were prototyped at the author's request in the working tree, each behind an env switch that is off by
+default, and the census added; campaign 34 verifies them after campaign 33 (`results/campaign34/README.txt`).
+
+**Verified 2026-11-23 (`results/campaign34/DECISIONS.md`).** Campaign 32's `jit_p50`, `ec_full` and `jit_exact` with
+all four fixes on: 0 reads refused host room (campaign 32: 1,100 to 1,200 a half hour late in the run), pending writes
+under 90 K tokens (515 to 675 K), the history computed again in minutes 60 to 110 down 15 to 21 times, 13 to 24 % more
+requests, and -9.52, -5.79 and -6.18 s on the same users. The arms now differ by at most 0.7 s; the four rules tie
+with exact hints. Fix 4 never acted (nothing was refused), and with all four on together the run does not say which
+one is needed. Left: the switches' defaults; history the SSD cleaner deletes is computed again from its first pass
+(minute 88); defect 1 (§1).
 
 - **Reads refused host room.** A read goes to the SSD only when host pages can be allocated for it
   (`_launch_storage_hit`; `srs_dispatch launched=0` otherwise). On FA3 refused and cut reads carry 82 to 95 % of the
@@ -562,6 +583,8 @@ counts are; analysis scripts in `results/campaign32/checks/mechanisms.tgz`). Eng
 - The host is preemptible and its `/tmp` is wiped on a restart. An interrupted arm leaves no manifest line and runs
   again from its start once the launcher is started (§5.5).
 - Stop a run only for errors; a slowdown is a result to report.
+- `start_server.sh` binds `0.0.0.0` with no key (§0 item 8). Until that changes, put `--host 127.0.0.1` in a queue
+  line's extra server flags (a later `--host` wins); every client and probe connects to 127.0.0.1.
 
 ## Layout and hygiene
 

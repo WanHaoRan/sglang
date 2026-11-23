@@ -1,0 +1,45 @@
+stopped: 20261121_174716_vllm_vanilla (pid 30571); port 30000 free; GPU used 0 MiB
+already stopped: 20261121_174716_vllm_vanilla (pid 30571)
+SSD stores wiped: 0 files left
+system: vllm_lmcache  model: Qwen/Qwen3-30B-A3B-Instruct-2507  GPU KV: 668096 tokens  L1: 160 GB (149.01 GiB)  L2: 1800 GB on /mnt/ssd/baselines/lmcache (O_DIRECT true)  run dir: /home/wanhr/sglang/agent_cache/results/20261121_181129_vllm_lmcache
+port 6555 open after 10s
+launched: vLLM pid 35242, LMCache server 34898 lmcache_server   (watch: tail -f /home/wanhr/sglang/agent_cache/results/20261121_181129_vllm_lmcache/server.log /home/wanhr/sglang/agent_cache/results/20261121_181129_vllm_lmcache/lmcache_server.log)
+READY after 167s
+versions:         vllm=0.33.0 lmcache=0.5.7.post1 
+GPU KV cache:     GPU KV cache size: 668,096 tokens   (want 668096 tokens)
+connector:           (want the external one unless CONNECTOR=bundled)
+LMCache L1:       
+LMCache L2:       fs_native_l2_adapter.py:231:lmcache.v1.distributed.l2_adapters.fs_
+client: --backend vllm --trace /sgl-workspace/sglang/agent_cache/data/converted/freeinference_16w.programs.jsonl.gz --recipe none --hints none --max-context 65536 --seed 0 --tag vllm_lmcache --arrival-rate 0.1 --max-active 128 --duration 1200 --gap-scale 1 --gap-cap 1200 -> /sgl-workspace/sglang/agent_cache/results/20261121_181129_vllm_lmcache/programs_181429_vllm_lmcache
+3787 trees from /sgl-workspace/sglang/agent_cache/data/converted/freeinference_16w.programs.jsonl.gz (freeinference, blocks); dropped over --max-context: 8215; backend vllm ; arrivals 0.1/s, max active 128, duration 1200.0
+[60 s] live 4, in flight 0, requests 16 (+0 warmup), errors 0, idle skipped 0 s
+[120 s] live 10, in flight 0, requests 57 (+0 warmup), errors 0, idle skipped 0 s
+[180 s] live 12, in flight 3, requests 185 (+0 warmup), errors 0, idle skipped 0 s
+[240 s] live 15, in flight 6, requests 302 (+0 warmup), errors 0, idle skipped 0 s
+[300 s] live 18, in flight 4, requests 383 (+0 warmup), errors 0, idle skipped 0 s
+[360 s] live 24, in flight 6, requests 462 (+0 warmup), errors 0, idle skipped 0 s
+[420 s] live 37, in flight 13, requests 587 (+0 warmup), errors 0, idle skipped 0 s
+[480 s] live 41, in flight 14, requests 725 (+0 warmup), errors 0, idle skipped 0 s
+[540 s] live 40, in flight 9, requests 876 (+0 warmup), errors 0, idle skipped 0 s
+[600 s] live 36, in flight 8, requests 1017 (+0 warmup), errors 0, idle skipped 0 s
+[660 s] live 42, in flight 8, requests 1162 (+0 warmup), errors 0, idle skipped 0 s
+[720 s] live 47, in flight 17, requests 1321 (+0 warmup), errors 0, idle skipped 0 s
+[780 s] live 46, in flight 12, requests 1486 (+0 warmup), errors 0, idle skipped 0 s
+[840 s] live 58, in flight 22, requests 1643 (+0 warmup), errors 0, idle skipped 0 s
+[900 s] live 61, in flight 21, requests 1772 (+0 warmup), errors 0, idle skipped 0 s
+[960 s] live 64, in flight 20, requests 1931 (+0 warmup), errors 0, idle skipped 0 s
+[1020 s] live 69, in flight 16, requests 2095 (+0 warmup), errors 0, idle skipped 0 s
+[1080 s] live 72, in flight 17, requests 2297 (+0 warmup), errors 0, idle skipped 0 s
+[1140 s] live 68, in flight 16, requests 2503 (+0 warmup), errors 0, idle skipped 0 s
+[1200 s] live 18, in flight 18, requests 2640 (+0 warmup), errors 0, idle skipped 0 s
+summary: {"kind": "summary", "tag": "vllm_lmcache", "elapsed_s": 1217.0, "wall_s": 1217.0, "profile": 2658, "warmup": 0, "errors": 0, "skipped": 1110, "plays": 127, "releases": 0, "mean_ttft_s": 0.3236, "idle_jumps": 0, "idle_skipped_s": 0.0}
+run | requests | errors | TTFT mean | p50 | p90 | p99 | out tok/s | req/min | device | host | storage | recomp | ideal | deliv/ideal
+/sgl-workspace/sglang/agent_cache/results/20261121_181129_vllm_lmcache/programs_181429_vllm_lmcache/client.jsonl | 2658 | 0 | 0.3236 | 0.1401 | 0.7599 | 2.674 | 565.9 | 131.04 | 0.9345 | 0.0 | 0.0 | 0.0655 | 0.9355 | 0.999
+
+/sgl-workspace/sglang/agent_cache/results/20261121_181129_vllm_lmcache/programs_181429_vllm_lmcache/client.jsonl: TTFT by wait {"0-1s": 0.2698, "1-10s": 0.3127, "10-60s": 0.487, "60-300s": 0.9157, "300-1800s": 1.5044, "1800s+": null}
+client rc=0
+ssd used: 16%; baseline store: 362G
+saved /home/wanhr/sglang/agent_cache/results/20261121_181129_vllm_lmcache/metrics_end_vllm.txt (686 lines)
+saved /home/wanhr/sglang/agent_cache/results/20261121_181129_vllm_lmcache/metrics_end_lmcache.txt (410 lines)
+stopped: 20261121_181129_vllm_lmcache (pid 35242); port 30000 free; GPU used 0 MiB
+already stopped: 20261121_181129_vllm_lmcache (pid 35242)

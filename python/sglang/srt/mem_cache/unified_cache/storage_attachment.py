@@ -410,11 +410,12 @@ class StorageAttachment:
                 cache.ongoing_prefetch.pop(handle, None)
 
         for ack_id in list(cache.ongoing_backup):
-            node_id, lock_params = cache.ongoing_backup.pop(ack_id)
+            entry = cache.ongoing_backup.pop(ack_id)
             try:
-                cache.dec_host_lock_ref(node_id, lock_params)
+                cache.dec_host_lock_ref(entry.node_id, entry.lock_params)
             except Exception:
                 logger.exception("Failed to release host lock for backup op %s", ack_id)
+        cache.pending_backup_tokens = 0
 
         for handle in list(cache._storage_prefetch_hit_remaining_by_reqid):
             cache.discard_storage_prefetch_accounting(handle)

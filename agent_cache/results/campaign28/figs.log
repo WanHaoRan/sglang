@@ -1,0 +1,33 @@
+hicache: tag hicache, client ran 7230 s, server lines kept 151691 of 151922, host pool held 0 tokens before -> results/compare_c28_designs/runs/hicache
+oracle_v2: tag oracle_v2, client ran 7230 s, server lines kept 260204 of 260481, host pool held 0 tokens before -> results/compare_c28_designs/runs/oracle_v2
+jit_exact: tag jit_exact, client ran 7230 s, server lines kept 260096 of 260324, host pool held 0 tokens before -> results/compare_c28_designs/runs/jit_exact
+jit_p50: tag jit_p50, client ran 7230 s, server lines kept 267066 of 267299, host pool held 0 tokens before -> results/compare_c28_designs/runs/jit_p50
+ec_full: tag ec_full, client ran 7230 s, server lines kept 278309 of 278556, host pool held 0 tokens before -> results/compare_c28_designs/runs/ec_full
+ec_exact: tag ec_exact, client ran 7230 s, server lines kept 272297 of 272547, host pool held 0 tokens before -> results/compare_c28_designs/runs/ec_exact
+hicache: 4650 requests / 260 streams; returning TTFT mean 121.064 p50 140.968 p90 249.906 s; device/host/storage/recompute 596/1298/759/1737
+oracle_v2: 9357 requests / 435 streams; returning TTFT mean 49.692 p50 53.453 p90 81.376 s; device/host/storage/recompute 616/3587/4548/171
+jit_p50: 9102 requests / 423 streams; returning TTFT mean 51.68 p50 54.827 p90 88.983 s; device/host/storage/recompute 584/3962/3883/250
+jit_exact: 9030 requests / 421 streams; returning TTFT mean 52.01 p50 55.148 p90 88.96 s; device/host/storage/recompute 623/3911/3836/239
+ec_full: 9330 requests / 433 streams; returning TTFT mean 49.95 p50 53.475 p90 82.387 s; device/host/storage/recompute 581/4009/4127/180
+ec_exact: 9228 requests / 430 streams; returning TTFT mean 50.6 p50 54.181 p90 85.156 s; device/host/storage/recompute 616/3826/4172/184
+wrote ../results/compare_c28_designs/ec_wait_split.png
+Over the 4,174 returning requests all six arms sent before minute 110 (HiCache, Old oracle, JIT p50, JIT exact, All four rules,
+Oracle): mean TTFT 113.50, 34.20, 35.44, 34.78, 33.84 and 34.60 s. Requests served in 2 h: 4,650, 9,357, 9,102, 9,030, 9,330 and
+9,228; users admitted: 256, 424, 414, 411, 425 and 422 of the 729 that arrive.
+Recorded waits at x1, one run per arm. 0.1 users arrive a second and at most 128 are in session; the others wait for a slot, a wait
+TTFT leaves out. Prompts are synthetic token ids of the recorded lengths and outputs have the recorded length; sessions with a
+request over 65,536 tokens are left out. Exact hints are the true next-request times; p50 hints are the median wait after the tool
+call the reply makes, from a table the client keeps online for each harness and model. The old oracle asks for a request's evicted
+history once its admission is expected within 120 s, and at once when the request is already queued; just-in-time starts the read so
+that it lands as the request is admitted. The rules arm gets that table's p10, p50 and p90 and an end-of-session signal: it starts
+reads by expected cost at a learned price on host memory, evicts by chance of return, and lets an arrived request's read take room
+from early reads. The oracle is the rules arm given each true next-request time as its distribution, so its reads land as the
+request is due and it evicts the session that returns last first. The old oracle and just-in-time arms ran an eviction that took a
+request queued for over 60 s for one not coming, a defect fixed after these runs; the rules arms did not have it.
+  original HiCache: 113.50 = after admission 1.63 + queue 80.95 + read and GPU 30.13 + read only 0.79
+  old oracle v2, exact hints: 34.20 = after admission 0.53 + queue 16.57 + read and GPU 16.60 + read only 0.50
+  JIT, p50 hints: 35.44 = after admission 0.55 + queue 15.79 + read and GPU 18.15 + read only 0.96
+  JIT, exact hints: 34.78 = after admission 0.52 + queue 17.04 + read and GPU 16.42 + read only 0.80
+  all four rules: 33.84 = after admission 0.52 + queue 15.50 + read and GPU 17.10 + read only 0.72
+  oracle: the four rules on exact hints: 34.60 = after admission 0.52 + queue 15.42 + read and GPU 18.12 + read only 0.54
+wrote ../results/compare_c28_designs

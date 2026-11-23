@@ -359,6 +359,8 @@ class Envs:
     SGLANG_LOG_REQUEST_HEADERS = EnvTuple(tuple())
     SGLANG_LOG_SCHEDULER_STATUS_TARGET = EnvStr("")
     SGLANG_LOG_SCHEDULER_STATUS_INTERVAL = EnvFloat(60.0)
+    # Seconds between HICACHE_EVT host_census lines (what holds host memory); 0 disables.
+    SGLANG_LOG_HICACHE_HOST_CENSUS_INTERVAL = EnvFloat(0.0)
     SGLANG_ENABLE_RANK_CONSENSUS_CHECKER = EnvBool(False)
 
     # ===================================================================
@@ -768,6 +770,18 @@ class Envs:
     # Disable with SGLANG_HICACHE_NIXL_USE_DIRECT_IO=0 or via the
     # "use_direct_io": false key in --hicache-storage-backend-extra-config.
     SGLANG_HICACHE_NIXL_USE_DIRECT_IO = EnvBool(True)
+    # NIXL file backend: a page whose files the store already holds is not written again,
+    # only its mtime refreshed, since the L3 cleaner deletes the oldest mtime first.
+    SGLANG_HICACHE_NIXL_SKIP_STORED_WRITES = EnvBool(False)
+    # Storage write thread: merge queued writes into transfers of up to this many pages;
+    # 0 writes each operation alone.
+    SGLANG_HICACHE_STORAGE_WRITE_COALESCE_PAGES = EnvInt(0)
+    # Deadline read order: hold timed storage reads while pending SSD writes hold at least
+    # this many host tokens, resuming at half of it; 0 disables.
+    SGLANG_HICACHE_STORAGE_READ_HOLD_WRITE_TOKENS = EnvInt(0)
+    # Next-turn prefetcher: a read refused host room is retried on its own paced budget
+    # and does not spend the turn's lookup allowance.
+    SGLANG_HICACHE_NEXT_TURN_ROOM_RETRY = EnvBool(False)
     SGLANG_HUGEPAGE_SIZE = EnvStr("")
 
     # ===================================================================

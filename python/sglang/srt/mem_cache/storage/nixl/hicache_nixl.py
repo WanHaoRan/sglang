@@ -93,6 +93,12 @@ class HiCacheNixl(HiCacheStorage):
             if plugin not in NixlBackendSelection.OBJ_PLUGINS
             else None
         )
+        self.skip_stored_writes = (
+            self.file_manager is not None and nixlconfig.get_skip_stored_writes()
+        )
+        # Pages skipped since the write thread last asked; only that thread touches it.
+        self._stored_write_skips = 0
+        logger.info("HiCacheNixl: skip_stored_writes=%s", self.skip_stored_writes)
 
         tp_rank, tp_size, model_name = (
             storage_config.tp_rank,
@@ -844,6 +850,34 @@ class HiCacheNixl(HiCacheStorage):
 
         return self._batch_get_postprocess(host_indices, results)
 
+    def _drop_stored_pages(
+        self, *, page_num: int, key_strs: List[str], host_buffers: List[tuple]
+    ) -> tuple[List[str], List[tuple]]:
+        """Drop the pages whose every file is already stored at full size, touching
+        those files for the cleaner; the kept (key, buffer) pairs stay in order."""
+        if len(key_strs) % page_num != 0:
+            return key_strs, host_buffers
+        files_per_page = len(key_strs) // page_num
+        kept_keys: List[str] = []
+        kept_buffers: List[tuple] = []
+        for page in range(page_num):
+            span = range(page * files_per_page, (page + 1) * files_per_page)
+            if all(
+                self.file_manager.touch_if_stored(
+                    self.file_manager.get_file_path(key_strs[i]), host_buffers[i][1]
+                )
+                for i in span
+            ):
+                self._stored_write_skips += 1
+                continue
+            kept_keys.extend(key_strs[i] for i in span)
+            kept_buffers.extend(host_buffers[i] for i in span)
+        return kept_keys, kept_buffers
+
+    def take_stored_write_skips(self) -> int:
+        skipped, self._stored_write_skips = self._stored_write_skips, 0
+        return skipped
+
     def batch_set_v1(
         self,
         keys: List[str],
@@ -866,6 +900,12 @@ class HiCacheNixl(HiCacheStorage):
         key_strs, host_buffers = self._batch_preprocess(keys, host_indices, "set")
         if not key_strs or not host_buffers:
             return [False] * len(keys)
+        if self.skip_stored_writes:
+            key_strs, host_buffers = self._drop_stored_pages(
+                page_num=len(keys), key_strs=key_strs, host_buffers=host_buffers
+            )
+            if not key_strs:
+                return [True] * len(keys)
 
         start_time = time.perf_counter()
         results = self._batch_xfer(keys, key_strs, host_buffers, "WRITE")

@@ -4,10 +4,12 @@ from sglang.test.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=8, suite="base-a-test-cpu")
 
+import contextlib
 import logging
 import unittest
 from array import array
 from types import SimpleNamespace
+from unittest import mock
 
 from sglang.test.test_utils import CustomTestCase, maybe_stub_sgl_kernel
 
@@ -16,6 +18,7 @@ maybe_stub_sgl_kernel()
 from test_session_unified_radix_cache import make_params
 
 from sglang.srt.disaggregation.utils import DisaggregationMode
+from sglang.srt.environ import envs
 from sglang.srt.managers.kv_hints import KvHintAction, KvHintsEnvelope
 from sglang.srt.managers.schedule_batch import FINISH_ABORT, FINISH_LENGTH
 from sglang.srt.mem_cache.base_prefix_cache import (
@@ -39,7 +42,10 @@ from sglang.srt.mem_cache.next_turn_prefetch import (
     NTP_JIT_MARGIN_S,
     NTP_LEAD_HORIZON_S,
     NTP_MAX_PARKED,
+    NTP_MAX_ROOM_RETRIES,
     NTP_MAX_STAGINGS,
+    NTP_ROOM_RETRY_S,
+    PROBE_INTERVAL_S,
     NextTurnPrefetcher,
 )
 from sglang.srt.mem_cache.next_use_eviction import (
@@ -112,9 +118,11 @@ class ReadOnlyCache:
     # v1 wiring: no read scheduler (fifo order) and an eviction strategy without a next-use registry
     read_scheduler = None
     tree_core = SimpleNamespace(eviction_strategy=None)
-    # The default: every trigger looks up, and parked reads are not held.
+    # The default: every trigger looks up, parked reads are not held, and refused reads
+    # are reported to no one.
     prefetch_gate_fn = None
     read_not_before_fn = None
+    prefetch_refused_fn = None
 
     def __init__(self):
         self.resident = 0
@@ -1535,6 +1543,20 @@ class TestOwnerSwitches(CustomTestCase):
         NextTurnPrefetcher(mode="on", tree_cache=fifo, page_size=PAGE, arrival_hold="on")
         self.assertIsNone(fifo.read_not_before_fn)
 
+    def test_room_retry_binds_only_when_on_and_only_in_mode_on(self):
+        """Off, the cache reports refused reads to no one and they spend the turn's reads as
+        before; observe must never change what the engine reads."""
+        for mode, switch, bound in (
+            ("on", False, False),
+            ("observe", True, False),
+            ("on", True, True),
+        ):
+            with self.subTest(mode=mode, switch=switch):
+                cache = DeadlineCache()
+                with envs.SGLANG_HICACHE_NEXT_TURN_ROOM_RETRY.override(switch):
+                    NextTurnPrefetcher(mode=mode, tree_cache=cache, page_size=PAGE)
+                self.assertEqual(cache.prefetch_refused_fn is not None, bound)
+
 
 class TestArrivalGate(PrefetcherTestCase):
     mode = "on"
@@ -1745,6 +1767,257 @@ class TestArrivalHold(PrefetcherTestCase):
         leads = [admitted[rid] - started[rid] for rid in admitted]
         self.assertLessEqual(max(leads), 6.0)
         self.assertGreater(started["q11"] - started["q0"], 3.0)
+
+
+def gate_decisions(found):
+    return [(f["decision"], f["lookups"]) for kind, f in found if kind == "ntp_gate"]
+
+
+def reevictions(found):
+    return [(f["refetches"], f["capped"]) for kind, f in found if kind == "ntp_reevict"]
+
+
+class RoomRetryTestCase(PrefetcherTestCase):
+    """A queued turn whose storage reads find no host room, with
+    SGLANG_HICACHE_NEXT_TURN_ROOM_RETRY on for the whole test. The turn waits behind
+    queue_ahead others, with a fixed 30 s wait estimate away from the head."""
+
+    mode = "on"
+    arrival_gate = "off"
+    queue_ahead = 2
+
+    def make_cache(self):
+        return DeadlineCache()
+
+    def setUp(self):
+        # Closed as a cleanup: override() skips its restore when the test body raises.
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(envs.SGLANG_HICACHE_NEXT_TURN_ROOM_RETRY.override(True))
+        stack.enter_context(
+            mock.patch(
+                "sglang.srt.mem_cache.next_turn_prefetch.residual_wait",
+                side_effect=lambda *, position, rate: None if position <= 1 else 30.0,
+            )
+        )
+        self.cache = self.make_cache()
+        self.ntp = NextTurnPrefetcher(
+            mode=self.mode,
+            tree_cache=self.cache,
+            page_size=PAGE,
+            arrival_gate=self.arrival_gate,
+        )
+        self.handle = CacheRequestHandle(rid="s-t1", attempt_id=0)
+        self.req = make_req("s-t1", entered=5.0)
+        self.ahead = [make_req(f"q-t{i}", entered=4.0) for i in range(self.queue_ahead)]
+        self.commit("s-t0", "s-t1", now=0.0)
+
+    def lookup(self):
+        """The turn's prefetch reaching the cache, where a bound gate decides if it reads."""
+        gate = self.cache.prefetch_gate_fn
+        if gate is None or gate(self.handle, self.cache.resident):
+            self.cache.ongoing.add(self.handle)
+
+    def scheduler_pass(self, now):
+        """tick(), then what Scheduler._on_next_turn_refetch does per returned req."""
+        returned = []
+
+        def run():
+            for req in self.ntp.tick(waiting_queue=self.ahead + [self.req], now=now):
+                returned.append(req.rid)
+                self.lookup()
+                self.ntp.on_refetch_result(
+                    req=req, issued=self.cache.has_ongoing_prefetch(self.handle)
+                )
+
+        return returned, self.events(run)
+
+    def refuse(self, now):
+        """_launch_storage_hit finding no host room: the read is reported, then revoked."""
+        if self.cache.prefetch_refused_fn is not None:
+            self.cache.prefetch_refused_fn(
+                self.handle, tokens=KEY_TOKENS, cut=False, now=now
+            )
+        self.cache.ongoing.discard(self.handle)
+
+
+class TestRoomRetry(RoomRetryTestCase):
+    arrival_gate = "on"
+
+    def test_a_read_refused_room_is_retried_later_at_no_cost_to_the_turn(self):
+        """A read refused host room is retried NTP_ROOM_RETRY_S later and spends neither a
+        lookup nor a refetch: refusals 25 ms apart must not use up MAX_REFETCHES and get
+        the turn admitted without its history."""
+        self.cache.resident = 0
+        self.assertEqual(gate_decisions(self.events(self.lookup)), [("read", "1")])
+        self.assertEqual(self.scheduler_pass(5.0)[0], [])  # its own read is under way
+        now = 5.0
+        for _ in range(2):  # the read, then its retry, refused room
+            self.refuse(now)
+            retry_at = now + NTP_ROOM_RETRY_S
+            for early in (now + 0.025, retry_at - 0.125):
+                self.assertEqual(self.scheduler_pass(early)[0], [])
+            returned, found = self.scheduler_pass(retry_at)
+            self.assertEqual(
+                (returned, gate_decisions(found), reevictions(found)),
+                (["s-t1"], [("retry", "1")], []),
+            )
+            now = retry_at
+        self.assertEqual(self.ntp._plans["s-t1"].refetches, 0)
+
+    def test_behind_turns_waiting_on_their_reads_a_refused_read_cannot_wait(self):
+        """Admission passes over a turn whose own read is under way, so a refused turn
+        behind only such turns is the next one admitted: like the head, its read is
+        re-issued at once and charged, or admission takes it without its history."""
+        for req in self.ahead:
+            self.cache.ongoing.add(req.cache_request_handle)
+        self.cache.resident = 0
+        self.lookup()
+        self.refuse(5.0)
+        returned, found = self.scheduler_pass(5.0)
+        self.assertEqual(
+            (returned, gate_decisions(found)), (["s-t1"], [("reread", "2")])
+        )
+
+    def test_a_charged_retry_ends_the_free_one(self):
+        """A charged lookup that retries a refused read (here at the head, after the
+        turns ahead left) takes the refusal's free retry with it: if that read lands and
+        is evicted again, the next re-read is charged, as for any landed read."""
+        self.cache.resident = 0
+        self.lookup()
+        self.scheduler_pass(5.0)
+        self.refuse(5.0)  # at position 2: the turn waits
+        self.assertEqual(self.scheduler_pass(5.5)[0], [])
+        self.ahead = []  # the two ahead were admitted
+        returned, found = self.scheduler_pass(6.0)
+        self.assertEqual(
+            (returned, gate_decisions(found)), (["s-t1"], [("reread", "2")])
+        )
+        self.cache.ongoing.clear()
+        self.cache.resident = KEY_TOKENS  # it landed
+        self.cache.resident = 0  # and was evicted before a probe saw it
+        returned, found = self.scheduler_pass(5.0 + NTP_ROOM_RETRY_S)
+        self.assertEqual(
+            (returned, gate_decisions(found), reevictions(found)),
+            (["s-t1"], [("reread", "3")], [("1", "0")]),
+        )
+
+    def test_a_lookup_sooner_than_the_wait_is_charged(self):
+        """A lookup earns the free retry only NTP_ROOM_RETRY_S after the refusal, whatever
+        triggers it: one sooner (the arrival lookup, the admission re-query) spends a
+        lookup as before, so the gate cannot be used to skip the wait."""
+        self.cache.resident = 0
+        self.lookup()
+        self.scheduler_pass(5.0)
+        self.refuse(5.0)
+        self.assertEqual(gate_decisions(self.events(self.lookup)), [("reread", "2")])
+
+    def test_past_its_budget_a_refused_read_is_charged_as_before(self):
+        """The free retries stop at NTP_MAX_ROOM_RETRIES: a later refusal spends lookups and
+        refetches again, at the probe interval, until the refetch is capped."""
+        self.cache.resident = 0
+        self.lookup()
+        self.scheduler_pass(5.0)
+        now = 5.0
+        for _ in range(NTP_MAX_ROOM_RETRIES):
+            self.refuse(now)
+            now += NTP_ROOM_RETRY_S
+            returned, found = self.scheduler_pass(now)
+            self.assertEqual(
+                (returned, gate_decisions(found)), (["s-t1"], [("retry", "1")])
+            )
+        charged = []
+        for _ in range(3):
+            self.refuse(now)
+            now += PROBE_INTERVAL_S
+            returned, found = self.scheduler_pass(now)
+            charged.append((returned, gate_decisions(found), reevictions(found)))
+        self.assertEqual(
+            charged,
+            [
+                (["s-t1"], [("reread", "2")], []),
+                (["s-t1"], [("reread", "3")], [("1", "0")]),
+                ([], [], [("2", "1")]),
+            ],
+        )
+        self.assertEqual(self.scheduler_pass(now + PROBE_INTERVAL_S), ([], []))
+
+    def test_a_landed_read_evicted_again_is_charged_as_before(self):
+        """Only a refusal is free: with the switch on, a read that landed and was evicted
+        again still spends a lookup and a refetch, up to the cap."""
+        self.cache.resident = KEY_TOKENS
+        self.scheduler_pass(5.0)
+        self.cache.resident = 0
+        returned, found = self.scheduler_pass(5.6)
+        self.assertEqual((returned, gate_decisions(found)), (["s-t1"], [("read", "1")]))
+        self.cache.ongoing.clear()
+        self.cache.resident = KEY_TOKENS  # the read landed
+        self.assertEqual(self.scheduler_pass(6.2)[0], [])
+        self.cache.resident = 0  # and was evicted again
+        returned, found = self.scheduler_pass(6.8)
+        self.assertEqual(
+            (returned, gate_decisions(found), reevictions(found)),
+            (["s-t1"], [("reread", "2")], [("1", "0")]),
+        )
+        self.cache.ongoing.clear()
+        returned, found = self.scheduler_pass(7.4)
+        self.assertEqual((returned, reevictions(found)), ([], [("2", "1")]))
+        self.assertEqual(self.scheduler_pass(8.0), ([], []))
+
+
+class TestRoomRetryWithoutGate(RoomRetryTestCase):
+    def test_the_refetch_takes_the_retry_and_refusals_never_cap_the_turn(self):
+        """Without the arrival gate (the oracle_v2 arm) the refetch takes the retry: more
+        refusals than MAX_REFETCHES spend no refetch, and once a retry has landed, a new
+        eviction is charged."""
+        self.cache.resident = 0
+        self.assertEqual(self.scheduler_pass(5.0)[0], ["s-t1"])  # the read at arrival
+        now = 5.0
+        for _ in range(MAX_REFETCHES + 1):
+            self.refuse(now)
+            now += NTP_ROOM_RETRY_S
+            returned, found = self.scheduler_pass(now)
+            self.assertEqual((returned, reevictions(found)), (["s-t1"], []))
+            self.assertEqual(
+                [f["room"] for kind, f in found if kind == "ntp_refetch"], ["1"]
+            )
+        self.cache.ongoing.clear()
+        self.cache.resident = KEY_TOKENS  # the last retry landed
+        self.assertEqual(self.scheduler_pass(now + PROBE_INTERVAL_S)[0], [])
+        self.cache.resident = 0  # and was evicted again
+        returned, found = self.scheduler_pass(now + 2 * PROBE_INTERVAL_S)
+        self.assertEqual((returned, reevictions(found)), (["s-t1"], [("1", "0")]))
+
+    def test_a_history_back_by_another_read_leaves_no_free_retry(self):
+        """A refusal's free retry ends when the history comes back by another read (the
+        turn's arrival read, say): a later re-eviction is charged, so the gate-less arm
+        cannot re-read past MAX_REFETCHES."""
+        self.cache.resident = 0
+        self.assertEqual(self.scheduler_pass(5.0)[0], ["s-t1"])
+        self.refuse(5.0)
+        self.cache.ongoing.clear()
+        self.cache.resident = KEY_TOKENS  # back by another read before the retry
+        self.assertEqual(self.scheduler_pass(5.0 + PROBE_INTERVAL_S)[0], [])
+        self.cache.resident = 0  # evicted again, past the retry's wait
+        returned, found = self.scheduler_pass(5.0 + NTP_ROOM_RETRY_S + PROBE_INTERVAL_S)
+        self.assertEqual((returned, reevictions(found)), (["s-t1"], [("1", "0")]))
+
+
+class TestRoomRetryAtHead(RoomRetryTestCase):
+    arrival_gate = "on"
+    queue_ahead = 0
+
+    def test_at_the_head_a_refused_read_is_reissued_at_once_and_charged(self):
+        """A turn at the queue head cannot wait NTP_ROOM_RETRY_S, or admission takes it
+        without its history before the retry goes out: its read is re-issued in the
+        refusal's own pass and charged as with the switch off."""
+        self.cache.resident = 0
+        self.lookup()
+        self.refuse(5.0)
+        returned, found = self.scheduler_pass(5.0)
+        self.assertEqual(
+            (returned, gate_decisions(found)), (["s-t1"], [("reread", "2")])
+        )
 
 
 if __name__ == "__main__":

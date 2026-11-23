@@ -1,14 +1,17 @@
-"""Unit tests for the NIXL FILE L3 cleaner."""
+"""Unit tests for the NIXL FILE L3 cleaner and for skipping writes of stored pages."""
 
 from sglang.test.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=12, suite="base-a-test-cpu")
 
+import importlib.util
 import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
+from sglang.srt.environ import envs
 from sglang.srt.mem_cache.storage.nixl.nixl_cleaner import (
     HiCacheL3Cleaner,
     _parse_group_key,
@@ -20,10 +23,14 @@ from sglang.srt.mem_cache.storage.nixl.nixl_utils import (
 )
 from sglang.test.test_utils import CustomTestCase
 
+# hicache_nixl imports the NIXL bindings at module scope;
+# the CPU runner has no NIXL wheel.
+_HAS_NIXL = importlib.util.find_spec("nixl") is not None
 
-class TestHiCacheL3Cleaner(CustomTestCase):
-    """Tests for watermark-driven cleanup over bucketed NIXL FILE layout."""
+_FILE_BYTES = 16
 
+
+class _NixlFileTestCase(CustomTestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp(prefix="test_nixl_l3_cleaner_")
         self.base_dirs = [os.path.join(self.test_dir, f"disk{i}") for i in range(2)]
@@ -32,7 +39,7 @@ class TestHiCacheL3Cleaner(CustomTestCase):
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
-    def _write_key(self, key: str, *, mtime: float, size: int = 16) -> str:
+    def _write_key(self, key: str, *, mtime: float, size: int = _FILE_BYTES) -> str:
         path = self.file_manager.get_file_path(key)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
@@ -57,6 +64,10 @@ class TestHiCacheL3Cleaner(CustomTestCase):
 
         cleaner._disk_usage_pct = fake_usage
         self.assertTrue(cleaner._tick())
+
+
+class TestHiCacheL3Cleaner(_NixlFileTestCase):
+    """Tests for watermark-driven cleanup over bucketed NIXL FILE layout."""
 
     def test_parse_group_key_strips_rank_and_kv_suffix(self):
         """Keys for TP ranks and zero-copy K/V files share one cleanup group."""
@@ -187,6 +198,117 @@ class TestHiCacheL3Cleaner(CustomTestCase):
 
         with self.assertRaises(ValueError):
             cfg.get_l3_cleaner_config()
+
+
+class TestSkipStoredWrites(_NixlFileTestCase):
+    """A page whose files are already stored is touched instead of written again."""
+
+    def test_touch_if_stored_accepts_only_a_full_size_file(self):
+        """Only a file of exactly the page's size is stored, and touching it does not
+        truncate it; a missing file is not created, and a short (torn) or longer
+        (another layout) file is left alone to be rewritten."""
+        stored = self._write_key("page-stored_model_0_1_k", mtime=100.0)
+        with self.subTest("full size"):
+            self.assertTrue(
+                self.file_manager.touch_if_stored(file_path=stored, size=_FILE_BYTES)
+            )
+            self.assertGreater(os.stat(stored).st_mtime, 100.0)
+            self.assertEqual(os.stat(stored).st_size, _FILE_BYTES)
+
+        missing = self.file_manager.get_file_path("page-missing_model_0_1_k")
+        with self.subTest("missing"):
+            self.assertFalse(
+                self.file_manager.touch_if_stored(file_path=missing, size=_FILE_BYTES)
+            )
+            self.assertFalse(os.path.exists(missing))
+
+        for size in (_FILE_BYTES - 1, _FILE_BYTES + 1):
+            path = self._write_key(f"page-{size}b_model_0_1_k", mtime=100.0, size=size)
+            with self.subTest(size=size):
+                self.assertFalse(
+                    self.file_manager.touch_if_stored(file_path=path, size=_FILE_BYTES)
+                )
+                self.assertEqual(os.stat(path).st_size, size)
+
+    def test_touched_page_outlives_an_untouched_newer_one(self):
+        """The cleaner deletes the oldest mtime first, so a page skipped instead of
+        rewritten must be touched, or it goes before untouched pages written later."""
+        reused = [
+            self._write_key(f"page-reused_model_0_1{suffix}", mtime=100.0)
+            for suffix in ("_k", "_v")
+        ]
+        idle = [
+            self._write_key(f"page-idle_model_0_1{suffix}", mtime=200.0)
+            for suffix in ("_k", "_v")
+        ]
+        for path in reused:
+            self.assertTrue(
+                self.file_manager.touch_if_stored(file_path=path, size=_FILE_BYTES)
+            )
+
+        self._run_single_group_cleanup()
+        self.assertTrue(all(os.path.exists(path) for path in reused))
+        self.assertFalse(any(os.path.exists(path) for path in idle))
+
+    @unittest.skipUnless(_HAS_NIXL, "nixl is not installed")
+    def test_drop_stored_pages_keeps_unstored_pages_aligned(self):
+        """A page leaves the write, touched, only when every one of its files is stored;
+        the kept (key, buffer) pairs stay aligned and in order, or one page's data
+        lands in another page's file."""
+        from sglang.srt.mem_cache.storage.nixl.hicache_nixl import HiCacheNixl
+
+        backend = HiCacheNixl.__new__(HiCacheNixl)
+        backend.file_manager = self.file_manager
+        backend._stored_write_skips = 0
+        # Zero-copy MHA writes two files per page, K then V.
+        key_strs = [
+            f"page-{page}_model_0_1{suffix}"
+            for page in range(3)
+            for suffix in ("_k", "_v")
+        ]
+        # Distinct addresses make a misaligned or reordered buffer list visible.
+        host_buffers = [(0x1000 * (i + 1), _FILE_BYTES) for i in range(len(key_strs))]
+        page0_paths = [self._write_key(key, mtime=100.0) for key in key_strs[:2]]
+        # Page 1 is torn: K is stored, V was cut short. Page 2 was never written.
+        self._write_key(key_strs[2], mtime=100.0)
+        self._write_key(key_strs[3], mtime=100.0, size=_FILE_BYTES // 2)
+
+        kept_keys, kept_buffers = backend._drop_stored_pages(
+            page_num=3, key_strs=key_strs, host_buffers=host_buffers
+        )
+
+        self.assertEqual(kept_keys, key_strs[2:])
+        self.assertEqual(kept_buffers, host_buffers[2:])
+        self.assertTrue(all(os.stat(path).st_mtime > 100.0 for path in page0_paths))
+        self.assertEqual(backend.take_stored_write_skips(), 1)
+        self.assertEqual(backend.take_stored_write_skips(), 0)
+
+    def test_nixl_config_resolves_skip_stored_writes(self):
+        """Off by default; the top-level key wins over the env var either way, and the
+        key is SGLang's own, never forwarded as a NIXL plugin init param."""
+        no_key = NixlBackendConfig()
+        key_off = NixlBackendConfig({"skip_stored_writes": False})
+        key_on = NixlBackendConfig({"skip_stored_writes": True})
+        # override() leaves the variable set when its body raises;
+        # patch.dict restores the environment even then.
+        with mock.patch.dict(os.environ):
+            os.environ.pop("SGLANG_HICACHE_NIXL_SKIP_STORED_WRITES", None)
+            self.assertFalse(no_key.get_skip_stored_writes())
+            with envs.SGLANG_HICACHE_NIXL_SKIP_STORED_WRITES.override(True):
+                self.assertTrue(no_key.get_skip_stored_writes())
+                self.assertFalse(key_off.get_skip_stored_writes())
+            with envs.SGLANG_HICACHE_NIXL_SKIP_STORED_WRITES.override(False):
+                self.assertTrue(key_on.get_skip_stored_writes())
+
+        cfg = NixlBackendConfig({"use_uring": "true", "skip_stored_writes": True})
+        self.assertEqual(cfg.get_backend_initparams("POSIX"), {"use_uring": "true"})
+
+    def test_nixl_config_rejects_non_boolean_skip_stored_writes(self):
+        """A string such as "false" must raise, not turn the skip on as bool() would."""
+        cfg = NixlBackendConfig({"skip_stored_writes": "false"})
+
+        with self.assertRaises(ValueError):
+            cfg.get_skip_stored_writes()
 
 
 if __name__ == "__main__":

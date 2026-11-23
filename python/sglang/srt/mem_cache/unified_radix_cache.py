@@ -46,6 +46,12 @@ from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
     PrefetchOperation,
 )
 from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool
+from sglang.srt.mem_cache.host_census import (
+    HoldReason,
+    HostCensusLog,
+    tally_fields,
+    tally_host_tree,
+)
 from sglang.srt.mem_cache.radix_cache import RadixKey
 from sglang.srt.mem_cache.storage_prefetch import StoragePrefetchRetries
 from sglang.srt.mem_cache.storage_read_scheduler import (
@@ -151,6 +157,14 @@ class _OngoingLoadBack(NamedTuple):
     node_id: NodeId
     lock_params: DecLockRefParams
     host_lock_params: DecLockRefParams
+
+
+class _OngoingBackup(NamedTuple):
+    """Tracks an in-flight host→storage write and the host lock it holds."""
+
+    node_id: NodeId
+    lock_params: DecLockRefParams
+    tokens: int
 
 
 # A landed storage span stays pinned at most this long without its request
@@ -312,6 +326,15 @@ class UnifiedRadixCache(BasePrefixCache):
         self.prefetch_landed_fn: Optional[Callable[[CacheRequestHandle, NodeId], None]] = (
             None
         )
+        # Told each storage read revoked (cut=False) or cut (cut=True) for host room,
+        # with the tokens refused; runs inside dispatch, so it must not call the cache.
+        self.prefetch_refused_fn: Optional[Callable[..., None]] = None
+        # What holds host memory, logged every interval and at refusals; None when off.
+        self.host_census: Optional[HostCensusLog] = None
+        # True for a handle whose turn has not reached the queue (a staged early read).
+        self.census_staged_fn: Optional[Callable[[CacheRequestHandle], bool]] = None
+        # Reads of the current dispatch batch not launched yet (census: parked).
+        self._census_dispatching: set[CacheRequestHandle] = set()
         self.prefetch_pin_budget_tokens = 0
         self.pinned_prefetch: dict[CacheRequestHandle, _PinnedPrefetch] = {}
         self.pinned_prefetch_tokens = 0
@@ -437,7 +460,9 @@ class UnifiedRadixCache(BasePrefixCache):
             CacheRequestHandle, int
         ] = {}
         self.storage_prefetch_retries = StoragePrefetchRetries()
-        self.ongoing_backup: dict[int, tuple[NodeId, DecLockRefParams]] = {}
+        self.ongoing_backup: dict[int, _OngoingBackup] = {}
+        # Host tokens locked by submitted storage writes not yet acked (cache mode).
+        self.pending_backup_tokens = 0
         if self.buffer_pipeline is not None:
             self.buffer_pipeline.reset()
 
@@ -577,6 +602,17 @@ class UnifiedRadixCache(BasePrefixCache):
                 extra_metric_labels=self.extra_metric_labels,
             )
         self._init_storage_read_scheduling()
+        self.host_census = HostCensusLog.maybe_create(
+            enabled=self.cache_controller is not None
+            and self.cache_controller.enable_storage
+            and self.host_memory_mode == "cache"
+        )
+        if self.host_census is not None:
+            logger.info(
+                "HiCache host census: interval_s=%g tree_walk=%d",
+                self.host_census.interval_s,
+                int(isinstance(self.tree_core, UnifiedTreeCore)),
+            )
 
     def _init_storage_read_scheduling(self) -> None:
         """Deadline-ordered dispatch and pinned staging (ORACLE_V2_PLAN.md 4.2-4.3)."""
@@ -592,6 +628,7 @@ class UnifiedRadixCache(BasePrefixCache):
             window_pages=memory.hicache_storage_read_window_pages,
             budget_tokens=cc.prefetch_capacity_limit,
             page_size=self.page_size,
+            write_hold_tokens=envs.SGLANG_HICACHE_STORAGE_READ_HOLD_WRITE_TOKENS.get(),
         )
         self.prefetch_pin_budget_tokens = int(
             memory.hicache_storage_prefetch_pin_fraction * cc.mem_pool_host.size
@@ -603,12 +640,14 @@ class UnifiedRadixCache(BasePrefixCache):
         cc.extra_occupancy_fn = lambda: self.pinned_prefetch_tokens
         logger.info(
             "HiCache storage reads: order=deadline window_pages=%d budget_tokens=%d "
-            "pin_budget_tokens=%d retry_poll_interval=%d retry_max_attempts=%d",
+            "pin_budget_tokens=%d retry_poll_interval=%d retry_max_attempts=%d "
+            "write_hold_tokens=%d",
             self.read_scheduler.window_pages,
             self.read_scheduler.budget_tokens,
             self.prefetch_pin_budget_tokens,
             memory.hicache_storage_prefetch_retry_poll_interval,
             memory.hicache_storage_prefetch_retry_max_attempts,
+            self.read_scheduler.write_hold_tokens,
         )
 
     def register_sidecar_pool(
@@ -1461,9 +1500,10 @@ class UnifiedRadixCache(BasePrefixCache):
             return 0
         result = self.tree_core.drive_host_eviction(component_type, num_tokens)
         self._free_values(result.device_frees, result.host_frees)
-        if result.tracker.get(component_type, 0) > 0:
-            logger.info("HICACHE_EVT evict_host tokens=%d requested=%d", result.tracker.get(component_type, 0), num_tokens)  # EVAL-PATCH
-        return result.tracker.get(component_type, 0)
+        freed = result.tracker.get(component_type, 0)
+        if freed > 0:
+            logger.info("HICACHE_EVT evict_host tokens=%d requested=%d", freed, num_tokens)  # EVAL-PATCH
+        return freed
 
     # ---- Decode retraction ----
 
@@ -1703,6 +1743,9 @@ class UnifiedRadixCache(BasePrefixCache):
                 node_id, device_value, comp_xfers, sidecar_xfers
             )
             if host_indices is None:
+                if self.host_census is not None:
+                    # Runs inside insert: count only, never walk the tree here.
+                    self.host_census.on_backup_refusal(len(device_value))
                 return 0
             self.tree_core.commit_backup(node_id, host_indices, comp_xfers)
             lock_params = None
@@ -2008,11 +2051,14 @@ class UnifiedRadixCache(BasePrefixCache):
             spec.prefix_keys,
             extra_pools=aux_xfers or None,
         )
-        self.ongoing_backup[operation_id] = (
-            node_id,
-            self.inc_host_lock_ref(node_id).to_dec_params(),
+        tokens = len(spec.token_ids)
+        self.ongoing_backup[operation_id] = _OngoingBackup(
+            node_id=node_id,
+            lock_params=self.inc_host_lock_ref(node_id).to_dec_params(),
+            tokens=tokens,
         )
-        logger.info("HICACHE_EVT h2s_submit op=%d node=%d tokens=%d", operation_id, node_id, len(spec.token_ids))  # EVAL-PATCH
+        self.pending_backup_tokens += tokens
+        logger.info("HICACHE_EVT h2s_submit op=%d node=%d tokens=%d pending=%d", operation_id, node_id, tokens, self.pending_backup_tokens)  # EVAL-PATCH
 
     def is_backuped(self, node_id: NodeId) -> bool:
         return self.tree_core.is_backuped(node_id)
@@ -3018,7 +3064,7 @@ class UnifiedRadixCache(BasePrefixCache):
                     max(alloc_len, aux_hit_tokens), "host_capacity"
                 )
                 return False
-            self._report_room_refusal(request, hit_tokens)
+            self._report_room_refusal(request, hit_tokens, cut=False)
             self._finish_storage_prefetch(
                 request, fulfilled_tokens=0, reason="host_capacity"
             )
@@ -3051,8 +3097,6 @@ class UnifiedRadixCache(BasePrefixCache):
             )
             return True
 
-        if alloc_len < hit_tokens:
-            self._report_room_refusal(request, hit_tokens - alloc_len)
         self._resolve_storage_prefetch_tokens(
             request, hit_tokens - alloc_len, reason="host_capacity"
         )
@@ -3068,6 +3112,10 @@ class UnifiedRadixCache(BasePrefixCache):
             cc.prefetch_tokens_occupied += alloc_len
         self.ongoing_prefetch[request] = info._replace(host_indices=host_indices)
         cc.prefetch_buffer.put(operation)
+        if alloc_len < hit_tokens:
+            # Reported once the read is staged and handed off, so a census taken here
+            # counts its pages as staging and its walk is not charged to the read's clock.
+            self._report_room_refusal(request, hit_tokens - alloc_len, cut=True)
         return True
 
 
@@ -3093,9 +3141,102 @@ class UnifiedRadixCache(BasePrefixCache):
             cc.prefetch_tokens_occupied + self.pinned_prefetch_tokens,
         )
 
-    def _report_room_refusal(self, request: CacheRequestHandle, tokens: int) -> None:
+    def _census_holders(self) -> tuple[dict[int, int], dict[int, int]]:
+        """(reason bits, host locks) per node for every holder the cache tracks. The
+        bits are plain ints: IntFlag operators would dominate the walk's cost."""
+        bits: dict[int, int] = {}
+        counts: dict[int, int] = {}
+
+        def hold(node_id: NodeId, reason: HoldReason) -> None:
+            bits[node_id] = bits.get(node_id, 0) | int(reason)
+            counts[node_id] = counts.get(node_id, 0) + 1
+
+        staged_fn = self.census_staged_fn
+        for entry in self.ongoing_backup.values():
+            hold(entry.node_id, HoldReason.WRITE)
+        for handle, entry in self.ongoing_prefetch.items():
+            if entry.anchor_lock_params is None:
+                continue
+            if staged_fn is not None and staged_fn(handle):
+                reason = HoldReason.STAGED
+            elif entry.host_indices is not None:
+                reason = HoldReason.READ
+            elif handle in self._census_dispatching or (
+                self.read_scheduler is not None and self.read_scheduler.is_parked(handle)
+            ):
+                reason = HoldReason.PARKED
+            else:
+                reason = HoldReason.LOOKUP
+            hold(entry.anchor_node_id, reason)
+        for handle, pin in self.pinned_prefetch.items():
+            staged = staged_fn is not None and staged_fn(handle)
+            hold(pin.node_id, HoldReason.STAGED if staged else HoldReason.PIN)
+        for entry in self.ongoing_load_back.values():
+            hold(entry.node_id, HoldReason.LOAD_BACK)
+        return bits, counts
+
+    def _take_host_census(self) -> dict[str, int]:
+        """One host_census line's fields: tokens, except n_* and mismatch (counts), wq
+        (queued write ops) and walk_ms. resid is not a leak signal: it also holds host
+        pages no field sees, such as the unread tail of a terminated read until its ack
+        drains, retraction backups, and other pools in a shared allocation domain."""
+        start = time.perf_counter()
+        cc = self.cache_controller
+        pool = cc.mem_pool_host
+        release = 0
+        if cc.host_mem_release_queue is not None:
+            with cc.host_mem_release_queue.mutex:
+                release = sum(len(x) for x in cc.host_mem_release_queue.queue)
+        staging = sum(
+            len(entry.host_indices)
+            for entry in self.ongoing_prefetch.values()
+            if entry.host_indices is not None
+        )
+        fields = {"total": pool.size, "free": pool.available_size(), "relq": release}
+        fields["staging"] = staging
+        if isinstance(self.tree_core, UnifiedTreeCore):
+            bits, counts = self._census_holders()
+            tally = tally_host_tree(
+                self.tree_core.root_node, holder_bits=bits, holder_counts=counts
+            )
+            fields.update(tally_fields(tally))
+            fields["resid"] = (
+                pool.size
+                - fields["free"]
+                - release
+                - staging
+                - tally.mirror
+                - tally.host_only()
+            )
+            fields["n_leaves"] = len(self.tree_core.evictable_host_leaves)
+        fields.update(
+            n_writes=len(self.ongoing_backup),
+            pending_write=self.pending_backup_tokens,
+            wq=cc.backup_queue.qsize(),
+            n_prefetch=len(self.ongoing_prefetch),
+            n_parked=0 if self.read_scheduler is None else self.read_scheduler.parked_count(),
+            n_pins=len(self.pinned_prefetch),
+            pinned=self.pinned_prefetch_tokens,
+            occ=cc.prefetch_tokens_occupied,
+            walk_ms=round((time.perf_counter() - start) * 1000),
+        )
+        return fields
+
+    def _report_room_refusal(
+        self, request: CacheRequestHandle, tokens: int, *, cut: bool
+    ) -> None:
         if self.room_refusals is not None:
             self.room_refusals.append((request, tokens))
+        if self.prefetch_refused_fn is not None:
+            # perf_counter: the clock the Scheduler passes to the prefetcher's tick.
+            self.prefetch_refused_fn(
+                request, tokens=tokens, cut=cut, now=time.perf_counter()
+            )
+        if self.host_census is not None:
+            # A revoke reports before revoking, so the refused read's own anchor counts.
+            self.host_census.on_read_refusal(
+                self._take_host_census, tokens=tokens, cut=cut
+            )
 
     def take_room_refusals(self) -> list[tuple[CacheRequestHandle, int]]:
         refusals, self.room_refusals = self.room_refusals or [], []
@@ -3128,6 +3269,15 @@ class UnifiedRadixCache(BasePrefixCache):
             return
         now = time.perf_counter()
         self._release_stale_pins(now)
+        if srs.update_write_hold(self.pending_backup_tokens):
+            logger.info(
+                "HICACHE_EVT srs_write_hold state=%s pending_write_tokens=%d parked=%d "
+                "parked_pages=%d",
+                "on" if srs.write_held else "off",
+                self.pending_backup_tokens,
+                srs.parked_count(),
+                srs.parked_pages(),
+            )
         if srs.parked_count() == 0:
             return
         for handle in srs.parked_handles():
@@ -3141,23 +3291,28 @@ class UnifiedRadixCache(BasePrefixCache):
             held_tokens=cc.prefetch_tokens_occupied + self.pinned_prefetch_tokens,
             not_before_of=self.read_not_before_fn,
         )
+        # Dispatched but not launched yet: the census counts them as parked.
+        self._census_dispatching = {decision.read.handle for decision in decisions}
         for decision in decisions:
             operation = decision.read.operation
             # The timeout policy's clock runs from dispatch, not from the lookup.
             operation.start_time = time.monotonic()
             self._launch_storage_hit(operation)
+            self._census_dispatching.discard(decision.read.handle)
             # Revoked at launch (terminated, no host pages) leaves no entry.
             entry = self.ongoing_prefetch.get(operation.handle)
             launched = entry is not None and entry.host_indices is not None
+            # pending_write_tokens comes last: parsers read pinned_tokens and launched adjacent.
             logger.info(
                 "HICACHE_EVT srs_dispatch rid=%s pages=%d waited_ms=%d inflight_pages=%d "
-                "pinned_tokens=%d launched=%d",
+                "pinned_tokens=%d launched=%d pending_write_tokens=%d",
                 operation.request_id,
                 decision.read.pages,
                 round(decision.waited_s * 1000),
                 self.storage_read_backlog_pages(),
                 self.pinned_prefetch_tokens,
                 int(launched),
+                self.pending_backup_tokens,
             )
 
     def _pin_prefetch(
@@ -3356,9 +3511,9 @@ class UnifiedRadixCache(BasePrefixCache):
                 else:
                     entry = self.ongoing_backup.pop(operation.id, None)
                     if entry is not None:
-                        node_id, lock_params = entry
-                        self.dec_host_lock_ref(node_id, lock_params)
-                logger.info("HICACHE_EVT h2s_done op=%d tokens=%d", operation.id, operation.completed_tokens)  # EVAL-PATCH
+                        self.dec_host_lock_ref(entry.node_id, entry.lock_params)
+                        self.pending_backup_tokens -= entry.tokens
+                logger.info("HICACHE_EVT h2s_done op=%d tokens=%d pending=%d", operation.id, operation.completed_tokens, self.pending_backup_tokens)  # EVAL-PATCH
                 if (
                     log_metrics
                     and self.enable_storage_metrics
@@ -3796,6 +3951,8 @@ class UnifiedRadixCache(BasePrefixCache):
                 log_metrics=True,
             )
             self._dispatch_storage_reads()
+            if self.host_census is not None:
+                self.host_census.tick(self._take_host_census)
         if self.buffer_pipeline is not None:
             self.buffer_pipeline.flush_pending_writes()
         if self.enable_storage_metrics and self.storage_metrics_collector is not None:

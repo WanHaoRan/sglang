@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Callable, List, NamedTuple, Optional
 
 import torch
 
+from sglang.srt.environ import envs
 from sglang.srt.mem_cache.hicache_storage import (
     STORAGE_BATCH_SIZE,
     HiCacheStorageConfig,
@@ -327,6 +328,10 @@ class HiCacheController:
         self.enable_storage = False
         self.storage_backend = None
         self.storage_backend_type = None
+        # Pages per storage write when queued writes are merged; 0 writes each op alone.
+        self.write_coalesce_pages = (
+            envs.SGLANG_HICACHE_STORAGE_WRITE_COALESCE_PAGES.get()
+        )
         self.enable_storage_metrics = enable_storage_metrics
         # Buffer mode: wired by the tree cache after attach; the load rate
         # limiter subtracts write staging from actual pool usage.

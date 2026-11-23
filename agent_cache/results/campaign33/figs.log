@@ -1,0 +1,33 @@
+hicache: tag hicache, client ran 7230 s, server lines kept 147014 of 147245, host pool held 0 tokens before -> results/compare_c33_designs/runs/hicache
+ec_full: tag ec_full, client ran 7230 s, server lines kept 185380 of 185633, host pool held 0 tokens before -> results/compare_c33_designs/runs/ec_full
+ec_exact: tag ec_exact, client ran 7230 s, server lines kept 178463 of 178719, host pool held 0 tokens before -> results/compare_c33_designs/runs/ec_exact
+jit_p50: tag jit_p50, client ran 7230 s, server lines kept 184210 of 184437, host pool held 0 tokens before -> results/compare_c33_designs/runs/jit_p50
+jit_exact: tag jit_exact, client ran 7230 s, server lines kept 176637 of 176864, host pool held 0 tokens before -> results/compare_c33_designs/runs/jit_exact
+oracle_v2: tag oracle_v2, client ran 7230 s, server lines kept 173742 of 173969, host pool held 0 tokens before -> results/compare_c33_designs/runs/oracle_v2
+hicache: 7314 requests / 729 streams; returning TTFT mean 0.606 p50 0.161 p90 1.512 s; device/host/storage/recompute 5140/1044/92/309
+oracle_v2: 7314 requests / 729 streams; returning TTFT mean 0.693 p50 0.164 p90 1.526 s; device/host/storage/recompute 5276/952/48/309
+jit_p50: 7314 requests / 729 streams; returning TTFT mean 0.586 p50 0.153 p90 1.432 s; device/host/storage/recompute 5193/993/90/309
+jit_exact: 7313 requests / 729 streams; returning TTFT mean 0.578 p50 0.153 p90 1.378 s; device/host/storage/recompute 5360/865/50/309
+ec_full: 7314 requests / 729 streams; returning TTFT mean 0.574 p50 0.152 p90 1.438 s; device/host/storage/recompute 5179/1077/20/309
+ec_exact: 7314 requests / 729 streams; returning TTFT mean 0.583 p50 0.152 p90 1.383 s; device/host/storage/recompute 5283/980/13/309
+wrote ../results/compare_c33_designs/ec_wait_split.png
+Over the 6,101 returning requests all six arms sent before minute 110 (HiCache, Old oracle, JIT p50, JIT exact, All four rules,
+Oracle): mean TTFT 0.63, 0.73, 0.61, 0.61, 0.60 and 0.61 s. Requests served in 2 h: 7,314, 7,314, 7,314, 7,313, 7,314 and 7,314;
+users admitted: 729, 729, 729, 729, 729 and 729 of the 729 that arrive.
+Recorded waits at x1, one run per arm. 0.1 users arrive a second and at most 128 are in session; the others wait for a slot, a wait
+TTFT leaves out. Prompts are synthetic token ids of the recorded lengths and outputs have the recorded length; sessions with a
+request over 65,536 tokens are left out. Exact hints are the true next-request times; p50 hints are the median wait after the tool
+call the reply makes, from a table the client keeps online for each harness and model. The old oracle asks for a request's evicted
+history once its admission is expected within 120 s, and at once when the request is already queued; just-in-time starts the read so
+that it lands as the request is admitted. The rules arm gets that table's p10, p50 and p90 and an end-of-session signal: it starts
+reads by expected cost at a learned price on host memory, evicts by chance of return, and lets an arrived request's read take room
+from early reads. The oracle is the rules arm given each true next-request time as its distribution, so its reads land as the
+request is due and it evicts the session that returns last first. Attention runs on FlashAttention 3. Every arm runs the engine with
+the eviction fix: a request queued for over 60 s is no longer taken for one not coming.
+  original HiCache: 0.63 = after admission 0.23 + queue 0.38 + read and GPU 0.01 + read only 0.01
+  old oracle v2, exact hints: 0.73 = after admission 0.32 + queue 0.41 + read and GPU 0.00 + read only 0.00
+  JIT, p50 hints: 0.61 = after admission 0.23 + queue 0.36 + read and GPU 0.01 + read only 0.01
+  JIT, exact hints: 0.61 = after admission 0.24 + queue 0.37 + read and GPU 0.00 + read only 0.00
+  all four rules: 0.60 = after admission 0.23 + queue 0.36 + read and GPU 0.00 + read only 0.00
+  oracle: the four rules on exact hints: 0.61 = after admission 0.23 + queue 0.38 + read and GPU 0.00 + read only 0.00
+wrote ../results/compare_c33_designs

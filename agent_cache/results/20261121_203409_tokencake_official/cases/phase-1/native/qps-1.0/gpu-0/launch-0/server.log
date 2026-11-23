@@ -1,0 +1,137 @@
+WARNING 11-21 20:34:22 [config.py:70] Support for Transformers v4 is deprecated. The Transformers v4 codepath will become unmaintained in vLLM v0.22.0 and will be removed in vLLM v0.24.0. Please upgrade to Transformers v5: pip install --upgrade transformers
+(APIServer pid=90382) INFO 11-21 20:34:24 [utils.py:344] 
+(APIServer pid=90382) INFO 11-21 20:34:24 [utils.py:344]        █     █     █▄   ▄█
+(APIServer pid=90382) INFO 11-21 20:34:24 [utils.py:344]  ▄▄ ▄█ █     █     █ ▀▄▀ █  version 0.22.0
+(APIServer pid=90382) INFO 11-21 20:34:24 [utils.py:344]   █▄█▀ █     █     █     █  model   Qwen/Qwen3-30B-A3B-Instruct-2507
+(APIServer pid=90382) INFO 11-21 20:34:24 [utils.py:344]    ▀▀  ▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀
+(APIServer pid=90382) INFO 11-21 20:34:24 [utils.py:344] 
+(APIServer pid=90382) INFO 11-21 20:34:24 [utils.py:278] non-default args: {'model_tag': 'Qwen/Qwen3-30B-A3B-Instruct-2507', 'host': '127.0.0.1', 'port': 8055, 'model': 'Qwen/Qwen3-30B-A3B-Instruct-2507', 'max_model_len': 32768, 'gpu_memory_utilization': 0.5}
+(APIServer pid=90382) WARNING 11-21 20:34:24 [envs.py:2057] Unknown vLLM environment variable detected: VLLM_USE_V1
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950] Error in inspecting model architecture 'Qwen3MoeForCausalLM'
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950] Traceback (most recent call last):
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/model_executor/models/registry.py", line 1385, in _run_in_subprocess
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     returned.check_returncode()
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/subprocess.py", line 502, in check_returncode
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     raise CalledProcessError(self.returncode, self.args, self.stdout,
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950] subprocess.CalledProcessError: Command '['/home/wanhr/sglang/agent_cache/baselines/tokencake/.venv/bin/python', '-m', 'vllm.model_executor.models.registry']' returned non-zero exit status 1.
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950] 
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950] The above exception was the direct cause of the following exception:
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950] 
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950] Traceback (most recent call last):
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/model_executor/models/registry.py", line 948, in _try_inspect_model_cls
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     return model.inspect_model_cls()
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]            ^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/logging_utils/log_time.py", line 21, in _wrapper
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     result = func(*args, **kwargs)
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]              ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/model_executor/models/registry.py", line 909, in inspect_model_cls
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     mi = _run_in_subprocess(
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]          ^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/model_executor/models/registry.py", line 1388, in _run_in_subprocess
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     raise RuntimeError(
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950] RuntimeError: Error raised in subprocess:
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950] <frozen runpy>:128: RuntimeWarning: 'vllm.model_executor.models.registry' found in sys.modules after import of package 'vllm.model_executor.models', but prior to execution of 'vllm.model_executor.models.registry'; this may result in unpredictable behaviour
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950] Traceback (most recent call last):
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "<frozen runpy>", line 198, in _run_module_as_main
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "<frozen runpy>", line 88, in _run_code
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/model_executor/models/registry.py", line 1411, in <module>
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     _run()
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/model_executor/models/registry.py", line 1404, in _run
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     result = fn()
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]              ^^^^
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/model_executor/models/registry.py", line 910, in <lambda>
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     lambda: _ModelInfo.from_model_cls(self.load_model_cls())
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]                                       ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/model_executor/models/registry.py", line 923, in load_model_cls
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     mod = importlib.import_module(self.module_name)
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/importlib/__init__.py", line 90, in import_module
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     return _bootstrap._gcd_import(name[level:], package, level)
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "<frozen importlib._bootstrap_external>", line 999, in exec_module
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/model_executor/models/qwen3_moe.py", line 45, in <module>
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     from vllm.model_executor.layers.attention import Attention
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/model_executor/layers/attention/__init__.py", line 13, in <module>
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     from vllm.model_executor.layers.attention.mm_encoder_attention import MMEncoderAttention
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/model_executor/layers/attention/mm_encoder_attention.py", line 11, in <module>
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     from vllm.kernels.triton.qkv_padded_fp8_quant import (
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/kernels/__init__.py", line 5, in <module>
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     from . import aiter_ops, oink_ops, vllm_c, xpu_ops
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/kernels/oink_ops.py", line 18, in <module>
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     OINK_AVAILABLE = current_platform.has_device_capability(100) and hasattr(
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/platforms/cuda.py", line 155, in wrapper
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     return fn(*args, **kwargs)
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]            ^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/platforms/cuda.py", line 630, in has_device_capability
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     return super().has_device_capability(capability, device_id)
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/platforms/interface.py", line 321, in has_device_capability
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     current_capability = cls.get_device_capability(device_id=device_id)
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/platforms/cuda.py", line 155, in wrapper
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     return fn(*args, **kwargs)
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]            ^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/platforms/cuda.py", line 615, in get_device_capability
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     physical_device_id = cls.device_id_to_physical_device_id(device_id)
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/platforms/interface.py", line 237, in device_id_to_physical_device_id
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]     return int(physical_device_id)
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950]            ^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950] ValueError: invalid literal for int() with base 10: 'GPU-0f61782e-8350-c0ba-8fa1-9f67c3775155'
+(APIServer pid=90382) ERROR 11-21 20:34:32 [registry.py:950] 
+(APIServer pid=90382) Traceback (most recent call last):
+(APIServer pid=90382)   File "<frozen runpy>", line 198, in _run_module_as_main
+(APIServer pid=90382)   File "<frozen runpy>", line 88, in _run_code
+(APIServer pid=90382)   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/entrypoints/cli/main.py", line 98, in <module>
+(APIServer pid=90382)     main()
+(APIServer pid=90382)   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/entrypoints/cli/main.py", line 92, in main
+(APIServer pid=90382)     args.dispatch_function(args)
+(APIServer pid=90382)   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/entrypoints/cli/serve.py", line 148, in cmd
+(APIServer pid=90382)     uvloop.run(run_server(args))
+(APIServer pid=90382)   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/.venv/lib/python3.12/site-packages/uvloop/__init__.py", line 96, in run
+(APIServer pid=90382)     return __asyncio.run(
+(APIServer pid=90382)            ^^^^^^^^^^^^^^
+(APIServer pid=90382)   File "/home/wanhr/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/runners.py", line 195, in run
+(APIServer pid=90382)     return runner.run(main)
+(APIServer pid=90382)            ^^^^^^^^^^^^^^^^
+(APIServer pid=90382)   File "/home/wanhr/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/runners.py", line 118, in run
+(APIServer pid=90382)     return self._loop.run_until_complete(task)
+(APIServer pid=90382)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382)   File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+(APIServer pid=90382)   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/.venv/lib/python3.12/site-packages/uvloop/__init__.py", line 48, in wrapper
+(APIServer pid=90382)     return await main
+(APIServer pid=90382)            ^^^^^^^^^^
+(APIServer pid=90382)   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/entrypoints/openai/api_server.py", line 678, in run_server
+(APIServer pid=90382)     await run_server_worker(listen_address, sock, args, **uvicorn_kwargs)
+(APIServer pid=90382)   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/entrypoints/openai/api_server.py", line 692, in run_server_worker
+(APIServer pid=90382)     async with build_async_engine_client(
+(APIServer pid=90382)                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382)   File "/home/wanhr/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 210, in __aenter__
+(APIServer pid=90382)     return await anext(self.gen)
+(APIServer pid=90382)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382)   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/entrypoints/openai/api_server.py", line 100, in build_async_engine_client
+(APIServer pid=90382)     async with build_async_engine_client_from_engine_args(
+(APIServer pid=90382)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382)   File "/home/wanhr/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 210, in __aenter__
+(APIServer pid=90382)     return await anext(self.gen)
+(APIServer pid=90382)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382)   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/entrypoints/openai/api_server.py", line 124, in build_async_engine_client_from_engine_args
+(APIServer pid=90382)     vllm_config = engine_args.create_engine_config(usage_context=usage_context)
+(APIServer pid=90382)                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382)   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/engine/arg_utils.py", line 1730, in create_engine_config
+(APIServer pid=90382)     model_config = self.create_model_config()
+(APIServer pid=90382)                    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=90382)   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/src/TokenCake/vllm/engine/arg_utils.py", line 1560, in create_model_config
+(APIServer pid=90382)     return ModelConfig(
+(APIServer pid=90382)            ^^^^^^^^^^^^
+(APIServer pid=90382)   File "/home/wanhr/sglang/agent_cache/baselines/tokencake/.venv/lib/python3.12/site-packages/pydantic/_internal/_dataclasses.py", line 121, in __init__
+(APIServer pid=90382)     s.__pydantic_validator__.validate_python(ArgsKwargs(args, kwargs), self_instance=s)
+(APIServer pid=90382) pydantic_core._pydantic_core.ValidationError: 1 validation error for ModelConfig
+(APIServer pid=90382)   Value error, Model architectures ['Qwen3MoeForCausalLM'] failed to be inspected. Please check the logs for more details. [type=value_error, input_value=ArgsKwargs((), {'model': ...nderer_num_workers': 1}), input_type=ArgsKwargs]
+(APIServer pid=90382)     For further information visit https://errors.pydantic.dev/2.13/v/value_error

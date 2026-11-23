@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import os
@@ -28,6 +29,7 @@ from sglang.srt.managers.cache_controller import (
 )
 from sglang.srt.mem_cache.base_prefix_cache import CacheRequestHandle
 from sglang.srt.mem_cache.hicache_storage import (
+    STORAGE_BATCH_SIZE,
     HiCacheStorageExtraInfo,
     PoolHitPolicy,
     PoolName,
@@ -1397,16 +1399,134 @@ class HybridCacheController(BaseHiCacheController):
         while not self.storage_stop_event.is_set():
             try:
                 operation = self.backup_queue.get(block=True, timeout=1)
-                if operation is None:
-                    continue
-                _t0 = time.perf_counter()  # EVAL-PATCH
-                self._page_backup(operation)
-                logger.info("HICACHE_EVT h2s_io op=%d pages=%d tokens=%d ms=%.0f",
-                            operation.id, len(operation.hash_value or []), operation.completed_tokens,
-                            (time.perf_counter() - _t0) * 1000)  # EVAL-PATCH
-                self.ack_backup_queue.put(operation)
             except Empty:
                 continue
+            if operation is None:
+                continue
+            group, next_operation = self._take_backup_group(operation)
+            self._write_backup_group(group)
+            if next_operation is not None:
+                self._write_backup_group([next_operation])
+
+    def _backup_mergeable(self, operation) -> bool:
+        # NIXL's batch_set_v1 ignores prefix keys, so its ops can share one page stream.
+        return (
+            self.write_coalesce_pages > 0
+            and self.storage_backend_type == "nixl"
+            and not self.backup_skip
+            and not operation.pool_transfers
+            and len(operation.hash_value) > 0
+            and operation.host_indices is not None
+            and len(operation.host_indices)
+            == len(operation.hash_value) * self.page_size
+        )
+
+    def _take_backup_group(self, first):
+        """The first op and the mergeable ops queued behind it, up to write_coalesce_pages
+        pages. A non-mergeable op that ends the group comes back to be written right
+        after it, so writes and acks keep queue order."""
+        if not self._backup_mergeable(first):
+            return [first], None
+        group, pages = [first], len(first.hash_value)
+        while pages < self.write_coalesce_pages:
+            try:
+                operation = self.backup_queue.get_nowait()
+            except Empty:
+                break
+            if operation is None:
+                break
+            if not self._backup_mergeable(operation):
+                return group, operation
+            group.append(operation)
+            pages += len(operation.hash_value)
+        return group, None
+
+    def _write_backup_group(self, group) -> None:
+        t0 = time.perf_counter()
+        if len(group) == 1:
+            operation = group[0]
+            self._page_backup(operation)
+            logger.info(
+                "HICACHE_EVT h2s_io op=%d pages=%d tokens=%d ms=%.0f skipped=%d",
+                operation.id,
+                len(operation.hash_value or []),
+                operation.completed_tokens,
+                (time.perf_counter() - t0) * 1000,
+                self.storage_backend.take_stored_write_skips(),
+            )
+            self.ack_backup_queue.put(operation)
+            return
+        failed = self._page_backup_group(group)
+        logger.info(
+            "HICACHE_EVT h2s_group op=%d ops=%d pages=%d skipped=%d ms=%.0f failed=%d",
+            group[0].id,
+            len(group),
+            sum(len(operation.hash_value) for operation in group),
+            self.storage_backend.take_stored_write_skips(),
+            (time.perf_counter() - t0) * 1000,
+            int(failed),
+        )
+
+    def _page_backup_group(self, group) -> bool:
+        """Write the group's pages as one stream in STORAGE_BATCH_SIZE batches. An op is
+        acked as soon as its last page is written, in queue order. After a failed batch
+        each op not yet written goes alone, as unmerged, so one failure costs the others
+        nothing. Returns whether a batch failed."""
+        hashes = [page_hash for operation in group for page_hash in operation.hash_value]
+        host_indices = torch.cat([operation.host_indices for operation in group])
+        ends = list(itertools.accumulate(len(operation.hash_value) for operation in group))
+        # Batch time pro-rated to the ops by their pages in it, so busy-time sums stay exact.
+        op_ms = [0.0] * len(group)
+        acked = 0
+        failed = False
+        with self.mem_pool_host.layout_lease():
+            for start in range(0, len(hashes), STORAGE_BATCH_SIZE):
+                end = min(start + STORAGE_BATCH_SIZE, len(hashes))
+                t0 = time.perf_counter()
+                ok = self.page_set_func(
+                    hashes[start:end],
+                    host_indices[start * self.page_size : end * self.page_size],
+                    HiCacheStorageExtraInfo(prefix_keys=None),
+                )
+                batch_ms = (time.perf_counter() - t0) * 1000
+                for i, op_end in enumerate(ends):
+                    op_start = op_end - len(group[i].hash_value)
+                    overlap = min(end, op_end) - max(start, op_start)
+                    if overlap > 0:
+                        op_ms[i] += batch_ms * overlap / (end - start)
+                if not ok:
+                    logger.warning("Write page to storage: %d pages failed.", end - start)
+                    failed = True
+                    break
+                while acked < len(group) and ends[acked] <= end:
+                    operation = group[acked]
+                    operation.completed_tokens += self.page_size * len(
+                        operation.hash_value
+                    )
+                    self._ack_grouped_write(
+                        operation, ms=op_ms[acked], group_id=group[0].id
+                    )
+                    acked += 1
+        for i in range(acked, len(group)):
+            t0 = time.perf_counter()
+            self._page_backup(group[i])
+            self._ack_grouped_write(
+                group[i],
+                ms=op_ms[i] + (time.perf_counter() - t0) * 1000,
+                group_id=group[0].id,
+            )
+        return failed
+
+    def _ack_grouped_write(self, operation, *, ms: float, group_id: int) -> None:
+        logger.info(
+            "HICACHE_EVT h2s_io op=%d pages=%d tokens=%d ms=%.0f group=%d",
+            operation.id,
+            len(operation.hash_value),
+            operation.completed_tokens,
+            ms,
+            group_id,
+        )
+        self.ack_backup_queue.put(operation)
 
     def _resolve_sidecar_kv_derived_pool_transfers(self, operation):
         for transfer in operation.pool_transfers:

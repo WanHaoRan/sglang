@@ -56,6 +56,12 @@ launcher process runs campaigns 32 and 33 (`run_campaigns.sh`). About 2 h 5 min 
   Counted to 5,500 s, before any pass, the arms keep their order (Results).
 - The slowest recorded request took 696 s in `hicache` and 552 to 611 s in the others, so a few requests sent shortly
   before 6,600 s may be missing; at the 5,500 s cut none should be.
+- Added 2026-11-23 (`results/campaign33/DECISIONS.md`, "Outside requests"): the server listened on `0.0.0.0` with no
+  key, and an outside address's `POST /update_weights_from_disk` stopped `ec_exact`'s server from admitting requests
+  three times at 2,776 to 2,859 s (about 26, 20 and 20 s). Its requests sent in minute 46 took 14.6 s against 7.7
+  and 8.6 s in `jit_exact` and `ec_full`; 960 requests sent at 2,716 to 3,099 s took 1,007 s more than in `ec_full`,
+  0.08 s of its mean. Without them `ec_full` to `ec_exact` stays +1.47 s [+1.08, +1.91] and `ec_exact` to
+  `jit_exact` is -0.07 s [-0.24, +0.10] (`checks/stall_window.out`). The other arms saw only `GET` requests.
 
 ## Results
 
