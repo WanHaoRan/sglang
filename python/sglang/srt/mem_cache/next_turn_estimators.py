@@ -147,3 +147,58 @@ class L3LoadModel(msgspec.Struct, frozen=True, kw_only=True):
 def trigger_time(*, admission_at: float, load_s: float, margin_s: float = 0.0) -> float:
     """Start the read here so its pages land as the request is admitted."""
     return admission_at - load_s - margin_s
+
+
+# Samples before a measured lag is published. Arbitrary; as the read thread's rate
+# (STORAGE_READ_RATE_MIN_SAMPLES).
+LAG_MIN_SAMPLES = 8
+
+
+class LagEwma(msgspec.Struct):
+    """EWMA of one lag; `seconds` is None until LAG_MIN_SAMPLES were seen."""
+
+    ewma_s: float = 0.0
+    samples: int = 0
+
+    def observe(self, seconds: float) -> None:
+        if self.samples == 0:
+            self.ewma_s = seconds
+        else:
+            self.ewma_s += EWMA_ALPHA * (seconds - self.ewma_s)
+        self.samples += 1
+
+    @property
+    def seconds(self) -> Optional[float]:
+        return self.ewma_s if self.samples >= LAG_MIN_SAMPLES else None
+
+
+class ReadPathLags(msgspec.Struct):
+    """What the storage read path adds to a read besides its own pages and the pages
+    served before it: the lags L3LoadModel seeds for a loaded read thread, measured. The
+    cache feeds it on the scheduler thread once the next-turn prefetcher installs it."""
+
+    # Lookup issued -> its hit parked for dispatch.
+    lookup: LagEwma = msgspec.field(default_factory=LagEwma)
+    # Dispatch -> pages inserted, beyond its pages and those ahead at the read thread's
+    # rate; negative when that rate overstates a short read.
+    fixed: LagEwma = msgspec.field(default_factory=LagEwma)
+    # How long a write hold lasts.
+    write_hold: LagEwma = msgspec.field(default_factory=LagEwma)
+    # When the write hold now on began; None while timed reads are not write-held.
+    write_hold_since: Optional[float] = None
+
+    def note_write_hold(self, *, held: bool, now: float) -> None:
+        """The write hold came on or went off at now."""
+        if held:
+            self.write_hold_since = now
+        elif self.write_hold_since is not None:
+            self.write_hold.observe(now - self.write_hold_since)
+            self.write_hold_since = None
+
+    def write_hold_left_s(self, now: float) -> float:
+        """Seconds a timed read parked now still waits for the write hold: what is left of
+        a hold of the usual length; 0 when not held or before any hold was measured."""
+        usual_s = self.write_hold.seconds
+        if self.write_hold_since is None or usual_s is None:
+            return 0.0
+        return max(0.0, usual_s - (now - self.write_hold_since))

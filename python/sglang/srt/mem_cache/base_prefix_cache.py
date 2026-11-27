@@ -102,6 +102,10 @@ class InsertParams:
     # off). See UnifiedTreeNode.rotation_base.
     rotation_base: Optional[int] = None
 
+    # The turn ends its session: the nodes this insert backs up to host memory are
+    # not written to storage.
+    skip_storage_backup: bool = False
+
 
 @dataclasses.dataclass
 class InsertResult:

@@ -1,0 +1,21 @@
+<section id="constants" class="alt foot">
+<div class="head">
+<p class="eyebrow">Reference · constants</p>
+<h2 class="title">The measured constants behind the numbers</h2>
+</div>
+<table class="t">
+<tr><th style="width:26%">Quantity</th><th style="width:74%">Value</th></tr>
+<tr><td>Model and KV</td><td>Qwen3-30B-A3B-Instruct-2507, 16-bit KV: 98,304 bytes a token; a page is 64 tokens, 6 MiB</td></tr>
+<tr><td>GPU memory for KV</td><td>668,096 tokens; 19 to 20 turns running when saturated</td></tr>
+<tr><td>Host pool, 160 GB</td><td>1,627,648 tokens: 0.65M copy what the GPU holds, 0.90–0.97M are left for other sessions</td></tr>
+<tr><td>SSD</td><td>2.3 TiB; 2.0–2.1 GB/s for reads and writes together, 21K tokens a second</td></tr>
+<tr><td>Read, idle device</td><td>0.05 s + 0.044 ms a token (2.84 ms a page)</td></tr>
+<tr><td>Prefill, idle GPU</td><td>0.03 s + 0.012 ms a token + 1.4 μs a token per thousand tokens of position: 20K cold 0.56 s, 30K 1.03 s</td></tr>
+<tr><td>Prefill under load</td><td>0.043 ms a token for a 20K history: 0.86 s</td></tr>
+<tr><td>Load, host to GPU</td><td>0.03–0.04 s for 20–29K tokens</td></tr>
+<tr><td>Workload</td><td>at most 128 users, arriving 0.1 a second; prompts 25.5K tokens, 1.1K new, 280 out; 141.5 requests a minute at saturation</td></tr>
+<tr><td>Gaps, as replayed</td><td>a tool, 91.5 %: p10/p50/p90 0.32/1.02/8.1 s; a person, 8.5 %: 2.7/68/722 s, 22 % never return</td></tr>
+</table>
+<p class="footer">Campaign 34 on FlashAttention 3, one H200. Records keep the per-run fits and where each number was read.</p>
+<aside>The measured constants behind the numbers in this deck, all from the two-hour run on FlashAttention 3 with one H200. The model is Qwen3-30B-A3B with 16-bit KV: 98,304 bytes a token, and a page of 64 tokens is 6 mebibytes. GPU memory holds 668,096 tokens of KV, enough for 19 to 20 running turns at saturation. The 160 gigabyte host pool holds 1,627,648 tokens, of which 0.65 million copy what the GPU holds and 0.90 to 0.97 million are left for other sessions. The SSD is 2.3 tebibytes and moves 2.0 to 2.1 gigabytes a second, reads and writes together, which is 21 thousand tokens a second. A read on an idle device takes 0.05 seconds plus 0.044 milliseconds a token. A cold prefill on an idle GPU takes 0.03 seconds plus 0.012 milliseconds a token plus a term that grows with position, so 20 thousand tokens take 0.56 seconds and 30 thousand take 1.03; under load a 20 thousand token history takes 0.86 seconds. The load from host to GPU takes three to four hundredths of a second. The workload has at most 128 users arriving at 0.1 a second, prompts of 25.5 thousand tokens with 1.1 thousand new and 280 out, and 141.5 requests a minute at saturation. Gaps as replayed: after a tool call, 91.5 percent of gaps, the tenth, fiftieth and ninetieth percentiles are 0.32, 1.02 and 8.1 seconds; after a person, 8.5 percent, 2.7, 68 and 722 seconds, and 22 percent of those sessions never return.</aside>
+</section>

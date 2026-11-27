@@ -709,6 +709,8 @@ class PrefillAdder:
         # mamba-evictable radix), NOT full-evictable. Gate new mamba slots on
         # that mamba-recoverable budget separately or an over-admit hits the
         # fail-loud `RuntimeError`. `None` outside the unified Mamba pool.
+        # Tokens this walk's admissions queue for the copy from host memory to the GPU.
+        self.host_load_tokens = 0
         self.rem_mamba_slots = None
         if self._mamba_slot_cost:
             self.rem_mamba_slots = self.token_to_kv_pool_allocator.mamba_allocator.schedulable_available_size()
@@ -1333,6 +1335,7 @@ class PrefillAdder:
                     return AddReqResult.OTHER
                 new_indices, req.last_node = loaded
                 req.host_loaded_length = len(new_indices)
+                self.host_load_tokens += req.host_loaded_length
                 if 0 < req.host_loaded_length < promised_host_hit:
                     raise RuntimeError(
                         "HiCache load-back must commit all promised FULL tokens or none: "

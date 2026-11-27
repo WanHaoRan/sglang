@@ -1,0 +1,7 @@
+# <label> <server arm> <hints> <client flags joined by commas, or -> <engine folder in frozen/> [extra server flags ...]
+# Campaign 42: the whole unified design (the cache rules of Fetch, Price and Retain, and the load hold) at
+# campaign 37's setting (128 users, 112 GB host pool, 2 h). settings.env is that campaign's plus the eleven switches,
+# so requests pair with campaign 37's ec_full by user, stream and index.
+# unified_load: the arm of the four rules on the unified engine copy, every switch of settings.env on, price learning
+# off (measured prices replace it), queued turns evicted latest arrival first.
+unified_load three_tier_wc_oracle_v2_nu_owned dist --hint-no-call engine_unified_20261126 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning off --hicache-storage-next-turn-soft-pins on --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30,"queued_order":"farthest"}

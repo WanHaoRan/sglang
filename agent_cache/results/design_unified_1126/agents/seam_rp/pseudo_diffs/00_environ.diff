@@ -1,0 +1,47 @@
+# Pseudo-diff against HEAD b7074d9cae. Not applied; context lines are HEAD's.
+# One section, next to the four fixes it extends ("HiCache storage backends and mmap allocation").
+# All typed EnvField descriptors, off by default, read once at construction with .get().
+
+--- a/python/sglang/srt/environ.py
++++ b/python/sglang/srt/environ.py
+@@ -781,6 +781,36 @@ class Envs:
+     # Next-turn prefetcher: a read refused host room is retried on its own paced budget
+     # and does not spend the turn's lookup allowance.
+     SGLANG_HICACHE_NEXT_TURN_ROOM_RETRY = EnvBool(False)
++    # R3. A node counts as stored only once its whole storage write is acked (agreed
++    # across TP ranks); R1, R4, R5 and P2 read that mark.
++    SGLANG_HICACHE_STORAGE_TRACK_STORED = EnvBool(False)
++    # R1. The last turn of a session whose hint says it ended is not written to storage.
++    SGLANG_HICACHE_STORAGE_SKIP_ENDED_WRITES = EnvBool(False)
++    # R2. Storage write thread: queued writes leave in host-eviction order, not FIFO.
++    SGLANG_HICACHE_STORAGE_WRITE_EVICTION_ORDER = EnvBool(False)
++    # R4. NIXL file backend: seconds between mtime refreshes of a stored page that memory
++    # serves, the chain's head newest; 0 disables.
++    SGLANG_HICACHE_NIXL_TOUCH_INTERVAL_S = EnvFloat(0.0)
++    # R4. NIXL file backend: an ended session's own pages get mtime zero, so the L3
++    # cleaner deletes them first.
++    SGLANG_HICACHE_NIXL_RETIRE_ENDED_PAGES = EnvBool(False)
++    # R5. Host eviction takes pages that have a storage copy before pages that have none,
++    # within each tier of the eviction policy.
++    SGLANG_HICACHE_HOST_EVICT_STORED_FIRST = EnvBool(False)
++    # P1. Deadline read order: a read short of host room takes idle pages, then staged
++    # reads, then queued turns with slack; never the queue head's.
++    SGLANG_HICACHE_STORAGE_READ_ROOM_ORDER = EnvBool(False)
++    # P1. Longest a read waits for host room before it is cut or refused; 0 never waits.
++    SGLANG_HICACHE_STORAGE_READ_ROOM_WAIT_S = EnvFloat(0.0)
++    # P2. Deadline read order: hold timed reads by the host reserve against the write
++    # drain time, in place of SGLANG_HICACHE_STORAGE_READ_HOLD_WRITE_TOKENS.
++    SGLANG_HICACHE_STORAGE_READ_HOLD_BY_RESERVE = EnvBool(False)
+     SGLANG_HUGEPAGE_SIZE = EnvStr("")
+
+# Where each is read (once, at construction; .get() at the read site, override() in tests):
+#   TRACK_STORED, SKIP_ENDED_WRITES, HOST_EVICT_STORED_FIRST, READ_ROOM_ORDER, READ_ROOM_WAIT_S,
+#   READ_HOLD_BY_RESERVE   UnifiedRadixCache._init_storage_read_scheduling / init_hicache
+#                          (as write_hold_tokens is, unified_radix_cache.py:631)
+#   WRITE_EVICTION_ORDER   HiCacheController.__init__ (as write_coalesce_pages, cache_controller.py:332-334)
+#   NIXL_TOUCH_INTERVAL_S, NIXL_RETIRE_ENDED_PAGES
+#                          NixlBackendConfig getters with a top-level extra-config key that wins
+#                          (as get_skip_stored_writes, nixl_utils.py:50-59; add both keys to
+#                          _SGLANG_NIXL_CONFIG_KEYS, nixl_utils.py:14-20)
+# Dependencies checked at init, logged once: R1, R4-retire, R5 and P2 need TRACK_STORED; R1 and R4-retire
+# need the next-turn prefetcher (TP = PP = 1 by its create()); R2 needs TP = PP = 1.

@@ -1,0 +1,29 @@
+<section id="late" class="foot">
+<div class="head">
+<p class="eyebrow">The model · the queue, part 2</p>
+<h2 class="title">A late read costs only the GPU time it wastes</h2>
+</div>
+<div class="row-wide">
+<div class="grow">
+<div class="formula">
+<p class="small">The engine admits turns in arrival order, but it passes over a turn whose read has not landed and takes the next ready one.</p>
+<p class="ink-b">While another ready turn takes the slot, a second of stall moves one turn back and another forward: the sum does not change.</p>
+<p class="math-s">change in mean TTFT = (<i>N</i> − <i>B</i>) × GPU time lost per request</p>
+<p class="small">So a stall has no price of its own. We write <i>c</i> for what a second of it costs the sum: 1 when the turn waits alone, 0 when ready turns always wait.</p>
+</div>
+</div>
+<div class="col-s" style="width:720px">
+<table class="t">
+<tr><th style="width:40%">Reads land</th><th style="width:20%">Mean TTFT</th><th style="width:20%">Readers</th><th style="width:20%">Others</th></tr>
+<tr><td>on time</td><td>31.2 s</td><td>31.2 s</td><td>31.2 s</td></tr>
+<tr><td>10 s late on average</td><td>31.2 s</td><td>31.6 s</td><td>31.1 s</td></tr>
+<tr><td>40 s late</td><td>31.2 s</td><td>47.8 s</td><td>25.7 s</td></tr>
+<tr><td>150 s late: slots empty</td><td>38.7 s</td><td>152.8 s</td><td>1.0 s</td></tr>
+</table>
+<div class="card-s in1"><p class="ink-b">Measured <i>c</i></p><p class="small">0.94 to 0.98 until the GPU saturates at minute 28, 0.06 until minute 70, 0.00 after.</p></div>
+<div class="card-hot in2"><p class="small">Two cautions. The mean hides who waits, so <i>c</i> keeps a floor. And before the user cap binds, a second of stall cost 0.35 to 0.46.</p></div>
+</div>
+</div>
+<p class="footer">Table: a model of this GPU, 128 users, 20 turns running at once, a quarter of the turns reading. Measured: campaign 34, share of admissions that leave no ready turn waiting. <i>N</i>: users in session · <i>B</i>: turns running past their first token.</p>
+<aside>This is the second way the queue enters the model. The engine admits turns in arrival order, but it passes over a turn whose read from the SSD has not landed, and takes the next ready one. So when a read is late, the GPU does not wait. As long as another ready turn takes the slot, a second of stall moves one turn back and another forward, and the sum of the waits does not change. In the closed loop the exact statement is that the mean TTFT changes by N minus B times the GPU time lost per request. A stall therefore has no price of its own: it costs only the GPU time it wastes. We write c for what a second of stall costs the sum: one when the turn waits alone, zero when ready turns always wait. The table shows it in a model of this GPU with 128 users and 20 turns running at once, where a quarter of the turns read. With reads on time the mean TTFT is 31.2 seconds. With reads ten or forty seconds late on average it is still 31.2: the readers wait longer, 47.8 seconds at forty seconds late, and the others shorter, 25.7. Only when reads are 150 seconds late do slots go empty, and the mean rises to 38.7. In the runs, c measured as the share of admissions that leave no ready turn waiting is 0.94 to 0.98 until the GPU saturates at minute 28, 0.06 until minute 70 and zero after. Two cautions. The mean hides who waits, so the engine keeps a floor under c instead of landing readers arbitrarily late. And before the cap on users binds, the loop is open: there one design’s extra stall did cost 0.35 to 0.46 per second, on one run per design.</aside>
+</section>

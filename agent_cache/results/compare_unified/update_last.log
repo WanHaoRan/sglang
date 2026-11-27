@@ -1,0 +1,66 @@
+== A_128u_160g: 7 arms
+pairs (B - A on the requests both sent before the cut; interval over users, 95 %)
+A                       B                       | requests users |   A mean   B mean |    B - A            interval | B faster
+ec_full_c34             ec_full                 |    15521   619 |    10.92    10.93 |    +0.01 [   -0.10,    +0.12] |    50.7%
+ec_full_c34             ec_full_load            |    15561   620 |    10.96     9.38 |    -1.59 [   -1.76,    -1.41] |    60.0%
+ec_full_c34             unified                 |    15550   620 |    10.95    10.58 |    -0.37 [   -0.49,    -0.25] |    55.2%
+ec_full_c34             unified_load            |    15562   620 |    10.96     9.18 |    -1.79 [   -1.99,    -1.60] |    61.9%
+ec_full_c34             unified_load_po         |    15558   620 |    10.96     9.10 |    -1.86 [   -2.13,    -1.60] |    62.4%
+ec_full_c34             unified_load_fixedprice |    15562   620 |    10.96     9.18 |    -1.78 [   -1.97,    -1.60] |    62.2%
+ec_full                 ec_full_load            |    15560   619 |    10.97     9.36 |    -1.61 [   -1.80,    -1.43] |    59.7%
+ec_full                 unified                 |    15548   619 |    10.96    10.58 |    -0.38 [   -0.52,    -0.25] |    54.1%
+ec_full                 unified_load            |    15560   619 |    10.97     9.18 |    -1.79 [   -2.00,    -1.60] |    61.9%
+ec_full                 unified_load_po         |    15560   619 |    10.97     9.10 |    -1.87 [   -2.13,    -1.61] |    62.1%
+ec_full                 unified_load_fixedprice |    15560   619 |    10.97     9.19 |    -1.79 [   -1.97,    -1.60] |    61.6%
+== B_cleaner50: 3 arms
+pairs (B - A on the requests both sent before the cut; interval over users, 95 %)
+A            B            | requests users |   A mean   B mean |    B - A            interval | B faster
+ec_full      unified      |    15366   613 |    11.55    10.56 |    -0.99 [   -1.18,    -0.81] |    58.6%
+ec_full      unified_load |    15370   613 |    11.56     9.07 |    -2.49 [   -2.75,    -2.22] |    66.0%
+unified      unified_load |    15675   624 |    10.86     9.41 |    -1.45 [   -1.62,    -1.28] |    59.2%
+by harness: requests, TTFT mean s (each arm's own requests before the cut)
+harness              |     ec_full      |     unified      |   unified_load  
+eval:swe-bench       |   7135    10.36  |   7308     9.50  |   7494     8.53 
+hermes               |   2770    13.17  |   2806    12.59  |   2868    11.11 
+pi                   |   1215     9.97  |   1250     9.36  |   1281     8.80 
+opencode             |    922    11.51  |    943    11.02  |    967     9.73 
+kilo                 |    686    16.51  |    685    15.62  |    700    13.84 
+== C_112g: 2 arms
+pairs (B - A on the requests both sent before the cut; interval over users, 95 %)
+A            B            | requests users |   A mean   B mean |    B - A            interval | B faster
+ec_full      unified_load |    15449   603 |    12.80     9.41 |    -3.39 [   -4.09,    -2.74] |    43.7%
+by harness: requests, TTFT mean s (each arm's own requests before the cut)
+harness              |     ec_full      |   unified_load  
+eval:swe-bench       |   7376     7.23  |   7775     6.31 
+hermes               |   2663    20.78  |   2819    15.06 
+pi                   |   1237    11.83  |   1302     9.62 
+opencode             |    912    15.15  |    970    12.15 
+kilo                 |    667    22.34  |    686    18.14 
+codex                |    619    12.86  |    647     9.11 
+claude-code          |    605    15.88  |    626    13.18 
+== D_64u_88g: 2 arms
+pairs (B - A on the requests both sent before the cut; interval over users, 95 %)
+A            B            | requests users |   A mean   B mean |    B - A            interval | B faster
+ec_full      unified_load |     6998   282 |     0.68     0.54 |    -0.14 [   -0.20,    -0.08] |    52.1%
+by harness: requests, TTFT mean s (each arm's own requests before the cut)
+harness              |     ec_full      |   unified_load  
+eval:swe-bench       |   3239     0.31  |   3261     0.30 
+hermes               |   1283     1.27  |   1302     0.81 
+pi                   |    682     0.75  |    689     0.61 
+opencode             |    472     0.94  |    479     0.74 
+codex                |    317     0.55  |    322     0.56 
+claude-code          |    222     1.35  |    229     0.98 
+kilo                 |    207     1.01  |    209     0.73 
+A_128u_160g: 6 arms, 15,548 shared requests; ec_full 10.96 s; ec_full_load 9.35 s; unified 10.58 s; unified_load 9.17 s; unified_load_po 9.09 s; unified_load_fixedprice 9.17 s
+   ec_full_load - ec_full: -1.61 s [-1.79, -1.42]
+   unified - ec_full: -0.38 s [-0.51, -0.25]
+   unified_load - ec_full: -1.79 s [-2.00, -1.60]
+   unified_load_po - ec_full: -1.87 s [-2.15, -1.60]
+   unified_load_fixedprice - ec_full: -1.79 s [-1.98, -1.61]
+B_cleaner50: 3 arms, 15,366 shared requests; ec_full 11.55 s; unified 10.56 s; unified_load 9.06 s
+   unified - ec_full: -0.99 s [-1.18, -0.81]
+   unified_load - ec_full: -2.49 s [-2.75, -2.22]
+C_112g: 2 arms, 15,449 shared requests; ec_full 12.80 s; unified_load 9.41 s
+   unified_load - ec_full: -3.39 s [-4.09, -2.74]
+D_64u_88g: 2 arms, 6,998 shared requests; ec_full 0.68 s; unified_load 0.54 s
+   unified_load - ec_full: -0.14 s [-0.20, -0.08]

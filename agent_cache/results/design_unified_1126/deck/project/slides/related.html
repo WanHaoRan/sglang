@@ -1,0 +1,17 @@
+<section id="related" class="alt foot">
+<div class="head">
+<p class="eyebrow">Reference · the closest systems</p>
+<h2 class="title">What this design adds to the closest systems</h2>
+</div>
+<table class="t">
+<tr><th style="width:19%">System</th><th style="width:43%">What it does</th><th style="width:38%">What this design adds</th></tr>
+<tr><td>CachedAttention, 2024</td><td>reads from disk for jobs in a window of the queue; evicts the queue’s tail first</td><td>the gap hint, prices, and the write</td></tr>
+<tr><td>TripleKV, Nov 2026</td><td>three tiers; reads timed at tool-end estimate plus queue delay minus read time minus a margin</td><td>a distribution and a priced quantile; the test of when a timed read pays; a floor</td></tr>
+<tr><td>Continuum, 2025</td><td>pins a tool-calling request’s KV on the GPU for a time-to-live from past durations</td><td>rent charged until the return, not for the whole time-to-live; the lower tiers</td></tr>
+<tr><td>SARIA, Oct 2026</td><td>writes to SSD only when reuse beyond memory is likely; paces reads against writes</td><td>the same choice from one cost model, with due times</td></tr>
+<tr><td>InferCept, 2024</td><td>keeps, drops or swaps a paused request’s KV by memory-time waste</td><td>three tiers and prices shared across resources</td></tr>
+<tr><td>TokenCake, 2025</td><td>offloads KV to host memory during a call and uploads near its predicted end</td><td>a distribution in place of a point; a cost model</td></tr>
+</table>
+<p class="footer">As read on 26 November 2026; the 2026 preprints from their abstracts and summaries. TripleKV is the closest: it has the clock <i>T</i> = <i>A</i> + <i>W</i> for reads and removes the host copy of GPU pages; the paper must compare against it.</p>
+<aside>How this design sits against the closest systems, as read on 26 November 2026; the preprints of 2026 were read from their abstracts and summaries, so these lines should be checked again before the paper cites them. CachedAttention already reads from disk for jobs in a look-ahead window of the queue and evicts the queue’s tail first: it has the after-arrival half of Fetch and one case of Retain, without any hint about the gap, without prices and without the write. TripleKV, a preprint of 18 November, is the closest: three tiers, with reads timed at the tool-end estimate plus the queue delay minus the read time minus a margin, and no host copy of pages the GPU holds. It uses a per-tool median and a constant margin where this design uses a distribution and a priced quantile, and it has no test of whether a timed read pays on heavy-tailed gaps and no floor; the paper must compare against it. Continuum pins a tool-calling request’s KV on the GPU for a time-to-live chosen from past durations; it charges memory for the whole time-to-live, where this design charges until the return, and it stops at the GPU tier. SARIA writes to the SSD only when reuse beyond the stay in memory is likely and paces reads against writes, the closest precedent for treating the write as retention one tier down, by thresholds instead of one cost model. InferCept keeps, drops or swaps a paused request’s KV by memory-time waste, on two tiers. TokenCake offloads KV to host memory during a call and uploads it near the predicted end, from a point estimate.</aside>
+</section>

@@ -1,0 +1,84 @@
+NOTE (fixer, 2026-11-26 8:10 PM ET): the table below is the engineer's first run, 64 mutations on the code
+before the review fixes. The list was rebuilt for the fixed code: mutation_scripts/mutations.py now holds 100
+(the 64, re-anchored where the fix moved their text, and 36 that re-open each defect the fix closed);
+results in mutations_after_fix.out (99, all killed), then, after the last small edits, the ones those edits
+touch: mutations_after_fix_rerun.out (6, one of them new), _rerun2.out (13) and _rerun3.out (8), all killed.
+The engineer's list as it was: ../fix/mutations_before_fix.py.
+
+Mutation checks of the tests added for steps 1 to 3 (copy B, CPU, 2026-11-26).
+Method: one line of the engine is broken, the test named in the right column is run alone, the line is
+restored. "killed" = the test failed on the broken engine.
+64 mutations, all killed by the final tests on the final code (every one rerun after the last engine edit,
+5:10 to 5:31 PM ET). Two survived when first written and were killed once their test was extended: M21d
+(an assertion on the skip set) and M27 (an exact-hint session added to the retire test).
+The exact text of each mutation and the runner: mutation_scripts/ (python3 mutate.py [tree] [name prefix ...]).
+
+step 1 (R3, X1)
+M1   a short ack counts as stored (storage_retention.stored_votes)           killed  test_a_write_acked_short_unlocks_its_pages_and_leaves_them_unstored
+M2   marks made with the switch off (_drain_backup)                          killed  test_with_the_switch_off_no_node_is_marked
+M3   no reduce over ranks (_agree_stored)                                    killed  test_a_write_short_on_any_rank_is_unstored_on_every_rank
+M3b  a rank that writes nothing votes no                                     killed  same
+M3c  the detach path reduces                                                 killed  same
+M4   detach leaves the op mark (StorageAttachment)                           killed  test_a_write_dropped_at_detach_is_neither_stored_nor_left_queued
+M5   a split does not copy the queued op                                     killed  test_a_split_while_the_write_is_queued_marks_both_fragments_at_the_ack
+M6   read-back pages not stored at birth (insert_host)                       killed  test_a_child_write_first_rewrites_an_unstored_ancestor
+M7   no heal in write_backup_storage                                         killed  same
+M7b  the heal writes a host copy still in flight                             killed  same
+M7c  the heal ignores a queued write                                         killed  same
+M8   clear_storage_backend keeps the marks                                   killed  test_clearing_the_store_clears_every_mark
+M8b  a split does not copy the stored mark                                   killed  same
+M9   no table entry is an end                                                killed  test_only_an_explicit_end_ends_the_session
+M9b  an unreadable table on a named turn is an end                           killed  same
+M9c  reply mode ends before the reply exists                                 killed  same
+M10  an un-hinted request is an end                                          killed  test_an_exact_hint_session_ends_at_the_turn_with_no_next
+M11  no usable entry registers the session as ended                          killed  test_a_turn_with_no_usable_entry_is_ranked_as_un_hinted_not_as_ended
+M11b expiry and abort register the session as ended                          killed  same
+M12  the factory does not pass the end switches                              killed  test_the_factory_follows_the_end_switches_the_cache_resolved
+M13  a switch is granted without what it needs                               killed  test_a_switch_missing_what_it_needs_stays_off_and_says_so
+M13b the cache ignores the store's touch interval                            killed  test_the_cache_reads_two_switches_from_the_envs_and_two_from_its_store
+M13c the cache reads no env                                                  killed  same
+M13d a test double counts as a store with a cleaner                          killed  same
+
+step 2 (R4 refresh)
+M14  a written page is stale at birth (no stamp at the ack)                  killed  test_a_stale_tail_takes_its_fresh_head_along_and_a_second_match_takes_nothing
+M14b only the stale nodes are refreshed                                      killed  same
+M14c tail first                                                              killed  same
+M14d refreshed nodes are not stamped                                         killed  same
+M15  unstored nodes are refreshed too                                        killed  test_only_stored_nodes_are_refreshed
+M16  a probe without a request counts as a serve                             killed  test_a_probe_without_a_request_refreshes_nothing
+M16b refresh with storage detached                                           killed  same
+M17  the tail is stamped newest (stamp_pages)                                killed  test_a_refreshed_chain_loses_its_tail_before_its_head
+M17b every page gets the same stamp                                          killed  same
+M18  a touch creates a missing file                                          killed  test_touching_a_deleted_file_creates_nothing_and_is_counted_gone
+M19  the touch_interval_s key does not win over the env                      killed  test_nixl_config_resolves_the_touch_switches
+M19b the two keys reach the NIXL plugin                                      killed  same
+M20  a touch reaches K only (_page_file_paths)                               killed  TestNixlTouch
+M20b close() leaves the touch thread                                         killed  TestNixlTouch
+M20c a thread runs with the switches off                                     killed  TestNixlTouch
+M20d the retire switch alone starts no thread                                killed  TestNixlTouch
+M20e the stop wake-up does not flush the counts                              killed  TestNixlTouch
+
+step 3 (R1, R4 retire)
+M21  an ended turn's node is written                                         killed  test_a_turn_after_a_skipped_one_writes_the_skipped_node_first
+M21b the skip flag is lost at a new leaf (_insert_tail_step)                 killed  same
+M21c the skip flag is lost at a node walked over (_insert_walk_step)         killed  same
+M21d the skip is never spent                                                 killed  same (survived until the test asserted the skip set is empty)
+M22  split fragments do not inherit the decision                             killed  test_a_split_of_a_skipped_node_skips_both_fragments
+M23  no retire at the ack                                                    killed  test_a_node_retired_while_its_write_is_queued_is_retired_at_the_ack
+M23b retired at the ack yet marked stored                                    killed  same
+M24  the first prompt is retired                                             killed  test_retire_* (the two retire tests on the CPU tree)
+M24b own replies are left                                                    killed  same
+M24c another session's leaf is taken as own                                  killed  same
+M24d a reply something was built on is taken as own                          killed  same
+M24e retired pages still count as stored                                     killed  same
+M24f a queued write is zeroed at once                                        killed  same
+M24g a write that will be skipped waits for an ack that never comes          killed  same
+M24h a host copy in flight is not left to its ack                            killed  same
+M25  a turn with no usable entry is not counted as the session's             killed  test_only_an_explicit_end_retires_and_only_past_the_sessions_first_prompt
+M25b the first prompt is not page aligned                                    killed  same
+M25c the first prompt recorded is the latest one                             killed  same
+M26  the commit hook does not flag the ended turn                            killed  test_an_explicit_end_skips_the_last_turns_write_and_retires_the_sessions_pages
+M26b retire is off in the cache                                              killed  same
+M27  the commit hook forgets which session named the turn                    killed  test_only_an_explicit_end_retires_and_only_past_the_sessions_first_prompt (survived until an exact-hint session was added to it)
+M27b ends_session forgets which session named the turn                       killed  test_an_exact_hint_session_ends_at_the_turn_with_no_next
+M27c an exact-hint end is not an explicit end at commit                      killed  test_only_an_explicit_end_retires_and_only_past_the_sessions_first_prompt

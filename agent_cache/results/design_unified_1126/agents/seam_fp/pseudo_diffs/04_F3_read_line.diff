@@ -1,0 +1,116 @@
+Pseudo-diff F3 (seam_fp, nothing applied): a read time that counts the device's line before arrival.
+Switch SGLANG_HICACHE_NEXT_TURN_READ_LINE (EnvBool False); deadline read order only. Under expected-cost timing
+it must come with F2 (replay: without c, 349 of campaign 34's 1,525 late-run decisions become "start now").
+
+Three parts.
+ (1) Line: pages served before the read = launched reads (today's storage_read_backlog_pages) + parked reads due
+     no later than this read's deadline ("now" reads always). Today only the hold sees parked reads
+     (dispatch's ahead_pages, storage_read_scheduler.py:136-143); the planner before arrival and the queue
+     check see launched pages only (unified_radix_cache.py:2334-2337).
+ (2) Lags measured, not seeded: L3LoadModel's alloc_lag_s 0.5 s + drain_lag_s 0.36 s + read_fixed_s 0.044 s are
+     dense-load seeds with one read ahead folded in. Measured in campaign 34 (out_f3_read_path.txt): lookup
+     answered -> parked 14-17 ms; I/O end -> inserted 11-18 ms; with an idle read thread dispatch -> landed is
+     pages x ms/page to within -16..-54 ms (median), 0.92 s under the model. Counting the line and keeping the
+     seeds would count the read ahead twice.
+ (3) Write hold: while timed reads are write-held, add what is left of a typical hold.
+
+--- python/sglang/srt/mem_cache/storage_read_scheduler.py
+@@ after parked_handles (line 105)
++    def pages_due_by(
++        self, deadline: Optional[float], *, deadline_of: Callable[[Hashable], Optional[float]]
++    ) -> int:
++        """Pages dispatch serves before a read parked now with this deadline (None = needed now): the parked
++        "now" reads, and for a timed read the timed ones due no later."""
++        total = 0
++        for handle, read in self._parked.items():
++            due = deadline_of(handle)
++            if due is None or (deadline is not None and due <= deadline):
++                total += read.pages
++        return total
+
+--- python/sglang/srt/mem_cache/unified_radix_cache.py
+@@ __init__ (next to pending state, around line 345)
++        # Read path lags, EWMAs (alpha 1/8) on the scheduler thread; None until 8 samples each.
++        self.read_lags = ReadPathLags()        # msgspec.Struct: lookup_s, fixed_s, write_hold_s + sample counts
++        self._write_hold_since: Optional[float] = None
+@@ after storage_read_backlog_pages (2334-2337)
++    def storage_read_line_pages(self, deadline: Optional[float]) -> int:
++        """Pages the read thread serves before a read parked now with this deadline: launched plus parked ahead."""
++        pages = self.storage_read_backlog_pages()
++        if self.read_scheduler is not None:
++            pages += self.read_scheduler.pages_due_by(deadline, deadline_of=self._read_deadline)
++        return pages
++
++    def storage_write_hold_left_s(self, now: float) -> float:
++        """Seconds a timed read parked now still waits for the write hold; 0 when not held."""
++        if self._write_hold_since is None or self.read_lags.write_hold_s is None:
++            return 0.0
++        return max(0.0, self.read_lags.write_hold_s - (now - self._write_hold_since))
+@@ _park_storage_hit (3245-3259)
+         now = time.perf_counter()
++        # operation.start_time is the lookup's submit time until dispatch resets it.
++        self.read_lags.observe_lookup(time.monotonic() - operation.start_time)
+@@ _dispatch_storage_reads (3272-3280, the write hold's flip)
+         if srs.update_write_hold(self.pending_backup_tokens):
++            if srs.write_held:
++                self._write_hold_since = now
++            elif self._write_hold_since is not None:
++                self.read_lags.observe_write_hold(now - self._write_hold_since)
++                self._write_hold_since = None
+@@ _dispatch_storage_reads (3296-3300, per launched read)
+         for decision in decisions:
+             operation = decision.read.operation
++            operation.dispatched_at = now
++            operation.ahead_pages = self.storage_read_backlog_pages()   # before this read is launched
+             # The timeout policy's clock runs from dispatch, not from the lookup.
+             operation.start_time = time.monotonic()
+@@ _handle_prefetch_result (2522-2527, where the landed span is pinned)
++            ms_per_page = self.cache_controller.storage_read_ms_per_page
++            if ms_per_page is not None and operation.dispatched_at is not None:
++                pages = operation.ahead_pages + len(hash_value)
++                self.read_lags.observe_fixed(
++                    time.perf_counter() - operation.dispatched_at - pages * ms_per_page / 1000.0
++                )
+   (PrefetchOperation gains dispatched_at: Optional[float] = None and ahead_pages: int = 0 in __init__,
+    hybrid_cache_controller.py:121-153; no-getattr-defensive: the fields always exist.)
+
+--- python/sglang/srt/mem_cache/next_turn_prefetch.py
+@@ __init__
++        self._read_line = self._deadline_mode and envs.SGLANG_HICACHE_NEXT_TURN_READ_LINE.get()
+@@ _refresh_load_model (1483-1493)
++        lags = self._tree_cache.read_lags
++        if self._read_line and lags.lookup_s is not None and lags.fixed_s is not None:
++            # The line is counted in pages, so the lags are the read path's own: no read ahead folded in.
++            self._load = msgspec.structs.replace(
++                self._load, alloc_lag_s=lags.lookup_s, drain_lag_s=max(0.0, lags.fixed_s), read_fixed_s=0.0
++            )
+@@ new helper
++    def _line_pages(self, deadline: Optional[float], backlog_pages: int) -> int:
++        """Pages ahead of a read due at `deadline`: the launched reads, and the parked ones due no later."""
++        if not self._read_line:
++            return backlog_pages
++        return self._tree_cache.storage_read_line_pages(deadline)
++
++    def _hold_left_s(self) -> float:
++        return self._tree_cache.storage_write_hold_left_s(self._last_now) if self._read_line else 0.0
+@@ _check_pending_deadline (1078): just-in-time start
+-        load_s = self._load_seconds(plan.missing_tokens, backlog_pages)
++        load_s = self._load_seconds(
++            plan.missing_tokens, self._line_pages(admission_at, backlog_pages)
++        ) + self._hold_left_s()
+@@ _check_pending_expected_cost (1161)
+-        read_s = self._read_seconds(plan.missing_tokens, backlog_pages)
++        # The deadline read_deadline() will give the staged read once it is parked.
++        staged_deadline = max(plan.predicted_arrival + wait, now + NTP_JIT_MARGIN_S)
++        line_pages = self._line_pages(staged_deadline, backlog_pages)
++        read_s = self._read_seconds(plan.missing_tokens, line_pages) + self._hold_left_s()
+@@ _check_queued (860)
+-        load_s = self._load_seconds(plan.missing_tokens, backlog_pages)
++        load_s = self._load_seconds(plan.missing_tokens, self._line_pages(admission_at, backlog_pages))
+@@ _mark_due (1633-1643) and _log_start_decision: the pages counted are logged
+             backlog_pages=backlog_pages,          (ntp_due: now the line's pages when the switch is on)
++            line_pages=line_pages,                (ec_start, at the end)
+
+What F3 does not do: it does not see reads that will be parked later with earlier deadlines (arrivals' own "now"
+reads), so under a saturated read thread it still under-estimates; campaign 34's line was 42 s at the median in
+minutes 90-110 with 27-43 reads parked (out_pr1_c34_*.txt). With F2 that no longer starts reads early: c is 0 there.

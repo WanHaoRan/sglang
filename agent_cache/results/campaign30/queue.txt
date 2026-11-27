@@ -1,11 +1,21 @@
 # <label> <system> <hints> <client flags joined by commas, or -> [arguments]   (baselines/common/run_baselines.sh)
-# The baselines at the setting of the campaign this folder copies (settings.env); our own arms are that campaign's.
-# Prepared 2026-11-21, not launched: about 2 h 10 min an arm.
-sglang_vanilla sglang_vanilla - -
-vllm_vanilla vllm_vanilla - -
-vllm_lmcache vllm_lmcache - -
-continuum continuum - - POLICY=continuum LMCACHE=on
-tokencake tokencake - - MODE=offload-agent
-# each fork's own stock base, for its gain over its own engine:
+# The baselines at campaign 34's setting (settings.env is that of campaigns 28, 32 and 34: FreeInference, 0.1 users/s,
+# at most 128 in session, 160 GB host tier, recorded waits x1, 2 h), so requests pair with campaign 34's arms by
+# (play, stream, k). Prepared 2026-11-21 for campaign 28; set up 2026-11-23 at the author's request to run after
+# campaign 34's hicache and ec_exact, in the author's order, on GPU-36746535 as those two arms.
+# Stock SGLang runs as campaign 34's engine: the same frozen copy, FA3, the 668,096-token GPU pool; arm hbm_lru is the
+# GPU radix cache only, so campaign 34's fix switches would have nothing to act on (settings.env does not set them).
+# Continuum runs twice: as its README's plain command (GPU only; LMCache is the README's optional "With CPU offload")
+# and with that offload (LMCache 0.3.6 in-process, CPU 149.01 GiB = 160 GB, disk tier capped at 1,800 GB).
+# Every server binds 127.0.0.1: the start scripts bind 0.0.0.0 with no key, and a later --host wins (checked
+# 2026-11-23 on vLLM 0.33.0, 0.22.0 and 0.10.2). TokenCake's CPU tier is 120 GiB (one pinned allocation fails above
+# ~122 GiB on this host); it has no disk tier.
+sglang_vanilla sglang none - hbm_lru engine_fa3fix_20261122 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1
+vllm_vanilla vllm_vanilla - - SERVER_EXTRA=--host=127.0.0.1
+vllm_lmcache vllm_lmcache - - SERVER_EXTRA=--host=127.0.0.1
+tokencake tokencake - - MODE=offload-agent SERVER_EXTRA=--host=127.0.0.1
+continuum continuum - - POLICY=continuum LMCACHE=off SERVER_EXTRA=--host=127.0.0.1
+continuum_lmcache continuum - - POLICY=continuum LMCACHE=on SERVER_EXTRA=--host=127.0.0.1
+# each fork's own stock base, for its gain over its own engine (not queued):
 # continuum_fcfs continuum - - POLICY=fcfs LMCACHE=on
 # tokencake_native tokencake - --backend-opt,meta=off,--backend-opt,events=off MODE=native

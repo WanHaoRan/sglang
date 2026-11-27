@@ -1,0 +1,36 @@
+<section id="load" class="foot">
+<div class="head">
+<p class="eyebrow">The four actions · Fetch, part 4</p>
+<h2 class="title">Fetch on the top tier: the copy must not block the GPU</h2>
+</div>
+<div class="row-wide">
+<div class="grow">
+<div class="formula">
+<p class="small">An admitted turn copies its history from host memory to the GPU, 60 to 100 ms a batch. Today the pass waits on that copy layer by layer and nothing decodes meanwhile: a late landing costs <i>μ</i>, not <i>c</i>.</p>
+<p class="ink-b">The fix is the pair the SSD tier already has. Fetch: start the copy before the pass that needs it. Preempt: pass over the turn and decode until the copy has landed.</p>
+<p class="small">Exactly: a pass of <i>p</i> seconds started at <i>s</i>, beside a copy ending at <i>r</i>, finishes at max(<i>s</i> + <i>p</i>, <i>r</i>). The start <i>s</i>* = (<i>r</i> − <i>p</i>)⁺ wastes no GPU time and delays nobody, whatever the prices.</p>
+</div>
+</div>
+<div class="col-s" style="width:620px">
+<div class="card-hot in1"><p class="mid">−1.61 s</p><p class="small">of a 10.97 s mean TTFT, measured on the same users and requests [−1.79, −1.43]. Nothing at light load; 2.5 to 3.5 s once the GPU is full.</p></div>
+</div>
+</div>
+<div class="lane" style="height:214px">
+<p class="pin-lbl-b" style="left:0px;top:14px">Today</p>
+<div class="bx bx-tint" style="left:150px;top:0px;width:190px;height:64px"><p class="bx-t">decode</p></div>
+<div class="bx bx-stall" style="left:348px;top:0px;width:496px;height:64px"><p class="bx-tw">prefill pass waits on the copy · 62 ms</p></div>
+<div class="bx bx-tint" style="left:852px;top:0px;width:190px;height:64px"><p class="bx-t">decode</p></div>
+<div class="bx bx-tint" style="left:1050px;top:0px;width:190px;height:64px"><p class="bx-t">decode</p></div>
+<p class="pin-lbl-b" style="left:0px;top:106px">Held</p>
+<div class="bx bx-tint" style="left:150px;top:92px;width:190px;height:64px"><p class="bx-t">decode</p></div>
+<div class="bx bx-tint" style="left:348px;top:92px;width:190px;height:64px"><p class="bx-t">decode</p></div>
+<div class="bx bx-tint" style="left:546px;top:92px;width:190px;height:64px"><p class="bx-t">decode</p></div>
+<div class="bx bx-blue" style="left:744px;top:92px;width:144px;height:64px"><p class="bx-tw">prefill</p></div>
+<div class="bx bx-tint" style="left:896px;top:92px;width:190px;height:64px"><p class="bx-t">decode</p></div>
+<div class="bx bx-pin" style="left:150px;top:164px;width:496px;height:44px"><p class="bx-tp">copy from host, beside the decode steps</p></div>
+<p class="pin-lbl-or" style="left:1270px;top:14px;width:394px">20 running turns get no token for 62 ms</p>
+<p class="pin-lbl" style="left:1116px;top:106px;width:548px">the turn starts about 30 ms later; the GPU loses 18 ms instead of 62</p>
+</div>
+<p class="footer">Two-hour runs, 128 users, the current design without and with the hold. Without it a prefill batch costs the running turns its copy’s time (slope 0.71 ± 0.05); with it, its own compute (0.00 ± 0.04), and the GPU runs 4.8 % more decode steps. 7,060 batches held.</p>
+<aside>The same Fetch problem exists one tier up, and it turns out to be the largest term of all. When a turn is admitted with its history in host memory, the history is copied to the GPU: 2.5 microseconds a token, 60 to 100 milliseconds for a batch. Today the copy starts when the prefill pass is built, and the pass waits on it layer by layer. So a late landing here does not stall one turn at the small weight c: it stalls the GPU, at the price mu of a GPU-second, because the twenty running turns get no token while the pass waits. The fix needs no new idea. It is the pair of actions the SSD tier already has. Fetch: start the copy before the pass that needs it. Preempt: pass over the turn, run decode steps, and prefill once the copy has landed. The picture shows both. Today a decode step is followed by a 62 millisecond pass that mostly waits. Held, the copy runs beside three decode steps and the prefill pass that follows takes about 18 milliseconds of compute. This tier also has an exact answer. The forward pass takes the layers in order and waits for a layer that has not landed, so a pass that needs p seconds of compute, started at time s beside a copy that ends at r, finishes at the larger of s plus p and r. Started at once, it holds the GPU for the whole copy. Started at r minus p, it finishes at the same moment and never waits. An earlier start wastes GPU time and a later one delays the turn, so this start is best whatever the prices: on this tier Fetch needs no price, because the landing time is known, where on the SSD tier it is a quantile. The engine starts the pass at the first decode step after the copy has landed, which wastes no GPU time either and delays the held turn by its own pass. The measurement: two runs of two hours on the same 128 users, the current design without and with the hold. Mean time to first token falls from 10.97 to 9.36 seconds, 1.61 seconds on the requests both runs sent, with an interval from 1.43 to 1.79. Nothing changes at light load, and between minutes 50 and 90, once the GPU is full, the gain is 2.5 to 3.5 seconds. The GPU's own log shows why: without the hold a prefill batch costs the running turns the time of its copy, with it only its own compute, and the GPU runs 4.8 percent more decode steps a second. That five percent of GPU time becomes fifteen percent of the wait, because at saturation a GPU-second is priced at mu. The general rule is the one sentence that covers every tier boundary: a transfer that is not complete never blocks the resource above it.</aside>
+</section>

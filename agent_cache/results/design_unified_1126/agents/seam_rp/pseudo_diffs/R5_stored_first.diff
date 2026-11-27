@@ -1,0 +1,68 @@
+# R5: restore-cost-aware host order: pages with no SSD copy are kept, clean ones go first.
+# Pseudo-diff against HEAD b7074d9cae; not applied. Needs R3's marks.
+#
+# Today: FullComponent.drive_host_eviction keys its heap by the policy's priority alone
+# (components/full.py:242-261); a page with a queued write is outside the heap through its host lock
+# (unified_radix_cache.py:2055-2059; unified_tree_core.py:2149-2150), and every other host-only page is taken
+# as if it were on the SSD.
+# With the switch the key is (tier, has no storage copy, rest of the priority): inside each tier of the
+# policy, stored pages go first; an ended session's pages go first whatever their state (its restore cost is
+# nil). A read's eviction (P1) may also refuse unstored pages outright.
+
+--- a/python/sglang/srt/mem_cache/evict_policy.py
++++ b/python/sglang/srt/mem_cache/evict_policy.py
+@@ -12,3 +12,9 @@ class EvictionStrategy(ABC):
+     def get_priority(self, node: TreeNode) -> Union[float, Tuple]:
+         pass
++
++    def host_priority(self, node: TreeNode, *, stored: bool) -> Tuple:
++        """Host-eviction key that keeps a page with no storage copy behind the stored ones.
++        A policy with tiers overrides it to order inside each tier."""
++        return (0 if stored else 1, self.get_priority(node))
+
+--- a/python/sglang/srt/mem_cache/next_use_eviction.py
++++ b/python/sglang/srt/mem_cache/next_use_eviction.py
+@@ class NextUseStrategy (and ReturnChanceStrategy with RETURN_TIER_ENDED)
++    def host_priority(self, node: TreeNode, *, stored: bool) -> tuple:
++        tier, *rest = self.get_priority(node)
++        # An ended session's page is worth nothing with or without a storage copy.
++        unstored = 0 if stored or tier == TIER_ENDED else 1
++        return (tier, unstored, *rest)
+
+--- a/python/sglang/srt/mem_cache/unified_cache/components/full.py
++++ b/python/sglang/srt/mem_cache/unified_cache/components/full.py
+@@ -242,8 +242,8 @@ def drive_host_eviction(
+         self._ensure_eviction_strategy()
+         heap = [
+-            (self.session_ref_eviction_strategy(n), n)
++            (self._host_key(n), n)
+             for n in self.tree_core.evictable_host_leaves
+         ]
+@@ -258,4 +258,4 @@
+                 heapq.heappush(
+                     heap,
+-                    (self.session_ref_eviction_strategy(x.parent), x.parent),
++                    (self._host_key(x.parent), x.parent),
+                 )
++
++    def _host_key(self, node: UnifiedTreeNode):
++        if not self._stored_first:
++            return self.session_ref_eviction_strategy(node)
++        return self.tree_core.eviction_strategy.host_priority(node, stored=node.storage_stored)
+# The tier stays the tuple's first element, so P1's class bounds compare as before.
+# Device eviction keeps get_priority: a node with no host copy has a write-through lock while its copy is in
+# flight (unified_radix_cache.py:1751-1753), and refused copies were 0, 0 and 11 in campaign 34's three arms.
+# With the session-ref wrapper (enable_session_radix_cache) the switch is refused at init: its key leads with
+# the session reference.
+
+# Who is unstored and unlocked today: no page in campaigns 32 and 34 (0 writes acked short in six arms,
+# out/srv_stats_*.out). With R1 an ended session's last turn (first out anyway); with R3 a failed write; and a
+# page whose files the cleaner deleted, which the tree cannot see (R4's refresh keeps such files young).
+
+# Tests (CPU):
+#  test_next_use_eviction.py:
+#   - TestNextUseStrategy.test_within_a_tier_stored_pages_go_first_and_an_ended_sessions_go_regardless (pure)
+#   - TestNextUseOnACpuTree.test_host_eviction_keeps_the_only_copy_until_its_tier_has_no_stored_page
+#     (host nodes through tree_core.insert_host, one of them marked unstored)
+#  test_evict_policy.py:
+#   - test_a_policy_without_tiers_keeps_every_unstored_page_behind_the_stored_ones

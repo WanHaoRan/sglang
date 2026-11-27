@@ -1,0 +1,119 @@
+Pseudo-diff F4 (seam_fp, nothing applied): read-or-recompute by price at light load.
+Switch SGLANG_HICACHE_NEXT_TURN_RECOMPUTE_BY_PRICE (EnvBool False); needs the arrival gate, measured prices (PR1),
+the read line (F3: measured lags) and F5's gate argument (the prompt's tokens, for the shared length).
+
+Where the restore path is chosen at arrival. Scheduler._add_request_to_queue calls _prefetch_kvcache(req) before
+the request joins the waiting queue (scheduler.py:3305-3306); that calls tree_cache.prefetch_from_storage, which
+joins a staged read under the same handle (unified_radix_cache.py:2145-2149), declines below the 256-token
+threshold (2189-2195) or under the rate limit (2196-2200), and then asks the arrival gate
+(2201-2205, prefetch_gate_fn = NextTurnPrefetcher.prefetch_gate, next_turn_prefetch.py:1411-1446). A declined gate
+leaves no entry in ongoing_prefetch, so admission takes the turn in its next pass and it prefills whatever is
+missing (scheduler.py:4006-4012 skips only turns with a read under way). So "recompute instead of read" is one
+more gate answer; nothing else changes, and no Scheduler line is touched.
+
+--- python/sglang/srt/mem_cache/next_turn_prefetch.py
+@@ __init__
++        self._recompute_by_price = (
++            mode == "on" and arrival_gate == "on" and self._measured_prices and self._read_line
++            and envs.SGLANG_HICACHE_NEXT_TURN_RECOMPUTE_BY_PRICE.get()
++        )
+@@ prefetch_gate (1411-1446)
+-    def prefetch_gate(self, handle: CacheRequestHandle, matched_tokens: int) -> bool:
++    def prefetch_gate(
++        self,
++        handle: CacheRequestHandle,
++        matched_tokens: int,
++        new_input_tokens: Optional[Sequence[int]] = None,
++    ) -> bool:
+         plan = self._plans.get(handle.rid)
+         if plan is None:
+             return True
+-        chain = len(plan.key)
++        chain = self._shared_chain(plan, matched_tokens, new_input_tokens)      # F5: len(plan.key) when off
++        priced = {}
+         if chain - matched_tokens < self._tree_cache.prefetch_threshold:
+             decision = "covered"
+             plan.room_refused = False
++        elif self._recompute_by_price and new_input_tokens is not None and (
++            priced := self._recompute_pricing(
++                handle,
++                matched=matched_tokens,
++                missing=chain - matched_tokens,
++                total=matched_tokens + len(new_input_tokens),
++            )
++        ).get("wins"):
++            # Spends no lookup: the next call for this turn prices it again.
++            decision = "recompute"
+         elif self._room_retry_due(plan, now=self._last_now):
+ ...
+         _log_event(
+             "ntp_gate",
+             handle.rid,
+             decision=decision,
+             matched=matched_tokens,
+             chain=chain,
+             lookups=plan.lookups,
++            **{k: v for k, v in priced.items() if k != "wins"},     # rec_ms, read_ms, mu, c on priced calls
+         )
+         return decision in ("read", "reread", "retry")
++
++    def _recompute_pricing(self, handle, *, matched: int, missing: int, total: int) -> dict:
++        """Read-or-recompute for a turn at the gate: recompute when its GPU time, at the price of GPU time,
++        costs less than the stall the read adds. Only with nobody else queued and before this turn has itself
++        waited for the GPU: behind a queue the read is hidden and GPU time is dear, which is today's path."""
++        now = self._last_now
++        others = len(self._queued) - (handle.rid in self._queued)
++        since = self._ready_since.get(handle.rid)
++        if others > 0 or (since is not None and now - since >= NTP_GPU_BOUND_S):
++            return {}
++        board = self._prices
++        cost = self._prefill_cost
++        # What the missing history adds to this turn's prefill: it prefills total - matched tokens without the
++        # read and total - matched - missing with it.
++        recompute_s = cost.seconds(new_tokens=total - matched, total_tokens=total) - cost.seconds(
++            new_tokens=total - matched - missing, total_tokens=total
++        )
++        pages = math.ceil(missing / self._page_size)
++        read_s = self._load.seconds(
++            own_pages=pages, backlog_pages=self._tree_cache.storage_read_line_pages(None)
++        )
++        wins = recompute_wins(
++            recompute_s=recompute_s,
++            read_s=read_s,
++            queue_wait_s=0.0,
++            mu=board.mu(now),
++            lateness_weight=board.c(now),
++            device_s=pages * self._load.read_s_per_page,
++            kappa=board.kappa(now),
++        )
++        return {"wins": wins, "rec_ms": _ms(recompute_s), "read_ms": _ms(read_s),
++                "mu": f"{board.mu(now):.1f}", "c": f"{board.c(now):.2f}"}
+
+How it is undone when load builds. The answer is per call and spends nothing. If the turn is not admitted in the
+next passes (the KV pool or the batch is full), the queue check re-asks every PROBE_INTERVAL_S = 0.5 s
+(_check_queued -> _wants_refetch -> Scheduler._on_next_turn_refetch -> _prefetch_kvcache -> gate,
+next_turn_prefetch.py:826-944, scheduler.py:3211-3218); by then the turn has waited NTP_GPU_BOUND_S with nothing
+to read, or others have queued, so _recompute_pricing returns {} and the gate answers read as today. The admission
+re-query (_prefetch_after_device_hit_loss, scheduler.py:3240-3267) goes through the same gate.
+A staged read already under way for the handle is joined before the gate (2145) and is not cancelled.
+
+--- python/sglang/srt/mem_cache/unified_radix_cache.py
+@@ -317 +317,3 @@
+-        self.prefetch_gate_fn: Optional[Callable[[CacheRequestHandle, int], bool]] = None
++        self.prefetch_gate_fn: Optional[
++            Callable[[CacheRequestHandle, int, Sequence[int]], bool]
++        ] = None
+@@ -2201,3 +2203,3 @@ def prefetch_from_storage
+         if self.prefetch_gate_fn is not None and not self.prefetch_gate_fn(
+-            request, storage_start
++            request, storage_start, new_input_tokens
+         ):
+
+Measured basis (agents/seam_fp/out_f4_*.txt, out_pr1_prefill_model.txt)
+- FA3 cold prefill at an empty queue: ttft = 0.05 s + 12.3-13.4 us x n + 0.69-0.72 ns x n^2 (campaign 33 n 503;
+  campaign 34 n 60-62): 0.20 s at 8K, 0.76 s at 24K, 2.3 s at 48K. Not a constant per token.
+- A read issued at arrival with nobody ahead keeps its turn in the queue 65-206 ms + 37-53 us a token
+  (lookup 19 ms, I/O 2.4-2.9 ms a page, landing -> admission 16-19 ms).
+- For the readers that arrived alone, measured TTFT against the model's recompute: recompute faster for 101 of
+  105 (campaign 34 ec_full), 25 of 25 (jit_exact), 30 of 30 (ec_exact), 14 of 16 (campaign 33 ec_full); median gain
+  0.14 to 0.33 s each; 0.5 to 2.3 ms per request of the run.

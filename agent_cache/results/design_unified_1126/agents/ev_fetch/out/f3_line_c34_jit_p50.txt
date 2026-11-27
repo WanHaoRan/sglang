@@ -1,0 +1,125 @@
+==== c34_jit_p50 ====
+write hold: 30 holds, total 81.0 s, median 2.83 s, max 8.19 s
+
+== A. Where the time goes (s; p10 p50 p90 mean) ==
+  -- minutes 0-30: 75 reads, 3 held, median 243 pages; dispatched at positions 0-1: 81 %; parked as 'now': 80 %; with the write hold on in release->dispatch: 0 % (mean 0.00 s) --
+      park -> release (hold)              :    0.00    0.00    0.00 mean    0.16
+      release -> dispatch (line)          :    0.00    0.00    0.00 mean    0.00
+      dispatch -> I/O start (thread FIFO) :    0.00    0.00    0.00 mean    0.03
+      I/O (own pages)                     :    0.09    0.75    1.41 mean    0.75
+      I/O end -> usable                   :    0.00    0.01    0.04 mean    0.02
+      release -> usable                   :    0.20    0.76    1.43 mean    0.81
+      park -> usable                      :    0.23    0.78    1.54 mean    0.97
+  -- minutes 30-70: 694 reads, 245 held, median 313 pages; dispatched at positions 0-1: 28 %; parked as 'now': 5 %; with the write hold on in release->dispatch: 4 % (mean 0.07 s) --
+      park -> release (hold)              :    0.00    0.07    4.48 mean    1.32
+      release -> dispatch (line)          :    0.00    3.76   19.15 mean    6.73
+      dispatch -> I/O start (thread FIFO) :    0.00    0.81    2.58 mean    1.14
+      I/O (own pages)                     :    0.15    1.03    2.34 mean    1.16
+      I/O end -> usable                   :    0.00    0.01    0.08 mean    0.04
+      release -> usable                   :    0.65    6.37   22.27 mean    9.07
+      park -> usable                      :    1.29    8.80   22.79 mean   10.39
+  -- minutes 70-90: 458 reads, 4 held, median 370 pages; dispatched at positions 0-1: 56 %; parked as 'now': 0 %; with the write hold on in release->dispatch: 27 % (mean 1.40 s) --
+      park -> release (hold)              :    0.01    0.05    0.09 mean    0.09
+      release -> dispatch (line)          :   29.83   51.44   63.83 mean   49.06
+      dispatch -> I/O start (thread FIFO) :    0.49    1.75    4.97 mean    2.43
+      I/O (own pages)                     :    0.19    1.32    2.84 mean    1.42
+      I/O end -> usable                   :    0.00    0.02    0.10 mean    0.04
+      release -> usable                   :   33.19   56.14   67.06 mean   52.95
+      park -> usable                      :   34.07   56.21   67.09 mean   53.05
+  -- minutes 90-110: 579 reads, 0 held, median 387 pages; dispatched at positions 0-1: 47 %; parked as 'now': 0 %; with the write hold on in release->dispatch: 20 % (mean 0.49 s) --
+      park -> release (hold)              :    0.01    0.05    0.09 mean    0.05
+      release -> dispatch (line)          :   50.12   66.06   80.92 mean   66.21
+      dispatch -> I/O start (thread FIFO) :    0.47    1.53    3.71 mean    1.88
+      I/O (own pages)                     :    0.21    1.43    2.75 mean    1.44
+      I/O end -> usable                   :    0.00    0.02    0.10 mean    0.04
+      release -> usable                   :   53.33   69.67   84.12 mean   69.56
+      park -> usable                      :   53.39   69.75   84.21 mean   69.61
+  -- pool < 0.90 at park: 65 reads, 0 held, median 286 pages; dispatched at positions 0-1: 97 %; parked as 'now': 95 %; with the write hold on in release->dispatch: 2 % (mean 0.07 s) --
+      park -> release (hold)              :    0.00    0.00    0.00 mean    0.00
+      release -> dispatch (line)          :    0.00    0.00    0.00 mean    1.03
+      dispatch -> I/O start (thread FIFO) :    0.00    0.00    0.00 mean    0.06
+      I/O (own pages)                     :    0.18    0.80    1.44 mean    0.85
+      I/O end -> usable                   :    0.00    0.01    0.04 mean    0.02
+      release -> usable                   :    0.25    0.84    1.45 mean    1.97
+      park -> usable                      :    0.25    0.84    1.45 mean    1.97
+  -- pool >= 0.90 at park: 2028 reads, 253 held, median 332 pages; dispatched at positions 0-1: 42 %; parked as 'now': 2 %; with the write hold on in release->dispatch: 16 % (mean 0.55 s) --
+      park -> release (hold)              :    0.01    0.05    0.79 mean    0.50
+      release -> dispatch (line)          :    0.13   46.36   72.32 mean   39.39
+      dispatch -> I/O start (thread FIFO) :    0.00    1.40    3.90 mean    1.76
+      I/O (own pages)                     :    0.16    1.18    2.61 mean    1.30
+      I/O end -> usable                   :    0.00    0.02    0.10 mean    0.04
+      release -> usable                   :    2.14   50.13   76.15 mean   42.50
+      park -> usable                      :    3.95   50.17   76.22 mean   43.00
+  -- read thread under the window at park (< 512 pages in flight), pool >= 0.90: 237 reads, 134 held, median 282 pages; dispatched at positions 0-1: 11 %; parked as 'now': 6 %; with the write hold on in release->dispatch: 1 % (mean 0.01 s) --
+      park -> release (hold)              :    0.00    0.52    6.07 mean    2.09
+      release -> dispatch (line)          :    0.00    0.02    3.62 mean    2.48
+      dispatch -> I/O start (thread FIFO) :    0.00    0.00    1.27 mean    0.32
+      I/O (own pages)                     :    0.10    0.76    1.98 mean    0.95
+      I/O end -> usable                   :    0.00    0.01    0.10 mean    0.04
+      release -> usable                   :    0.20    1.15    5.72 mean    3.79
+      park -> usable                      :    0.42    2.55   13.19 mean    5.88
+  -- read thread over the window at park (>= 512 pages in flight): 1792 reads, 119 held, median 343 pages; dispatched at positions 0-1: 46 %; parked as 'now': 1 %; with the write hold on in release->dispatch: 18 % (mean 0.62 s) --
+      park -> release (hold)              :    0.01    0.05    0.10 mean    0.29
+      release -> dispatch (line)          :    5.28   50.79   73.81 mean   44.29
+      dispatch -> I/O start (thread FIFO) :    0.37    1.49    4.05 mean    1.95
+      I/O (own pages)                     :    0.18    1.22    2.67 mean    1.35
+      I/O end -> usable                   :    0.00    0.02    0.10 mean    0.04
+      release -> usable                   :    7.81   54.71   77.34 mean   47.63
+      park -> usable                      :    9.32   54.75   77.42 mean   47.92
+
+== B. Read-time estimates against release -> usable (s) ==
+   estimate: p10 p50 p90 mean | actual - estimate: p10 p50 p90 mean | actual / estimate p50 | |err| p50 p90
+  -- minutes 0-30: 75 reads; actual release -> usable    0.20    0.76    1.43 mean    0.81; park -> usable    0.23    0.78    1.54 mean    0.97 --
+      planner (own + in flight), at park      :    0.98    1.98    3.95 mean    2.32 |   -2.88   -1.16   -0.54 mean   -1.51 |  0.31 |   1.16   2.88
+      hold (+ parked ahead by deadline), park :    0.95    1.95    3.95 mean    2.30 |   -2.88   -1.14   -0.54 mean   -1.48 |  0.32 |   1.14   2.88
+      hold (+ parked ahead), at release       :    0.95    1.95    3.95 mean    2.30 |   -2.88   -1.15   -0.55 mean   -1.49 |  0.32 |   1.15   2.88
+      arrival order (+ parked earlier), park  :    0.98    1.98    3.95 mean    2.32 |   -2.88   -1.16   -0.54 mean   -1.51 |  0.31 |   1.16   2.88
+      line (order by regime + write hold)     :    0.95    1.95    3.95 mean    2.30 |   -2.88   -1.14   -0.54 mean   -1.48 |  0.32 |   1.14   2.88
+  -- minutes 30-70: 694 reads; actual release -> usable    0.65    6.37   22.27 mean    9.07; park -> usable    1.29    8.80   22.79 mean   10.39 --
+      planner (own + in flight), at park      :    1.51    4.43    8.84 mean    4.86 |   -1.55    1.36   15.71 mean    4.24 |  1.29 |   2.25  15.71
+      hold (+ parked ahead by deadline), park :    1.74    6.79   22.28 mean    9.64 |   -3.50   -0.91    3.12 mean   -0.54 |  0.85 |   1.47   4.84
+      hold (+ parked ahead), at release       :    1.67    6.73   22.28 mean    9.55 |   -2.96   -0.87    2.67 mean   -0.48 |  0.85 |   1.25   4.34
+      arrival order (+ parked earlier), park  :    1.76    6.57   20.63 mean    8.89 |   -3.13   -0.76    4.81 mean    0.20 |  0.87 |   1.72   5.42
+      line (order by regime + write hold)     :    1.75    6.62   20.63 mean    8.92 |   -3.14   -0.75    4.79 mean    0.17 |  0.87 |   1.69   5.42
+  -- minutes 70-90: 458 reads; actual release -> usable   33.19   56.14   67.06 mean   52.95; park -> usable   34.07   56.21   67.09 mean   53.05 --
+      planner (own + in flight), at park      :    4.41    7.31   13.19 mean    8.14 |   25.35   47.11   59.83 mean   44.87 |  7.27 |  47.11  59.83
+      hold (+ parked ahead by deadline), park :   29.27   45.11   62.30 mean   47.17 |   -5.22    7.27   20.92 mean    5.83 |  1.16 |   9.26  22.07
+      hold (+ parked ahead), at release       :   29.27   45.11   62.30 mean   47.19 |   -5.26    7.22   20.83 mean    5.77 |  1.16 |   9.12  22.00
+      arrival order (+ parked earlier), park  :   26.24   40.40   55.27 mean   42.73 |   -2.57   11.40   26.68 mean   10.27 |  1.28 |  12.37  27.46
+      line (order by regime + write hold)     :   26.24   40.44   55.27 mean   42.79 |   -2.57   11.29   26.66 mean   10.21 |  1.27 |  12.34  27.34
+  -- minutes 90-110: 579 reads; actual release -> usable   53.33   69.67   84.12 mean   69.56; park -> usable   53.39   69.75   84.21 mean   69.61 --
+      planner (own + in flight), at park      :    4.48    6.70    9.90 mean    7.09 |   45.94   62.77   77.05 mean   62.52 | 10.06 |  62.77  77.05
+      hold (+ parked ahead by deadline), park :   47.53   62.26   73.28 mean   62.22 |   -2.00    7.68   18.76 mean    7.39 |  1.12 |   8.61  20.00
+      hold (+ parked ahead), at release       :   47.53   62.26   73.28 mean   62.22 |   -2.06    7.59   18.72 mean    7.34 |  1.12 |   8.58  19.96
+      arrival order (+ parked earlier), park  :   46.23   58.84   70.34 mean   58.95 |    0.78   10.94   23.33 mean   10.66 |  1.19 |  11.62  24.29
+      line (order by regime + write hold)     :   46.48   58.87   70.42 mean   58.99 |    0.78   10.92   23.33 mean   10.62 |  1.19 |  11.62  24.26
+  -- pool < 0.90 at park: 65 reads; actual release -> usable    0.25    0.84    1.45 mean    1.97; park -> usable    0.25    0.84    1.45 mean    1.97 --
+      planner (own + in flight), at park      :    1.15    1.99    4.24 mean    2.50 |   -2.88   -1.20   -0.49 mean   -0.53 |  0.37 |   1.21   2.91
+      hold (+ parked ahead by deadline), park :    1.05    1.99    4.24 mean    3.08 |   -2.88   -1.16   -0.49 mean   -1.11 |  0.39 |   1.18   2.91
+      hold (+ parked ahead), at release       :    1.05    1.99    4.24 mean    3.08 |   -2.88   -1.17   -0.49 mean   -1.12 |  0.39 |   1.18   2.91
+      arrival order (+ parked earlier), park  :    1.15    1.99    4.24 mean    3.10 |   -2.88   -1.20   -0.49 mean   -1.13 |  0.37 |   1.21   2.91
+      line (order by regime + write hold)     :    1.05    1.99    4.24 mean    3.05 |   -2.88   -1.16   -0.49 mean   -1.08 |  0.39 |   1.18   2.91
+  -- pool >= 0.90 at park: 2028 reads; actual release -> usable    2.14   50.13   76.15 mean   42.50; park -> usable    3.95   50.17   76.22 mean   43.00 --
+      planner (own + in flight), at park      :    2.95    6.13   10.60 mean    6.57 |   -0.90   42.36   68.65 mean   35.97 |  6.37 |  42.36  68.65
+      hold (+ parked ahead by deadline), park :    3.82   42.13   67.95 mean   38.59 |   -3.85    2.74   17.04 mean    3.95 |  1.08 |   4.89  18.85
+      hold (+ parked ahead), at release       :    3.54   42.13   67.95 mean   38.57 |   -3.61    2.60   16.93 mean    3.93 |  1.08 |   4.78  18.82
+      arrival order (+ parked earlier), park  :    3.77   40.20   63.83 mean   36.65 |   -3.42    4.94   20.61 mean    5.89 |  1.14 |   6.65  22.24
+      line (order by regime + write hold)     :    3.78   40.24   63.83 mean   36.68 |   -3.42    4.90   20.61 mean    5.85 |  1.14 |   6.60  22.20
+  -- read thread under the window at park (< 512 pages in flight), pool >= 0.90: 237 reads; actual release -> usable    0.20    1.15    5.72 mean    3.79; park -> usable    0.42    2.55   13.19 mean    5.88 --
+      planner (own + in flight), at park      :    0.99    1.95    3.54 mean    2.11 |   -1.41   -0.90    3.60 mean    1.69 |  0.52 |   1.05   3.60
+      hold (+ parked ahead by deadline), park :    1.08    2.18    6.73 mean    4.48 |   -2.41   -0.97    0.87 mean   -0.68 |  0.46 |   1.06   3.42
+      hold (+ parked ahead), at release       :    1.02    2.19    6.77 mean    4.55 |   -1.71   -0.96   -0.12 mean   -0.75 |  0.49 |   1.00   2.41
+      arrival order (+ parked earlier), park  :    1.14    2.18    6.42 mean    4.38 |   -2.41   -0.98    1.36 mean   -0.58 |  0.46 |   1.09   3.81
+      line (order by regime + write hold)     :    1.08    2.18    6.73 mean    4.48 |   -2.41   -0.97    0.87 mean   -0.68 |  0.46 |   1.06   3.42
+  -- read thread over the window at park (>= 512 pages in flight): 1792 reads; actual release -> usable    7.81   54.71   77.34 mean   47.63; park -> usable    9.32   54.75   77.42 mean   47.92 --
+      planner (own + in flight), at park      :    4.19    6.51   10.89 mean    7.16 |    2.19   46.82   69.78 mean   40.52 |  7.04 |  46.82  69.78
+      hold (+ parked ahead by deadline), park :    8.04   46.00   68.62 mean   43.11 |   -4.20    4.32   17.84 mean    4.57 |  1.11 |   6.16  19.50
+      hold (+ parked ahead), at release       :    7.80   46.00   68.62 mean   43.07 |   -3.91    4.19   17.78 mean    4.56 |  1.10 |   6.00  19.44
+      arrival order (+ parked earlier), park  :    7.30   44.26   64.50 mean   40.92 |   -3.61    6.65   21.44 mean    6.76 |  1.17 |   8.31  23.08
+      line (order by regime + write hold)     :    7.30   44.32   64.56 mean   40.95 |   -3.63    6.57   21.38 mean    6.73 |  1.17 |   8.32  23.08
+
+== C. The read time planned before arrival against the read's own time ==
+  staged reads (ntp_due case 1): planned load against stage -> usable
+    minutes 30-70: n 483 (483 whose turn came); planned    3.36    5.80   10.21 mean    6.38 | actual    2.30    8.30   35.52 mean   14.45 | of which parked    0.03    4.55   33.14 mean   11.23 | actual/planned p50 1.29 | usable after the turn arrived by -345.18  -22.34   14.12 mean -124.72 (landed before the arrival: 70 %)
+    minutes 70-90: n 339 (339 whose turn came); planned    5.93    9.42   16.51 mean   10.37 | actual   11.08   49.54   93.14 mean   51.22 | of which parked    3.18   44.99   89.62 mean   45.65 | actual/planned p50 4.48 | usable after the turn arrived by -572.07   -7.12   64.74 mean -121.84 (landed before the arrival: 55 %)
+    minutes 90-110: n 202 (195 whose turn came); planned    5.77    8.21   11.36 mean    8.61 | actual   11.84   67.49  117.96 mean   62.14 | of which parked    8.37   62.17  114.61 mean   57.90 | actual/planned p50 6.85 | usable after the turn arrived by -306.27  -13.41   78.26 mean  -85.80 (landed before the arrival: 56 %)

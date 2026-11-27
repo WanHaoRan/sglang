@@ -144,6 +144,7 @@ class TestShardedFullPoolInvariant(CustomTestCase):
         self.last_batch = SimpleNamespace(reqs=[], is_empty=lambda: True)
         self.running_batch = self.last_batch
         self.chunked_req = None
+        self.held_batch = None
         observer = SchedulerPoolStatsObserver(
             tree_cache=self.cache,
             token_to_kv_pool_allocator=self.allocator,
@@ -158,6 +159,7 @@ class TestShardedFullPoolInvariant(CustomTestCase):
             max_total_num_tokens=self.allocator.size,
             get_last_batch=lambda: self.last_batch,
             get_running_batch=lambda: self.running_batch,
+            get_held_batch=lambda: self.held_batch,
         )
         return SchedulerInvariantChecker(
             is_hybrid_swa=False,
@@ -174,6 +176,7 @@ class TestShardedFullPoolInvariant(CustomTestCase):
             get_last_batch=lambda: self.last_batch,
             get_running_batch=lambda: self.running_batch,
             get_chunked_req=lambda: self.chunked_req,
+            get_held_batch=lambda: self.held_batch,
             scheduler_stage_metrics=None,
         )
 
@@ -287,6 +290,19 @@ class TestShardedFullPoolInvariant(CustomTestCase):
                 self.assertNotIn("slack_allowed", msg)
                 with envs.SGLANG_CHECK_KV_PAGE_INVARIANTS.override(False):
                     checker.self_check_during_busy()
+
+    def test_a_batch_held_for_its_host_load_owns_its_extend_pages(self):
+        """A prefill batch held while its prefix loads has allocated its extend pages but
+        is in neither batch; without it the busy check reports those pages as a leak."""
+        checker = self._make_checker()
+        req = self._active_partial_page(checker)
+        self.last_batch = SimpleNamespace(reqs=[], is_empty=lambda: True)
+        self.running_batch = self.last_batch
+        self.held_batch = SimpleNamespace(reqs=[req], is_empty=lambda: False)
+        self.assertEqual(checker._get_total_uncached_sizes(), (self.PAGE_SIZE, 0))
+        self.assertIn(0, checker.pool_stats_observer.active_pool_idxs())
+        with envs.SGLANG_CHECK_KV_PAGE_INVARIANTS.override(False):
+            checker.self_check_during_busy()
 
     def test_misaligned_evictable_counter_is_not_rounded_up(self):
         checker = self._make_checker()

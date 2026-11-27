@@ -1,0 +1,20 @@
+=== c34 jit_exact (7 s): lookups placed 8363 of 8414 logged
+   logged hit == replayed hit: with the logged passes 8313 of 8363; with no deletion 8145; before the first pass 5222 of 5270; after 3091 of 3093
+   first mismatches (t, rid, start page, pages asked, logged, replayed): [(1033, 'jit_exact-c5-t1', 0, 154, 154, 129), (1037, 'jit_exact-c11-t30', 0, 660, 660, 651), (1059, 'jit_exact-c45-t27', -13, 239, 239, 0), (1088, 'jit_exact-c26-t13', 4, 254, 254, 202), (1108, 'jit_exact-c1-t19', -1, 235, 235, 0), (1265, 'jit_exact-c104-t2', 0, 141, 141, 122)]
+   lookups from the first pass to 6,600 s that a no-deletion store answers: logged found nothing 96, part 16, all 920
+   pages written by my model 497132 = 31.82 M tokens; h2s_submit 31.82 M
+   pass at 5261-5272 s: store 351811 pages = 22.52 M tokens before; deletes 40100  -> implied volume at 100 % if 90.3 % full: 389602 pages
+   pass at 5962-5973 s: store 351726 pages = 22.51 M tokens before; deletes 40400  -> implied volume at 100 % if 90.3 % full: 389508 pages
+   pass at 6603-6614 s: store 352429 pages = 22.56 M tokens before; deletes 40600  -> implied volume at 100 % if 90.3 % full: 390287 pages
+   pass at 7215-7226 s: store 352815 pages = 22.58 M tokens before; deletes 41200  -> implied volume at 100 % if 90.3 % full: 390714 pages
+   first pass to 6,600 s: replay loses 1.226 M tokens over 63 requests (>= 1 page), 56 with >= 1,024; the run's records: 1.522 M lost (all causes, >= 256)
+   minutes 90-110: replay loses 0.829 M over 48 requests
+   of them first requests of a session: 24 requests, 128 K; logged failed reads 12
+Traceback (most recent call last):
+  File "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/verify_evidence/scripts/s01_validate.py", line 26, in <module>
+    base = ssd_replay.replay(D, delete=False)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/verify_evidence/scripts/ssd_replay.py", line 209, in replay
+    if ks[j] in mt:
+       ~~^^^
+IndexError: list index out of range

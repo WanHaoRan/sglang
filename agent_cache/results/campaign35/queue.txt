@@ -1,0 +1,11 @@
+# <label> <server arm> <hints> <client flags joined by commas, or -> <engine folder in frozen/> [extra server flags ...]
+# Campaign 35: the unified four-action design against the current one, at campaign 34's setting (FreeInference on FA3,
+# 0.1 users/s, at most 128 in session, 160 GB host, recorded waits x1, 2 h; settings.env is campaign 34's, the fix
+# switches on), ordered by the author on 2026-11-26 ("implement the strategy and compare with current one").
+# ec_full: campaign 34's line unchanged, as the baseline on the GPU unit of this campaign (the host restarted on
+# GPU-b1c6de25 on 2026-11-26; campaign 34's ec_full ran on GPU-0f61782e), and as a repeat of that run.
+# The new design's arms are appended below as their engine copies are frozen; the queue is re-read after every arm.
+ec_full three_tier_wc_oracle_v2_nu_owned dist --hint-no-call engine_fa3fix_20261122 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning harm --hicache-storage-next-turn-soft-pins on --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}
+# unified: the cache rules of the unified design without the load hold (settings.env gains the ten cache-rule
+# switches before this arm; the ec_full arm above ran on the earlier engine, which does not read them).
+unified three_tier_wc_oracle_v2_nu_owned dist --hint-no-call engine_unified_20261126 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning off --hicache-storage-next-turn-soft-pins on --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30,"queued_order":"farthest"}

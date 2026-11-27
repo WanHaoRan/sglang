@@ -1,0 +1,65 @@
+{
+ "url": "http://127.0.0.1:30000",
+ "backend": "openai",
+ "model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+ "prompt_tokens": 20000,
+ "stages": [
+  "host:150000:cached",
+  "ssd:400000:cached"
+ ],
+ "failed": 0,
+ "checks": [
+  {
+   "check": "cold",
+   "ok": true,
+   "text": "prompt 20000, cached 0 (want 0), output 16 with 16 ids (want 16), TTFT 0.833 s",
+   "ttft": 0.8327745419992425,
+   "cached": 0
+  },
+  {
+   "check": "warm",
+   "ok": true,
+   "text": "cached 19968 of 20000 (want all but one block of 64), TTFT 0.022 s against 0.833 s cold, first-token logprobs equal (largest difference 0.066)",
+   "ttft": 0.022094652998930542,
+   "cached": 19968,
+   "logprob_diff": 0.066
+  },
+  {
+   "check": "extend",
+   "ok": true,
+   "text": "prompt 22064, cached 19968 (want at least 19936), TTFT 0.101 s",
+   "ttft": 0.10146722400168073,
+   "cached": 19968
+  },
+  {
+   "check": "host",
+   "ok": true,
+   "text": "after 150,000 filler tokens (4 s): cached 19968 of 20000 (want all but one block), TTFT 0.055 s against 0.022 s warm and 0.833 s cold, first-token logprobs against warm (19968 cached) equal (largest difference 0.0, tolerance 0.02); by tier {'device': 0, 'host': 19968, 'storage': 0}",
+   "ttft": 0.055059276997781126,
+   "cached": 19968,
+   "logprob_diff": 0.0,
+   "fill_s": 3.789983006998227,
+   "metrics_moved": {},
+   "tiers": {
+    "device": 0,
+    "host": 19968,
+    "storage": 0
+   }
+  },
+  {
+   "check": "ssd",
+   "ok": true,
+   "text": "after 400,000 filler tokens (10 s): cached 19968 of 20000 (want all but one block), TTFT 0.790 s against 0.022 s warm and 0.833 s cold, first-token logprobs against warm (19968 cached) equal (largest difference 0.0, tolerance 0.02); by tier {'device': 0, 'host': 0, 'storage': 19968}",
+   "ttft": 0.7904404900000372,
+   "cached": 19968,
+   "logprob_diff": 0.0,
+   "fill_s": 10.144511937996867,
+   "metrics_moved": {},
+   "tiers": {
+    "device": 0,
+    "host": 0,
+    "storage": 19968
+   }
+  }
+ ]
+}

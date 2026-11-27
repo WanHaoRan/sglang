@@ -14,3 +14,7 @@ by (play, stream, k). Arms (queue.txt): jit_p50, ec_full, jit_exact, the full 2 
 
 Run by chain_fix.sh after campaign 33 (see its header): unit tests on the frozen copy, a tier correctness check with
 the write-path fixes on, then the arms. Log: chain.log; unit_tests.log; the check's run folder holds check_fixes.*.
+
+Added 2026-11-23 at the author's request: campaign 32's other two arms, hicache and ec_exact, on the same setting, so
+the campaign pairs with campaign 32 arm by arm (oracle_v2 not rerun). They run after a host restart on another H200
+(GPU-36746535 instead of GPU-0f61782e). Run by chain_rerun.sh; log chain_rerun.log.

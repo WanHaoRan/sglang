@@ -1,0 +1,304 @@
+{
+ "summary": "The simulator reproduces what the builder claims for campaign 34 (fixes on) and campaign 28 (Triton), and campaign 32 (fixes off) only roughly. I found seven small defects and two wrong statements in CALIBRATION.md. Use the patched copy, `referee/kvsim_patched.py`, from here on.\n\n**What I did**\n- Re-derived every measured number from the client records and server logs of campaigns 34 and 32 (`ref_measured.py`).\n- Re-ran the five anchored arms on seed 0 (the campaigns' users) and on eight fresh seeds, 5 to 12, with the fixes on and off.\n- Checked invariants by subclassing `Sim`, after every event and by a full scan every 10 simulated seconds.\n- Scaled each of the 16 fitted constants by 0.8 and 1.2 (660 runs), and measured the noise floor with six jitter replicas.\n- Notes are in `referee/REFEREE_NOTES.md`; the full anchor table is `referee/anchors_table.md`.\n\n**Anchors**\n- Seed 0 gives the builder's numbers exactly, and the fresh seeds give the same spread as the builder's seeds 0 to 4.\n- The simulated client equals the recorded one on all 154,415 requests of the 11 recorded runs.\n- The match of absolute TTFT on seed 0 is in-sample: the GPU terms were fitted to campaign 34's own decode-log intervals.\n- The out-of-sample evidence is `hicache` (GPU work, lookups, the storm bin by bin), the mechanism counters, campaign 28 and, weakly, campaign 32.\n\n**Wrong in CALIBRATION.md**\n- Pending SSD writes are 2 to 4 times the measured ones, not \"about half\". The builder compared with the census field `h_write` instead of `pending_write`.\n- `hicache` is not smooth in GPU speed: with the GPU 0.5 or 1 % faster its storm starts at minute 60 instead of 40, and the mean is 19.7 s instead of 31.6 s. The builder's check at \u00b12 % missed this.\n- \"All 20 half-hour cells within 10 %\" is 19 of 20; the worst is -10.5 %.\n\n**Patched copy**\n- It fixes the seven defects and nothing else; every invariant then holds with the fixes on or off, the mirror on or off, and every `unified` switch.\n- Campaign 34 anchors are the same or slightly better (217 rows reproduced against 209). Campaign 32 and Triton are the same within the spread of jitter replicas.\n- One policy result already drawn in `../POLICY_RESULTS.md` changes with it: P2 on the 112 GB pool goes from -0.40 s to -0.01 s (range -0.62 to +0.82 over seeds 0 to 2). R4 and F3 keep their numbers.\n\n**Two things to know**\n- `kvsim_policy.py` was changed by someone else at 20:10 UTC during the review (the switch `F4B` was added). The anchored arms give identical seed-0 numbers before and after; my line numbers for that file are the earlier version's.\n- I wrote only under `referee/`, CPU only at nice 19. I ran 5 processes instead of 4 for about 3 minutes, when an invariant check overlapped the sensitivity matrix.",
+ "anchors": [
+  {
+   "anchor": "Workload: simulated client against all 11 recorded runs of campaigns 34 and 32 (prompt, output, wait, gap kind, key, tree, arrival time), and the hint table replayed in the recorded send order",
+   "measured": "154,415 recorded requests; 61,523 hinted requests",
+   "simulated": "0 requests differ, 0 arrival times differ; recorded p50 hint reproduced on 61,518 of 61,523",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 mean TTFT, hicache (requests sent before 6,600 s)",
+   "measured": "31.88 s",
+   "simulated": "31.58 s on seed 0 (patched 31.57); fresh seeds 5-12: 8.6 to 45.8 s",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 mean TTFT, jit_p50",
+   "measured": "11.47 s",
+   "simulated": "11.11 s (patched 11.22); fresh seeds 5.6 to 16.8 s",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 mean TTFT, jit_exact",
+   "measured": "10.92 s",
+   "simulated": "10.58 s (patched 10.57)",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 mean TTFT, ec_full",
+   "measured": "10.96 s",
+   "simulated": "10.62 s (patched 10.63); fresh seeds 5.3 to 16.6 s",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 mean TTFT, ec_exact",
+   "measured": "10.66 s",
+   "simulated": "10.60 s (patched 10.57)",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 mean TTFT by half hour of send time (minutes 0-30 / 30-60 / 60-90 / 90-110), ec_full and hicache; all 20 cells of the five arms",
+   "measured": "ec_full 0.41 / 6.18 / 16.36 / 27.97 s; hicache 0.41 / 30.53 / 72.97 / 90.14 s",
+   "simulated": "ec_full 0.39 / 5.90 / 15.91 / 26.77 s; hicache 0.40 / 30.83 / 71.30 / 88.25 s; 19 of 20 cells within 10 % (16 within 5 %), worst -10.5 % (jit_exact, minutes 0-30)",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 requests per minute to 6,600 s",
+   "measured": "141.5 to 142.2 (hinted arms), 90.6 (hicache)",
+   "simulated": "142.3 to 142.6, 90.9",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 requests per minute at saturation (minutes 90-109)",
+   "measured": "128.3 to 132.6 (hinted), 55.3 (hicache)",
+   "simulated": "132.2 to 134.6 (+1 to +4 %), 55.9",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 running requests (median, minutes 30-60 / 60-90 / 90-110), queued requests and GPU pool use in minutes 90-110",
+   "measured": "22 / 20-21 / 20 running (mean 19.7 to 20.0 in minutes 90-110); 60-61 queued (hicache 83); pool use 0.97",
+   "simulated": "22 / 20-21 / 20 running (mean 19.6 to 19.9); 59-60 queued (hicache 83); pool use 0.973 to 0.980",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 cap of 128 users: minute first reached, minute from which it holds, requests in flight in minutes 90-110 (not in the builder's table)",
+   "measured": "74-75, 85-86, 80 in flight (hicache: 53, 53, 104)",
+   "simulated": "72.7-74.5, 85.0-85.2, 79 in flight (hicache: 52, 52, 103)",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 GPU work under a full pool: decode share of GPU time by window, and non-decode time per new token (hicache was not in the builder's fit)",
+   "measured": "ec_full 0.760 / 0.767 / 0.760 and 0.061-0.065 ms; hicache 0.475 / 0.328 / 0.325 and 0.038-0.042 ms",
+   "simulated": "ec_full 0.757 / 0.766 / 0.768 and 0.061-0.063 ms; hicache 0.476 / 0.326 / 0.330 and 0.038-0.041 ms",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 decode time per output token on the client's clock (TPOT; the builder did not check it), minutes 30-110",
+   "measured": "30.4 to 31.4 ms (hinted arms); hicache 49.7 / 69.6 / 70.9 ms by half hour",
+   "simulated": "30.6 to 31.0 ms; hicache 50.6 / 69.2 / 71.2 ms",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 share of prompt tokens from GPU / host / SSD (ec_full), and SSD share across the hinted arms",
+   "measured": "0.194 / 0.606 / 0.138; SSD share 0.113 to 0.148",
+   "simulated": "0.199 / 0.600 / 0.140; SSD share 0.114 to 0.150",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 history recomputed (1 - cached / ideal)",
+   "measured": "0.39 to 0.53 % (hinted), 28.9 % (hicache)",
+   "simulated": "0.40 to 0.61 %, 29.1 % (patched: 0.43 to 0.58 %, 29.2 %)",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 hicache mechanism: SSD lookups, SSD reads, requests that reached the 8-lookup cap",
+   "measured": "39,963 lookups, 2,162 reads, 3,789 at the cap",
+   "simulated": "40,504 lookups, 2,160 reads, 3,874 at the cap",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 who waits, minutes 90-110 (hinted arms): share of returning requests that read from the SSD, their mean TTFT, the others' mean TTFT",
+   "measured": "26 to 32 %, 46.7 to 69.6 s, 13.1 to 19.0 s",
+   "simulated": "27 to 34 %, 46.0 to 66.6 s, 12.0 to 16.9 s",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 pinned host tokens, minutes 60-110 (census field 'pinned': pins of arrived and staged turns)",
+   "measured": "jit_p50 median 153 K, p90 319 K; other hinted arms median 0, p90 55 to 61 K",
+   "simulated": "jit_p50 median 172 K, p90 310 K; others median 0 to 2 K, p90 57 to 70 K",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "Campaign 34 read thread busy share by window (minutes 30-60 / 60-90 / 90-110)",
+   "measured": "hinted arms 0.09-0.55 / 0.56-0.97 / 1.00; hicache 0.34 / 0.38 / 0.35",
+   "simulated": "hinted arms 0.12-0.54 / 0.56-0.95 / 0.99-1.00; hicache 0.38 / 0.44 / 0.42 (+9 to +18 %)",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "Campaign 34 write thread busy share, minutes 90-110 (hinted arms)",
+   "measured": "0.73 to 0.74",
+   "simulated": "0.66 to 0.67",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "Campaign 34 first cleaner pass (the SSD capacity was fitted to it); interval between passes",
+   "measured": "5,252 to 5,301 s, none for hicache; 600 to 700 s apart",
+   "simulated": "5,190 s, none for hicache; 570 to 690 s apart",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 reads refused host room before 6,600 s, fixes on",
+   "measured": "0 in every arm",
+   "simulated": "0 for ec_full, jit_exact, ec_exact and 46 for jit_p50 on seed 0 (patched 21); fresh seeds 0 to 58 for jit_p50, 0 to 17 for the others",
+   "verdict": "not_reproduced"
+  },
+  {
+   "anchor": "Campaign 34 pending SSD writes, minutes 60-110 (census field 'pending_write', the counter the write hold reads); CALIBRATION.md compared with 'h_write' and concluded 'about half'",
+   "measured": "p75 3 to 6 K, p90 12 to 17 K, maximum 51 to 57 K tokens",
+   "simulated": "p75 11 to 22 K, p90 33 to 41 K, maximum 78 to 93 K tokens",
+   "verdict": "not_reproduced"
+  },
+  {
+   "anchor": "Campaign 34 write hold (fix 3) switched on, times per run",
+   "measured": "28 to 30",
+   "simulated": "51 to 80",
+   "verdict": "not_reproduced"
+  },
+  {
+   "anchor": "Campaign 34 reads staged before arrival: jit_p50 / jit_exact / ec_full / ec_exact",
+   "measured": "1,208 / 99 / 1 / 39",
+   "simulated": "1,216 / 103 / 1 / 46",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 SSD reads and tokens read (jit_p50 / ec_full / jit_exact / ec_exact)",
+   "measured": "3,268 / 2,678 / 2,221 / 2,335 reads; 82.5 / 64.1 / 54.4 / 55.3 M tokens",
+   "simulated": "3,405 / 2,797 / 2,368 / 2,387 reads; 84.0 / 65.2 / 56.4 / 56.1 M tokens",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 tokens written to the SSD (not skipped as stored)",
+   "measured": "hinted arms 30.7 M; hicache 29.4 M (65.3 M more skipped)",
+   "simulated": "hinted arms 30.6 M; hicache 19.9 M: the engine wrote 9.5 M tokens of recomputed pages again that the simulator skips",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "Campaign 34 paired jit_p50 -> ec_full on the requests both sent",
+   "measured": "-0.62 s [-1.02, -0.22]",
+   "simulated": "-0.59 s [-1.02, -0.19] (patched -0.70); fresh seeds -0.20 to -0.47, same sign in all 9 seeds; over 36 pairs of jitter replicas -0.66 [-0.87, -0.48]",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 paired ec_full -> jit_exact",
+   "measured": "-0.06 s [-0.19, +0.06]",
+   "simulated": "-0.05 s [-0.17, +0.09]; fresh seeds -0.10 to +0.09 (a tie in both)",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 paired ec_full -> ec_exact (ec_exact ran on another GPU unit; a GPU 0.5 % faster under ec_exact alone gives -0.48 s in the simulator)",
+   "measured": "-0.40 s [-0.51, -0.29]",
+   "simulated": "+0.01 s [-0.11, +0.12]; fresh seeds -0.12 to +0.06",
+   "verdict": "not_reproduced"
+  },
+  {
+   "anchor": "Campaign 34 paired hicache -> ec_exact",
+   "measured": "-26.96 s [-30.53, -23.61]",
+   "simulated": "-26.63 s [-30.26, -23.25]; hicache behind ec_full by 5.0 to 33.9 s over the fresh seeds, same sign in every seed",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Light load: campaign 34's first 30 minutes (mean TTFT, p50, share of prompt tokens from the GPU)",
+   "measured": "0.39 to 0.41 s, 0.086 to 0.094 s, 0.68 to 0.76",
+   "simulated": "0.36 to 0.40 s, 0.083 to 0.094 s, 0.70 to 0.77, same order across arms",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 32 (fixes off) mean TTFT: hicache / jit_p50 / jit_exact / ec_full / ec_exact",
+   "measured": "33.52 / 17.97 / 14.86 / 14.64 / 14.95 s",
+   "simulated": "32.08 / 15.35 / 13.45 / 13.48 / 13.58 s on one run; five jitter replicas 31.2-32.0 / 14.1-18.7 / 13.35-13.60 / 13.33-13.74 / 13.50-13.62 (patched medians 32.08 / 15.15 / 13.42 / 13.70 / 13.51)",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "Campaign 32: a loop of refused reads in all four hinted arms and none with the fixes on; onset minute (first of 3 minutes in a row with 5 or more refusals) for jit_p50 / jit_exact / ec_full / ec_exact",
+   "measured": "loop in all four, none in campaign 34; onset 42 (67 by the 5-minute rule) / 80 / 84 / 79",
+   "simulated": "loop in all four on seed 0, none with the fixes on in any of 9 seeds; onset 78 / 88 / 88 / 87 (jit_p50 42 to 89 over replicas; 40 to 105 over fresh seeds; one fresh seed has no loop in the two ec arms)",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "Campaign 32 p90 TTFT of jit_exact / ec_full / ec_exact, and history recomputed in minutes 60-90",
+   "measured": "50.5 / 51.2 / 50.1 s; 7.7 / 4.9 / 8.0 M tokens",
+   "simulated": "28.2 / 30.9 / 28.5 s; 2.5 / 2.6 / 2.8 M tokens (the loop starts 4 to 8 minutes late)",
+   "verdict": "not_reproduced"
+  },
+  {
+   "anchor": "Campaign 32 minutes 90-110 (inside the loop): mean TTFT and requests per minute, hinted arms",
+   "measured": "78.5 to 80.2 s (jit_p50 69.3); 58.9 to 65.2 a minute",
+   "simulated": "79.3 to 81.8 s (jit_p50 84.7); 56.3 to 58.7 a minute",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "Campaign 32 hicache: share of prompt tokens from the SSD, mean TTFT in minutes 90-110",
+   "measured": "0.045; 111.8 s",
+   "simulated": "0.068; 99.1 s (patched 0.054; 105.2 s)",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "The fixes: campaign 34 minus campaign 32, mean TTFT on each run's own requests",
+   "measured": "-3.7 to -6.5 s (hinted), -1.6 s (hicache)",
+   "simulated": "-2.9 to -4.2 s, -0.5 s; -0.2 to -17.0 s over the fresh seeds",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "Campaign 28 (Triton costs from the records): mean TTFT hicache / jit_p50 / jit_exact / ec_full / ec_exact; requests per minute; SSD share of the hinted arms",
+   "measured": "115.7 / 49.4 / 49.8 / 48.3 / 48.6 s; 41.3 and 76.9 to 78.9 a minute; 0.41 to 0.44",
+   "simulated": "121.3 / 50.2 / 49.6 / 49.8 / 50.0 s; 39.3 and 76.9 to 77.2 a minute; 0.46 to 0.47 (patched 121.2 / 50.1 / 50.2 / 50.0 / 49.8 s)",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Seed spread claimed by the builder (seeds 0-4): mean TTFT of a hinted arm and of hicache",
+   "measured": "builder: 4.6 to 19.4 s and 7.5 to 54.1 s",
+   "simulated": "referee, fresh seeds 5-12: 5.2 to 16.8 s and 8.6 to 45.8 s",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "hicache against GPU speed on seed 0 (all GPU times x 0.99 / 0.995 / 1.0 / 1.005 / 1.01); CALIBRATION.md reports 29.5 and 32.8 s at x 0.98 and x 1.02 and treats the response as smooth",
+   "measured": "both measured hicache runs (campaigns 32 and 34) stormed from minute 40",
+   "simulated": "19.4 / 19.7 / 31.6 / 31.6 / 32.8 s: at x 0.99 and x 0.995 the storm starts at minute 60, not 40; hinted arms move smoothly, 0.6 s per 1 %",
+   "verdict": "roughly"
+  }
+ ],
+ "defects": [
+  "D1, kvsim.py:327 (_stream_next): after the deadline a send is scheduled at min(t, deadline), which is in the past, so the clock steps back by up to 30 s. 23 to 72 events a run, all in the grace period after 7,200 s; no effect on requests sent before the cut. Patched.",
+  "D2, kvsim.py:437-449 (_hlock_dec), 557-572 (_orphan), 874-878 (backup), 940 (_write_ack): a host node that is unreachable but still locked, and is computed again, is held twice and freed once, or freed without returning to the evictable set; a node with two writes pending counts as clean after the first. With the fixes off only, in 6 of 12 runs checked: host tokens leak (up to 5.8 K by the end of a run), up to 12 evictable leaves are missing, the pending-write counter is off by up to 9.5 K. Patched; results with the fixes off are unchanged within the spread of jitter replicas.",
+  "D3, kvsim.py:1246-1252 (_finish): the reply's pages are inserted on the GPU even when nothing could be evicted for them. The GPU pool is exceeded 7 to 197 times a run, by up to 8,073 tokens (1.2 %). Patched: such a reply is not cached (32 to 38 a run).",
+  "D4, kvsim.py:960-962 (_cleaner) with 977-983 (ssd_oldest): the generator pops a node before the loop tests the target, so the first node not deleted leaves the cleaner's order for good. After 4 passes, 4 stored nodes (2.6 to 5.4 K tokens) can never be found again. Patched.",
+  "D5, kvsim.py:761-767 (_read_next) and 785-803 (_read_landed): a read parked or queued while the cleaner deletes its pages is served as if they were there. 0 to 14 reads a run (up to 129 K tokens) are served from deleted pages; the engine fails such reads (9 to 12 an arm). The builder disclosed this. Patched: the read delivers only the pages before the first deleted one.",
+  "D6, kvsim.py:1123-1128 (_admit) with 521-529 (_gpu_drop), and 794-797 (_read_landed), mirror off only: the GPU eviction of an admission copies pages to host and may evict the host pages the same admission is about to load, which are then loaded from nowhere; host_mirror goes negative. For jit_p50 with the mirror off the in-memory set is not prefix-closed in 401 of 723 samples (45 nodes). Patched; the mirror-off TTFT numbers barely move (ec_full 16.69 s inline, 10.43 s asynchronous).",
+  "D7, kvsim.py:1191-1201 and 1223 (_prefill_done): the infinite-cache ideal is taken at the end of prefill from pages that were prefilled, where the client takes it at the send from requests that completed. Patched: the simulator then shows 4 to 6 rows a run with cached above ideal, as the recorded clients do (3 to 6), and history recomputed is closer in 7 rows.",
+  "Not patched, write path (kvsim.py:741-759 _retime, 893-910 _write_next): one FIFO of nodes at a fixed rate, no merged writes. This is why pending writes are 2 to 4 times the measured ones, the write hold fires about twice as often, and jit_p50 has refused reads the engine did not.",
+  "Not patched, by design (kvsim.py:94-96 Config, 752 _retime): the read thread alone runs at 24.0 K tokens/s, above the device's 21.4 K. Device work stays within the device's rate only while both threads run. The value matches the measured uncontended per-page time (2.5 to 2.8 ms).",
+  "Not patched, one read share (0.73) for both campaigns (kvsim.py:97-98): in campaign 32's loop the write thread delivered 10.7 K tokens/s while the read thread was 76 to 80 % busy; the simulator gives it about 8.6 K at that duty. The loop's existence turns on this constant.",
+  "Not patched, kvsim_policy.py:424-431 (session_ended, reviewed version): in the exact-hint mode it reads r.is_last, where the engine sees only 'no hint' (also sent when the next send would fall past the deadline). Used by switch R1 only; no effect inside a run. No other use of the future was found: the plan's gap equals the sent table p50 in the table arms and the true gap only in the exact arms, checked at every commit.",
+  "Free actions in the unified arm (kvsim.py:985-988 ssd_touch): R4's touches of SSD copies cost no device or CPU time, and the cleaner works in an instant on whole nodes.",
+  "CALIBRATION.md, row 'ec_full: pending writes, p90' (80 K against 33 K, 'about half'): the 65 to 94 K is the census field h_write (host-only tokens held by pending writes with their ancestors). The comparable field, pending_write, has p90 12 to 17 K, so the simulator is 2 to 3 times high, not low.",
+  "CALIBRATION.md, section 6 item 4 (GPU speed, x 0.98 and x 1.02 only): it misses that hicache on seed 0 drops to 19.4 to 19.7 s at x 0.99 and x 0.995 because its storm starts 20 minutes later.",
+  "CALIBRATION.md, 'all 20 half-hour cells within 10 %': 19 of 20; jit_exact in minutes 0-30 is -10.5 % (0.40 against 0.36 s).",
+  "Process: ../kvsim_policy.py changed during the review (20:10 UTC, md5 a51bc5a7 to 2342e7fb, switch F4B added, not part of 'all'). The five anchored arms are unaffected (identical seed-0 results before and after)."
+ ],
+ "sensitivity": [
+  "Design: each of the 16 fitted constants x 0.8 and x 1.2, others unchanged, five arms on the same users; seeds 0, 5 and 7 with the fixes on and seed 0 with the fixes off (660 runs, referee/sens_report.md). All differences are paired on the requests both arms sent.",
+  "hicache behind ec_full: survives in 96 of 96 settings with the fixes on and 32 of 32 with them off. The size ranges from +0.2 s (seed 7 with the decode context term x 0.8, where nothing saturates) to +30.5 s.",
+  "jit_p50 behind ec_full: the point estimate survives in 96 of 96 settings with the fixes on (+0.09 to +2.74 s) and 31 of 32 with them off (-0.1 to +13.4 s). The interval over users is clear of zero in 30 of 32 settings on seed 0, 3 of 32 on seed 5 and 32 of 32 on seed 7.",
+  "ec_full, jit_exact and ec_exact tied: with the fixes on they stay within 0.2 s of each other in 90 of 96 settings for jit_exact (worst 0.59 s) and 94 of 96 for ec_exact (worst 0.27 s). With the fixes off the tie survives in only 10 and 6 of 32 settings (-7.9 to +4.3 s): the order there is whatever the tipping minute makes it.",
+  "'The fixes end the loop' survives in 31 of 32 settings on each of the three seeds. It fails for the read share x 1.2 (0.876): the write thread then gets 2.65 K tokens/s under read load, below the 4.3 K it must write, and a loop appears with the fixes on (onset minutes 38 to 83).",
+  "'The loop appears without the fixes' survives in 30 of 32 settings on seed 0. It fails for the read share x 0.8 (0.584: no refused read at all, the run equals the fixed one) and for the decode context term x 0.8 (a faster GPU: two arms do not loop within 2 hours).",
+  "The loop is present or absent according to whether (1 - read share) x 21.4 K tokens/s is under or over the write demand; the fitted share 0.73 is 9 % from that edge. Campaign 32's own logs give a lower share inside the loop than before it, so the constant is not one number.",
+  "Absolute TTFT is not robust. The decode term per token of running context x 0.8 or x 1.2 moves ec_full on seed 0 from 10.6 s to 3.9 or 16.8 s. Each other GPU term moves it by 0.4 to 1.6 s. The device and SSD terms move it by 0.15 s or less with the fixes on, the read share x 1.2 apart.",
+  "GPU speed as a whole (x 0.99 to x 1.01, seed 0): the hinted arms move smoothly, 0.6 s per 1 % (ec_full 9.96 / 10.32 / 10.62 / 10.90 / 11.17 s). The measured runs differ in GPU speed by 0.3 to 0.7 %, which is 0.2 to 0.4 s.",
+  "hicache against GPU speed is a tipping point: 19.4 / 19.7 / 31.6 / 31.6 / 32.8 s at x 0.99 / 0.995 / 1.0 / 1.005 / 1.01, and 28.5 to 30.6 s again at x 0.97 to x 0.985. The ordering against the hinted arms never flips, but the gap on one seed moves by 12 s.",
+  "Noise floor (six replicas of seed 0 with 5 ms send jitter): two replicas of the same arm, paired, differ by up to 0.08 s (jit_exact), 0.12 s (ec_full), 0.27 s (jit_p50), 0.28 s (ec_exact) and 0.68 s (hicache). jit_p50 -> ec_full is -0.66 s [-0.87, -0.48] over all 36 replica pairs, the same sign in all.",
+  "Patched against original on a result already in ../POLICY_RESULTS.md (seeds 0-2): P2 at 112 GB goes from -0.40 s to -0.01 s (range -0.62 to +0.82); R4 stays at -0.23 s and -0.86 s (-0.08 s at 112 GB against -0.17); F3 stays at +0.37, +0.51 and +1.12 s."
+ ],
+ "trusted_for": [
+  "At the anchored setting (FreeInference trace, FA3 or Triton costs, 128 users, 160 GB host pool, 2 hours, fixes on): the sign and rough size of effects that change GPU work per request by 5 % or more, such as history recomputed, a lookup budget like hicache's, or a read-or-recompute rule. A difference of 2 s or more with one sign on five or more seeds can be believed.",
+  "The sign of 0.2 to 0.7 s effects of read timing that act through pinned host memory and the read line (the jit_p50 against ec_full kind), when the sign holds on every seed and over jitter replicas. The size is good to about a factor of two.",
+  "Throughput, queue length, running requests, the minute the user cap binds, who waits (readers against the rest), GPU work per token and decode time per token at saturation: all within 5 % on the campaigns' users.",
+  "The GPU-bound Triton regime of campaign 28: hinted arms tied, hicache far behind, levels within 5 %.",
+  "The existence of the loop of refused reads and rewrites without the fixes, and its absence with them, as long as the write thread's share of the device under read load stays above the write demand.",
+  "Comparisons should be paired on the same users, over at least five seeds, quoting the range over seeds; one seed's level means little (a hinted arm's mean TTFT runs from 5 to 17 s across seeds)."
+ ],
+ "not_trusted_for": [
+  "Differences under about 0.5 s as statements about the GPU: the measured runs differ in GPU speed by 0.3 to 0.7 %, worth 0.2 to 0.4 s, and the one measured sub-second lead that could test this (ec_exact, 0.3 to 0.4 s) is not reproduced.",
+  "Differences under 0.3 s on a single seed even inside the simulator (under 0.7 s when hicache is one side): replicas of the same arm differ by that much.",
+  "Absolute TTFT away from the campaigns' users at the anchored setting, and the size of hicache's gap on one seed (it moves by 12 s on half a per cent of GPU speed).",
+  "Anything that acts through refused reads, pending writes or the write hold with the fixes on: switches P1, P2, R2, R3, and which of the four fixes does the work. The simulator's write backlog is 2 to 4 times the measured one and it refuses reads the engine did not; P2's gain at 112 GB vanished in the patched copy.",
+  "The fixes-off regime beyond 'a loop exists': the onset minute, the order of the hinted arms inside it, and the size of the fixes' gain are tipping-point outcomes and turn on the fitted read share.",
+  "SSD-tier rules (R1, R4, R5) beyond their sign: the cleaner works on whole nodes in an instant, touches are free, and a 2-hour run has only three passes in its last 22 minutes.",
+  "Mirror off: no engine run exists to compare with, and the original breaks residency there (use the patched copy).",
+  "The nohint arm and every unified switch as absolute predictions: none has a measured anchor.",
+  "Settings with no GPU anchor: other host sizes or user caps (112 GB; 64 users with 88 GB), the cleaner at 50 / 40 %, light load with a short host room (campaign 26's regime), and other traces (TraceLab is not read). Campaigns 35 to 38 can become anchors; until then results there are extrapolation.",
+  "Effects below the level of a node: page-level cleaner order, losses of shared heads, counts of requests the cleaner hurts."
+ ],
+ "use_file": "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/referee/kvsim_patched.py (the patched copy, built from ../kvsim.py by referee/make_patched.py; run it with referee/kvsim_compare_patched.py, which takes kvsim_compare.py's command line, or referee/ref_run.py --sim kvsim_patched; it uses the builder's kvsim_policy.py and kvsim_trace.py unchanged)"
+}

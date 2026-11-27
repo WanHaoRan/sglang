@@ -15,7 +15,7 @@ from sglang.srt.arg_groups.hicache_hook import (
 )
 from sglang.srt.arg_groups.kv_cache_hook import handle_cache_compatibility
 from sglang.srt.arg_groups.overrides import resolution_result
-from sglang.srt.mem_cache.next_use_eviction import RETURN_SCORES
+from sglang.srt.mem_cache.next_use_eviction import QUEUED_ORDERS, RETURN_SCORES
 from sglang.srt.server_args import ServerArgs
 from sglang.test.test_utils import CustomTestCase
 
@@ -355,6 +355,53 @@ class TestPricingFlags(CustomTestCase):
                         radix_eviction_policy_config={"score": score},
                     )
                 )
+
+    def test_every_queued_order_the_strategies_take_passes_validation(self):
+        for policy in ("next_use", "return_chance"):
+            for queued_order in QUEUED_ORDERS:
+                with self.subTest(policy=policy, queued_order=queued_order):
+                    handle_cache_compatibility(
+                        make_args(
+                            **DEADLINE_ON,
+                            radix_eviction_policy=policy,
+                            radix_eviction_policy_config={
+                                "horizon_s": 30,
+                                "queued_order": queued_order,
+                            },
+                        )
+                    )
+            with self.subTest(policy=policy, queued_order="nearest"):
+                with self.assertRaisesRegex(ValueError, "queued_order"):
+                    handle_cache_compatibility(
+                        make_args(
+                            **DEADLINE_ON,
+                            radix_eviction_policy=policy,
+                            radix_eviction_policy_config={"queued_order": "nearest"},
+                        )
+                    )
+
+    def test_farthest_warns_unless_admission_is_first_come_first_served(self):
+        """farthest evicts the latest arrival's history first because under fcfs that
+        turn is admitted last; any other schedule policy breaks that premise."""
+        config = {"horizon_s": 30, "queued_order": "farthest"}
+        with self.assertLogs("sglang.srt.arg_groups.kv_cache_hook", "WARNING") as logs:
+            handle_cache_compatibility(
+                make_args(
+                    **DEADLINE_ON,
+                    radix_eviction_policy="return_chance",
+                    radix_eviction_policy_config=config,
+                    schedule_policy="lpm",
+                )
+            )
+        self.assertIn("queued_order farthest", logs.output[0])
+        with self.assertNoLogs("sglang.srt.arg_groups.kv_cache_hook", "WARNING"):
+            handle_cache_compatibility(
+                make_args(
+                    **DEADLINE_ON,
+                    radix_eviction_policy="return_chance",
+                    radix_eviction_policy_config=config,
+                )
+            )
 
 
 if __name__ == "__main__":

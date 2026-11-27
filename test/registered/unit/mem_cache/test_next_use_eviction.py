@@ -1,17 +1,23 @@
 """Next-use eviction: the tier order, the registry contract, the factory wiring
-and the eviction order of a CPU tree (agent_cache/ORACLE_V2_PLAN.md 4.5)."""
+and the eviction order of a CPU tree (agent_cache/ORACLE_V2_PLAN.md 4.5). On the
+same CPU tree: which nodes count as stored on the SSD (the Retain action of the
+design in agent_cache/results/design_unified_1126/)."""
 
 from sglang.test.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=10, suite="base-a-test-cpu")
 
+import contextlib
 import time
 import unittest
 from array import array
+from queue import Queue
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import torch
 
+from sglang.srt.environ import envs
 from sglang.srt.mem_cache.allocator import TokenToKVPoolAllocator
 from sglang.srt.mem_cache.base_prefix_cache import (
     EvictParams,
@@ -19,9 +25,13 @@ from sglang.srt.mem_cache.base_prefix_cache import (
     MatchPrefixParams,
 )
 from sglang.srt.mem_cache.cache_init_params import CacheInitParams
+from sglang.srt.mem_cache.evict_policy import LRUStrategy
+from sglang.srt.mem_cache.hicache_storage import HiCacheStorage
 from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool, ReqToTokenPool
 from sglang.srt.mem_cache.next_turn_policy import GapDistribution
+from sglang.srt.mem_cache.next_turn_prefetch import NextTurnPrefetcher
 from sglang.srt.mem_cache.next_use_eviction import (
+    HOLDING_MIN_HORIZON_S,
     POINT_GRACE_S,
     QUEUED_MAX_AGE_S,
     RETURN_TIER_ENDED,
@@ -38,9 +48,13 @@ from sglang.srt.mem_cache.next_use_eviction import (
     Queued,
     ReturnChanceStrategy,
     ReturnForecast,
+    queued_holding_rate,
 )
 from sglang.srt.mem_cache.radix_cache import RadixKey
-from sglang.srt.mem_cache.unified_cache.components import ComponentType
+from sglang.srt.mem_cache.storage_retention import RetentionSwitches
+from sglang.srt.mem_cache.unified_cache.components import ComponentType, FullComponent
+from sglang.srt.mem_cache.unified_cache.storage_attachment import StorageAttachment
+from sglang.srt.mem_cache.unified_cache.unified_tree_core import UnifiedTreeNode
 from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 from sglang.srt.mem_cache.utils import get_eviction_strategy
 from sglang.test.test_utils import CustomTestCase
@@ -276,6 +290,34 @@ class TestReturnChanceStrategy(CustomTestCase):
         clock[0] += QUEUED_MAX_AGE_S + 1.0
         self.assertEqual(strategy.get_priority(node(1))[0], RETURN_TIER_UNKNOWN)
 
+    def test_farthest_order_evicts_the_last_arrival_among_queued_turns(self):
+        """Admission is FCFS, so of two queued turns the one that arrived later is
+        admitted later and its history has the farther next use. LRU ranks them the
+        other way round once the earlier turn's path is the older stamp: it takes the
+        history of the turn about to be admitted."""
+        early, late = Queued(since=900.0), Queued(since=990.0)
+        for name, config in (("return_chance", {}), ("next_use", {})):
+            with self.subTest(policy=name):
+                lru = get_eviction_strategy(name, config or None)
+                far = get_eviction_strategy(
+                    name, {**config, "queued_order": "farthest"}
+                )
+                for strategy in (lru, far):
+                    strategy._clock = lambda: 1000.0
+                    strategy.registry.register(1, early)
+                    strategy.registry.register(2, late)
+                # The earlier turn was matched last, as a turn the admission loop reached.
+                nodes = [node(1, last_access=995.0), node(2, last_access=990.0)]
+                order = lambda s: [n.id for n in sorted(nodes, key=s.get_priority)]
+                self.assertEqual(order(lru), [2, 1])
+                self.assertEqual(order(far), [2, 1])
+                # Stamps the other way round: only the arrival order may decide.
+                nodes = [node(1, last_access=900.0), node(2, last_access=990.0)]
+                self.assertEqual(order(lru), [1, 2])
+                self.assertEqual(order(far), [2, 1])
+                with self.assertRaises(ValueError):
+                    get_eviction_strategy(name, {"queued_order": "nearest"})
+
     def test_factory_builds_the_policy_from_its_config(self):
         strategy = get_eviction_strategy("return_chance", {"horizon_s": 60})
         self.assertIsInstance(strategy, ReturnChanceStrategy)
@@ -335,6 +377,312 @@ class TestReturnChanceStrategy(CustomTestCase):
         nodes = [node(4, 0.0), node(2, 1.0), node(1, 5.0), node(5, 4.0)]
         order = [n.id for n in sorted(nodes, key=strategy.get_priority)]
         self.assertEqual(order, [2, 5, 1, 4])
+
+
+class TestHoldingRate(CustomTestCase):
+    """What a host holder is worth per second: the price of host room is read off the
+    holding rates of eviction's victims."""
+
+    def test_next_use_rate_is_one_over_the_time_left_and_zero_for_a_session_not_coming(
+        self,
+    ):
+        """A queued turn's history and an un-hinted prefix have no forecast: priced as
+        zero instead of left out, each such victim would pull the room's price down just
+        when eviction has reached the queued turns. A turn due any moment is worth one over
+        the shortest horizon, not one over zero."""
+        strategy = NextUseStrategy(overdue_grace_s=60.0, clock=lambda: 1000.0)
+        registry = strategy.registry
+        registry.register(1, 1100.0)
+        registry.register(2, 1000.25)
+        registry.register(3, 950.0)  # 50 s overdue: within the grace, still due
+        registry.register(4, 900.0)  # 100 s overdue: not coming
+        registry.register(5, None)
+        registry.register(6, Queued(since=990.0))
+        rates = {i: strategy.holding_rate(node(i)) for i in range(1, 8)}
+        self.assertEqual(
+            rates, {1: 0.01, 2: 2.0, 3: 2.0, 4: 0.0, 5: 0.0, 6: None, 7: None}
+        )
+
+    def test_return_chance_rate_is_the_sessions_whichever_of_its_nodes_goes(self):
+        """A session's body carries no registration: it is the session's once eviction has
+        ranked the tail, and pricing alone must not make it so. An exact hint is worth one
+        over the time left, due within the grace and not coming after it."""
+        now = 1000.0
+        strategy = ReturnChanceStrategy(horizon_s=30.0, clock=lambda: now)
+        registry = strategy.registry
+        sharp = GapDistribution.from_quantiles(p10=18.0, p50=20.0, p90=22.0)
+        body = node(2, parent=node(1))
+        tail = node(3, parent=body)
+        registry.register(3, ReturnForecast(dist=sharp, idle_from=now))
+        rate = strategy.holding_rate(tail)
+        self.assertAlmostEqual(rate, 1.0 / 20.0, delta=0.003)
+        self.assertIsNone(strategy.holding_rate(body))
+        strategy.get_priority(tail)
+        self.assertEqual(strategy.holding_rate(body), rate)
+        for node_id, gap_s, idle_s, expected in (
+            (10, 60.0, 10.0, 1.0 / 50.0),
+            (11, 10.0, 10.0 + POINT_GRACE_S / 2, 2.0),
+            (12, 10.0, 10.0 + 2 * POINT_GRACE_S, 0.0),
+        ):
+            registry.register(
+                node_id,
+                ReturnForecast(
+                    dist=GapDistribution.point(gap_s), idle_from=now - idle_s
+                ),
+            )
+            self.assertAlmostEqual(strategy.holding_rate(node(node_id)), expected)
+        registry.register(13, None)
+        registry.register(14, Queued(since=now))
+        self.assertEqual(strategy.holding_rate(node(13)), 0.0)
+        self.assertIsNone(strategy.holding_rate(node(14)))
+        self.assertIsNone(strategy.holding_rate(node(15)))
+
+    def test_a_queued_turn_is_worth_what_the_caller_says_until_its_registration_is_stale(
+        self,
+    ):
+        """A registration left by a turn aborted before it committed ranks as un-hinted again:
+        priced as queued it would hold the room's price up for ten minutes."""
+        now = 1000.0
+        stale = Queued(since=now - QUEUED_MAX_AGE_S - 1.0)
+        for strategy in (
+            NextUseStrategy(clock=lambda: now),
+            ReturnChanceStrategy(clock=lambda: now),
+        ):
+            with self.subTest(strategy=type(strategy).__name__):
+                strategy.registry.register(1, Queued(since=now - 5.0))
+                strategy.registry.register(2, stale)
+                self.assertEqual(strategy.holding_rate(node(1), queued=0.25), 0.25)
+                self.assertIsNone(strategy.holding_rate(node(2), queued=0.25))
+
+    def test_the_queued_victim_is_the_last_arrival_under_farthest_and_near_the_head_under_lru(
+        self,
+    ):
+        """One over the wait the evicted turn has left: the whole queue's under "farthest". At
+        the top rate there, a 20 s queue would read as room 40 times dearer than it is."""
+        top = 1.0 / HOLDING_MIN_HORIZON_S
+        self.assertEqual(queued_holding_rate("farthest", queue_wait_s=20.0), 1.0 / 20.0)
+        self.assertEqual(queued_holding_rate("farthest", queue_wait_s=0.1), top)
+        self.assertEqual(queued_holding_rate("farthest", queue_wait_s=None), top)
+        self.assertEqual(queued_holding_rate("lru", queue_wait_s=20.0), top)
+
+
+class TestHostEvictionObserver(CustomTestCase):
+    """Host eviction of the FULL component over three host leaves of 4, 8 and 16 tokens,
+    least recently used first, on a tree core that only records."""
+
+    def setUp(self):
+        full = ComponentType.FULL
+
+        def leaf(tokens, last_access):
+            made = UnifiedTreeNode((full,))
+            made.component_data[full].host_value = torch.zeros(
+                tokens, dtype=torch.int64
+            )
+            made.last_access_time = last_access
+            return made
+
+        self.leaves = [leaf(4, 1.0), leaf(8, 2.0), leaf(16, 3.0)]
+        self.seen, self.evicted = [], []
+
+        def evict(victim, tracker, device_frees, host_frees):
+            self.assertIs(self.seen[-1][0], victim)
+            data = victim.component_data[full]
+            tracker[full] += len(data.host_value)
+            data.host_value = None
+            self.core.evictable_host_leaves.discard(victim)
+            self.evicted.append(victim)
+
+        self.core = SimpleNamespace(
+            evictable_host_leaves=set(self.leaves),
+            host_eviction_observer=lambda victim, tokens: self.seen.append(
+                (victim, tokens)
+            ),
+            _evict_host_leaf=evict,
+            eviction_strategy=LRUStrategy(),
+            enable_session_radix_cache=False,
+        )
+        self.component = FullComponent.__new__(FullComponent)
+        self.component.component_type = full
+        self.component.tree_core = self.core
+        self.component.session_ref_eviction_strategy = None
+
+    def evict_host(self, tokens):
+        self.component.drive_host_eviction(tokens, {ComponentType.FULL: 0}, {}, {})
+
+    def test_each_victim_is_reported_with_its_host_tokens_before_it_goes(self):
+        """The observer prices the room off the victims. Told after the eviction, a victim
+        has no host value left to count and is detached from its session's path; a leaf
+        eviction did not need must not be reported at all."""
+        first, second, _ = self.leaves
+        self.evict_host(10)
+        self.assertEqual(self.seen, [(first, 4), (second, 8)])
+        self.assertEqual(self.evicted, [first, second])
+
+    def test_the_next_victim_is_the_leaf_eviction_then_takes_first(self):
+        """A staging pays for the holder it would evict next. Named from the other end of
+        the order it would pay for the holder worth most, and price every staging out;
+        with nothing evictable there is no holder to pay for."""
+        first, second, third = self.leaves
+        self.assertIs(self.component.next_host_victim(), first)
+        self.evict_host(1)
+        self.assertEqual(self.evicted, [first])
+        self.assertIs(self.component.next_host_victim(), second)
+        self.evict_host(100)
+        self.assertEqual(self.evicted, [first, second, third])
+        self.assertIsNone(self.component.next_host_victim())
+
+    def test_the_next_victim_follows_session_refs_as_eviction_does(self):
+        """With session refs a leaf some session still holds goes after every leaf none
+        does, whatever its age: named by age alone, the next victim would be the wrong one."""
+        first, second, _ = self.leaves
+        self.core.enable_session_radix_cache = True
+        self.component.session_ref_eviction_strategy = (
+            self.component._session_ref_eviction_strategy
+        )
+        first.component_data[ComponentType.FULL].session_ref = 1
+        self.assertIs(self.component.next_host_victim(), second)
+        self.evict_host(1)
+        self.assertEqual(self.evicted, [second])
+
+
+class TestPricingLeavesEvictionAlone(CustomTestCase):
+    """root -> body -> {a, b} and root -> unhinted, four host tokens each, under return_chance
+    on a tree core that detaches victims as the real one does. The tails are ended
+    sessions'; the body and the un-hinted leaf, used before the body, carry no registration."""
+
+    def tree(self, *, tails):
+        full = ComponentType.FULL
+        strategy = ReturnChanceStrategy(horizon_s=30.0, clock=lambda: 1000.0)
+        evicted = []
+
+        def made(name, parent, last_access):
+            created = UnifiedTreeNode((full,))
+            created.name = name
+            created.parent = parent
+            created.last_access_time = last_access
+            created.component_data[full].host_value = torch.zeros(4, dtype=torch.int64)
+            if parent is not None:
+                parent.children[created.id] = created
+            return created
+
+        root = made("root", None, 0.0)
+        body = made("body", root, 50.0)
+        unhinted = made("unhinted", root, 10.0)
+        leaves = {unhinted}
+        for age, name in enumerate(tails, start=1):
+            tail = made(name, body, float(age))
+            strategy.registry.register(tail.id, None)
+            leaves.add(tail)
+
+        def evict(victim, tracker, device_frees, host_frees):
+            data = victim.component_data[full]
+            tracker[full] += len(data.host_value)
+            data.host_value = None
+            core.evictable_host_leaves.discard(victim)
+            del victim.parent.children[victim.id]
+            evicted.append(victim.name)
+            # A host-backed parent left childless becomes a host leaf.
+            if victim.parent is not root and not victim.parent.children:
+                core.evictable_host_leaves.add(victim.parent)
+
+        core = SimpleNamespace(
+            evictable_host_leaves=leaves,
+            host_eviction_observer=None,
+            _evict_host_leaf=evict,
+            eviction_strategy=strategy,
+            enable_session_radix_cache=False,
+        )
+        component = FullComponent.__new__(FullComponent)
+        component.component_type = full
+        component.tree_core = core
+        component.session_ref_eviction_strategy = None
+        return component, core, body, evicted
+
+    def test_the_prices_log_does_not_change_which_leaf_host_eviction_takes(self):
+        """Asked about b once a is gone, a price that ranks as eviction does pulls the body into
+        b's ended session, and the body leaves before the un-hinted leaf."""
+        orders = {}
+        for prices_interval_s in (0.0, 5.0):
+            component, core, _, evicted = self.tree(tails=("a", "b"))
+            stack = contextlib.ExitStack()
+            self.addCleanup(stack.close)
+            stack.enter_context(
+                envs.SGLANG_LOG_HICACHE_PRICES_INTERVAL.override(prices_interval_s)
+            )
+            NextTurnPrefetcher(
+                mode="observe",
+                tree_cache=SimpleNamespace(read_scheduler=None, tree_core=core),
+                page_size=64,
+            )
+            stack.close()
+            self.assertEqual(
+                core.host_eviction_observer is not None, prices_interval_s > 0
+            )
+            component.drive_host_eviction(12, {ComponentType.FULL: 0}, {}, {})
+            orders[prices_interval_s] = evicted
+        self.assertEqual(orders[0.0], ["a", "b", "unhinted"])
+        self.assertEqual(orders[5.0], orders[0.0])
+
+    def test_naming_the_next_victim_ranks_nothing_into_a_session(self):
+        """Asked between eviction passes: ranked as eviction ranks, the body's only child would
+        pull the body into its session when eviction ranks nothing."""
+        component, core, body, _ = self.tree(tails=("b",))
+        self.assertEqual(component.next_host_victim().name, "b")
+        self.assertEqual(
+            core.eviction_strategy.peek_priority(body)[0], RETURN_TIER_UNKNOWN
+        )
+
+    def test_host_eviction_of_the_real_tree_is_the_same_with_the_prices_log_on(self):
+        """On a real tree, host-only: the leaf named as next victim goes first, and with the log
+        on eviction keeps what it keeps without, the body and the un-hinted leaf."""
+        full = ComponentType.FULL
+        kept = {}
+        for prices_interval_s in (0.0, 5.0):
+            params = next_use_params(horizon_s=30.0)
+            params.eviction_policy = "return_chance"
+            cache = UnifiedRadixCache(params)
+            core = cache.tree_core
+            core.set_hicache_enabled()
+            alloc = cache.token_to_kv_pool_allocator.alloc
+            nodes = {}
+            keys = {"x": [1, 2, 3, 4], "y": [1, 2, 5, 6], "w": [7, 8], "u": [9, 10]}
+            for name, tokens in keys.items():
+                inserted = cache.insert(
+                    InsertParams(
+                        key=RadixKey(array("q", tokens)), value=alloc(len(tokens))
+                    )
+                )
+                nodes[name] = core.node_by_id(inserted.last_device_node)
+            nodes["body"] = nodes["x"].parent
+            self.assertIs(nodes["y"].parent, nodes["body"])
+            ages = {"body": 50.0, "y": 1.0, "x": 2.0, "w": 60.0, "u": 10.0}
+            for name, node in nodes.items():
+                data = node.component_data[full]
+                data.host_value, data.value = data.value.clone(), None
+                node.last_access_time = ages[name]
+            for node in nodes.values():
+                core._update_evictable_leaf_sets(node)
+            for name in ("x", "y", "w"):
+                core.eviction_strategy.registry.register(nodes[name].id, None)
+            stack = contextlib.ExitStack()
+            self.addCleanup(stack.close)
+            stack.enter_context(
+                envs.SGLANG_LOG_HICACHE_PRICES_INTERVAL.override(prices_interval_s)
+            )
+            NextTurnPrefetcher(mode="on", tree_cache=cache, page_size=1)
+            stack.close()
+            self.assertIs(cache.next_host_victim(), nodes["y"])
+            freed = core.drive_host_eviction(full, 6)
+            self.assertEqual(freed.tracker[full], 6)
+            # Host values of this tree are stand-ins: nothing to hand back to a pool.
+            freed.host_frees.clear()
+            freed.device_frees.clear()
+            kept[prices_interval_s] = sorted(
+                name
+                for name, node in nodes.items()
+                if node in core.evictable_host_leaves
+            )
+        self.assertEqual(kept, {0.0: ["body", "u"], 5.0: ["body", "u"]})
 
 
 def next_use_params(horizon_s: float) -> CacheInitParams:
@@ -483,6 +831,583 @@ class TestNextUseOnACpuTree(CustomTestCase):
         strategy.registry.register(tail_a, Queued(since=time.perf_counter()))
         cache.evict(EvictParams(num_tokens=2))
         self.assertEqual((device_tokens(whole), device_tokens(other)), (2, 0))
+
+
+CACHE_LOGGER = "sglang.srt.mem_cache.unified_radix_cache"
+
+
+class _StorageWrites:
+    """A controller that copies to host memory at once, unless told to refuse, and
+    records the pages of each storage write in submit order."""
+
+    backup_skip = False
+    # The ack drain reads these queues as well; it is asked for nothing from them.
+    prefetch_hit_queue = ack_prefetch_queue = host_mem_release_queue = None
+
+    def __init__(self):
+        self.writes = []
+        self.refuse_host_copies = False
+        self.ack_backup_queue = Queue()
+        self.mem_pool_host = SimpleNamespace(
+            anchor_entry=SimpleNamespace(
+                host_pool=SimpleNamespace(shared_allocation_domain=None),
+                host_evict_fn=None,
+            ),
+            available_size=lambda: 10**6,
+        )
+
+    def write(self, device_value, node_id, extra_pools=None, flush=False):
+        return None if self.refuse_host_copies else torch.arange(len(device_value))
+
+    def write_storage(
+        self, host_indices, token_ids, hash_value, prefix_keys, extra_pools=None
+    ):
+        self.writes.append(list(hash_value))
+        return len(self.writes) - 1
+
+
+def stored_marks_cache(**switches) -> UnifiedRadixCache:
+    """A CPU cache (one token a page) with storage on, the stored marks tracked, and a
+    controller that records the writes queued."""
+    cache = UnifiedRadixCache(next_use_params(horizon_s=100.0))
+    cache.cache_controller = _StorageWrites()
+    # With the host tier on, a match ends at the deepest node memory holds.
+    cache.tree_core.set_hicache_enabled()
+    cache.enable_storage = True
+    cache.retention = RetentionSwitches(track_stored=True, **switches)
+    return cache
+
+
+def recording_store(cache) -> Mock:
+    """Attach a store that records the mtime changes asked of it."""
+    store = Mock(spec=HiCacheStorage)
+    cache.cache_controller.storage_backend = store
+    return store
+
+
+def zeroed_pages(store) -> list:
+    """The page keys the store was asked to give mtime zero, in the order asked."""
+    return [
+        key
+        for call in store.touch_pages.call_args_list
+        if call.kwargs["newest_ns"] is None
+        for key in call.args[0]
+    ]
+
+
+def read_back_node(cache, parent_id, tokens) -> int:
+    """A host-only node under parent_id, as a landed storage read inserts it."""
+    return cache.tree_core.insert_host(
+        parent_id,
+        RadixKey(array("q", tokens)),
+        torch.arange(len(tokens)),
+        # Page keys are hex digests: a child's key chains from its parent's last one.
+        [f"{token:064x}" for token in tokens],
+    ).inserted_host_node
+
+
+def computed_node(cache, prompt) -> int:
+    """Compute a prompt on the device and give its new node a host copy, as an acked
+    write-through leaves it; returns that node's id."""
+    key = RadixKey(array("q", prompt))
+    held = cache.match_prefix(MatchPrefixParams(key=key)).device_indices
+    fresh = cache.token_to_kv_pool_allocator.alloc(len(prompt) - len(held))
+    node_id = cache.insert(
+        InsertParams(key=key, value=torch.cat([held, fresh]))
+    ).last_device_node
+    pages = len(cache.tree_core.get_hash_values(node_id))
+    cache.tree_core.commit_backup(node_id, torch.arange(pages), {})
+    return node_id
+
+
+def stored_node(cache, prompt) -> int:
+    """computed_node whose storage write was acked in full."""
+    node_id = computed_node(cache, prompt)
+    cache.tree_core.mark_storage_write(node_id, op_id=node_id)
+    cache.tree_core.finish_storage_write(node_id, op_id=node_id, stored_at=0.0)
+    return node_id
+
+
+def ack_host_copies(cache) -> None:
+    """Ack every host copy in flight, which queues the storage write of its node."""
+    for ack_id in list(cache.ongoing_write_through):
+        cache._finish_write_through_ack(ack_id)
+
+
+def write_through_turn(cache, prompt, *, ends=False, acked=True) -> int:
+    """Insert a prompt as a turn does under write-through, where each new node is copied
+    to host memory inside the insert, and ack those copies; returns the last node."""
+    key = RadixKey(array("q", prompt))
+    held = cache.match_prefix(MatchPrefixParams(key=key)).device_indices
+    fresh = cache.token_to_kv_pool_allocator.alloc(len(prompt) - len(held))
+    leaf = cache.insert(
+        InsertParams(key=key, value=torch.cat([held, fresh]), skip_storage_backup=ends)
+    ).last_device_node
+    if acked:
+        ack_host_copies(cache)
+    return leaf
+
+
+def ack_storage_writes(cache, *, short=()) -> None:
+    """The write thread acks every queued storage write in submit order, in full unless
+    its op id is in short, and the cache drains the acks as a scheduler pass does."""
+    controller = cache.cache_controller
+    op_ids = sorted(cache.ongoing_backup)
+    for op_id in op_ids:
+        pages = controller.writes[op_id]
+        written = 0 if op_id in short else len(pages) * cache.page_size
+        controller.ack_backup_queue.put(
+            SimpleNamespace(id=op_id, hash_value=pages, completed_tokens=written)
+        )
+    cache._drain_storage_control_queues_impl(
+        n_storage_hit=0,
+        n_ack_prefetch=0,
+        n_backup=len(op_ids),
+        n_release=0,
+        extra_release_counts={},
+        log_metrics=False,
+    )
+
+
+class TestStoredMarksOnACpuTree(CustomTestCase):
+    def marks(self, cache, node_id):
+        node = cache.tree_core.node_by_id(node_id)
+        return node.storage_write_op, node.storage_stored
+
+    def stored(self, cache, *node_ids):
+        return [self.marks(cache, node_id)[1] for node_id in node_ids]
+
+    def test_a_split_while_the_write_is_queued_marks_both_fragments_at_the_ack(self):
+        """A match ending inside a node splits it while its storage write is queued: the
+        ack marks both fragments, or the new one is written again under every child."""
+        cache = stored_marks_cache()
+        tree = cache.tree_core
+        parent = computed_node(cache, [1, 2])
+        child = computed_node(cache, [1, 2, 3, 4, 5, 6])
+        tree.mark_storage_write(parent, op_id=6)
+        tree.mark_storage_write(child, op_id=7)
+        cache.match_prefix(MatchPrefixParams(key=RadixKey(array("q", [1, 2, 3, 4]))))
+        fragment = tree.node_by_id(child).parent.id
+        self.assertNotEqual(fragment, parent)
+        tree.finish_storage_write(child, op_id=7, stored_at=100.0)
+        self.assertEqual(
+            [self.marks(cache, node_id) for node_id in (child, fragment, parent)],
+            [(None, True), (None, True), (6, False)],
+        )
+
+    def test_a_child_write_first_rewrites_an_unstored_ancestor(self):
+        """A lookup stops at the first page missing on the SSD: a write first queues,
+        once, every ancestor without a copy there, stored nodes in between or not."""
+        cache = stored_marks_cache()
+        tree, writes = cache.tree_core, cache.cache_controller.writes
+        pages = tree.get_hash_values
+        # Read back from the SSD: stored at birth and never written again.
+        read_back_node(cache, cache.root_node_handle(), [1, 2])
+        failed = computed_node(cache, [1, 2, 3])
+        below = computed_node(cache, [1, 2, 3, 4])
+        cache.write_backup_storage(failed)
+        cache.write_backup_storage(below)
+        self.assertEqual(writes, [pages(failed), pages(below)])
+        # The write thread goes on after a write cut short: the hole is left above a
+        # stored node.
+        ack_storage_writes(cache, short={0})
+        self.assertEqual(self.stored(cache, failed, below), [False, True])
+
+        child = computed_node(cache, [1, 2, 3, 4, 5])
+        cache.write_backup_storage(child)
+        self.assertEqual(writes[2:], [pages(failed), pages(child)])
+        sibling = computed_node(cache, [1, 2, 3, 4, 6])
+        cache.write_backup_storage(sibling)
+        self.assertEqual(writes[4:], [pages(sibling)])
+
+        # A host copy still in flight is written at its own ack, not by a child's.
+        copying = computed_node(cache, [7])
+        tree.mark_write_through_pending([copying], ack_id=copying)
+        deeper = computed_node(cache, [7, 8])
+        cache.write_backup_storage(deeper)
+        self.assertEqual(writes[5:], [pages(deeper)])
+
+    def test_clearing_or_detaching_the_store_clears_every_mark(self):
+        """An emptied or detached store holds no page of this tree: a mark kept, or set
+        by the ack of a write queued before, keeps a page from being written again."""
+        for gone in ("cleared", "detached"):
+            with self.subTest(gone):
+                cache = stored_marks_cache(retire_ended_pages=True)
+                cache._storage_attachment = SimpleNamespace(clear=lambda: True)
+                tree = cache.tree_core
+                node = read_back_node(cache, cache.root_node_handle(), [1, 2, 3, 4])
+                # A split copies the mark to the fragment it makes.
+                cache.match_prefix(MatchPrefixParams(key=RadixKey(array("q", [1, 2]))))
+                fragment = tree.node_by_id(node).parent.id
+                queued = computed_node(cache, [1, 2, 3, 4, 5])
+                cache.write_backup_storage(queued)
+                cache._retire_at_ack.add(queued)
+                copying = computed_node(cache, [9])
+                cache._storage_skip_nodes.add(copying)
+                self.assertEqual(
+                    [
+                        self.marks(cache, node_id)
+                        for node_id in (node, fragment, queued)
+                    ],
+                    [(None, True), (None, True), (0, False)],
+                )
+                if gone == "cleared":
+                    self.assertTrue(cache.clear_storage_backend())
+                    # The write went out before the clear: its ack must find no node.
+                    ack_storage_writes(cache)
+                else:
+                    StorageAttachment(cache)._release_pending_storage_ops()
+                    self.assertEqual(
+                        (cache.ongoing_backup, cache.pending_backup_tokens), ({}, 0)
+                    )
+                self.assertEqual(
+                    [
+                        self.marks(cache, node_id)
+                        for node_id in (node, fragment, queued)
+                    ],
+                    [(None, False)] * 3,
+                )
+                self.assertEqual(cache._retire_at_ack, set())
+                # A cleared store still takes writes, so a skip decided stays decided.
+                self.assertEqual(
+                    cache._storage_skip_nodes, {copying} if gone == "cleared" else set()
+                )
+
+    def test_a_stale_tail_takes_its_fresh_head_along_and_a_second_match_takes_nothing(
+        self,
+    ):
+        """One stale node refreshes every stored node of the served chain, head first: a
+        tail refreshed alone would outlive its head. A page just written is fresh."""
+        cache = stored_marks_cache()
+        tree = cache.tree_core
+        pages = tree.get_hash_values
+        head = computed_node(cache, [1, 2])
+        tail = computed_node(cache, [1, 2, 3])
+        fork = computed_node(cache, [1, 2, 9])
+        for op_id, (node_id, acked_at) in enumerate(
+            ((head, 1000.0), (tail, 1250.0), (fork, 1100.0))
+        ):
+            tree.mark_storage_write(node_id, op_id=op_id)
+            tree.finish_storage_write(node_id, op_id=op_id, stored_at=acked_at)
+
+        def stale(node_id, now):
+            return tree.take_stale_storage_keys(node_id, now=now, min_interval_s=300.0)
+
+        self.assertEqual(stale(tail, 1299.0), [])
+        self.assertEqual(stale(tail, 1300.0), pages(head) + pages(tail))
+        self.assertEqual(stale(tail, 1310.0), [])
+        # The fork was written at 1100, so the head it hangs on is touched again 150 s
+        # after its last refresh: the interval bounds a chain, not each of its pages.
+        self.assertEqual(stale(fork, 1450.0), pages(head) + pages(fork))
+        self.assertEqual(stale(tail, 1599.0), [])
+        self.assertEqual(stale(tail, 1600.0), pages(head) + pages(tail))
+        # A split copies the stamp: the fragment it makes is not stale at once.
+        cache.match_prefix(MatchPrefixParams(key=RadixKey(array("q", [1]))))
+        self.assertEqual(stale(tail, 1601.0), [])
+
+    def test_only_stored_nodes_are_refreshed(self):
+        """A node whose write is queued or failed has no file to keep recent; pages read
+        back have files of unknown age and are refreshed at their first match."""
+        cache = stored_marks_cache()
+        tree = cache.tree_core
+        pages = tree.get_hash_values
+        read_back = read_back_node(cache, cache.root_node_handle(), [1, 2])
+        queued = computed_node(cache, [1, 2, 3])
+        tree.mark_storage_write(queued, op_id=0)
+        failed = computed_node(cache, [1, 2, 3, 4])
+        tree.mark_storage_write(failed, op_id=1)
+        tree.finish_storage_write(failed, op_id=1, stored_at=None)
+        written = computed_node(cache, [1, 2, 3, 4, 5])
+        tree.mark_storage_write(written, op_id=2)
+        tree.finish_storage_write(written, op_id=2, stored_at=50.0)
+        # The node written at 50 is fresh at 60 and goes along with the stale one.
+        self.assertEqual(
+            tree.take_stale_storage_keys(written, now=60.0, min_interval_s=300.0),
+            pages(read_back) + pages(written),
+        )
+
+    def test_a_probe_without_a_request_refreshes_nothing(self):
+        """Only a request's match is memory serving a chain: the prefetcher's probes, a
+        detached store and a touch interval of zero move no mtime."""
+        touching = RetentionSwitches(track_stored=True, touch_interval_s=300.0)
+        cache = stored_marks_cache(touch_interval_s=300.0)
+        store = recording_store(cache)
+        node = read_back_node(cache, cache.root_node_handle(), [1, 2])
+        key = RadixKey(array("q", [1, 2]))
+        request = SimpleNamespace(session=None)
+        cache.match_prefix(MatchPrefixParams(key=key))
+        cache.enable_storage = False
+        cache.match_prefix(MatchPrefixParams(key=key, req=request))
+        cache.enable_storage = True
+        cache.retention = RetentionSwitches(track_stored=True)
+        cache.match_prefix(MatchPrefixParams(key=key, req=request))
+        store.touch_pages.assert_not_called()
+
+        cache.retention = touching
+        before_ns = time.time_ns()
+        for _ in range(2):
+            cache.match_prefix(MatchPrefixParams(key=key, req=request))
+        (touch,) = store.touch_pages.call_args_list
+        self.assertEqual(touch.args, (cache.tree_core.get_hash_values(node),))
+        self.assertGreaterEqual(touch.kwargs["newest_ns"], before_ns)
+
+    def test_a_turn_after_a_skipped_one_writes_the_skipped_node_first(self):
+        """An ended turn is copied to host memory and not written: no write, no host
+        lock, no pending tokens. A turn that extends it after all writes it first."""
+        cache = stored_marks_cache(skip_ended_writes=True)
+        cache.write_through_threshold = 1
+        tree, controller = cache.tree_core, cache.cache_controller
+        pages = tree.get_hash_values
+        first = write_through_turn(cache, [1, 2])
+        self.assertEqual(controller.writes, [pages(first)])
+        with self.assertLogs(CACHE_LOGGER, level="INFO") as logs:
+            last = write_through_turn(cache, [1, 2, 3, 4], ends=True)
+        self.assertEqual(controller.writes, [pages(first)])
+        self.assertEqual(
+            (cache.pending_backup_tokens, len(cache.ongoing_backup)), (2, 1)
+        )
+        last_node = tree.node_by_id(last)
+        self.assertTrue(last_node.backuped)
+        self.assertEqual(last_node.component_data[ComponentType.FULL].host_lock_ref, 0)
+        skips = [line for line in logs.output if "h2s_skip" in line]
+        self.assertEqual(len(skips), 1)
+        # The skipped node holds two pages of one token each.
+        self.assertIn(f"h2s_skip node={last} tokens=2 reason=ended", skips[0])
+
+        resumed = write_through_turn(cache, [1, 2, 3, 4, 5])
+        self.assertEqual(controller.writes[1:], [pages(last), pages(resumed)])
+
+        # A node a refused host copy left above the ended turn is backed up by it and
+        # skipped with it.
+        controller.refuse_host_copies = True
+        unbacked = write_through_turn(cache, [7, 8])
+        controller.refuse_host_copies = False
+        self.assertFalse(tree.is_backuped(unbacked))
+        written = len(controller.writes)
+        write_through_turn(cache, [7, 8, 9], ends=True)
+        self.assertTrue(tree.is_backuped(unbacked))
+        self.assertEqual(len(controller.writes), written)
+        # A skip is spent at the node's ack: nothing is left to grow with the run.
+        self.assertEqual(cache._storage_skip_nodes, set())
+
+    def session_tree(self, cache):
+        """A three-turn session of one-page prompts: a two-page first prompt, and after
+        each prompt a reply the next prompt did not repeat."""
+        first = stored_node(cache, [1, 2])
+        reply_1 = stored_node(cache, [1, 2, 50])
+        second = stored_node(cache, [1, 2, 3])
+        reply_2 = stored_node(cache, [1, 2, 3, 60])
+        third = computed_node(cache, [1, 2, 3, 4])
+        tail = computed_node(cache, [1, 2, 3, 4, 70])
+        pages = cache.tree_core.get_hash_values
+        return SimpleNamespace(
+            first=first,
+            reply_1=reply_1,
+            second=second,
+            reply_2=reply_2,
+            third=third,
+            tail=tail,
+            # What the prefetcher keeps of each committed turn: its last page key.
+            leaf_keys={pages(reply_1)[-1], pages(reply_2)[-1]},
+        )
+
+    def test_retire_takes_the_replies_no_later_prompt_repeated(self):
+        """An ended session's own pages are its later prompts and the replies left by
+        them: stored ones get mtime zero now, the others at the ack of their write."""
+        for last_turn_skipped in (False, True):
+            with self.subTest(last_turn_skipped=last_turn_skipped):
+                cache = stored_marks_cache(retire_ended_pages=True)
+                store = recording_store(cache)
+                tree = cache.tree_core
+                pages = tree.get_hash_values
+                made = self.session_tree(cache)
+                tree.mark_storage_write(made.third, op_id=90)
+                tree.mark_write_through_pending([made.tail], ack_id=made.tail)
+                at_ack = {made.third, made.tail}
+                if last_turn_skipped:
+                    # A write the ended turn skips leaves nothing to retire at an ack.
+                    cache._storage_skip_nodes.add(made.tail)
+                    at_ack.remove(made.tail)
+
+                def retire():
+                    cache.retire_storage_chain(
+                        made.tail, keep_tokens=2, own_leaf_keys=made.leaf_keys
+                    )
+
+                # A detached store has no file to retire: the marks stay as they are.
+                cache.enable_storage = False
+                retire()
+                store.touch_pages.assert_not_called()
+                cache.enable_storage = True
+                with self.assertLogs(CACHE_LOGGER, level="INFO") as logs:
+                    retire()
+                own_stored = (made.reply_2, made.second, made.reply_1)
+                self.assertEqual(
+                    sorted(zeroed_pages(store)),
+                    sorted(key for node_id in own_stored for key in pages(node_id)),
+                )
+                self.assertEqual(cache._retire_at_ack, at_ack)
+                still_stored = [
+                    name
+                    for name, node_id in vars(made).items()
+                    if name != "leaf_keys" and self.stored(cache, node_id)[0]
+                ]
+                self.assertEqual(still_stored, ["first"])
+                self.assertIn(
+                    f"l3_retire node={made.tail} pages=3 at_ack={len(at_ack)} "
+                    "keep_tokens=2",
+                    logs.output[-1],
+                )
+
+    def test_retire_keeps_the_first_prompt_and_stops_at_another_sessions_branch(self):
+        """Later sessions reuse an ended session's first prompt, at times a later turn:
+        from a leaf it did not make, or a reply built on, upward nothing is retired."""
+        for name, fork in (
+            ("another session's leaf", [1, 2, 3, 9]),
+            ("a reply built on", [1, 2, 3, 60, 61]),
+        ):
+            with self.subTest(name):
+                cache = stored_marks_cache(retire_ended_pages=True)
+                tree = cache.tree_core
+                made = self.session_tree(cache)
+                tree.mark_storage_write(made.third, op_id=90)
+                tree.finish_storage_write(made.third, op_id=90, stored_at=0.0)
+                stored_node(cache, fork)
+                retired = tree.take_retired_storage_pages(
+                    made.tail, keep_tokens=2, own_leaf_keys=made.leaf_keys
+                )
+                self.assertEqual(
+                    (retired.page_keys, retired.pending_node_ids),
+                    (tree.get_hash_values(made.third), []),
+                )
+                kept = (made.first, made.reply_1, made.second, made.reply_2)
+                self.assertEqual(self.stored(cache, *kept), [True] * 4)
+
+    def test_a_reply_read_back_as_a_new_node_is_still_the_sessions_own(self):
+        """A reply that left memory comes back from the SSD under a new node id: it is
+        known by its last page key, or the walk stops under it as at another's leaf."""
+        cache = stored_marks_cache(retire_ended_pages=True)
+        tree = cache.tree_core
+        pages = tree.get_hash_values
+        first = stored_node(cache, [1, 2])
+        # One read brings the second turn back whole (prompt page 3, reply page 60); the
+        # third prompt's match splits it, and the reply half is a leaf again.
+        reply = read_back_node(cache, first, [3, 60])
+        third = stored_node(cache, [1, 2, 3, 4])
+        tail = computed_node(cache, [1, 2, 3, 4, 70])
+        prompt = tree.node_by_id(reply).parent.id
+        self.assertEqual((pages(prompt), pages(reply)), ([f"{3:064x}"], [f"{60:064x}"]))
+        retired = tree.take_retired_storage_pages(
+            tail, keep_tokens=2, own_leaf_keys={f"{60:064x}"}
+        )
+        self.assertEqual(
+            sorted(retired.page_keys),
+            sorted(pages(third) + pages(reply) + pages(prompt)),
+        )
+
+    def test_the_last_replys_write_does_not_bring_a_retired_chain_back(self):
+        """The last reply's host copy is in flight when its session is retired: the
+        reply's write is retired at its ack, or skipped, and heals nothing above it."""
+        for skipped in (False, True):
+            with self.subTest(skip_ended_writes=skipped):
+                cache = stored_marks_cache(
+                    retire_ended_pages=True, skip_ended_writes=skipped
+                )
+                cache.write_through_threshold = 1
+                store = recording_store(cache)
+                writes = cache.cache_controller.writes
+                pages = cache.tree_core.get_hash_values
+                write_through_turn(cache, [1, 2])
+                second = write_through_turn(cache, [1, 2, 3])
+                ack_storage_writes(cache)
+                tail = write_through_turn(
+                    cache, [1, 2, 3, 4, 5], ends=skipped, acked=False
+                )
+                with self.assertLogs(CACHE_LOGGER, level="INFO") as logs:
+                    cache.retire_storage_chain(
+                        tail, keep_tokens=2, own_leaf_keys=frozenset()
+                    )
+                # at_ack counts pages: the tail holds two.
+                self.assertIn(
+                    f"l3_retire node={tail} pages=1 at_ack={0 if skipped else 2} "
+                    "keep_tokens=2",
+                    logs.output[-1],
+                )
+                written_before = len(writes)
+                ack_host_copies(cache)
+                self.assertEqual(
+                    writes[written_before:], [] if skipped else [pages(tail)]
+                )
+                ack_storage_writes(cache)
+                self.assertEqual(self.stored(cache, second, tail), [False, False])
+                self.assertEqual(
+                    zeroed_pages(store),
+                    pages(second) + ([] if skipped else pages(tail)),
+                )
+                self.assertEqual(
+                    (cache._retire_at_ack, cache._storage_skip_nodes), (set(), set())
+                )
+
+    def test_a_node_retired_while_its_write_is_queued_is_retired_at_the_ack(self):
+        """A write would reset a zeroed mtime, so a queued page is zeroed at its ack and
+        left unstored: the fragments the retire took, not what a split gave others."""
+        for built_on in (False, True):
+            with self.subTest(another_session_built_on_the_upper_fragment=built_on):
+                cache = stored_marks_cache(retire_ended_pages=True)
+                store = recording_store(cache)
+                tree = cache.tree_core
+                pages = tree.get_hash_values
+                stored_node(cache, [1, 2])
+                lower = computed_node(cache, [1, 2, 3, 4, 5, 6])
+                cache.write_backup_storage(lower)
+                # The node is split in two while its write is queued.
+                if built_on:
+                    computed_node(cache, [1, 2, 3, 4, 9])
+                else:
+                    middle = RadixKey(array("q", [1, 2, 3, 4]))
+                    cache.match_prefix(MatchPrefixParams(key=middle))
+                upper = tree.node_by_id(lower).parent.id
+                cache.retire_storage_chain(
+                    lower, keep_tokens=2, own_leaf_keys=frozenset()
+                )
+                self.assertEqual(
+                    cache._retire_at_ack, {lower} if built_on else {lower, upper}
+                )
+                store.touch_pages.assert_not_called()
+                with self.assertLogs(CACHE_LOGGER, level="INFO") as logs:
+                    ack_storage_writes(cache)
+                taken = pages(lower) if built_on else pages(lower) + pages(upper)
+                self.assertEqual(zeroed_pages(store), taken)
+                self.assertEqual(self.stored(cache, upper, lower), [built_on, False])
+                self.assertEqual(cache._retire_at_ack, set())
+                self.assertIn(
+                    f"l3_retire_ack op=0 node={lower} pages={len(taken)}",
+                    "\n".join(logs.output),
+                )
+
+    def test_a_write_below_a_retired_chain_brings_it_back(self):
+        """A session that sends a turn after its end, or a fork, builds on retired
+        pages: its write rewrites those zeroed and takes those queued off the retire."""
+        cache = stored_marks_cache(retire_ended_pages=True)
+        store = recording_store(cache)
+        writes = cache.cache_controller.writes
+        pages = cache.tree_core.get_hash_values
+        stored_node(cache, [1, 2])
+        middle = stored_node(cache, [1, 2, 3])
+        last = computed_node(cache, [1, 2, 3, 4])
+        cache.write_backup_storage(last)
+        cache.retire_storage_chain(last, keep_tokens=2, own_leaf_keys=frozenset())
+        self.assertEqual(
+            (zeroed_pages(store), cache._retire_at_ack), (pages(middle), {last})
+        )
+
+        resumed = computed_node(cache, [1, 2, 3, 4, 5])
+        cache.write_backup_storage(resumed)
+        self.assertEqual(writes[1:], [pages(middle), pages(resumed)])
+        self.assertEqual(cache._retire_at_ack, set())
+        ack_storage_writes(cache)
+        self.assertEqual(self.stored(cache, middle, last, resumed), [True] * 3)
+        self.assertEqual(zeroed_pages(store), pages(middle))
 
 
 if __name__ == "__main__":

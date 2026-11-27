@@ -1,0 +1,20 @@
+<section id="regimes" class="foot">
+<div class="head">
+<p class="eyebrow">The four actions · regimes</p>
+<h2 class="title">One rule set, five regimes</h2>
+</div>
+<table class="t">
+<tr><th style="width:23%">Regime, minutes</th><th style="width:11%"><i>c</i>, <i>μ</i></th><th style="width:22%">Fetch</th><th style="width:22%">Retain</th><th style="width:22%">Still moves the mean</th></tr>
+<tr><td>Room free, 0–8</td><td>0.98, 1</td><td>nothing to read</td><td>keep everything</td><td>nothing</td></tr>
+<tr><td>Light load, room short, 8–28</td><td>0.94, 1.3–2.8</td><td>read at arrival; early only on a sharp hint</td><td>by return rate</td><td>each reader’s own stall</td></tr>
+<tr><td>GPU saturated, SSD keeps up, 28–70</td><td>0.06, 71</td><td>land at admission</td><td>never lose the only copy</td><td>recompute only</td></tr>
+<tr><td>GPU and SSD saturated, 90–110</td><td>0.00, 109</td><td>reads by due time; readers 27–31 s late</td><td>order among queued turns; the cleaner</td><td>recompute; and who waits</td></tr>
+<tr><td>SSD the bottleneck, GPU starved</td><td>1, 1</td><td>recompute the overflow</td><td>as above</td><td>GPU idle time; not yet seen</td></tr>
+</table>
+<div class="row">
+<div class="card-s in1" style="flex:1"><p class="ink-b">The prices are the regime.</p><p class="small">No mode switch is coded: <i>c</i> and <i>μ</i> move, and each formula moves with them.</p></div>
+<div class="card-s in2" style="flex:1"><p class="ink-b">Fetch matters at light load, Retain at saturation.</p><p class="small">Stalls count while turns wait alone; lost copies count once every GPU-second is spoken for.</p></div>
+</div>
+<p class="footer">Campaign 34, the current design, 128 users, 160 GB host pool. <i>c</i>: weight of a second of stall · <i>μ</i>: price of a GPU-second.</p>
+<aside>Put the two weights next to the rules and the regimes fall out. The minutes are those of the two-hour run with 128 users. For the first eight minutes room is free: everything is in memory and no policy has anything to decide. From minute 8 to 28 the load is light and room is short: c is 0.94 and mu between 1.3 and 2.8, so each reader’s own stall counts in full, but only one to three percent of turns read at all. Fetch reads at arrival, and early only on a sharp hint; Retain goes by return rate. From minute 28 the GPU is saturated while the SSD keeps up: c drops to 0.06 and mu rises to 71. Stalls are absorbed by other ready turns, so reads land at admission, and the one thing that still moves the mean is recompute: never lose the only copy. From minute 90 the SSD is saturated too: mu is 109, c is zero, and readers are 27 to 31 seconds late, which the mean does not see. What matters is the order among queued turns and what the cleaner deletes. The last row has not occurred in a run: if the SSD becomes the bottleneck and no queued turn is ready, the GPU starves, c and mu return to one, and the rules recompute what the SSD cannot deliver. Two things to take away. The prices are the regime: no mode switch is coded, c and mu move and each formula moves with them. And the actions trade places: Fetch matters at light load, where stalls count because turns wait alone; Retain matters at saturation, where lost copies count because every GPU-second is spoken for.</aside>
+</section>

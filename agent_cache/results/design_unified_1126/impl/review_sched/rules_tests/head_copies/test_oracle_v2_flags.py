@@ -1,0 +1,361 @@
+"""Oracle v2 server flags: the defaults keep the FIFO read path, and a bad
+combination fails at argument resolution (agent_cache/ORACLE_V2_PLAN.md 4.1)."""
+
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=10, suite="base-a-test-cpu")
+
+import re
+import unittest
+
+import sglang.srt.server_args as server_args_module
+from sglang.srt.arg_groups.hicache_hook import (
+    handle_hicache,
+    handle_hicache_ratio_default,
+)
+from sglang.srt.arg_groups.kv_cache_hook import handle_cache_compatibility
+from sglang.srt.arg_groups.overrides import resolution_result
+from sglang.srt.mem_cache.next_use_eviction import RETURN_SCORES
+from sglang.srt.server_args import ServerArgs
+from sglang.test.test_utils import CustomTestCase
+
+THREE_TIER = dict(enable_hierarchical_cache=True, hicache_storage_backend="nixl")
+
+
+def make_args(**overrides) -> ServerArgs:
+    # A dummy model path takes the pipeline's early return, so the hooks under
+    # test are run by hand after their one prerequisite.
+    args = ServerArgs(model_path="dummy", **overrides)
+    handle_hicache_ratio_default(args)
+    return args
+
+
+class TestOracleV2Flags(CustomTestCase):
+    def test_defaults_keep_the_fifo_path_and_pass_validation(self):
+        args = make_args(**THREE_TIER)
+        self.assertEqual(
+            (
+                args.hicache_storage_read_order,
+                args.hicache_storage_read_window_pages,
+                args.hicache_storage_prefetch_pin_fraction,
+                args.radix_eviction_policy,
+            ),
+            ("fifo", 512, 0.0, "lru"),
+        )
+        handle_hicache(args)
+        handle_cache_compatibility(args)
+
+    def test_deadline_order_prerequisites(self):
+        """The parked reads land in the resident host tier on one rank."""
+        cases = [
+            (
+                dict(enable_hierarchical_cache=True, hicache_storage_read_order="deadline"),
+                "--hicache-storage-backend",
+            ),
+            (
+                dict(
+                    **THREE_TIER,
+                    hicache_storage_read_order="deadline",
+                    hicache_host_memory_mode="buffer_only",
+                ),
+                "--hicache-host-memory-mode",
+            ),
+            (dict(**THREE_TIER, hicache_storage_read_order="deadline", tp_size=2), "TP = PP = 1"),
+        ]
+        for overrides, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, re.escape(message)):
+                    handle_hicache(make_args(**overrides))
+        handle_hicache(
+            make_args(
+                **THREE_TIER,
+                hicache_storage_read_order="deadline",
+                hicache_storage_prefetch_pin_fraction=0.3,
+            )
+        )
+
+    def test_pin_and_window_bounds(self):
+        cases = [
+            (
+                dict(**THREE_TIER, hicache_storage_prefetch_pin_fraction=0.3),
+                "needs --hicache-storage-read-order deadline",
+            ),
+            (
+                dict(
+                    **THREE_TIER,
+                    hicache_storage_read_order="deadline",
+                    hicache_storage_prefetch_pin_fraction=0.6,
+                ),
+                "[0, 0.5]",
+            ),
+            (
+                dict(
+                    **THREE_TIER,
+                    hicache_storage_read_order="deadline",
+                    hicache_storage_read_window_pages=0,
+                ),
+                "--hicache-storage-read-window-pages",
+            ),
+        ]
+        for overrides, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, re.escape(message)):
+                    handle_hicache(make_args(**overrides))
+
+    def test_paced_retries_are_off_only_for_the_deadline_order_with_the_prefetcher_on(self):
+        """The prefetcher's refetch of queued turns replaces the paced miss
+        retries under the deadline order, and the attempt budget stays for the
+        admission re-query. Every other combination keeps both, so campaign
+        15's FIFO oracle arm and the dl arm still run with retries."""
+        retry_fields = (
+            "hicache_storage_prefetch_retry_poll_interval",
+            "hicache_storage_prefetch_retry_max_attempts",
+        )
+        cases = [
+            ("deadline", "on", (0, 8)),
+            ("deadline", "observe", (8, 8)),
+            ("deadline", "off", (8, 8)),
+            ("fifo", "on", (8, 8)),
+        ]
+        for order, prefetch, expected in cases:
+            with self.subTest(order=order, prefetch=prefetch):
+                args = make_args(
+                    **THREE_TIER,
+                    hicache_storage_read_order=order,
+                    hicache_storage_next_turn_prefetch=prefetch,
+                )
+                handle_hicache(args)
+                self.assertEqual(
+                    tuple(resolution_result(args, f) for f in retry_fields), expected
+                )
+
+    def test_next_use_needs_the_prefetcher_and_a_non_negative_horizon(self):
+        with self.assertRaisesRegex(ValueError, "next-turn-prefetch"):
+            handle_cache_compatibility(
+                make_args(**THREE_TIER, radix_eviction_policy="next_use")
+            )
+        for bad in ({"horizon_s": -5}, {"overdue_grace_s": "soon"}):
+            with self.assertRaisesRegex(ValueError, next(iter(bad))):
+                handle_cache_compatibility(
+                    make_args(
+                        **THREE_TIER,
+                        radix_eviction_policy="next_use",
+                        hicache_storage_next_turn_prefetch="on",
+                        radix_eviction_policy_config=bad,
+                    )
+                )
+        handle_cache_compatibility(
+            make_args(
+                **THREE_TIER,
+                radix_eviction_policy="next_use",
+                hicache_storage_next_turn_prefetch="on",
+                radix_eviction_policy_config={"horizon_s": 300},
+            )
+        )
+
+    def test_arrival_gate_and_hold_prerequisites(self):
+        """Both act on the prefetcher's plans, and the hold on parked reads; on any
+        other setup they would be accepted and silently do nothing."""
+        deadline = dict(**THREE_TIER, hicache_storage_read_order="deadline")
+        gate_alone = dict(hicache_storage_next_turn_arrival_gate="on")
+        hold_alone = dict(hicache_storage_next_turn_arrival_hold="on")
+        for overrides in (gate_alone, hold_alone):
+            with self.subTest(overrides=overrides):
+                with self.assertRaisesRegex(ValueError, "prefetch on"):
+                    handle_hicache(make_args(**deadline, **overrides))
+        with self.assertRaisesRegex(ValueError, "read-order deadline"):
+            handle_hicache(
+                make_args(
+                    **THREE_TIER,
+                    **hold_alone,
+                    hicache_storage_next_turn_prefetch="on",
+                )
+            )
+        handle_hicache(
+            make_args(
+                **deadline,
+                **gate_alone,
+                **hold_alone,
+                hicache_storage_next_turn_prefetch="on",
+            )
+        )
+
+    def test_cli_spellings_reach_their_fields(self):
+        parser = server_args_module.argparse.ArgumentParser()
+        ServerArgs.add_cli_args(parser)
+        ns = parser.parse_args(
+            [
+                "--model-path", "dummy",
+                "--hicache-storage-read-order", "deadline",
+                "--hicache-storage-read-window-pages", "256",
+                "--hicache-storage-prefetch-pin-fraction", "0.3",
+                "--radix-eviction-policy", "next_use",
+                "--radix-eviction-policy-config", '{"horizon_s": 300}',
+                "--hicache-storage-next-turn-arrival-gate", "on",
+                "--hicache-storage-next-turn-arrival-hold", "on",
+            ]
+        )
+        self.assertEqual(
+            (
+                ns.hicache_storage_read_order,
+                ns.hicache_storage_read_window_pages,
+                ns.hicache_storage_prefetch_pin_fraction,
+                ns.radix_eviction_policy,
+                ns.radix_eviction_policy_config,
+                ns.hicache_storage_next_turn_arrival_gate,
+                ns.hicache_storage_next_turn_arrival_hold,
+            ),
+            ("deadline", 256, 0.3, "next_use", {"horizon_s": 300}, "on", "on"),
+        )
+        with self.assertRaises(SystemExit):
+            parser.parse_args(
+                ["--model-path", "dummy", "--hicache-storage-read-order", "random"]
+            )
+
+
+DEADLINE_ON = dict(
+    **THREE_TIER,
+    hicache_storage_read_order="deadline",
+    hicache_storage_next_turn_prefetch="on",
+    hicache_storage_prefetch_pin_fraction=0.3,
+)
+
+
+class TestPricingFlags(CustomTestCase):
+    def test_each_pricing_flag_needs_the_routine_it_acts_on(self):
+        """Expected-cost timing, soft pins and the learned price act on the
+        prefetcher's parked and pinned reads; set without them they would be
+        accepted and do nothing."""
+        cases = [
+            (
+                dict(**THREE_TIER, hicache_storage_next_turn_read_timing="expected_cost"),
+                "--hicache-storage-next-turn-prefetch on",
+            ),
+            (
+                dict(
+                    **THREE_TIER,
+                    hicache_storage_next_turn_prefetch="on",
+                    hicache_storage_next_turn_read_timing="expected_cost",
+                ),
+                "--hicache-storage-read-order deadline",
+            ),
+            (
+                dict(**THREE_TIER, hicache_storage_next_turn_soft_pins="on"),
+                "--hicache-storage-next-turn-prefetch on",
+            ),
+            (
+                dict(**DEADLINE_ON, hicache_storage_next_turn_price_learning="on"),
+                "expected_cost",
+            ),
+            (
+                dict(
+                    **DEADLINE_ON,
+                    hicache_storage_next_turn_read_timing="arrival",
+                    hicache_storage_next_turn_price_learning="harm",
+                ),
+                "expected_cost",
+            ),
+            (
+                dict(**THREE_TIER, hicache_storage_next_turn_read_timing="arrival"),
+                "--hicache-storage-next-turn-prefetch on",
+            ),
+            (
+                dict(
+                    **DEADLINE_ON,
+                    hicache_storage_next_turn_read_timing="expected_cost",
+                    hicache_storage_next_turn_memory_price=-1e-5,
+                ),
+                "--hicache-storage-next-turn-memory-price",
+            ),
+            (
+                dict(**DEADLINE_ON, hicache_storage_next_turn_landing_quantile=0.9),
+                "just_in_time",
+            ),
+            (
+                dict(
+                    **DEADLINE_ON,
+                    hicache_storage_next_turn_read_timing="just_in_time",
+                    hicache_storage_next_turn_soft_pins="on",
+                ),
+                "expected_cost",
+            ),
+            (
+                dict(
+                    **{**DEADLINE_ON, "hicache_storage_prefetch_pin_fraction": 0.0},
+                    hicache_storage_next_turn_read_timing="expected_cost",
+                ),
+                "--hicache-storage-prefetch-pin-fraction above 0",
+            ),
+            (
+                dict(
+                    **DEADLINE_ON,
+                    hicache_storage_next_turn_read_timing="expected_cost",
+                    hicache_storage_next_turn_memory_price=float("nan"),
+                ),
+                "--hicache-storage-next-turn-memory-price",
+            ),
+            (
+                dict(
+                    **DEADLINE_ON,
+                    hicache_storage_next_turn_read_timing="just_in_time",
+                    hicache_storage_next_turn_landing_quantile=1.0,
+                ),
+                "(0, 1)",
+            ),
+        ]
+        for overrides, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, re.escape(message)):
+                    handle_hicache(make_args(**overrides))
+        handle_hicache(
+            make_args(
+                **DEADLINE_ON,
+                hicache_storage_next_turn_read_timing="expected_cost",
+                hicache_storage_next_turn_price_learning="on",
+                hicache_storage_next_turn_soft_pins="on",
+            )
+        )
+        handle_hicache(
+            make_args(
+                **DEADLINE_ON,
+                hicache_storage_next_turn_read_timing="just_in_time",
+                hicache_storage_next_turn_landing_quantile=0.9,
+            )
+        )
+
+    def test_return_chance_needs_the_prefetcher_and_a_positive_horizon(self):
+        with self.assertRaisesRegex(ValueError, "next-turn-prefetch"):
+            handle_cache_compatibility(
+                make_args(**THREE_TIER, radix_eviction_policy="return_chance")
+            )
+        for bad in ({"horizon_s": 0}, {"score": "rate"}, {"overdue_grace_s": 60}):
+            with self.assertRaisesRegex(ValueError, next(iter(bad))):
+                handle_cache_compatibility(
+                    make_args(
+                        **DEADLINE_ON,
+                        radix_eviction_policy="return_chance",
+                        radix_eviction_policy_config=bad,
+                    )
+                )
+        handle_cache_compatibility(
+            make_args(
+                **DEADLINE_ON,
+                radix_eviction_policy="return_chance",
+                radix_eviction_policy_config={"horizon_s": 30},
+            )
+        )
+
+    def test_every_return_chance_score_the_strategy_takes_passes_validation(self):
+        for score in RETURN_SCORES:
+            with self.subTest(score=score):
+                handle_cache_compatibility(
+                    make_args(
+                        **DEADLINE_ON,
+                        radix_eviction_policy="return_chance",
+                        radix_eviction_policy_config={"score": score},
+                    )
+                )
+
+
+if __name__ == "__main__":
+    unittest.main()

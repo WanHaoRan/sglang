@@ -1,0 +1,68 @@
+Pseudo-diff F1 (seam_fp, nothing applied): the hold lands a queued turn's read at the q-quantile of its admission
+time, q = lam L / (c + lam L), in place of the fixed 2 s (NTP_HOLD_MARGIN_S, next_turn_prefetch.py:128).
+Switch SGLANG_HICACHE_NEXT_TURN_HOLD_QUANTILE (EnvBool False); needs the arrival hold and measured prices (PR1).
+
+What is tracked (PR1's AdmissionErrorTracker, fed in _on_departure where ntp_admit is logged, line 755-770):
+  non-readers  err = wait - pred_wait_ql        (both already computed there: stats, plan.pred_wait_ql)
+               binned by pred_wait_ql (edges 2, 5, 10, 20 s), last 256 per bin: the error of the estimate of D.
+  readers      lag = wait - max(pred_wait_ql, last landing - arrival): what admission adds once both the GPU turn
+               and the landing are there (campaign 34: median 0.4 s, q90 2.1 s). Kept apart: a reader's wait
+               against pred_wait_ql is the read line (+8 to +27 s median), not an error of D.
+  turns with no plan get their prediction at first sight in the queue (self._pred_wait, PR1), so the hold's
+  estimate for un-hinted turns is tracked too.
+The hold predicts with the same function at a shorter horizon ((position + 0.5) / rate each pass), so it takes the
+bin of the wait it predicts now. Checked offline: the error at arrival in a predicted-wait bin and the error at the
+first pass the prediction falls to X agree to about 1 s at q10/q90 for X <= 8 s (out_f1_*.txt, parts A and B).
+
+--- python/sglang/srt/mem_cache/next_turn_prefetch.py
+@@ __init__ (after the PR1 block)
++        self._hold_quantile = self._hold_arrived and envs.SGLANG_HICACHE_NEXT_TURN_HOLD_QUANTILE.get()
++        if self._hold_quantile and not self._measured_prices:
++            raise ValueError("SGLANG_HICACHE_NEXT_TURN_HOLD_QUANTILE needs SGLANG_HICACHE_NEXT_TURN_MEASURED_PRICES")
+@@ -1464,18 +1464,24 @@ def read_not_before
+         load_s = self._load.seconds(own_pages=read.pages, backlog_pages=ahead_pages)
++        margin_s, quantile = self._hold_margin(tokens=read.pages * self._page_size, wait_s=wait)
+         not_before = trigger_time(
+             admission_at=self._last_now + wait,
+             load_s=load_s,
+-            margin_s=NTP_HOLD_MARGIN_S,
++            margin_s=margin_s,
+         )
+         if not_before > self._last_now and handle.rid not in self._hold_logged:
+             self._hold_logged.add(handle.rid)
+             _log_event(
+                 "ntp_hold",
+                 handle.rid,
+                 pos=position,
+                 pages=read.pages,
+                 wait_ms=_ms(wait),
+                 load_ms=_ms(load_s),
+                 hold_ms=_ms(not_before - self._last_now),
++                margin_ms=_ms(margin_s),
++                q=f"{quantile:.2f}",
+             )
+         return not_before
++
++    def _hold_margin(self, *, tokens: int, wait_s: float) -> tuple[float, float]:
++        """(seconds before the load estimate requires that a held read starts, the landing quantile behind it).
++        Minus the q-quantile of measured - predicted wait: the read then lands by admission with chance 1 - q."""
++        if not self._hold_quantile:
++            return NTP_HOLD_MARGIN_S, 0.0
++        now = self._last_now
++        quantile = landing_quantile(
++            price=self._memory_price(now), tokens=tokens, lateness_weight=self._prices.c(now)
++        )
++        return (
++            self._admission_error.margin(quantile, predicted_wait_s=wait_s, fallback_s=NTP_HOLD_MARGIN_S),
++            quantile,
++        )
+
+Notes for the implementer
+- read_not_before runs for every parked read on every pass (test_a_read_is_logged_held_once_not_once_per_pass):
+  AdmissionErrorTracker.quantile sorts at most 256 floats; cache the sorted bin until its next sample, as
+  GapSamples.ascending does (next_turn_policy.py:147-152).
+- landing_quantile clamps q to [0.05, 0.5] and floors c at 0.02. Both prices go to zero together at saturation
+  (campaign 34: c = 0.000 in every window from minute 60, kappa <= 0.06, so lam = k x rate ~ 0): unclamped, q is a
+  ratio of two noise terms, and q -> 1 would release reads 2.5 to 3.6 s after the point estimate to save 15 to
+  19 K pinned tokens of a 1.63 M pool.
+- The ntp_hold line is still logged once per request, at the first hold; margin_ms and q go at its end.

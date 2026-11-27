@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from sglang.srt.managers.io_struct import AbortReq
 from sglang.srt.managers.scheduler import Scheduler, _make_abort_req
+from sglang.srt.managers.scheduler_components.prefill_load_hold import PrefillLoadHold
 from sglang.srt.utils.weight_versions import (
     WeightVersionEvent,
     WeightVersionSpan,
@@ -305,10 +306,12 @@ class _SchedulerStub:
         chunked=None,
         last_batch=None,
         hisparse=None,
+        held=None,
     ):
         self.serving = _ServingStub(version)
         self.running_batch = SimpleNamespace(reqs=running)
         self.last_batch = last_batch
+        self.prefill_load_hold = PrefillLoadHold(max_steps=0, held=held)
         self.waiting_queue = waiting
         self.chunked_req = chunked
         self.hisparse_coordinator = hisparse
@@ -363,6 +366,15 @@ class TestSchedulerRecordWeightVersionChange(CustomTestCase):
 
         self.assertEqual(len(shared_req.weight_version_events), 1)
         self.assertEqual(len(prefill_req.weight_version_events), 1)
+
+    def test_records_on_a_batch_held_for_its_load(self):
+        """A prefill batch held while its prefix loads is in neither the running nor the last batch; its requests are still in flight."""
+        held_req = _ReqStub(5)
+        scheduler = self._scheduler("v1", [], [], held=SimpleNamespace(reqs=[held_req]))
+
+        Scheduler.record_weight_version_change(scheduler, new_version="v2")
+
+        self.assertEqual(len(held_req.weight_version_events), 1)
 
     def test_records_on_all_pp_microbatches(self):
         """With pipeline parallelism every microbatch is visited, not just the selected one."""

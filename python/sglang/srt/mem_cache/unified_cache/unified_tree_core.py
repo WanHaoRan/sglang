@@ -17,11 +17,20 @@ cache for cache-level logic, but the TreeCore itself never touches it.
 from __future__ import annotations
 
 import logging
+import math
 import sys
 from array import array
 from collections import defaultdict
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Collection,
+    NamedTuple,
+    Optional,
+    Sequence,
+)
 
 import msgspec
 import torch
@@ -107,6 +116,14 @@ class StorageBackupSpec(NamedTuple):
     comp_xfers: dict[ComponentType, list[PoolTransfer]]
 
 
+class RetiredPages(msgspec.Struct, frozen=True):
+    """An ended session's own storage pages: the page keys of its stored nodes, and the
+    nodes whose pages are still to be written or acked."""
+
+    page_keys: list[str]
+    pending_node_ids: list[NodeId]
+
+
 class UnifiedTreeNode:
     counter = 0
 
@@ -132,6 +149,13 @@ class UnifiedTreeNode:
         self._tlru_cached_prefix_len = 0
         self._tlru_history_len = 0
         self.external_cache_stored = False
+        # Host->storage write: the id of the op queued for the node, and whether every
+        # page of the node has an acked storage copy (a full ack, or read back from it).
+        self.storage_write_op: Optional[int] = None
+        self.storage_stored = False
+        # time.monotonic() seconds when the stored pages last got a recent mtime, by
+        # their write or a refresh; -inf for pages read back, whose age is unknown.
+        self.storage_touched_at = -math.inf
         self.priority = priority
         self.lru_prev: list[UnifiedTreeNode | None] = [None] * (
             _NUM_COMPONENT_TYPES * 2
@@ -436,6 +460,11 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
         self.eviction_strategy = get_eviction_strategy(
             params.eviction_policy.lower(), params.eviction_policy_config
         )
+        # Told each host leaf that host eviction takes, before it goes, with its FULL host
+        # tokens; None = nobody listens. Runs inside eviction, so it must not call the tree.
+        self.host_eviction_observer: Optional[
+            Callable[[UnifiedTreeNode, int], None]
+        ] = None
         # The node _tlru_* lens are read only by TLRUStrategy.get_priority;
         # every other policy skips the per-insert bookkeeping entirely.
         self.tlru_bookkeeping = params.eviction_policy.lower() == "tlru"
@@ -1308,7 +1337,11 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
                     step_actions.append(FreeDeviceKV([dup[swa_already_freed:]]))
 
         if self._inc_hit_count_and_check(node, state.params.chunked):
-            step_actions.append(self._build_backup_kv_action(node))
+            step_actions.append(
+                self._build_backup_kv_action(
+                    node, skip_storage=state.params.skip_storage_backup
+                )
+            )
         state.node = node
         state.total_prefix_length += prefix_len
         state.key = key[prefix_len:]
@@ -1392,7 +1425,9 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
 
         if self._should_backup_after_insert(state):
             state.pending_actions.append(
-                self._build_backup_kv_action(state.target_node)
+                self._build_backup_kv_action(
+                    state.target_node, skip_storage=state.params.skip_storage_backup
+                )
             )
 
     def _split_node(
@@ -1404,6 +1439,10 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
         new_node.key = child.key[:split_len]
         new_node.hit_count = child.hit_count
         new_node.external_cache_stored = child.external_cache_stored
+        # A queued storage write and its ack cover both fragments.
+        new_node.storage_write_op = child.storage_write_op
+        new_node.storage_stored = child.storage_stored
+        new_node.storage_touched_at = child.storage_touched_at
         new_node.creation_time = child.creation_time
         if self.tlru_bookkeeping:
             # A split adds no depth to the branch: the new parent sits at
@@ -2228,6 +2267,8 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
         if self.tlru_bookkeeping:
             _set_tlru_lens_and_raise_history(new_node, node)
         new_node.hash_value = hash_value
+        # These pages were just read from storage.
+        new_node.storage_stored = True
         new_node.component_data[BASE_COMPONENT_TYPE].host_value = host_value.clone()
         node.children[child_key] = new_node
         self._update_evictable_leaf_sets(new_node)
@@ -2369,7 +2410,10 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
         return node.key.extra_key, node.key.cache_salt
 
     def _build_backup_kv_action(
-        self, node: UnifiedTreeNode, write_back: bool = False
+        self,
+        node: UnifiedTreeNode,
+        write_back: bool = False,
+        skip_storage: bool = False,
     ) -> BackupKV:
         """Build the backup action for a node and its not-yet-persisted ancestors."""
         chain = [node]
@@ -2389,7 +2433,7 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
                 ancestor = ancestor.parent
             # write_through: Ancestors first to preserve backup invariant
             chain.reverse()
-        return BackupKV([target.id for target in chain])
+        return BackupKV([target.id for target in chain], skip_storage=skip_storage)
 
     def commit_hicache_transfers(
         self,
@@ -2595,6 +2639,138 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
                 # The backed-up copy becomes a tracked duplicate only now.
                 self._update_duplicate_tracking(node)
             self.kv_events.record_store(node, medium=StorageMedium.CPU)
+
+    def mark_storage_write(self, node_id: NodeId, *, op_id: int) -> None:
+        """A host->storage write of the node's pages was queued as op_id."""
+        self.node_by_id(node_id).storage_write_op = op_id
+
+    def finish_storage_write(
+        self,
+        node_id: NodeId,
+        *,
+        op_id: int,
+        stored_at: Optional[float],
+        retire: Collection[NodeId] = (),
+    ) -> list[NodeId]:
+        """op_id was acked or dropped: unmark the node and the split fragments above it.
+        stored_at: time.monotonic() of a full ack, else None. Returns those retired."""
+        retired = []
+        node = self._node_arena.get(node_id)
+        while (
+            node is not None
+            and node is not self.root_node
+            and node.storage_write_op == op_id
+        ):
+            node.storage_write_op = None
+            if node.id in retire:
+                # Its session ended while the write was queued: unstored either way.
+                node.storage_stored = False
+                retired.append(node.id)
+            else:
+                node.storage_stored = stored_at is not None
+                if stored_at is not None:
+                    node.storage_touched_at = stored_at
+            node = node.parent
+        return retired
+
+    def ancestor_ids(self, node_id: NodeId) -> list[NodeId]:
+        """The node's ancestors below the root, nearest first."""
+        found = []
+        node = self.node_by_id(node_id).parent
+        while node is not None and node is not self.root_node:
+            found.append(node.id)
+            node = node.parent
+        return found
+
+    def unstored_ancestors(self, node_id: NodeId) -> list[NodeId]:
+        """Ancestors with a complete host copy and neither a storage copy nor a write
+        queued, root side first, up to the first ancestor without a host copy."""
+        found = []
+        node = self.node_by_id(node_id).parent
+        while node is not None and node is not self.root_node and node.backuped:
+            # A host copy still in flight is written to storage at its own ack.
+            if (
+                node.write_through_pending_id is None
+                and not node.storage_stored
+                and node.storage_write_op is None
+            ):
+                found.append(node.id)
+            node = node.parent
+        found.reverse()
+        return found
+
+    def take_stale_storage_keys(
+        self, node_id: NodeId, *, now: float, min_interval_s: float
+    ) -> list[str]:
+        """Head-first page keys of the stored nodes on the root path, all of them once
+        one is min_interval_s stale: a tail refreshed alone would outlive its head."""
+        stored = []
+        node = self.node_by_id(node_id)
+        while node is not None and node is not self.root_node:
+            if node.storage_stored and node.hash_value:
+                stored.append(node)
+            node = node.parent
+        if not any(now - node.storage_touched_at >= min_interval_s for node in stored):
+            return []
+        page_keys: list[str] = []
+        for node in reversed(stored):
+            node.storage_touched_at = now
+            page_keys.extend(node.hash_value)
+        return page_keys
+
+    def take_retired_storage_pages(
+        self, tail_node_id: NodeId, *, keep_tokens: int, own_leaf_keys: Collection[str]
+    ) -> RetiredPages:
+        """Walking up from an ended session's tail: its nodes from keep_tokens on, and
+        the leaves off them ending in own_leaf_keys; stored ones taken are unmarked."""
+        path = []
+        node = self.node_by_id(tail_node_id)
+        while node is not None and node is not self.root_node:
+            path.append(node)
+            node = node.parent
+        page_keys: list[str] = []
+        pending: list[NodeId] = []
+
+        def take(owned: UnifiedTreeNode) -> None:
+            if not owned.hash_value:
+                return
+            # A host copy in flight or a queued write would give the pages a new mtime.
+            if (
+                owned.storage_write_op is not None
+                or owned.write_through_pending_id is not None
+            ):
+                pending.append(owned.id)
+            elif owned.storage_stored:
+                owned.storage_stored = False
+                page_keys.extend(owned.hash_value)
+
+        end = sum(len(node.key) for node in path)
+        below = None
+        for node in path:
+            start = end - len(node.key)
+            others = [child for child in node.children.values() if child is not below]
+            # Any other child is a branch another session built on, and so is every
+            # node from here up.
+            if any(
+                child.children or child.get_last_hash_value() not in own_leaf_keys
+                for child in others
+            ):
+                break
+            # They start where the node ends, which is at or past keep_tokens.
+            for child in others:
+                take(child)
+            if start < keep_tokens:
+                break
+            take(node)
+            below, end = node, start
+        return RetiredPages(page_keys=page_keys, pending_node_ids=pending)
+
+    def clear_storage_marks(self) -> None:
+        """The store was emptied or detached: no node has a storage copy, and a write
+        queued before that gives none (its ack finds no node carrying its id)."""
+        for node in self._node_arena.values():
+            node.storage_stored = False
+            node.storage_write_op = None
 
     def _walk_span(self, key: RadixKey, end: int):
         """Yield nodes and their matched spans along ``key`` through ``end``."""

@@ -1,0 +1,28 @@
+<section id="clock" class="foot">
+<div class="head">
+<p class="eyebrow">The model · one clock</p>
+<h2 class="title">Every decision asks when the KV is next needed: <i>T</i> = <i>A</i> + <i>W</i></h2>
+</div>
+<div class="lane" style="height:250px">
+<div class="bx bx-blue" style="left:0px;top:40px;width:250px;height:90px"><p class="bx-tw">turn runs</p></div>
+<div class="bx bx-dash" style="left:262px;top:40px;width:520px;height:90px"><p class="bx-tm">gap <i>G</i>: the tool runs, or a person types</p></div>
+<div class="bx bx-tint" style="left:794px;top:40px;width:520px;height:90px"><p class="bx-t">queue wait <i>W</i>: other turns go first</p></div>
+<div class="bx bx-blue" style="left:1326px;top:40px;width:338px;height:90px"><p class="bx-tw">next turn runs</p></div>
+<div class="vtick" style="left:255px;top:20px;height:130px"></div>
+<div class="vtick" style="left:787px;top:20px;height:130px"></div>
+<div class="vtick" style="left:1319px;top:20px;height:130px"></div>
+<p class="pin-lbl-b" style="left:150px;top:160px;width:220px">turn ends</p>
+<p class="pin-lbl-b" style="left:650px;top:160px;width:320px">arrival <i>A</i></p>
+<p class="pin-lbl-or" style="left:1150px;top:160px;width:400px">next use <i>T</i></p>
+<p class="pin-lbl-m" style="left:262px;top:0px">known to the agent, as a distribution</p>
+<p class="pin-lbl-m" style="left:794px;top:0px">known to the engine, from its queue</p>
+<p class="pin-lbl-m" style="left:0px;top:204px">The KV must be on the GPU at <i>T</i>. A read from the SSD takes <i>r</i> seconds, so it must start by <i>T</i> − <i>r</i>.</p>
+</div>
+<div class="row">
+<div class="card in1"><p class="math-s"><i>A</i> = turn end + <i>G</i></p><p class="small">The next request’s arrival. Before it happens only the agent can forecast it: it knows which tool it is about to run. It sends that forecast as a hint.</p></div>
+<div class="card in2"><p class="math-s"><i>W</i></p><p class="small">The wait from arrival until the GPU would take the turn. The engine estimates it from the turns ahead and the rate at which it admits them.</p></div>
+<div class="card in3"><p class="math-s"><i>x</i> = (<i>r</i> − <i>W</i>)⁺</p><p class="small">The part of a read the queue does not hide. If <i>W</i> ≥ <i>r</i>, a read started at arrival lands in time and costs the turn nothing.</p></div>
+</div>
+<p class="footer"><i>G</i>: gap · <i>A</i>: arrival time · <i>W</i>: queue wait · <i>T</i>: time of next use on the GPU · <i>r</i>: read time, including the wait in the SSD’s line · (<i>z</i>)⁺ = max(<i>z</i>, 0)</p>
+<aside>The model has one clock. For each session, the question behind every decision is when its KV is next needed on the GPU. Call that time T. It is the sum of two parts that different parties know. The first is the arrival of the next request, A: the end of the current turn plus the gap G. Before it happens, only the agent can forecast it, because the agent knows which tool it is about to run; it sends that forecast to the engine as a hint, which is a distribution, not a number. The second part is the queue wait W: once the request has arrived, other turns may go first, and the engine can estimate how long from the turns ahead of it and the rate at which it admits them. The KV has to be on the GPU at T. A read from the SSD takes r seconds, counting its wait in the SSD’s line, so it has to start by T minus r. One quantity will come back on many slides: x, the positive part of r minus W. It is the part of a read that the queue does not hide. If the queue wait is longer than the read, a read started at arrival lands in time and costs the turn nothing. Earlier versions of this design took the queue wait as a constant; here it is part of the model, and it changes the answers.</aside>
+</section>

@@ -69,6 +69,8 @@ class BackupKV(msgspec.Struct, frozen=True):
     actions carry a single eviction victim."""
 
     node_ids: list[NodeId]
+    # The host copies of these nodes are not to be written on to storage.
+    skip_storage: bool = False
 
 
 class MambaEvictExcessPathStates(ComponentAction, frozen=True):

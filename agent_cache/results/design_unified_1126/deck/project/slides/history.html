@@ -1,0 +1,23 @@
+<section id="history" class="foot">
+<div class="head">
+<p class="eyebrow">The checks · how the design got here</p>
+<h2 class="title">Eight iterations, each kept what the last one measured</h2>
+</div>
+<table class="t">
+<tr><th style="width:20%">Iteration</th><th style="width:46%">What it added</th><th style="width:34%">What it showed</th></tr>
+<tr><td>Stock HiCache</td><td>host copy of every page, SSD write-through, LRU</td><td>31.9 s; landed reads were evicted</td></tr>
+<tr><td>Oracle v1 and v2</td><td>exact gaps, pins, due-time reads, next-use eviction</td><td>18.5 → 5.7 s on stretched gaps</td></tr>
+<tr><td>Hint table, timed reads</td><td>p10, p50, p90 per tool call; reads land before use</td><td>the median keeps 87 % of the gain</td></tr>
+<tr><td>No-hint arms</td><td>protect queued turns; time reads by queue position</td><td>96 % of the way to exact hints</td></tr>
+<tr><td>Four rules (current)</td><td>the whole distribution; a price on host memory</td><td>10.96 s saturated; ties with no hints</td></tr>
+<tr><td>Write-path fixes</td><td>stored pages not rewritten; merged writes</td><td>5.8 to 9.5 s faster</td></tr>
+<tr><td><i>T</i> = <i>G</i> + <i>W</i> note</td><td>one clock, five components; not built</td><td>the gain sits after arrival</td></tr>
+<tr><td>This design</td><td>queue, hint shape and write inside the four actions</td><td>a floor, and the levers left</td></tr>
+</table>
+<div class="row">
+<div class="card-s in1" style="flex:1"><p class="ink-b">What carried the gain</p><p class="small">Pins on landed reads, protection of queued turns, and a write path that does not back up.</p></div>
+<div class="card-s in2" style="flex:1"><p class="ink-b">What did not</p><p class="small">Reads before arrival, the order of eviction among idle sessions, and a learned price.</p></div>
+</div>
+<p class="footer">Record with the numbers, settings and arm names of each iteration: agent_cache/DESIGN_ITERATIONS.md. Settings differ between rows; each number is from its own campaign.</p>
+<aside>How the design got here, in eight iterations. Stock HiCache keeps a host copy of every page, writes through to the SSD, evicts the least recently used and reads on arrival; on this workload it is at 31.9 seconds, and reads that had landed were evicted before use. The oracles used exact gaps: pins on landed reads, reads served by due time, and eviction by next use took an earlier workload from 18.5 to 5.7 seconds. The hint table made the hint realistic, the tenth, fiftieth and ninetieth percentile per kind of tool call, with reads timed to land just before use; the median alone kept 87 percent of the gain at light load. The no-hint designs use only the queue: they protect queued turns and time reads by queue position, and get 96 percent of the way to exact hints. The four rules, the current design, use the whole distribution and a price on host memory; they reach 10.96 seconds at saturation and tie with the no-hint design. The write-path fixes ended a loop of refused reads and rewrites, worth 5.8 to 9.5 seconds. The note of 23 November put everything on one clock but was never built. This design puts the queue, the hint’s shape and the write inside the four actions, and adds a floor and a list of the levers left. Across the iterations three things carried the gain: pins on landed reads, protection of queued turns, and a write path that does not back up. Three things did not: reads before arrival, the order of eviction among idle sessions, and a learned price. The record with the numbers, settings and names of each iteration is in the repository.</aside>
+</section>

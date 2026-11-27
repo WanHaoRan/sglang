@@ -1,0 +1,19 @@
+== c34_ec_full minutes 10-30: 3173 admissions, 132 readers
+  A. err = measured wait - pred_wait_ql (s) at arrival, quantiles q05 q10 q25 q50 q75 q90 q95
+     non-readers pred   0-  2 s (n  2728):   -0.6   -0.5   +0.0   +0.0   +0.0   +0.0   +0.0
+     non-readers pred   2-  5 s (n   139):   -1.8   -1.4   -0.8   -0.0   +0.9   +1.6   +1.8
+     non-readers pred   5- 10 s (n    28):   -2.3   -1.8   -1.1   +0.2   +2.7   +3.8   +3.9
+     non-readers all                (n  2895):   -0.7   -0.6   +0.0   +0.0   +0.0   +0.0   +0.3
+     readers     pred   0-  2 s (n    22):   -0.8   +0.0   +0.2   +1.0   +1.3   +1.6   +1.8
+     readers     all                (n    30):   -0.9   -0.8   +0.0   +0.6   +1.2   +1.8   +3.4
+     readers, admission - max(arrival + pred, own last landing) (n 30):   -0.9   -0.8   +0.0   +0.0   +0.0   +0.4   +2.9
+  B. non-readers: err = actual residual - predicted residual at the first time the prediction is <= X
+     X =  2.0 s (n   410, never crossed    3):   -1.0   -0.7   -0.3   +0.0   +0.5   +1.5   +2.4   margin for q=0.1: +0.7 s, q=0.5: -0.0 s, q=0.9: -1.5 s
+     X =  3.0 s (n   413, never crossed    0):   -1.2   -1.0   -0.4   -0.0   +0.6   +1.6   +2.5   margin for q=0.1: +1.0 s, q=0.5: +0.0 s, q=0.9: -1.6 s
+     X =  5.0 s (n   413, never crossed    0):   -1.4   -1.0   -0.5   -0.0   +0.6   +1.6   +2.5   margin for q=0.1: +1.0 s, q=0.5: +0.0 s, q=0.9: -1.6 s
+     X =  8.0 s (n   413, never crossed    0):   -1.4   -1.0   -0.5   -0.0   +0.7   +1.6   +2.5   margin for q=0.1: +1.0 s, q=0.5: +0.0 s, q=0.9: -1.6 s
+     X = 12.0 s (n   413, never crossed    0):   -1.4   -1.0   -0.5   -0.0   +0.7   +1.6   +2.5   margin for q=0.1: +1.0 s, q=0.5: +0.0 s, q=0.9: -1.6 s
+     X = 20.0 s (n   413, never crossed    0):   -1.4   -1.0   -0.5   -0.0   +0.7   +1.6   +2.5   margin for q=0.1: +1.0 s, q=0.5: +0.0 s, q=0.9: -1.6 s
+  C. readers: last landing -> admission (s):   +0.0   +0.0   +0.0   +0.0   +0.1   +2.0   +2.9; pinned token-seconds 0.62 M over 1200 s = mean 0.5 K tokens pinned; mean pin 0.33 s
+     ntp_hold (first hold per request) n 10: pos median 12, predicted wait median 5.4 s, load estimate median 1.9 s, hold median 1.2 s [p90 2.1]
+     held readers: (admission - hold line) - predicted residual (s):   -2.2   -0.9   -0.5   +0.1   +3.3   +4.3   +4.3

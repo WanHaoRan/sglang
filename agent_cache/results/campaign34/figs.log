@@ -1,22 +1,31 @@
 jit_p50: tag jit_p50, client ran 7230 s, server lines kept 439441 of 439723, host pool held 0 tokens before -> results/compare_c34_designs/runs/jit_p50
 ec_full: tag ec_full, client ran 7230 s, server lines kept 449225 of 449483, host pool held 0 tokens before -> results/compare_c34_designs/runs/ec_full
 jit_exact: tag jit_exact, client ran 7230 s, server lines kept 420728 of 420971, host pool held 0 tokens before -> results/compare_c34_designs/runs/jit_exact
+hicache: tag hicache, client ran 7230 s, server lines kept 304363 of 304602, host pool held 0 tokens before -> results/compare_c34_designs/runs/hicache
+ec_exact: tag ec_exact, client ran 7230 s, server lines kept 436172 of 436427, host pool held 0 tokens before -> results/compare_c34_designs/runs/ec_exact
+hicache: 10479 requests / 480 streams; returning TTFT mean 34.37 p50 7.026 p90 87.273 s; device/host/storage/recompute 3055/2406/1468/3070
 jit_p50: 17049 requests / 691 streams; returning TTFT mean 12.269 p50 7.116 p90 25.143 s; device/host/storage/recompute 2960/10598/2468/332
 jit_exact: 17114 requests / 696 streams; returning TTFT mean 11.785 p50 9.877 p90 24.52 s; device/host/storage/recompute 3331/10873/1882/332
 ec_full: 17095 requests / 695 streams; returning TTFT mean 11.811 p50 9.996 p90 25.017 s; device/host/storage/recompute 3023/10720/2337/320
+ec_exact: 17206 requests / 701 streams; returning TTFT mean 11.501 p50 9.433 p90 23.8 s; device/host/storage/recompute 3335/10833/2016/321
 wrote ../results/compare_c34_designs/ec_wait_split.png
-Over the 14,767 returning requests all three arms sent before minute 110 (JIT p50, JIT exact, All four rules): mean TTFT 11.21,
-10.67 and 10.73 s. Requests served in 2 h: 17,049, 17,114 and 17,095; users admitted: 678, 677 and 676 of the 729 that arrive.
+Over the 9,459 returning requests all five arms sent before minute 110 (HiCache, JIT p50, JIT exact, All four rules, Oracle): mean
+TTFT 31.68, 5.60, 5.07, 5.09 and 4.85 s. Requests served in 2 h: 10,479, 17,049, 17,114, 17,095 and 17,206; users admitted: 469,
+678, 677, 676 and 680 of the 729 that arrive.
 Recorded waits at x1, one run per arm. 0.1 users arrive a second and at most 128 are in session; the others wait for a slot, a wait
 TTFT leaves out. Prompts are synthetic token ids of the recorded lengths and outputs have the recorded length; sessions with a
 request over 65,536 tokens are left out. Exact hints are the true next-request times; p50 hints are the median wait after the tool
 call the reply makes, from a table the client keeps online for each harness and model. The rules arm gets that table's p10, p50 and
 p90 and an end-of-session signal: it starts reads by expected cost at a learned price on host memory, evicts by chance of return,
-and lets an arrived request's read take room from early reads. Attention runs on FlashAttention 3. Every arm runs the engine with
-the eviction fix: a request queued for over 60 s is no longer taken for one not coming. Engine fixes on: pages the SSD already holds
-are not written again; queued writes are merged into transfers of up to 128 pages; timed reads wait while pending writes hold 50,000
-host tokens; a read refused host memory is retried without spending the turn's lookups.
-  JIT, p50 hints: 11.21 = after admission 0.19 + queue 5.50 + read and GPU 4.90 + read only 0.63
-  JIT, exact hints: 10.67 = after admission 0.18 + queue 7.13 + read and GPU 3.06 + read only 0.30
-  all four rules: 10.73 = after admission 0.19 + queue 7.07 + read and GPU 3.11 + read only 0.36
+and lets an arrived request's read take room from early reads. The oracle is the rules arm given each true next-request time as its
+distribution, so its reads land as the request is due and it evicts the session that returns last first. Attention runs on
+FlashAttention 3. Every arm runs the engine with the eviction fix: a request queued for over 60 s is no longer taken for one not
+coming. Engine fixes on: pages the SSD already holds are not written again; queued writes are merged into transfers of up to 128
+pages; timed reads wait while pending writes hold 50,000 host tokens; a read refused host memory is retried without spending the
+turn's lookups.
+  original HiCache: 31.68 = after admission 0.51 + queue 22.25 + read and GPU 8.41 + read only 0.50
+  JIT, p50 hints: 5.60 = after admission 0.18 + queue 3.70 + read and GPU 1.50 + read only 0.23
+  JIT, exact hints: 5.07 = after admission 0.18 + queue 4.40 + read and GPU 0.47 + read only 0.03
+  all four rules: 5.09 = after admission 0.18 + queue 4.18 + read and GPU 0.69 + read only 0.04
+  oracle: the four rules on exact hints: 4.85 = after admission 0.17 + queue 4.17 + read and GPU 0.48 + read only 0.03
 wrote ../results/compare_c34_designs

@@ -2367,6 +2367,8 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
 
     # hicache pointer for synchronizing data loading from CPU to GPU
     hicache_consumer_index: int = -1
+    # Tokens this batch's own load copies from host memory; set with the index above.
+    hicache_load_tokens: int = 0
 
     # Metrics
     dp_cooperation_info: Optional[DPCooperationInfo] = None
@@ -3519,6 +3521,9 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
 
     def prepare_for_decode(self):
         self.forward_mode = ForwardMode.DECODE
+        # The prefill that consumed a load waited for it on the same stream; a stale
+        # index would make eager decode wait on a later load that reuses the slot.
+        self.hicache_consumer_index = -1
         self.mamba_track_seqlens_cpu = None
         self.mamba_prefill_track_mask_cpu = None
         # Decode embeds the last output token via embed_tokens; clear the stale

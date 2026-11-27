@@ -1,0 +1,20 @@
+<section id="hint" class="foot">
+<div class="head">
+<p class="eyebrow">The model · the hint</p>
+<h2 class="title">The hint: how long this tool call is likely to run</h2>
+</div>
+<table class="t">
+<tr><th style="width:36%">After a reply that calls</th><th style="width:14%">Share of gaps</th><th style="width:22%">Gap p10 / p50 / p90</th><th style="width:28%">The longer it has been idle</th></tr>
+<tr><td><b>cd</b> in a shell</td><td>19 %</td><td>0.5 / 1.1 / 5.6 s</td><td>the less likely back soon</td></tr>
+<tr><td>a web search</td><td>0.5 %</td><td>2.2 / 5.6 / 15.9 s</td><td>the likelier, for the first 5 s</td></tr>
+<tr><td><b>sleep</b> in a terminal</td><td>0.3 %</td><td>4.5 / 16.6 / 67 s</td><td>the likelier, for the first 10 s</td></tr>
+<tr><td>no tool: a person answers</td><td>8.5 %</td><td>2.7 / 68 / 722 s</td><td>the less likely; 22 % never return</td></tr>
+</table>
+<div class="row">
+<div class="card in1"><p class="h3">What the agent sends</p><p class="small">A table with each request: for each kind of tool call (the tool and the command’s first word), the p10, p50 and p90 of past gaps, and whether the session is over.</p></div>
+<div class="card in2"><p class="h3">What the engine reads off it</p><p class="small"><i>Φ</i>: that row’s gap distribution. After <i>a</i> seconds idle, <i>F</i>(<i>x</i> | <i>a</i>) = [<i>Φ</i>(<i>a</i> + <i>x</i>) − <i>Φ</i>(<i>a</i>)] / [1 − <i>Φ</i>(<i>a</i>)] is the chance of return within <i>x</i> more seconds, and <i>h</i>(<i>a</i>) the same chance per second, right now.</p></div>
+<div class="card in3"><p class="h3">Two shapes</p><p class="small">Sharp: <i>h</i> rises with <i>a</i>, so waiting narrows down the return. Heavy-tailed: <i>h</i> falls, so the longer idle, the less likely back soon. Here <i>h</i> falls beyond 2 s for 94 % of requests.</p></div>
+</div>
+<p class="footer"><i>Φ</i>: distribution of the gap <i>G</i> · <i>a</i>: seconds idle so far · <i>F</i>(<i>x</i> | <i>a</i>): chance the gap ends within <i>x</i> more seconds · <i>h</i>(<i>a</i>): return rate (hazard). FreeInference sessions as replayed, 103K gaps.</p>
+<aside>The agent’s forecast of the gap is the hint. It is not a number. With each request the agent framework sends a small table: for each kind of tool call, meaning the tool and the first word of its command, the tenth, fiftieth and ninetieth percentile of the gaps it has seen after such calls, and a flag for a session that is over. When the engine finishes a reply, it reads the tool call from its own output and picks the row. The table on this slide shows four rows from the workload. A cd in a shell is the most common call: half of the gaps after it end within 1.1 seconds, a tenth last over 5.6. After a reply with no tool call a person has to answer: the median is 68 seconds, a tenth last over twelve minutes, and 22 percent of those sessions never return. The engine turns a row into a distribution, phi, and from it two functions of the time a the session has already been idle: F of x given a, the chance of return within x more seconds, and h of a, the return rate, which is the same chance per second right now. The shape of the row matters more than its median. In a sharp row, like a web search or a sleep, the rate rises: the longer the session has been idle, the sooner it will be back. In a heavy-tailed row the rate falls: most sessions return at once, and one that has not is less and less likely to return soon. On this trace the rate falls beyond two seconds for the rows of 94 percent of requests. The design uses the two shapes differently.</aside>
+</section>

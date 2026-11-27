@@ -1,0 +1,106 @@
+1c1,4
+< """kvsim: a discrete-event simulator of three-tier KV caching (GPU pool, host memory, one SSD) under the closed-loop
+---
+> """REFEREE COPY of kvsim.py with the defects D1-D7 of referee/REFEREE_NOTES.md patched (built by referee/make_patched.py;
+> the original is untouched). Every changed line carries a [referee Dn] mark.
+> 
+> kvsim: a discrete-event simulator of three-tier KV caching (GPU pool, host memory, one SSD) under the closed-loop
+38c41
+< sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+---
+> sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # referee copy: modules are one up
+124c127
+<                  "t_land", "pinned", "seq", "io_start", "rid")
+---
+>                  "t_land", "pinned", "seq", "io_start", "rid", "lost_from")
+132a136
+>         self.lost_from = None         # [referee D5] index of the first node whose SSD copy was gone when the I/O began
+170a175,177
+>         self.orphan_tok = [0] * n     # [referee D2] tokens those copies hold (a node can be orphaned, inserted again and orphaned again)
+>         self.wpend = [0] * n          # [referee D2] SSD writes pending per node
+>         self.seen = [False] * n       # [referee D7] pages of requests whose reply is complete (the client's infinite cache)
+327c334
+<         self.at(min(t, self.cfg.duration), self._send, r)
+---
+>         self.at(max(self.now, min(t, self.cfg.duration)), self._send, r)   # [referee D1] never before now
+333a341,350
+>         # [referee D7] the client's ideal_cached: at the send, the leading pages of the prompt whose requests have
+>         # completed, and in 16-token blocks what it keeps of its base once that has completed
+>         ideal = 0
+>         for n in r.path:
+>             if not self.seen[n]:
+>                 break
+>             ideal += self.tok[n]
+>         if r.base is not None and r.play.streams[r.base[0]][r.base[1]].t_done is not None:
+>             ideal = max(ideal, min(r.keep_tokens, r.prompt))
+>         r.ideal_at_send = ideal
+350a368,370
+>         seen = self.seen                            # [referee D7]
+>         for n in r.path:
+>             seen[n] = True
+446,447c466,471
+<                 self.host_used -= self.tok[n]
+<                 self.cnt["evict_host_tokens"] += self.tok[n]
+---
+>                 t = self.orphan_tok[n]              # [referee D2] every orphaned copy, once
+>                 self.orphan_tok[n] = 0
+>                 self.host_used -= t
+>                 self.cnt["evict_host_tokens"] += t
+>                 if self.in_host[n]:
+>                     self._hc(n)                     # [referee D2] the copy inserted since is evictable again
+569a594
+>         self.orphan_tok[c] += self.tok[c]           # [referee D2]
+766a792
+>             rd.lost_from = next((i for i, n in enumerate(rd.nodes) if not self.ssd[n]), None)   # [referee D5]
+792c818,823
+<         for n in rd.nodes:
+---
+>         for i_node, n in enumerate(rd.nodes):
+>             if rd.lost_from is not None and i_node >= rd.lost_from:
+>                 # [referee D5] the cleaner deleted this page (or one before it) before the I/O began: nothing was read
+>                 self.host_used -= self.tok[n]
+>                 self.cnt["read_deleted_tokens"] = self.cnt.get("read_deleted_tokens", 0) + self.tok[n]
+>                 continue
+795a827
+>                     self.host_mirror += self.tok[n]     # [referee D6] it is a host copy of a GPU page now
+875a908
+>             self.wpend[n] += 1                      # [referee D2]
+940c973,974
+<         self.dirty[n] = False
+---
+>         self.wpend[n] -= 1                          # [referee D2] dirty until its last pending write is acknowledged
+>         self.dirty[n] = self.wpend[n] > 0
+960,961c994,997
+<         for n in self.pol.cleaner_order(target):
+<             if self.ssd_used <= target:
+---
+>         order = iter(self.pol.cleaner_order(target))
+>         while self.ssd_used > target:               # [referee D4] test before taking the next node off the order
+>             n = next(order, None)
+>             if n is None:
+1125c1161,1170
+<         if not self.evict_gpu(need):
+---
+>         if not self.cfg.mirror:
+>             # [referee D6] mirror off: a GPU eviction copies pages to host and may evict host pages to make room;
+>             # the host pages this admission is about to load must not be among them
+>             for i in range(ig, it):
+>                 self._hlock_inc(path[i])
+>         fits = self.evict_gpu(need)
+>         if not self.cfg.mirror:
+>             for i in range(ig, it):
+>                 self._hlock_dec(path[i])
+>         if not fits:
+1201c1246
+<         r.ideal_seen = ideal_pages
+---
+>         r.ideal_seen = r.ideal_at_send              # [referee D7]
+1245a1291,1295
+>         if tw is not None and self.C_G - self.gpu_used < self.tok[tw] and not self.evict_gpu(self.tok[tw]):
+>             # [referee D3] no room and nothing evictable: the reply's pages are not cached (the pool is never exceeded)
+>             self.cnt["twig_dropped"] = self.cnt.get("twig_dropped", 0) + 1
+>             tw = None
+>             r.twig, r.twig_pages = None, 0
+1248,1249d1297
+<             if self.C_G - self.gpu_used < t:
+<                 self.evict_gpu(t)

@@ -1,0 +1,11 @@
+samples per arm (prefill, reads): {'ec_full': (145, 217), 'jit_exact': (149, 52), 'ec_exact': (160, 66), 'jit_p50': (145, 141)}
+idle prefill (n 599): 34.9 ms + 0.0120 ms/token + 1.46 us per token per K of position; R2 0.9523
+   cold prompt of 20 K: 0.57 s; 30 K: 1.05 s; 45 K: 2.06 s (0.0457 ms/token)
+   linear only: 7.7 ms + 0.0396 ms/token; R2 0.7930
+uncontended read (n 476): 0.054 s + 2.82 ms/page = 0.0440 ms/token; R2 0.769; non-I/O part median 0.015 s
+   L = 10000: read 0.49 s  recompute on an idle GPU 0.19 s
+   L = 20000: read 0.93 s  recompute on an idle GPU 0.53 s
+   L = 30000: read 1.37 s  recompute on an idle GPU 1.02 s
+   L = 45000: read 2.03 s  recompute on an idle GPU 2.02 s
+   L = 60000: read 2.69 s  recompute on an idle GPU 3.35 s
+   own crossover (recompute = read): L = 45394 tokens

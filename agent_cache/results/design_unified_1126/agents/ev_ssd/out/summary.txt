@@ -1,0 +1,207 @@
+
+=== volume 25.0 M, 90/80 (as run): minutes 90-110 (requests sent 5,400-6,600 s): requests losing / K tokens recomputed beyond a store that deletes nothing / TTFT at stake by N g (N = 128, 0.043 ms a token), s; and live pages deleted before 6,600 s
+order                                           ec_full               |             jit_exact              |              jit_p50              
+a_oldest_written                     47 /   899.6 /  1.91 s; live   7038 |   45 /   822.7 /  1.70 s; live   5737 |   43 /   769.3 /  1.63 s; live   5641
+b_end_chain                          98 /  1690.4 /  3.59 s; live   3046 |   98 /  1742.3 /  3.59 s; live   2978 |  102 /  1867.0 /  3.96 s; live   2701
+b_end_own                            93 /  1472.4 /  3.13 s; live   2770 |   93 /  1568.3 /  3.24 s; live   2793 |   92 /  1566.9 /  3.32 s; live   2549
+b_end_index                          85 /  1262.5 /  2.68 s; live   2307 |   79 /  1114.2 /  2.30 s; live   2283 |   83 /  1214.6 /  2.58 s; live   2102
+b_end_tail                            5 /    78.5 /  0.17 s; live    282 |    6 /   119.0 /  0.25 s; live    262 |    5 /    96.6 /  0.20 s; live    275
+touch_on_read                         6 /    31.4 /  0.07 s; live   1268 |    8 /    38.5 /  0.08 s; live   1325 |    6 /    31.4 /  0.07 s; live   1132
+c_refresh                             6 /    61.8 /  0.13 s; live   1238 |    6 /    35.6 /  0.07 s; live   1238 |    6 /    31.2 /  0.07 s; live   1238
+c_refresh_60s                         7 /    63.0 /  0.13 s; live   1267 |    6 /    35.6 /  0.07 s; live   1250 |    6 /    31.2 /  0.07 s; live   1250
+c_refresh_300s                        7 /    63.0 /  0.13 s; live   1270 |    8 /    45.4 /  0.09 s; live   1405 |    7 /    39.9 /  0.08 s; live   1253
+c_refresh_headfirst                   7 /    63.0 /  0.13 s; live   1255 |    6 /    35.6 /  0.07 s; live   1238 |    6 /    31.2 /  0.07 s; live   1238
+d_chain+refresh                      51 /   393.3 /  0.84 s; live   1652 |   51 /   372.4 /  0.77 s; live   1523 |   56 /   419.1 /  0.89 s; live   1479
+d_index+refresh                      45 /   203.3 /  0.43 s; live   1416 |   45 /   177.7 /  0.37 s; live   1438 |   45 /   167.9 /  0.36 s; live   1249
+d_tail+refresh                        1 /     0.8 /  0.00 s; live    126 |    1 /     0.8 /  0.00 s; live    124 |    2 /    13.4 /  0.03 s; live    161
+d_tier+refresh                        1 /     0.8 /  0.00 s; live    126 |    1 /     0.8 /  0.00 s; live    124 |    2 /    13.4 /  0.03 s; live    161
+d_tier+refresh_300s                   1 /     8.6 /  0.02 s; live    149 |    1 /     8.4 /  0.02 s; live    165 |    2 /    21.1 /  0.04 s; live    160
+d_tier+touch_on_read                  1 /     0.8 /  0.00 s; live     84 |    1 /     0.8 /  0.00 s; live     83 |    2 /    13.4 /  0.03 s; live    120
+d_tier_index+refresh                  1 /     0.8 /  0.00 s; live    126 |    1 /     0.8 /  0.00 s; live    124 |    1 /     0.8 /  0.00 s; live    122
+d_tier_index+refresh+hit+recheck      1 /     0.8 /  0.00 s; live     84 |    1 /     0.8 /  0.00 s; live     83 |    1 /     0.8 /  0.00 s; live     81
+d_tier_shared+refresh+hit+recheck     1 /     0.8 /  0.00 s; live     84 |    1 /     0.8 /  0.00 s; live     83 |    1 /     0.8 /  0.00 s; live     81
+e_oracle_next_use                     0 /     0.0 /  0.00 s; live      0 |    0 /     0.0 /  0.00 s; live      0 |    0 /     0.0 /  0.00 s; live      0
+   ec_full: order a: first pass at 5263 s, 3 passes before 6,600 s, file times deleted up to [771, 1314, 1853, 2483]... s at passes [5273, 5975, 6587, 7198]...; requests in the window 2589
+   jit_exact: order a: first pass at 5261 s, 2 passes before 6,600 s, file times deleted up to [767, 1320, 1862, 2489]... s at passes [5272, 5974, 6615, 7227]...; requests in the window 2668
+   jit_p50: order a: first pass at 5289 s, 2 passes before 6,600 s, file times deleted up to [762, 1330, 1862]... s at passes [5299, 6031, 6643]...; requests in the window 2595
+
+=== volume 25.0 M, 80/70: minutes 90-110 (requests sent 5,400-6,600 s): requests losing / K tokens recomputed beyond a store that deletes nothing / TTFT at stake by N g (N = 128, 0.043 ms a token), s; and live pages deleted before 6,600 s
+order                                           ec_full               |             jit_exact              |              jit_p50              
+a_oldest_written                     52 /   766.2 /  1.63 s; live   7893 |   49 /   647.6 /  1.34 s; live   7753 |   47 /   679.6 /  1.44 s; live   7174
+b_end_chain                          81 /  1056.1 /  2.25 s; live   4618 |   92 /  1654.7 /  3.41 s; live   4631 |   82 /  1218.0 /  2.58 s; live   4054
+b_end_own                            73 /   794.0 /  1.69 s; live   4264 |   82 /  1263.2 /  2.61 s; live   4227 |   73 /   956.4 /  2.03 s; live   3784
+b_end_index                          64 /   583.9 /  1.24 s; live   3450 |   66 /   760.2 /  1.57 s; live   3386 |   62 /   719.7 /  1.53 s; live   3043
+b_end_tail                            5 /    65.8 /  0.14 s; live    590 |    4 /    48.5 /  0.10 s; live    528 |    3 /    49.8 /  0.11 s; live    446
+touch_on_read                        12 /    54.1 /  0.11 s; live   1889 |   12 /    57.0 /  0.12 s; live   1982 |   13 /    53.4 /  0.11 s; live   1961
+c_refresh                            10 /    43.1 /  0.09 s; live   1950 |   10 /    47.4 /  0.10 s; live   2084 |   11 /    42.9 /  0.09 s; live   1963
+c_refresh_60s                        10 /    43.1 /  0.09 s; live   1962 |   10 /    47.4 /  0.10 s; live   2096 |   11 /    43.4 /  0.09 s; live   1982
+c_refresh_300s                       10 /    42.6 /  0.09 s; live   1849 |   11 /    55.6 /  0.11 s; live   1984 |   12 /    51.6 /  0.11 s; live   2007
+c_refresh_headfirst                  10 /    43.1 /  0.09 s; live   1950 |   10 /    47.4 /  0.10 s; live   2084 |   11 /    42.9 /  0.09 s; live   2007
+d_chain+refresh                      55 /   389.4 /  0.83 s; live   3119 |   51 /   367.6 /  0.76 s; live   3041 |   56 /   438.1 /  0.93 s; live   2792
+d_index+refresh                      49 /   188.1 /  0.40 s; live   2680 |   45 /   184.0 /  0.38 s; live   2642 |   44 /   156.2 /  0.33 s; live   2309
+d_tail+refresh                        1 /     1.0 /  0.00 s; live    236 |    1 /     0.8 /  0.00 s; live    227 |    2 /    13.4 /  0.03 s; live    276
+d_tier+refresh                        1 /     1.0 /  0.00 s; live    236 |    1 /     0.8 /  0.00 s; live    227 |    2 /    13.4 /  0.03 s; live    276
+d_tier+refresh_300s                   1 /     8.6 /  0.02 s; live    346 |    1 /     8.6 /  0.02 s; live    288 |    2 /    21.2 /  0.04 s; live    277
+d_tier+touch_on_read                  1 /     1.0 /  0.00 s; live    147 |    1 /     0.8 /  0.00 s; live    136 |    2 /    13.4 /  0.03 s; live    189
+d_tier_index+refresh                  1 /     1.0 /  0.00 s; live    235 |    1 /     0.8 /  0.00 s; live    226 |    1 /     0.8 /  0.00 s; live    219
+d_tier_index+refresh+hit+recheck      1 /     1.0 /  0.00 s; live    146 |    1 /     0.8 /  0.00 s; live    135 |    1 /     0.8 /  0.00 s; live    132
+d_tier_shared+refresh+hit+recheck     1 /     1.0 /  0.00 s; live    146 |    1 /     0.8 /  0.00 s; live    135 |    1 /     0.8 /  0.00 s; live    132
+e_oracle_next_use                     0 /     0.0 /  0.00 s; live      0 |    0 /     0.0 /  0.00 s; live      0 |    0 /     0.0 /  0.00 s; live      0
+   ec_full: order a: first pass at 4663 s, 3 passes before 6,600 s, file times deleted up to [785, 1374, 1906, 2539]... s at passes [4673, 5315, 6017, 6688]...; requests in the window 2589
+   jit_exact: order a: first pass at 4661 s, 3 passes before 6,600 s, file times deleted up to [784, 1347, 1883, 2494]... s at passes [4672, 5314, 5985, 6627]...; requests in the window 2668
+   jit_p50: order a: first pass at 4659 s, 3 passes before 6,600 s, file times deleted up to [762, 1321, 1862, 2461]... s at passes [4669, 5281, 6013, 6624]...; requests in the window 2595
+
+=== volume 12.5 M, 90/80: minutes 90-110 (requests sent 5,400-6,600 s): requests losing / K tokens recomputed beyond a store that deletes nothing / TTFT at stake by N g (N = 128, 0.043 ms a token), s; and live pages deleted before 6,600 s
+order                                           ec_full               |             jit_exact              |              jit_p50              
+a_oldest_written                     77 /  1275.3 /  2.71 s; live  26683 |   90 /  1810.9 /  3.74 s; live  27880 |   80 /  1480.3 /  3.14 s; live  26929
+b_end_chain                          85 /  1100.0 /  2.34 s; live  14615 |   89 /  1176.4 /  2.43 s; live  15119 |   85 /  1143.7 /  2.43 s; live  14711
+b_end_own                            76 /   802.2 /  1.71 s; live  13573 |   79 /   906.8 /  1.87 s; live  13981 |   74 /   794.7 /  1.69 s; live  13631
+b_end_index                          55 /   342.3 /  0.73 s; live  10083 |   57 /   347.1 /  0.72 s; live  10233 |   52 /   235.3 /  0.50 s; live   9754
+b_end_tail                           18 /   330.2 /  0.70 s; live   2818 |   18 /   400.3 /  0.83 s; live   2993 |   15 /   303.3 /  0.64 s; live   2690
+touch_on_read                        35 /   285.3 /  0.61 s; live   7197 |   32 /   202.4 /  0.42 s; live   8534 |   35 /   206.7 /  0.44 s; live   7368
+c_refresh                            32 /   134.6 /  0.29 s; live   7262 |   31 /   140.2 /  0.29 s; live   7467 |   36 /   149.2 /  0.32 s; live   7441
+c_refresh_60s                        32 /   134.6 /  0.29 s; live   7516 |   31 /   140.2 /  0.29 s; live   7341 |   35 /   161.3 /  0.34 s; live   7642
+c_refresh_300s                       33 /   199.9 /  0.43 s; live   7959 |   33 /   199.2 /  0.41 s; live   8093 |   36 /   192.3 /  0.41 s; live   8090
+c_refresh_headfirst                  32 /   134.6 /  0.29 s; live   7357 |   31 /   140.2 /  0.29 s; live   7467 |   36 /   149.2 /  0.32 s; live   7488
+d_chain+refresh                      54 /   404.9 /  0.86 s; live  10292 |   56 /   406.5 /  0.84 s; live  10104 |   58 /   375.2 /  0.80 s; live   9945
+d_index+refresh                      47 /   185.7 /  0.39 s; live   8649 |   47 /   194.6 /  0.40 s; live   8532 |   48 /   161.5 /  0.34 s; live   8424
+d_tail+refresh                        4 /    27.9 /  0.06 s; live   1427 |    4 /    34.0 /  0.07 s; live   1594 |    4 /    23.2 /  0.05 s; live   1426
+d_tier+refresh                        4 /    27.9 /  0.06 s; live   1333 |    3 /    22.5 /  0.05 s; live   1321 |    5 /    29.0 /  0.06 s; live   1419
+d_tier+refresh_300s                   4 /    27.9 /  0.06 s; live   1332 |    3 /    22.8 /  0.05 s; live   1330 |    5 /    37.1 /  0.08 s; live   1536
+d_tier+touch_on_read                  4 /    27.9 /  0.06 s; live   1124 |    3 /    22.5 /  0.05 s; live   1139 |    2 /    17.7 /  0.04 s; live   1052
+d_tier_index+refresh                  2 /    17.7 /  0.04 s; live   1077 |    2 /    17.7 /  0.04 s; live   1073 |    4 /    23.9 /  0.05 s; live   1364
+d_tier_index+refresh+hit+recheck      2 /    17.7 /  0.04 s; live   1050 |    2 /    17.7 /  0.04 s; live   1045 |    2 /    17.7 /  0.04 s; live   1042
+d_tier_shared+refresh+hit+recheck     2 /    17.7 /  0.04 s; live   1050 |    2 /    17.7 /  0.04 s; live   1045 |    2 /    17.7 /  0.04 s; live   1042
+e_oracle_next_use                     0 /     0.0 /  0.00 s; live      0 |    0 /     0.0 /  0.00 s; live      0 |    0 /     0.0 /  0.00 s; live      0
+   ec_full: order a: first pass at 2683 s, 13 passes before 6,600 s, file times deleted up to [445, 815, 1118, 1458]... s at passes [2693, 3005, 3257, 3538]...; requests in the window 2589
+   jit_exact: order a: first pass at 2681 s, 13 passes before 6,600 s, file times deleted up to [443, 812, 1116, 1434]... s at passes [2692, 3004, 3255, 3537]...; requests in the window 2668
+   jit_p50: order a: first pass at 2679 s, 13 passes before 6,600 s, file times deleted up to [441, 787, 1097, 1418]... s at passes [2689, 2971, 3223, 3504]...; requests in the window 2595
+
+=== volume 6.2 M, 90/80: minutes 90-110 (requests sent 5,400-6,600 s): requests losing / K tokens recomputed beyond a store that deletes nothing / TTFT at stake by N g (N = 128, 0.043 ms a token), s; and live pages deleted before 6,600 s
+order                                           ec_full               |             jit_exact              |              jit_p50              
+a_oldest_written                    177 /  4131.2 /  8.78 s; live 121935 |  182 /  4228.1 /  8.72 s; live 118334 |  169 /  3790.1 /  8.04 s; live 125359
+b_end_chain                         100 /  1841.1 /  3.91 s; live  33997 |  114 /  2083.2 /  4.30 s; live  32507 |   97 /  1562.4 /  3.31 s; live  31306
+b_end_own                            96 /  1663.4 /  3.54 s; live  32429 |  107 /  1918.8 /  3.96 s; live  31842 |   95 /  1523.5 /  3.23 s; live  30290
+b_end_index                          88 /  1437.2 /  3.06 s; live  28666 |   88 /  1439.4 /  2.97 s; live  28153 |   81 /  1294.8 /  2.75 s; live  26186
+b_end_tail                          119 /  2531.6 /  5.38 s; live  53611 |  130 /  2897.3 /  5.98 s; live  54786 |  110 /  2242.4 /  4.76 s; live  50653
+touch_on_read                       104 /  1798.5 /  3.82 s; live  80485 |  106 /  1848.1 /  3.81 s; live  81736 |   97 /  1610.1 /  3.42 s; live  70088
+c_refresh                            86 /  1146.1 /  2.44 s; live  66668 |   88 /  1299.1 /  2.68 s; live  67022 |   84 /  1156.6 /  2.45 s; live  68108
+c_refresh_60s                        87 /  1123.0 /  2.39 s; live  65882 |   83 /  1170.3 /  2.41 s; live  64120 |   84 /  1156.6 /  2.45 s; live  68624
+c_refresh_300s                       81 /  1107.3 /  2.35 s; live  63058 |   84 /  1305.0 /  2.69 s; live  65798 |   88 /  1154.8 /  2.45 s; live  63870
+c_refresh_headfirst                  86 /  1169.9 /  2.49 s; live  66718 |   88 /  1308.2 /  2.70 s; live  67044 |   84 /  1156.6 /  2.45 s; live  68158
+d_chain+refresh                      65 /   593.9 /  1.26 s; live  20553 |   58 /   477.8 /  0.99 s; live  21053 |   70 /   730.2 /  1.55 s; live  21938
+d_index+refresh                      52 /   209.2 /  0.44 s; live  16810 |   51 /   238.0 /  0.49 s; live  16941 |   51 /   190.0 /  0.40 s; live  16559
+d_tail+refresh                       76 /  1057.0 /  2.25 s; live  32102 |   74 /  1062.4 /  2.19 s; live  33338 |   74 /   994.1 /  2.11 s; live  32603
+d_tier+refresh                       58 /   408.8 /  0.87 s; live  12846 |   58 /   473.8 /  0.98 s; live  14798 |   57 /   349.6 /  0.74 s; live  12905
+d_tier+refresh_300s                  63 /   490.2 /  1.04 s; live  13226 |   59 /   484.1 /  1.00 s; live  13343 |   65 /   494.7 /  1.05 s; live  13358
+d_tier+touch_on_read                 64 /   526.4 /  1.12 s; live  13400 |   58 /   494.6 /  1.02 s; live  15493 |   66 /   561.3 /  1.19 s; live  13050
+d_tier_index+refresh                 52 /   215.6 /  0.46 s; live  12088 |   48 /   207.7 /  0.43 s; live  11921 |   51 /   189.6 /  0.40 s; live  11612
+d_tier_index+refresh+hit+recheck     52 /   217.2 /  0.46 s; live  11988 |   47 /   199.3 /  0.41 s; live  11785 |   51 /   189.6 /  0.40 s; live  11587
+d_tier_shared+refresh+hit+recheck    52 /   262.7 /  0.56 s; live  11737 |   49 /   270.3 /  0.56 s; live  12106 |   49 /   214.3 /  0.45 s; live  11212
+e_oracle_next_use                     0 /     0.0 /  0.00 s; live      0 |    0 /     0.0 /  0.00 s; live      0 |    2 /     3.9 /  0.01 s; live      0
+   ec_full: order a: first pass at 1453 s, 37 passes before 6,600 s, file times deleted up to [335, 477, 674, 855]... s at passes [1463, 1595, 1757, 1888]...; requests in the window 2589
+   jit_exact: order a: first pass at 1451 s, 37 passes before 6,600 s, file times deleted up to [334, 477, 674, 854]... s at passes [1462, 1594, 1755, 1887]...; requests in the window 2668
+   jit_p50: order a: first pass at 1449 s, 37 passes before 6,600 s, file times deleted up to [326, 477, 659, 852]... s at passes [1459, 1591, 1753, 1884]...; requests in the window 2595
+
+=== lookups a deleted page cut short (found nothing / found part) and reads that failed on a deleted file, first pass of order a to 6,600 s
+  volume 25.0 M, 90/80 (as run)
+    a_oldest_written                    101 /  13 /  7; requests   59,   1210.3 K |   95 /  15 /  3; requests   60,   1211.7 K |   71 /  11 /  5; requests   52,    971.7 K
+    b_end_chain                          71 / 151 /  9; requests  129,   2599.5 K |   76 / 153 / 14; requests  135,   2752.3 K |   36 / 125 / 29; requests  122,   2398.1 K
+    b_end_own                            66 / 141 /  6; requests  121,   2273.6 K |   71 / 141 / 11; requests  126,   2449.0 K |   35 / 113 / 25; requests  112,   2098.0 K
+    b_end_index                          54 / 124 /  5; requests  107,   1849.4 K |   58 / 116 /  8; requests  107,   1817.9 K |   31 / 102 / 20; requests  100,   1647.6 K
+    b_end_tail                           10 /   7 /  1; requests    7,    119.0 K |    9 /   9 /  1; requests    9,    163.5 K |    5 /   7 /  0; requests    6,    107.0 K
+    touch_on_read                         4 /   3 /  0; requests    6,     31.4 K |    6 /   5 /  0; requests    8,     38.5 K |    4 /   3 /  0; requests    6,     31.4 K
+    c_refresh                             4 /   3 /  0; requests    6,     61.8 K |    5 /   2 /  1; requests    6,     35.6 K |    4 /   2 /  1; requests    6,     31.2 K
+    c_refresh_60s                         4 /   4 /  0; requests    7,     63.0 K |    5 /   2 /  1; requests    6,     35.6 K |    4 /   2 /  1; requests    6,     31.2 K
+    c_refresh_300s                        4 /   4 /  0; requests    7,     63.0 K |    7 /   4 /  1; requests    8,     45.4 K |    6 /   3 /  1; requests    7,     39.9 K
+    c_refresh_headfirst                   4 /   4 /  0; requests    7,     63.0 K |    5 /   2 /  1; requests    6,     35.6 K |    4 /   2 /  1; requests    6,     31.2 K
+    d_chain+refresh                      27 /  50 /  1; requests   57,    414.3 K |   21 /  54 /  1; requests   58,    387.3 K |   17 /  45 /  5; requests   59,    420.5 K
+    d_index+refresh                      14 /  47 /  0; requests   50,    217.6 K |   16 /  44 /  1; requests   51,    185.9 K |   16 /  38 /  2; requests   48,    169.4 K
+    d_tail+refresh                        2 /   1 /  0; requests    1,      0.8 K |    2 /   1 /  0; requests    1,      0.8 K |    2 /   2 /  0; requests    2,     13.4 K
+    d_tier+refresh                        2 /   1 /  0; requests    1,      0.8 K |    2 /   1 /  0; requests    1,      0.8 K |    2 /   2 /  0; requests    2,     13.4 K
+    d_tier+refresh_300s                   2 /   1 /  0; requests    1,      8.6 K |    2 /   1 /  0; requests    1,      8.4 K |    2 /   2 /  0; requests    2,     21.1 K
+    d_tier+touch_on_read                  2 /   1 /  0; requests    1,      0.8 K |    2 /   1 /  0; requests    1,      0.8 K |    2 /   2 /  0; requests    2,     13.4 K
+    d_tier_index+refresh                  2 /   1 /  0; requests    1,      0.8 K |    2 /   1 /  0; requests    1,      0.8 K |    2 /   1 /  0; requests    1,      0.8 K
+    d_tier_index+refresh+hit+recheck      2 /   1 /  0; requests    1,      0.8 K |    2 /   1 /  0; requests    1,      0.8 K |    2 /   1 /  0; requests    1,      0.8 K
+    d_tier_shared+refresh+hit+recheck     2 /   1 /  0; requests    1,      0.8 K |    2 /   1 /  0; requests    1,      0.8 K |    2 /   1 /  0; requests    1,      0.8 K
+    e_oracle_next_use                     0 /   0 /  0; requests    0,      0.0 K |    0 /   0 /  0; requests    0,      0.0 K |    0 /   0 /  1; requests    0,      0.0 K
+  volume 25.0 M, 80/70
+    a_oldest_written                     93 /  31 /  8; requests   83,   1497.1 K |   91 /  32 /  5; requests   80,   1441.9 K |   55 /  24 / 18; requests   70,   1223.2 K
+    b_end_chain                          76 / 168 / 13; requests  158,   2747.7 K |   79 / 193 /  9; requests  168,   3312.4 K |   52 / 137 / 26; requests  149,   2813.6 K
+    b_end_own                            67 / 151 / 11; requests  144,   2253.4 K |   72 / 169 /  6; requests  152,   2722.9 K |   47 / 117 / 23; requests  135,   2381.3 K
+    b_end_index                          50 / 133 /  9; requests  125,   1715.2 K |   60 / 132 /  3; requests  127,   1922.8 K |   38 / 107 / 21; requests  118,   1868.6 K
+    b_end_tail                            9 /  10 /  1; requests   11,    136.9 K |    7 /  10 /  1; requests   11,    188.1 K |    5 /   6 /  3; requests    9,    164.2 K
+    touch_on_read                         9 /   6 /  0; requests   13,     58.9 K |   11 /   7 /  0; requests   14,     66.2 K |    7 /   7 /  1; requests   14,     58.2 K
+    c_refresh                             4 /   8 /  0; requests   11,     47.9 K |    5 /   8 /  0; requests   11,     52.2 K |    5 /   7 /  2; requests   12,     47.7 K
+    c_refresh_60s                         4 /   8 /  0; requests   11,     47.9 K |    5 /   8 /  0; requests   11,     52.2 K |    5 /   7 /  2; requests   12,     48.2 K
+    c_refresh_300s                        4 /   8 /  0; requests   11,     47.4 K |    7 /   9 /  0; requests   12,     60.4 K |    7 /   8 /  2; requests   13,     56.4 K
+    c_refresh_headfirst                   4 /   8 /  0; requests   11,     47.9 K |    5 /   8 /  0; requests   11,     52.2 K |    5 /   7 /  2; requests   12,     47.7 K
+    d_chain+refresh                      35 /  76 /  3; requests   86,    651.3 K |   33 /  73 /  2; requests   84,    671.4 K |   31 /  57 /  7; requests   80,    649.1 K
+    d_index+refresh                      25 /  69 /  2; requests   77,    373.1 K |   27 /  59 /  0; requests   75,    352.5 K |   28 /  50 /  3; requests   67,    287.2 K
+    d_tail+refresh                        5 /   2 /  0; requests    4,     21.0 K |    3 /   3 /  0; requests    4,     20.9 K |    5 /   3 /  0; requests    4,     24.7 K
+    d_tier+refresh                        5 /   2 /  0; requests    4,     21.0 K |    3 /   3 /  0; requests    4,     20.9 K |    5 /   3 /  0; requests    4,     24.7 K
+    d_tier+refresh_300s                   5 /   2 /  0; requests    4,     28.7 K |    3 /   3 /  0; requests    4,     28.6 K |    5 /   3 /  0; requests    4,     32.4 K
+    d_tier+touch_on_read                  3 /   2 /  0; requests    3,     13.1 K |    3 /   2 /  0; requests    3,     13.0 K |    2 /   3 /  0; requests    3,     16.8 K
+    d_tier_index+refresh                  4 /   2 /  0; requests    3,     12.0 K |    2 /   3 /  0; requests    3,     11.8 K |    5 /   2 /  0; requests    3,     12.1 K
+    d_tier_index+refresh+hit+recheck      2 /   2 /  0; requests    2,      4.1 K |    2 /   2 /  0; requests    2,      4.0 K |    2 /   2 /  0; requests    2,      4.2 K
+    d_tier_shared+refresh+hit+recheck     2 /   2 /  0; requests    2,      4.1 K |    2 /   2 /  0; requests    2,      4.0 K |    2 /   2 /  0; requests    2,      4.2 K
+    e_oracle_next_use                     0 /   0 /  0; requests    0,      0.0 K |    0 /   0 /  0; requests    0,      0.0 K |    0 /   0 /  2; requests    0,      0.0 K
+  volume 12.5 M, 90/80
+    a_oldest_written                    246 /  41 / 12; requests  183,   3289.2 K |  248 /  40 / 13; requests  192,   3627.8 K |  186 /  33 / 19; requests  188,   3545.3 K
+    b_end_chain                         209 / 184 / 14; requests  257,   4153.3 K |  206 / 168 / 16; requests  259,   4169.6 K |  163 / 157 / 14; requests  262,   4428.1 K
+    b_end_own                           172 / 164 / 12; requests  226,   3092.2 K |  168 / 156 / 13; requests  229,   3147.3 K |  133 / 141 / 12; requests  231,   3374.2 K
+    b_end_index                         101 / 127 /  4; requests  173,   1459.9 K |  114 / 120 /  4; requests  178,   1577.5 K |   96 / 113 /  5; requests  174,   1617.1 K
+    b_end_tail                           32 /  16 /  5; requests   36,    563.6 K |   37 /  21 /  3; requests   36,    644.4 K |   23 /  15 /  4; requests   33,    531.5 K
+    touch_on_read                        64 /  24 /  0; requests   70,    451.6 K |   69 /  23 /  0; requests   70,    427.5 K |   58 /  25 /  0; requests   69,    379.8 K
+    c_refresh                            59 /  24 /  0; requests   65,    308.6 K |   58 /  22 /  0; requests   64,    314.2 K |   51 /  26 /  3; requests   68,    313.3 K
+    c_refresh_60s                        59 /  27 /  0; requests   69,    322.2 K |   57 /  23 /  0; requests   64,    306.4 K |   54 /  26 /  2; requests   68,    326.1 K
+    c_refresh_300s                       60 /  23 /  0; requests   66,    369.9 K |   58 /  21 /  1; requests   66,    369.2 K |   52 /  26 /  4; requests   70,    368.6 K
+    c_refresh_headfirst                  59 /  24 /  0; requests   65,    308.6 K |   58 /  22 /  0; requests   64,    314.2 K |   51 /  26 /  3; requests   68,    313.3 K
+    d_chain+refresh                     110 / 111 /  1; requests  168,   1496.3 K |  102 / 114 /  7; requests  172,   1504.6 K |  104 /  87 /  3; requests  164,   1489.0 K
+    d_index+refresh                      79 /  96 /  1; requests  144,    758.0 K |   84 /  91 /  2; requests  148,    834.1 K |   88 /  77 /  1; requests  138,    724.4 K
+    d_tail+refresh                       11 /  10 /  1; requests   15,    109.7 K |    7 /  14 /  0; requests   15,    114.9 K |   12 /  10 /  0; requests   15,    105.2 K
+    d_tier+refresh                       11 /  10 /  1; requests   15,    109.7 K |    6 /  14 /  0; requests   14,    103.5 K |   12 /  11 /  0; requests   16,    111.0 K
+    d_tier+refresh_300s                  11 /  10 /  1; requests   15,    109.7 K |    6 /  14 /  0; requests   14,    104.0 K |   12 /  11 /  0; requests   16,    119.1 K
+    d_tier+touch_on_read                 11 /  10 /  1; requests   15,     94.3 K |    6 /  14 /  0; requests   14,     87.9 K |    8 /  11 /  0; requests   13,     84.2 K
+    d_tier_index+refresh                 10 /   8 /  0; requests   12,     82.8 K |    4 /  13 /  0; requests   12,     82.4 K |   12 /   9 /  0; requests   14,     96.9 K
+    d_tier_index+refresh+hit+recheck     10 /   8 /  0; requests   12,     75.1 K |    4 /  13 /  0; requests   12,     74.6 K |    9 /  10 /  0; requests   12,     75.1 K
+    d_tier_shared+refresh+hit+recheck    10 /   8 /  0; requests   12,     75.1 K |    4 /  13 /  0; requests   12,     74.6 K |    9 /  10 /  0; requests   12,     75.1 K
+    e_oracle_next_use                     0 /   0 /  0; requests    0,      0.0 K |    0 /   0 /  0; requests    0,      0.0 K |    1 /   0 /  3; requests    0,      0.0 K
+  volume 6.2 M, 90/80
+    a_oldest_written                    717 /  82 / 24; requests  490,  10713.1 K |  693 /  77 / 34; requests  474,  10222.7 K |  487 /  72 / 66; requests  497,  10972.5 K
+    b_end_chain                         381 / 100 / 18; requests  332,   5493.1 K |  382 /  91 / 17; requests  328,   5296.4 K |  308 /  89 / 28; requests  334,   5489.9 K
+    b_end_own                           335 /  93 / 17; requests  304,   4463.2 K |  320 /  86 / 15; requests  296,   4189.9 K |  274 /  85 / 28; requests  305,   4601.2 K
+    b_end_index                         244 / 101 / 12; requests  256,   3005.7 K |  250 /  86 / 11; requests  248,   2895.2 K |  216 /  73 / 13; requests  237,   2710.3 K
+    b_end_tail                          392 /  69 / 21; requests  296,   6035.1 K |  416 /  63 / 28; requests  305,   6274.9 K |  257 /  57 / 44; requests  293,   5876.2 K
+    touch_on_read                       455 /  79 /  4; requests  325,   5739.1 K |  470 /  75 /  0; requests  324,   5600.9 K |  276 /  66 /  1; requests  298,   4953.5 K
+    c_refresh                           340 /  87 /  4; requests  265,   3799.7 K |  343 /  87 /  7; requests  271,   3915.5 K |  212 /  73 / 10; requests  264,   3846.6 K
+    c_refresh_60s                       343 /  90 /  4; requests  269,   3751.2 K |  337 /  89 /  6; requests  265,   3771.1 K |  212 /  74 / 10; requests  264,   3855.1 K
+    c_refresh_300s                      324 /  92 /  6; requests  254,   3566.4 K |  336 /  93 /  2; requests  260,   3866.1 K |  198 /  77 / 12; requests  257,   3610.7 K
+    c_refresh_headfirst                 342 /  86 /  4; requests  266,   3824.0 K |  343 /  87 /  7; requests  271,   3924.5 K |  213 /  72 /  9; requests  264,   3846.6 K
+    d_chain+refresh                     240 /  79 /  4; requests  238,   2468.5 K |  252 /  71 /  2; requests  235,   2580.3 K |  215 /  62 / 15; requests  245,   2984.4 K
+    d_index+refresh                     163 /  74 /  1; requests  191,   1022.7 K |  169 /  62 /  1; requests  187,   1051.1 K |  153 /  63 /  4; requests  181,   1007.6 K
+    d_tail+refresh                      181 /  61 /  4; requests  156,   1805.6 K |  176 /  63 /  4; requests  154,   1814.0 K |  119 /  52 / 12; requests  157,   1942.8 K
+    d_tier+refresh                      122 /  50 /  4; requests  129,    841.0 K |  117 /  53 /  8; requests  130,   1059.5 K |  104 /  45 /  6; requests  126,    886.6 K
+    d_tier+refresh_300s                 132 /  51 /  3; requests  134,    938.9 K |  125 /  51 /  2; requests  131,   1013.2 K |  109 /  51 /  3; requests  135,   1023.1 K
+    d_tier+touch_on_read                141 /  53 /  0; requests  140,   1074.3 K |  140 /  51 /  0; requests  137,   1197.8 K |  119 /  50 /  1; requests  138,   1115.1 K
+    d_tier_index+refresh                119 /  42 /  0; requests  124,    580.6 K |  111 /  39 /  1; requests  118,    533.6 K |  110 /  34 /  0; requests  116,    523.8 K
+    d_tier_index+refresh+hit+recheck    118 /  41 /  0; requests  122,    547.4 K |  111 /  39 /  0; requests  117,    524.9 K |  108 /  36 /  0; requests  116,    505.2 K
+    d_tier_shared+refresh+hit+recheck   103 /  51 /  0; requests  115,    569.5 K |   97 /  50 /  0; requests  113,    583.6 K |   86 /  46 /  0; requests  107,    520.6 K
+    e_oracle_next_use                     0 /   0 /  0; requests    0,      0.0 K |    0 /  17 /  0; requests    0,      0.0 K |    0 /   9 /  7; requests    2,      3.9 K
+
+=== file touches the refresh needs (pages a second; two files a page), minutes 90-110 mean and the peak 10 s
+   ec_full    c_refresh         :   952.1 pages/s =  1904.1 files/s late; minutes 30-110   977.9 pages/s; peak 10 s  1849.8 pages/s
+   ec_full    c_refresh_60s     :   666.9 pages/s =  1333.7 files/s late; minutes 30-110   543.7 pages/s; peak 10 s  1141.7 pages/s
+   ec_full    c_refresh_300s    :   215.7 pages/s =   431.3 files/s late; minutes 30-110   187.8 pages/s; peak 10 s   814.6 pages/s
+   ec_full    touch_on_read     :   283.3 pages/s =   566.5 files/s late; minutes 30-110   178.6 pages/s; peak 10 s   669.3 pages/s
+   ec_full    c_refresh+hit     :  1235.4 pages/s =  2470.7 files/s late; minutes 30-110  1156.6 pages/s; peak 10 s  2029.5 pages/s
+   jit_exact  c_refresh         :   977.3 pages/s =  1954.7 files/s late; minutes 30-110   980.4 pages/s; peak 10 s  1907.5 pages/s
+   jit_exact  c_refresh_60s     :   666.4 pages/s =  1332.9 files/s late; minutes 30-110   541.9 pages/s; peak 10 s  1155.0 pages/s
+   jit_exact  c_refresh_300s    :   216.0 pages/s =   431.9 files/s late; minutes 30-110   187.4 pages/s; peak 10 s   949.2 pages/s
+   jit_exact  touch_on_read     :   284.2 pages/s =   568.5 files/s late; minutes 30-110   150.6 pages/s; peak 10 s   658.5 pages/s
+   jit_exact  c_refresh+hit     :  1261.6 pages/s =  2523.2 files/s late; minutes 30-110  1130.9 pages/s; peak 10 s  2288.9 pages/s
+   jit_p50    c_refresh         :   952.6 pages/s =  1905.2 files/s late; minutes 30-110   981.0 pages/s; peak 10 s  2045.2 pages/s
+   jit_p50    c_refresh_60s     :   624.4 pages/s =  1248.9 files/s late; minutes 30-110   527.7 pages/s; peak 10 s   955.4 pages/s
+   jit_p50    c_refresh_300s    :   217.3 pages/s =   434.6 files/s late; minutes 30-110   189.3 pages/s; peak 10 s   670.8 pages/s
+   jit_p50    touch_on_read     :   281.6 pages/s =   563.2 files/s late; minutes 30-110   233.9 pages/s; peak 10 s   894.8 pages/s
+   jit_p50    c_refresh+hit     :  1234.2 pages/s =  2468.4 files/s late; minutes 30-110  1214.9 pages/s; peak 10 s  2394.6 pages/s

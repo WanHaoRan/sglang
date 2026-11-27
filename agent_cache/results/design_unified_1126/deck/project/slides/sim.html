@@ -1,0 +1,22 @@
+<section id="sim" class="foot">
+<div class="head">
+<p class="eyebrow">The checks · on a simulator</p>
+<h2 class="title">A simulator sizes each rule before the GPU does</h2>
+</div>
+<table class="t">
+<tr><th style="width:44%">Rule switched on, against the current design</th><th style="width:14%">128 users, 160 GB</th><th style="width:14%">cleaner from minute 50</th><th style="width:14%">112 GB host pool</th><th style="width:14%">64 users, 88 GB</th></tr>
+<tr><td>Copy from host memory at no GPU time (the hold’s upper bound)</td><td><b>−2.61</b></td><td><b>−2.38</b></td><td><b>−1.50</b></td><td>−0.07</td></tr>
+<tr><td>SSD keeps pages by index (the cleaner’s order)</td><td><b>−0.25</b></td><td><b>−0.94</b></td><td>−0.14</td><td>0.00</td></tr>
+<tr><td>Read time counts the SSD’s line, without the stall weight</td><td>+0.26</td><td>+0.33</td><td>+1.02</td><td>−0.01</td></tr>
+<tr><td>Read or recompute by price</td><td>+0.22</td><td>+0.16</td><td>+0.40</td><td>+0.10</td></tr>
+<tr><td>Host eviction by the full index, not one horizon</td><td>+0.13</td><td>+0.06</td><td>+0.33</td><td>+0.03</td></tr>
+<tr><td><b>The cache rules that are built</b> (Fetch, Price, Retain on the SSD)</td><td><b>−0.22</b></td><td><b>−0.93</b></td><td><b>−0.50</b></td><td>−0.14</td></tr>
+<tr><td><b>The same with the copy at no GPU time</b></td><td><b>−2.84</b></td><td><b>−3.52</b></td><td><b>−3.04</b></td><td>−0.18</td></tr>
+</table>
+<div class="row">
+<div class="card-s in1" style="flex:1"><p class="ink-b">Calibrated, then refereed</p><p class="small">Trusted for the sign of effects of half a second or more.</p></div>
+<div class="card-hot in2" style="flex:1"><p class="ink-b">Two gains, both GPU time</p><p class="small">The copy beside decoding, and what the SSD keeps.</p></div>
+</div>
+<p class="footer">Seconds of mean TTFT, paired by request, mean over 5 sets of users; negative is faster; bold rows keep their sign in every set. A discrete-event model of the queue, the three tiers and the SSD (3 to 12 s of CPU per two-hour run). The first row is a bound: the simulator gives the copy’s GPU time back entirely.</p>
+<aside>Before spending GPU hours, each rule was switched on alone in a simulator. The simulator is a discrete-event model of the queue, the three tiers and the device, calibrated on the earlier runs: it reproduces the mean TTFT of five designs within 3 percent with no constant fitted per design, the loop of refused reads of an older engine, and the runs on another attention backend. A referee then re-derived every measured anchor, found and patched seven small defects, and stated what the simulator can carry: the sign and rough size of effects of half a second or more that hold for every set of users, and not differences of a few tenths. The table shows the change in mean TTFT against the current design in the four settings of the GPU comparison, averaged over five sets of users. The first row is the top-tier rule. If the copy from host memory cost no GPU time at all, the current design would be 2.4 to 2.6 seconds faster at 128 users and 1.5 seconds faster on the tight host pool. That is an upper bound for the hold, and the simulator charges only half of the blocked time the logs show, so the GPU run decides. Among the cache rules one pays where the model said it would: letting the SSD keep pages by the index, which is the cleaner’s order, gains a quarter of a second in the earlier setting and 0.9 seconds when the cleaner works for an hour. Three rules lose. Counting the SSD’s line in the read time without also weighing the stall makes the start rule read early at saturation, as the algebra warned. Recomputing instead of reading by price loses everywhere, even restricted to moments with no ready turn waiting: a recompute is GPU work at the price of a GPU-second, and it delays the turns that arrive while it runs. So it stays off. And evicting host memory by the full index instead of the index at one 30 second horizon changes nothing measurable, which says the engine’s current order is already close to it. The last two rows are the sets: the cache rules that are built are faster in all four settings, by 0.2, 0.9, 0.5 and 0.1 seconds, and with the copy given back the two gains add up to about three seconds. Rules that act through refused reads and pending writes are not in the table: the referee showed the simulator does not model that path well enough to say anything about them.</aside>
+</section>

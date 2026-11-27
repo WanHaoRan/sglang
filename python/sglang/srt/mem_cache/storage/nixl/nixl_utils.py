@@ -17,7 +17,13 @@ _SGLANG_NIXL_CONFIG_KEYS = {
     "l3_cleaner_high_watermark",
     "l3_cleaner_low_watermark",
     "skip_stored_writes",
+    "touch_interval_s",
+    "retire_ended_pages",
 }
+
+# Arbitrary; ns between the stamps of consecutive pages of one touch, so their order
+# survives a filesystem with coarser stamps (a 1,000-page chain spans one second).
+TOUCH_STEP_NS = 1_000_000
 
 
 class NixlBackendConfig:
@@ -57,6 +63,29 @@ class NixlBackendConfig:
                 raise ValueError("skip_stored_writes must be a boolean")
             return skip
         return envs.SGLANG_HICACHE_NIXL_SKIP_STORED_WRITES.get()
+
+    def get_touch_interval_s(self) -> float:
+        """Seconds between mtime refreshes of a stored page memory serves, 0 for none:
+        the ``touch_interval_s`` key, else SGLANG_HICACHE_NIXL_TOUCH_INTERVAL_S."""
+        if "touch_interval_s" in self.config:
+            interval = self.config["touch_interval_s"]
+            if isinstance(interval, bool) or not isinstance(interval, (int, float)):
+                raise ValueError("touch_interval_s must be a number")
+        else:
+            interval = envs.SGLANG_HICACHE_NIXL_TOUCH_INTERVAL_S.get()
+        if interval < 0:
+            raise ValueError("touch_interval_s must not be negative")
+        return float(interval)
+
+    def get_retire_ended_pages(self) -> bool:
+        """Whether an ended session's own pages get mtime zero: the top-level
+        ``retire_ended_pages`` key, else SGLANG_HICACHE_NIXL_RETIRE_ENDED_PAGES."""
+        if "retire_ended_pages" in self.config:
+            retire = self.config["retire_ended_pages"]
+            if not isinstance(retire, bool):
+                raise ValueError("retire_ended_pages must be a boolean")
+            return retire
+        return envs.SGLANG_HICACHE_NIXL_RETIRE_ENDED_PAGES.get()
 
     def get_l3_cleaner_config(self) -> dict:
         """Return typed NIXL FILE L3 cleaner options from top-level config."""
@@ -331,6 +360,25 @@ class NixlFileManager:
             return True
         except OSError:
             return False
+
+    def stamp_pages(
+        self, page_files: list[list[str]], *, newest_ns: Optional[int]
+    ) -> tuple[int, int]:
+        """Set the mtime of each page's files, first page newest; zero for all if
+        newest_ns is None. Returns (files stamped, files missing); creates nothing."""
+        stamped = missing = 0
+        for index, paths in enumerate(page_files):
+            # A chain passed head first loses its tail first: the L3 cleaner deletes the
+            # oldest mtime first and a lookup stops at the first missing page.
+            stamp = 0 if newest_ns is None else newest_ns - index * TOUCH_STEP_NS
+            for path in paths:
+                try:
+                    os.utime(path, ns=(stamp, stamp))
+                    stamped += 1
+                except OSError:
+                    # Never written on this rank, or already deleted by the cleaner.
+                    missing += 1
+        return stamped, missing
 
     def close_file(self, fd: int) -> bool:
         """Close a file descriptor."""

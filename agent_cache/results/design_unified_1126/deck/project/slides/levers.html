@@ -1,0 +1,22 @@
+<section id="levers" class="foot">
+<div class="head">
+<p class="eyebrow">The checks · on the logs of earlier runs</p>
+<h2 class="title">Every lever, sized on the logs before building it</h2>
+</div>
+<table class="t">
+<tr><th style="width:42%">Lever</th><th style="width:12%">Action</th><th style="width:46%">At stake in the two-hour run</th></tr>
+<tr><td>The prefill pass waits on the copy from host memory</td><td>Fetch</td><td><b>2.8 to 3.2 s</b> of mean TTFT, inferred: 8–12 % of GPU time</td></tr>
+<tr><td>The cleaner deletes live sessions’ pages</td><td>Retain</td><td><b>0.3 s</b> of mean TTFT; 1.3 to 1.7 s in the last 20 minutes</td></tr>
+<tr><td>Live sessions marked as over (410 of 981)</td><td>Retain</td><td>first out of memory for 2.3 s; the next turn has no plan</td></tr>
+<tr><td>Queued turns lose history they had</td><td>Preempt</td><td>111–171 turns per half hour; their reads land late</td></tr>
+<tr><td>Lookups that find nothing (63–75 %)</td><td>Fetch</td><td>0.02 s; 19–28 ms per turn at light load</td></tr>
+<tr><td>Landing quantile; read or recompute at an idle GPU</td><td>Fetch</td><td>at most 0.013 s; 0.2–1.4 % of returning turns</td></tr>
+<tr><td>Finished sessions’ writes; write order; holding reads</td><td>Retain</td><td>4.7 % of writes; no TTFT at this setting</td></tr>
+</table>
+<div class="row">
+<div class="card-hot in1" style="flex:1"><p class="ink-b">Two levers are above the noise at this setting.</p><p class="small">Both save GPU time. The rest is a few hundredths of a second, below the spread between two runs.</p></div>
+<div class="card-s in2" style="flex:1"><p class="ink-b">So the comparison adds settings.</p><p class="small">The cleaner at work for an hour; a tight host pool; light load.</p></div>
+</div>
+<p class="footer">Campaign 34, the current design, 128 users, 160 GB: replays of its server and client logs on CPU. At stake = what removing the effect entirely would be worth.</p>
+<aside>Before building anything, every candidate change was sized on the logs of the earlier two-hour run, by replaying the server and client records on CPU. The table lists them with what removing each effect entirely would be worth. The first row was not in the first draft; a critic who went through the engine looking for what the design left out found it. A prefill pass waits on the copy of the turn’s history from host memory to the GPU, 40 to 53 milliseconds per admitted request, 8 to 12 percent of GPU time at saturation. Through the identity that is 2.8 to 3.2 seconds of mean TTFT, inferred, not yet measured. The cleaner deleting live sessions’ pages is next: a third of a second of mean TTFT over the run, and 1.3 to 1.7 seconds in its last twenty minutes. Then two defects in how sessions are ranked. Of 981 sessions the engine marked as over, 410 were not: they sent their next turn a median of 2.3 seconds later, and in between their history was first out of memory and the next turn had no plan. And late in the run, 111 to 171 queued turns per half hour lost history they had when they arrived, so their reads landed late. Lookups that find nothing are 63 to 75 percent of all SSD lookups; they cost two hundredths of a second in recompute, and at light load 19 to 28 milliseconds on the turn itself. The remaining rows are small or zero here: a landing quantile in place of the fixed two seconds moves at most 0.013 seconds; choosing between read and recompute at an idle GPU touches about one percent of returning turns; and not writing finished sessions, write order and holding reads by free room have nothing to act on at this setting. So two levers are above the noise, and both save GPU time, which is what the identity said a policy must do to move the mean. It is also why the comparison adds settings: one where the cleaner works for an hour, one with a tight host pool, and one at light load.</aside>
+</section>

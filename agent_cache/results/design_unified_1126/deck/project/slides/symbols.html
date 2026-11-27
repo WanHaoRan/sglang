@@ -1,0 +1,30 @@
+<section id="symbols" class="alt foot">
+<div class="head">
+<p class="eyebrow">Reference · symbols</p>
+<h2 class="title">Every symbol in one place</h2>
+</div>
+<div class="row-wide">
+<table class="t" style="width:800px">
+<tr><th style="width:26%">Symbol</th><th style="width:74%">Meaning</th></tr>
+<tr><td><i>G</i>, <i>R</i>, <i>a</i></td><td>gap; time left until the return; seconds idle so far</td></tr>
+<tr><td><i>A</i>, <i>W</i>, <i>D</i>, <i>T</i></td><td>arrival; queue wait; <i>D</i> = <i>T</i> = <i>A</i> + <i>W</i>, the next use on the GPU</td></tr>
+<tr><td><i>Φ</i>, <i>F</i>(<i>x</i> | <i>a</i>), <i>h</i>(<i>a</i>)</td><td>the hint’s gap distribution; chance of return within <i>x</i>; return rate</td></tr>
+<tr><td><i>τ</i>(<i>x</i> | <i>a</i>), <i>τ</i>*</td><td>expected seconds held if kept <i>x</i> more; the least per return</td></tr>
+<tr><td><i>r</i>, <i>V</i>, <i>x</i>, <i>ℓ</i></td><td>read time; wait in the SSD’s line; (<i>r</i> − <i>W</i>)⁺; landing time</td></tr>
+<tr><td><i>S</i>, <i>U</i>, <i>Δ</i>, <i>L</i></td><td>stall; tokens lost; new tokens; tokens of the prefix</td></tr>
+<tr><td><i>q</i></td><td>landing quantile, <i>λL</i> / (<i>c</i> + <i>λL</i>)</td></tr>
+</table>
+<table class="t" style="width:800px">
+<tr><th style="width:26%">Symbol</th><th style="width:74%">Meaning</th></tr>
+<tr><td><i>μ</i></td><td>price of a GPU-second, in seconds of TTFT summed over turns</td></tr>
+<tr><td><i>c</i></td><td>weight of a second of one turn’s stall, between 0 and 1</td></tr>
+<tr><td><i>λ</i>, <i>κ</i></td><td>price of a host token-second; of a second of SSD time</td></tr>
+<tr><td><i>K</i>₀, <i>K</i>₁</td><td>cost of restoring a prefix by a read; by recompute</td></tr>
+<tr><td><i>ν</i></td><td>holding index: keep a copy while <i>ν</i> &gt; <i>λ</i></td></tr>
+<tr><td><i>γ</i>, <i>β</i></td><td>GPU seconds per token; SSD tokens per second</td></tr>
+<tr><td><i>N</i>, <i>B</i>, <i>X</i>, <i>Z</i>, <i>g</i></td><td>users; turns running; requests per second; mean pause; GPU-seconds per request</td></tr>
+</table>
+</div>
+<p class="footer">Token: one token of context, 98 KB of KV. Page: 64 tokens. TTFT: time to first token. Turn: one request of a session. Gap: the pause before a session’s next request.</p>
+<aside>A reference slide with every symbol used in the deck. On the left, the quantities of one session: the gap G, the time left until the return R and the idle time so far a; the arrival A, the queue wait W, and D or T, their sum, the moment the KV is next needed on the GPU; the hint’s gap distribution phi, with F, the chance of return within x, and h, the return rate; tau, the expected seconds a copy is held if kept x more, and tau star, the least holding time per return; the read time r, the wait in the SSD’s line V, the part of the read the queue does not hide x, and the landing time l; the stall S, the lost tokens U, the new tokens delta and the tokens of the prefix L; and the landing quantile q. On the right, the prices and system quantities: mu for a GPU-second; c for a second of stall; lambda and kappa for a host token-second and a second of SSD time; K zero and K one for restoring by a read and by recompute; the holding index nu; gamma and beta, the GPU’s seconds per token and the SSD’s tokens per second; and N, B, X, Z and g, the users, the turns running, the throughput, the mean pause and the GPU-seconds per request.</aside>
+</section>

@@ -66,6 +66,8 @@ class SchedulerInvariantChecker:
     # The chunked-prefill request parked between chunks is in neither batch;
     # its uncached tokens must still be counted.
     get_chunked_req: Callable = field(default=lambda: None)
+    # A prefill batch held for its host-to-GPU load owns its extend pages already.
+    get_held_batch: Callable = field(default=lambda: None)
     count_req_pool_leak_warnings: int = 0
     count_memory_leak_warnings: int = 0
     recent_busy_msgs: Deque[str] = field(
@@ -305,6 +307,9 @@ class SchedulerInvariantChecker:
         chunked_req = self.get_chunked_req()
         if chunked_req is not None:
             reqs.append(chunked_req)
+        held_batch = self.get_held_batch()
+        if held_batch is not None:
+            reqs.extend(held_batch.reqs)
         for req in reqs:
             if id(req) in counted:
                 continue

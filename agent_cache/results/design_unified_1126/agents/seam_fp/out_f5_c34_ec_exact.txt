@@ -1,0 +1,14 @@
+== c34_ec_exact (to minute 110): 7713 SSD lookups: found nothing 5734 (74.3 %), under 256 tokens 43, a hit 1936; tokens asked by empty lookups 18.94 M
+   gate decisions: {'covered': 5092, 'read': 5649, 'reread': 1451, 'capped': 4}
+   requests 15643, planned (returning, hinted) 15008
+   requests with at least one empty lookup: 5068 (32.4 %); planned requests that used all 3 lookups: 604, of them every lookup empty: 116
+   gate answered capped before admission: 4 requests; admitted with >= 256 tokens of history missing: 1 (0.023 M tokens of the 1.103 M computed again by all requests = 2.1 %)
+     of these 1: empty lookups median 3, lookups with a hit median 0, minute median 102 [p10 102, p90 102], history lost median 22752
+     refused with no lookup that hit (all of the allowance went on empty lookups): 1 (0.023 M tokens)
+     minutes   0-30 : computed again 0.000 M tokens (0 requests), by cap-refused 0.000 M (0 requests)
+     minutes  30-60 : computed again 0.013 M tokens (7 requests), by cap-refused 0.000 M (0 requests)
+     minutes  60-90 : computed again 0.368 M tokens (17 requests), by cap-refused 0.000 M (0 requests)
+     minutes  90-110: computed again 0.722 M tokens (44 requests), by cap-refused 0.023 M (1 requests)
+   at an empty queue, planned non-readers: gate covered (no lookup) n 1367 queue wait median 1.1 ms [p90 3.8]; one or more empty lookups n 1022 median 17.7 ms [p90 25.4]
+   planned non-readers whose arrival lookup found nothing: 3925 (26.2 % of planned)
+   unplanned requests (first turns, no plan): 635; with only empty lookups 395; with a hit 213

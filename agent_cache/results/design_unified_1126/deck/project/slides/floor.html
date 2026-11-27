@@ -1,0 +1,28 @@
+<section id="floor" class="foot">
+<div class="head">
+<p class="eyebrow">What is proved · the floor</p>
+<h2 class="title">A floor under every cache policy, and how close we are</h2>
+</div>
+<div class="row-wide">
+<div class="grow">
+<div class="formula">
+<p class="math-s">mean TTFT ≥ (<i>N</i> − <i>B</i>) · <i>g</i>₀ − <i>Z</i>′</p>
+<p class="small">With the users in a closed loop and the GPU never idle, mean TTFT is (<i>N</i> − <i>B</i>) · <i>g</i> − <i>Z</i>′. A cache policy changes only <i>g</i>, the GPU-seconds per request, and cannot push it below <i>g</i>₀, its value when no history is recomputed.</p>
+</div>
+<div class="card-s">
+<p class="tag">The current design’s distance from the floor, seconds of mean TTFT</p>
+<div class="row" style="align-items:center"><p class="ink" style="width:330px">SSD cleaner</p><div style="width:330px;height:28px;background:#A94E12;border-radius:4px"></div><p class="ink-b">0.33</p></div>
+<div class="row" style="align-items:center"><p class="ink" style="width:330px">Under one page a request</p><div style="width:98px;height:28px;background:#9AA1AD;border-radius:4px"></div><p class="ink-b">0.10</p></div>
+<div class="row" style="align-items:center"><p class="ink" style="width:330px">Lookup allowance spent</p><div style="width:16px;height:28px;background:#2A62A8;border-radius:4px"></div><p class="ink-b">0.02</p></div>
+<div class="row" style="align-items:center"><p class="ink" style="width:330px">Evicted after its read landed</p><div style="width:9px;height:28px;background:#2A62A8;border-radius:4px"></div><p class="ink-b">0.01</p></div>
+</div>
+</div>
+<div class="col-s" style="width:560px">
+<div class="card-hot in1"><p class="big">4 %</p><p class="small">above the floor: 0.45 s of a 10.96 s mean. With exact hints, 0.40 s.</p></div>
+<div class="card-s in2"><p class="ink-b">Two thirds is one cause</p><p class="small">The cleaner deletes live sessions’ oldest pages, their heads. The grey bar no policy can move: KV is stored in whole 64-token pages.</p></div>
+<div class="card-s in3"><p class="ink-b">What moves the floor itself</p><p class="small">GPU time per request with nothing recomputed: the copy wait is 8 to 12 % of it.</p></div>
+</div>
+</div>
+<p class="footer">Campaign 34, the current design: 15,562 requests, 1.67M tokens of history recomputed = 72 GPU-seconds. <i>N</i>: users (128) · <i>B</i>: turns running past their first token (19) · <i>Z</i>′: mean pause · <i>g</i>₀: GPU-seconds per request with no lost history.</p>
+<aside>The identity from the model section gives more than a price. With the users in a closed loop and the GPU never idle, mean TTFT is N minus B times g, minus the mean pause. A cache policy cannot change N, B or the pause. It changes only g, the GPU-seconds per request, and it cannot push g below its value when no history is recomputed at all. That value is a floor under every cache policy on this GPU and these users. So we can ask how far the current design is from optimal, without knowing the optimal policy. In the two-hour run it still recomputed 1.67 million tokens of history, 72 GPU-seconds, which at the measured price is 0.45 seconds of a 10.96 second mean: the current design is four percent above the floor. With exact hints the distance is 0.40. The bars split the 0.45 seconds by cause. The SSD cleaner accounts for 0.33: it deletes live sessions’ oldest pages, which are the heads of their chains. A tenth of a second is less than one page per request, because KV is stored in whole 64-token pages; no policy can move that. The lookup allowance and evictions after a read had landed are two and one hundredths. This also explains the tie between our designs at this setting: they differ in when reads land, which the mean does not see, and hardly at all in what they recompute. The gains left for a cache policy are the cleaner here, and other regimes elsewhere. One more thing moves the floor itself: it is built on the GPU time a request takes when nothing is recomputed, and 8 to 12 percent of that time is a prefill pass waiting on the copy from host memory, which the fourth Fetch slide removes.</aside>
+</section>

@@ -1,0 +1,22 @@
+<section id="moves" class="foot">
+<div class="head">
+<p class="eyebrow">The setting · what a policy decides</p>
+<h2 class="title">Five movements of KV share three resources</h2>
+<p class="body">A cache policy decides when each read starts and in what order the SSD serves them, which copies each tier keeps, what is written and when, and who gives way when a resource is full.</p>
+</div>
+<table class="t">
+<tr><th style="width:13%">Movement</th><th style="width:15%">From → to</th><th style="width:34%">Uses</th><th style="width:38%">Needed by</th></tr>
+<tr><td>Load</td><td>host → GPU</td><td>under 0.1 s of the turn’s own time</td><td>the moment the GPU takes the turn</td></tr>
+<tr><td>Backup</td><td>GPU → host</td><td>host memory</td><td>the moment the GPU gives the page up</td></tr>
+<tr><td>Write</td><td>host → SSD</td><td>SSD time; host memory until done</td><td>the moment host memory gives the page up</td></tr>
+<tr><td>Read</td><td>SSD → host</td><td>SSD time; host memory until use</td><td>the moment the GPU would take the turn</td></tr>
+<tr><td>Recompute</td><td>tokens → GPU</td><td>GPU time, instead of a read</td><td>the same moment, in place of a read</td></tr>
+</table>
+<div class="row">
+<div class="card-s in1" style="flex:1"><p class="ink-b">GPU time</p><p class="small">Work for one turn delays every turn behind it.</p></div>
+<div class="card-s in2" style="flex:1"><p class="ink-b">Host memory</p><p class="small">Room kept for one session is room another cannot use.</p></div>
+<div class="card-s in3" style="flex:1"><p class="ink-b">SSD time</p><p class="small">One device, one line: a read and a write cannot both go first.</p></div>
+</div>
+<p class="footer">Today a different mechanism makes each decision, each with its own constants. The design below makes all of them with four actions and one set of prices.</p>
+<aside>Five kinds of movement keep the tiers in step. A load copies KV from host memory to the GPU when a turn is taken; it costs under a tenth of a second of that turn’s own time. A backup copies new KV from the GPU to host memory. A write copies it from host memory to the SSD. A read brings it back from the SSD into host memory. And a recompute rebuilds KV from the tokens on the GPU when no copy is at hand. Each movement has a moment by which it is needed: a load and a read by the moment the GPU would take the turn, a backup by the moment the GPU gives the page up, and a write by the moment host memory gives the page up. And each uses shared resources. GPU time is one queue of turns, so work added for one turn delays every turn behind it. Host memory is a fixed number of tokens, so room kept for one session is room that another cannot use. SSD time is one device with one line, so a read and a write cannot both go first. A cache policy is the set of decisions about these movements: when each read starts and in which order the SSD serves them, which copies each tier keeps, what is written and when, and who gives way when a resource is full. In the engine today a different mechanism makes each of these decisions, each with its own constants. The design in this deck makes all of them with four actions and one set of prices.</aside>
+</section>

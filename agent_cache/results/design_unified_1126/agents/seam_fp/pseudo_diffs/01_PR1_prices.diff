@@ -1,0 +1,268 @@
+Pseudo-diff PR1 (seam_fp, nothing applied): mu, c, kappa, lambda measured and logged; the fitted prefill cost in
+place of RECOMPUTE_S_PER_TOKEN. Line numbers at HEAD. Everything below runs on the scheduler thread (tick(), the
+cache's drain and dispatch, evict_host, cache_finished_req); no lock is added. The prefetcher refuses TP/PP > 1
+(next_turn_prefetch.py:468-469), so no rank consensus is involved.
+
+=== new file python/sglang/srt/mem_cache/next_turn_prices.py  (pure policy: no clock, no cache) ===
+The prototype agents/seam_fp/proto/next_turn_prices.py, 22 CPU tests passing: DecayedMean, PriceBoard
+(observe_admissions / observe_queue / observe_device / observe_eviction; c, mu, kappa, lam, snapshot),
+landing_quantile, AdmissionErrorTracker, PrefillCostModel, recompute_wins.
+
+  c(t)      = decayed share (half-life 30 s) of admissions after which no ready turn was left waiting;
+              prior 1 (one pseudo-sample), so an idle engine reads 1.
+  mu(t)     = 1 + time-weighted decayed mean of ready turns waiting (ready = queued, no storage read of its own
+              under way for >= NTP_GPU_BOUND_S = 0.5 s).
+  kappa(t)  = c(t) x (parked reads past deadline - own load, "now" reads included) + lam(t) x pending write tokens.
+  lam(t)    = decayed mean of the per-pass marginal holding index among host eviction victims, 0 once the last
+              eviction is older than 30 s:  index = k x holding_rate(victim),
+              k = (c + kappa) x read seconds per token  [seconds of TTFT per token restored by a read],
+              holding_rate = sup_{h >= 0.5 s} F(h | idle) / E[min(R, h) | idle]  [per second].
+              Units: seconds of TTFT per token-second, the unit of --hicache-storage-next-turn-memory-price.
+
+--- python/sglang/srt/mem_cache/next_turn_policy.py
+@@ -41,4 +41,5 @@
+ # Seconds of GPU prefill to recompute one token of history. Measured: first-turn prefill of
+ # Qwen3-30B-A3B on an H200, 0.108-0.113 ms per token (agent_cache campaign 25); re-measure
+-# for another model or GPU.
++# for another model or GPU. Only the seed of PrefillCostModel once prices are measured: the cost is not a
++# constant (FA3: 25 us a token at 8K, 59 us at 64K; Triton: 60 us at 8K, 210 us at 48K).
+ RECOMPUTE_S_PER_TOKEN = 1.1e-4
+@@ class GapDistribution  (after quantile(), line 106)
++    def holding_rate(self, *, idle_s: float, min_horizon_s: float) -> float:
++        """sup over horizons h >= min_horizon_s of P(back within h | idle) / E[min(time left, h) | idle], per
++        second. On the survival function: over support() the sup jumps with the distance to the next point."""
++        (body: proto/next_turn_prices.py holding_rate; 49 survival() calls)
+
+--- python/sglang/srt/mem_cache/next_use_eviction.py
+@@ class NextUseStrategy  (after get_priority, line 172)
++    def holding_rate(self, node: TreeNode) -> Optional[float]:
++        """Per second, for the price of host room: 1 / seconds to the registered next use; 0 for an ended or
++        overdue session; None when unregistered or queued (no priced holder)."""
++        known, next_use = self.registry.lookup(node.id)
++        if not known or isinstance(next_use, Queued):
++            return None
++        if next_use is None:
++            return 0.0
++        left = next_use - self._clock()
++        return 0.0 if left < -self.overdue_grace_s else 1.0 / max(left, HOLDING_MIN_HORIZON_S)
+@@ class ReturnChanceStrategy  (after get_priority, line 271)
++    def holding_rate(self, node: TreeNode) -> Optional[float]:
++        known, forecast = self._session_registration(node)
++        if not known or isinstance(forecast, Queued):
++            return None
++        if forecast is None:
++            return 0.0
++        idle = max(0.0, self._clock() - forecast.idle_from)
++        if forecast.dist.is_point:
++            left = forecast.dist.median_s - idle
++            return 0.0 if left < -POINT_GRACE_S else 1.0 / max(left, HOLDING_MIN_HORIZON_S)
++        return forecast.dist.holding_rate(idle_s=idle, min_horizon_s=HOLDING_MIN_HORIZON_S)
++# Arbitrary: no copy is dropped and read back faster than about one read.
++HOLDING_MIN_HORIZON_S = 0.5
+
+--- python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py
+@@ __init__ (next to eviction_strategy, line 436)
++        # Told each host leaf host eviction takes, before it goes: (node, host tokens). None = nobody listens.
++        self.host_eviction_observer: Optional[Callable[[UnifiedTreeNode, int], None]] = None
+--- python/sglang/srt/mem_cache/unified_cache/components/full.py
+@@ -249,5 +249,8 @@ def drive_host_eviction
+         while tracker[ct] < num_tokens and heap:
+             _, x = heapq.heappop(heap)
+             if x not in self.tree_core.evictable_host_leaves:
+                 continue
++            observer = self.tree_core.host_eviction_observer
++            if observer is not None:
++                observer(x, len(x.component_data[ct].host_value))
+             self.tree_core._evict_host_leaf(x, tracker, device_frees, host_frees)
+
+--- python/sglang/srt/mem_cache/storage_read_scheduler.py
+@@ -104,2 +104,5 @@
+     def parked_handles(self) -> list[Hashable]:
+         return list(self._parked)
++
++    def parked_reads(self) -> list[ParkedRead]:
++        return list(self._parked.values())
+
+--- python/sglang/srt/mem_cache/next_turn_prefetch.py
+@@ __init__ (after line 399, tree_cache.census_staged_fn = ...)
++        self._prices_log_interval_s = envs.SGLANG_LOG_HICACHE_PRICES_INTERVAL.get()
++        self._measured_prices = mode == "on" and envs.SGLANG_HICACHE_NEXT_TURN_MEASURED_PRICES.get()
++        self._prices: Optional[PriceBoard] = (
++            PriceBoard() if self._prices_log_interval_s > 0 or self._measured_prices else None
++        )
++        self._next_prices_log = -math.inf
++        self._admission_error = AdmissionErrorTracker()
++        self._prefill_cost = PrefillCostModel(seed_a=RECOMPUTE_S_PER_TOKEN)
++        # rid -> the wait its queue position predicted when a turn with no plan was first seen queued.
++        self._pred_wait: dict[str, float] = {}
++        # rid -> when the turn's last storage read landed (perf_counter).
++        self._landed_at: dict[str, float] = {}
++        # (holding rate, tokens) of the host leaves evicted since the last tick.
++        self._evicted: list[tuple[float, int]] = []
++        self._ready_waiting = 0
++        if self._prices is not None:
++            tree_cache.tree_core.host_eviction_observer = self._on_host_evicted
++            tree_cache.prefetch_landed_fn = self.on_read_landed
+@@ -413,2  (today the landing hook is bound only under return_chance; the board needs readers' landing times)
+         if self._scores_return_chance:
+             tree_cache.prefetch_landed_fn = self.on_read_landed
+   (unchanged; the binding added above covers the other eviction policies when prices are measured)
+@@ on_turn_committed (after line 513, "return" of the unfinished case)
++        stats = req.time_stats
++        if (
++            self._prices is not None
++            and stats.prefill_finished_time > stats.forward_entry_time > 0
++            # Admitted with no queue: a prefill that shared its passes with others is not the GPU cost.
++            and stats.forward_entry_time - stats.wait_queue_entry_time < NTP_GPU_BOUND_S
++        ):
++            total = len(req.origin_input_ids)
++            self._prefill_cost.observe(
++                new_tokens=total - req.cached_tokens,
++                total_tokens=total,
++                seconds=stats.prefill_finished_time - stats.forward_entry_time,
++            )
+@@ tick (636-696)
+         queued = {req.rid: req for req in waiting_queue}
++        admitted = 0
+         for rid, req in self._queued.items():
+             if rid not in queued:
+-                self._on_departure(req, now=now)
++                admitted += self._on_departure(req, now=now)   # 1 for an admission, 0 for an abort
+         self._queued = queued
+         self._last_now = now
+         self._positions = {req.rid: position for position, req in enumerate(waiting_queue)}
+         if self._deadline_mode:
+             self._refresh_load_model()
++        self._ready_waiting = self._follow_ready(waiting_queue, now=now)
++        if self._prices is not None:
++            self._follow_prices(admitted=admitted, now=now)
+         # The hold times reads of turns with no plan, so it needs a fresh rate regardless.
+         if not self._plans and not self._hold_arrived:
+             return []
+ ...
+         for position, req in enumerate(waiting_queue):
+ ...
+             plan = self._plans.get(req.rid)
+             if plan is None:
++                if self._prices is not None and req.rid not in self._pred_wait:
++                    predicted = 0.0 if position == 0 else residual_wait(position=position, rate=rate)
++                    if predicted is not None:
++                        self._pred_wait[req.rid] = predicted
+                 continue
+@@ _queue_ahead (698-712): the ready bookkeeping moves out so every read timing has it
+-        cache = self._tree_cache
+-        ready_since = {}
+-        for req in waiting_queue:
+-            if not cache.has_ongoing_prefetch(req.cache_request_handle):
+-                ready_since[req.rid] = self._ready_since.get(req.rid, now)
+-        self._ready_since = ready_since
+-        gpu_bound = any(now - since >= NTP_GPU_BOUND_S for since in ready_since.values())
+-        return len(waiting_queue) if gpu_bound else 0
++        return len(waiting_queue) if self._ready_waiting > 0 else 0
++
++    def _follow_ready(self, waiting_queue: list[Req], *, now: float) -> int:
++        """Queued turns that have had no read of their own under way for NTP_GPU_BOUND_S: waiting for the GPU."""
++        if not (self._expected_cost or self._prices is not None):
++            return 0
++        cache = self._tree_cache
++        ready_since = {}
++        for req in waiting_queue:
++            if not cache.has_ongoing_prefetch(req.cache_request_handle):
++                ready_since[req.rid] = self._ready_since.get(req.rid, now)
++        self._ready_since = ready_since
++        return sum(now - since >= NTP_GPU_BOUND_S for since in ready_since.values())
++
++    def _follow_prices(self, *, admitted: int, now: float) -> None:
++        board = self._prices
++        board.observe_admissions(count=admitted, ready_left=self._ready_waiting > 0, now=now)
++        board.observe_queue(ready_waiting=self._ready_waiting, now=now)
++        cache = self._tree_cache
++        if self._deadline_mode:
++            late = 0
++            for read in cache.read_scheduler.parked_reads():
++                deadline = self.read_deadline(read.handle)
++                own = self._load.seconds(own_pages=read.pages, backlog_pages=0)
++                late += deadline is None or deadline - own <= now
++            board.observe_device(late_reads=late, pending_write_tokens=cache.pending_backup_tokens)
++        if self._evicted:
++            restore_s_per_token = (board.c(now) + board.kappa(now)) * self._load.read_s_per_page / self._page_size
++            board.observe_eviction(
++                marginal_index=restore_s_per_token * max(rate for rate, _ in self._evicted),
++                tokens=sum(tokens for _, tokens in self._evicted),
++                now=now,
++            )
++            self._evicted.clear()
++        if self._prices_log_interval_s > 0 and now >= self._next_prices_log:
++            self._next_prices_log = now + self._prices_log_interval_s
++            self._log_prices(now)
++
++    def _on_host_evicted(self, node, tokens: int) -> None:
++        """Inside host eviction, so it only records: the tick folds it into the price."""
++        strategy = self._tree_cache.tree_core.eviction_strategy
++        if isinstance(strategy, (NextUseStrategy, ReturnChanceStrategy)):
++            rate = strategy.holding_rate(node)
++            if rate is not None:
++                self._evicted.append((rate, tokens))
+@@ _on_departure (740-770): returns int; feeds the error tracker; two fields added at the END of ntp_admit
+         self._hold_logged.discard(req.rid)
+         plan = self._plans.pop(req.rid, None)
++        predicted = plan.pred_wait_ql if plan is not None else self._pred_wait.pop(req.rid, None)
++        landed = self._landed_at.pop(req.rid, None)
+         stats = req.time_stats
+         if stats.forward_entry_time <= 0:
+ ...
+-            return
++            return 0
+ ...
+         wait = stats.forward_entry_time - stats.wait_queue_entry_time
++        reader = req.storage_hit_length > 0 and landed is not None
++        if predicted is not None:
++            self._admission_error.observe(
++                predicted_wait_s=predicted,
++                wait_s=wait,
++                landed_after_arrival_s=landed - stats.wait_queue_entry_time if reader else None,
++            )
++        if plan is None:
++            return 1
+ ...
+             case=plan.due_case,
++            reader=int(reader),
++            land_ms=_ms(stats.forward_entry_time - landed if reader else None),
+         )
++        return 1
+@@ on_read_landed (1203-1212): also stamps the landing; adoption stays for return_chance only
++        # The last tick's clock: the landing is drained before this pass's tick, so at most one pass early.
++        self._landed_at[handle.rid] = self._last_now
+         plan = self._plans.get(handle.rid)
+-        if plan is None:
++        if plan is None or self._return_chance is None:
+             return
+@@ _follow_room (1345-1386): the harm charge takes the fitted cost and the measured mu when prices are measured
+-                self._price.charge(
+-                    lost_tokens * RECOMPUTE_S_PER_TOKEN * max(1, queue_ahead)
+-                )
++                if self._measured_prices:
++                    harm = self._prices.mu(now) * self._prefill_cost.seconds(
++                        new_tokens=lost_tokens, total_tokens=lost_tokens
++                    )
++                else:
++                    harm = lost_tokens * RECOMPUTE_S_PER_TOKEN * max(1, queue_ahead)
++                self._price.charge(harm)
++    def _memory_price(self, now: float) -> float:
++        """Host room's price for every priced decision: the frontier's when measured, else the knob's."""
++        return self._prices.lam(now) if self._measured_prices else self._price.price
+
+=== the log line (one every SGLANG_LOG_HICACHE_PRICES_INTERVAL seconds; _log_event keeps rid first) ===
+HICACHE_EVT prices rid=- c=0.931 mu=1.42 ready=0 queued=3 plans=97 kappa=0.02 late=0 parked=1 pend_w=0
+    lam=1.2e-07 evict_tok=38400 k_us=56.2 rec_a_us=15.2 rec_b_ns=0.72 rec_n=812 read_ms_page=3.52
+    err_n=412 err_q10_ms=-1300 err_q50_ms=0 err_q90_ms=2100 rd_lag_ms=400 q20k=0.05 margin_ms=2000
+  ready/queued/plans: turns waiting for the GPU, the waiting queue, plans held (pending + queued): with the
+      running count of the Decode batch lines these give the users in session, the closed-loop bound on mu.
+  k_us: restore seconds per token used for lam; rec_*: the prefill fit and its samples; err_*: the admission
+      error (non-readers, all bins pooled) and the readers' landing -> admission lag; q20k / margin_ms: the
+      landing quantile and hold margin a 20K-token read would get now (the F1 inputs, logged also when F1 is off).
+
+=== also logged, because nothing logs them today ===
+ReadSchedulerStats (storage_read_scheduler.py:41-49) counts window_holds, budget_holds, hold_skips and write_holds
+and is never written anywhere; the prices line appends their deltas (win_holds= budget_holds= held= write_holds=),
+which answers facts_fetch.md's open question (which limit kept reads parked for 30 s).

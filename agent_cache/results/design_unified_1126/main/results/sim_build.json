@@ -1,0 +1,316 @@
+{
+ "summary": "Built kvsim, a calibrated discrete-event simulator of the three-tier KV cache under the closed-loop FreeInference replay, with the five engine arms, a no-hint arm and a `unified` arm exposing every DESIGN.md section 9 switch (F1-F5, R1-R5, P1-P2, PR1), plus mirror on/off, FA3/Triton costs and fixes on/off. A 2-hour run takes 3 to 12 s of CPU and is deterministic per seed. Everything is under /home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/; nothing else was written, no git writes, CPU only at nice 19 with at most 4 processes.\n\nCalibration (constants fitted only to GPU and device measurements, none per arm, none changed between campaigns):\n- Campaign 34, seed 0 (the campaign's own users; the simulated client matches the recorded one on all 17,095 requests): mean TTFT of the five arms within 1 to 3 % (hicache 31.6 s against 31.9; hinted arms 10.6 to 11.1 s against 10.7 to 11.5), hicache 2.9 times the hinted arms in both, all 20 half-hour cells within 10 %, requests per minute within 1 % (4 % at saturation), tier shares within 3 %, history recomputed 0.40 to 0.61 % against 0.39 to 0.53 % (hicache 29.1 against 28.9 %), first cleaner pass 5,190 s against 5,252 to 5,301 s, staged reads 1,216/103/1 against 1,208/99/1, who waits (readers 27 to 34 % at 46 to 67 s) arm by arm, and the paired gaps (jit_p50 to ec_full -0.59 s against -0.62; hicache to ec_exact -26.6 s against -27.0).\n- Campaign 32 (fixes off): the loop of refused reads and rewrites appears with no constant changed (mean TTFT 31.8/15.1/13.5/13.6/13.6 s against 33.5/18.0/14.9/14.6/15.0; pending writes about 700 K), and never with the fixes on.\n- Campaign 28 (Triton costs taken from the records, nothing fitted): hicache 121.4 s against 115.7, hinted arms 49.6 to 50.2 s against 48.3 to 49.8.\n\nNot reproduced: ec_exact's 0.3 to 0.4 s lead (simulated about 0); zero refusals for jit_p50 with the fixes on (46 of 3,405 reads refused in seed 0); the write hold fires about twice as often and pending writes are about half; jit_p50's loop onset in campaign 32 comes at minute 81 against 42/67; the fixes gain 20 to 40 % less than measured for the hinted arms. Campaign 33 (TraceLab, a `lengths` trace) and campaign 26 (old trace format) were not attempted.\n\nThings to know:\n- The brief's \"read fixed lags about 0.9 s\" is the engine's own estimate; the logs give about 0.05 s. The simulator uses the measured lags for what happens and keeps 0.9 s inside the engine's estimator.\n- Absolute TTFT is good to about 10 %: a 2 % change in GPU speed moves ec_full from 10.6 s to 9.3 or 11.8 s. Differences between arms on the same seed move much less.\n- Observations for the designers, logged in CALIBRATION.md section 6, not evaluated: a lambda read off the eviction frontier feeds itself through K_read and diverges (capped at 1e-3); F4's rent term with the device line in r prefers recompute at saturation (13.3 s against 10.6 s); F3 makes the expected-cost rule stage 905 reads instead of 1; measured c is 0.00 and mu about 30 at saturation; mirror off costs 10 % of throughput with an inline copy at GPU eviction and gains 0.2 s with an asynchronous one.\n- Leftovers: `sim/runs/` and `sim/runs_final/` (426 MB) hold runs from earlier code versions; a safety check blocked my deletion, so they are still there and safe to delete. `calibration_runs/` is the current set.",
+ "files": [
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/kvsim.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/kvsim_policy.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/kvsim_trace.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/kvsim_compare.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/CALIBRATION.md",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/calibration_notes.md",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/calibration_table.md",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/calib_table.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/calib_measured.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/calib_structure.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/calib_gpu_fit.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/calib_read_lags.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/rerun_calibration.sh",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/measured_anchors.json",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/measured_structure.json",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/trace_cache_freeinference_16w_ctx65536.pkl",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/calibration_runs/calib",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/calibration_runs/noise",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/calibration_runs/triton",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/calibration_runs/sens",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/calibration_runs/notes",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/calibration_runs/logs"
+ ],
+ "calibration": [
+  {
+   "anchor": "Workload: the client's schedule for seed 0 against campaign 34 ec_full's client record (prompt, output, wait, key, tree per request; arrivals of the 729 users)",
+   "measured": "17,095 requests, 729 users",
+   "simulated": "0 mismatches on 17,095 requests, 0 on arrivals",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Hint table (gap_hints.OnlineGapTable, --hint-no-call): hints of the requests sent before 1,200 s",
+   "measured": "2,657 recorded hints",
+   "simulated": "1,999 identical (entry, sample count, p50, or no entry in both); 573 same entry with a sample count within 3; 85 differ (interleaving of concurrent sessions)",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 mean TTFT, hicache (requests sent before 6,600 s)",
+   "measured": "31.88 s",
+   "simulated": "31.58 s (-1 %); seeds 0-4: 28.1 +- 17.4 [7.5, 54.1]",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 mean TTFT, jit_p50",
+   "measured": "11.47 s",
+   "simulated": "11.11 s (-3 %); seeds 0-4: 11.5 +- 5.4 [4.7, 19.4]",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 mean TTFT, jit_exact",
+   "measured": "10.92 s",
+   "simulated": "10.58 s (-3 %); seeds 0-4: 11.2 +- 5.3",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 mean TTFT, ec_full",
+   "measured": "10.96 s",
+   "simulated": "10.62 s (-3 %); seeds 0-4: 11.2 +- 5.3",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 34 mean TTFT, ec_exact",
+   "measured": "10.66 s",
+   "simulated": "10.60 s (-1 %); seeds 0-4: 11.1 +- 5.3",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "hicache over the mean of the four hinted arms",
+   "measured": "2.90",
+   "simulated": "2.94 in seed 0; 2.34 +- 0.56 [1.60, 2.94] over seeds",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Hinted arms: slowest minus fastest mean TTFT",
+   "measured": "0.81 s",
+   "simulated": "0.53 s in seed 0; 0.32 +- 0.15 over seeds",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "TTFT by half hour of send time, ec_full (minutes 0-30 / 30-60 / 60-90 / 90-110)",
+   "measured": "0.41 / 6.18 / 16.36 / 27.97 s",
+   "simulated": "0.39 / 5.90 / 15.91 / 26.77 s; all 20 cells of the five arms within 10 %",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "TTFT by half hour, hicache",
+   "measured": "0.41 / 30.53 / 72.97 / 90.14 s",
+   "simulated": "0.40 / 30.83 / 71.30 / 88.25 s",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Requests per minute to 6,600 s",
+   "measured": "141.5 to 142.2 (hinted), 90.6 (hicache)",
+   "simulated": "142.3 to 142.6, 90.9",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Requests per minute at saturation (minutes 90-109)",
+   "measured": "128.3 to 132.6 (hinted), 55.3 (hicache)",
+   "simulated": "132.2 to 134.6 (+1 to +4 %), 55.9",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Prompt tokens from GPU / host / SSD, ec_full",
+   "measured": "0.194 / 0.606 / 0.138",
+   "simulated": "0.199 / 0.600 / 0.140 (every arm within 3 %)",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "History recomputed (1 - cached / ideal)",
+   "measured": "0.39 to 0.53 % (hinted), 28.9 % (hicache)",
+   "simulated": "0.40 to 0.61 %, 29.1 %",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "First cleaner pass (the SSD capacity in tokens was fitted to this one)",
+   "measured": "5,252 to 5,301 s; none for hicache",
+   "simulated": "5,190 s; none for hicache in seed 0",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Reads refused host room before the cut with the fixes on: ec_full, jit_exact, ec_exact",
+   "measured": "0",
+   "simulated": "0 in seed 0 (0 to 6 across seeds)",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Reads refused host room before the cut with the fixes on: jit_p50",
+   "measured": "0",
+   "simulated": "46 of 3,405 reads in seed 0 (3 to 46 across seeds)",
+   "verdict": "not_reproduced"
+  },
+  {
+   "anchor": "Pinned host memory, minutes 60-110: jit_p50 median (p90); other arms",
+   "measured": "136 K (280 K); 0 to 25 K",
+   "simulated": "172 K (310 K); 0 to 2 K",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "Host census, ec_full: mirror; free room; pending writes p90",
+   "measured": "0.65 M; 16 to 18 K; 65 to 94 K",
+   "simulated": "0.648 M; 12 K; 33 K",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "Running / queued requests and GPU pool use, minutes 90-110",
+   "measured": "19.7 to 20.1 / about 60 / 0.97",
+   "simulated": "20.0 / 59 / 0.98",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Reads staged before arrival: jit_p50 / jit_exact / ec_full",
+   "measured": "1,208 / 99 / 1",
+   "simulated": "1,216 / 103 / 1",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "SSD reads in the run and tokens read, ec_full",
+   "measured": "2,678 reads, 64.1 M tokens",
+   "simulated": "2,797 reads, 65.2 M tokens",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "The engine's learned price (ec_full)",
+   "measured": "1,451 updates, stayed at 5e-5",
+   "simulated": "1,445 updates, none moved it",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Who waits, minutes 90-110: share of returning requests that read from the SSD, their mean TTFT, the others' mean TTFT (hinted arms)",
+   "measured": "26 to 32 %, 47 to 70 s (jit_p50 69.6), 13 to 19 s",
+   "simulated": "27 to 34 %, 46 to 67 s (jit_p50 66.6), 12 to 17 s",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Paired jit_p50 -> ec_full on the requests both sent",
+   "measured": "-0.62 s [-1.02, -0.22]",
+   "simulated": "-0.59 s [-1.02, -0.19]; seeds 0-4: -0.35 [-0.59, -0.06], same sign in every seed",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Paired ec_full -> jit_exact",
+   "measured": "-0.06 s [-0.19, +0.06]",
+   "simulated": "-0.05 s [-0.18, +0.09]; sign changes between seeds",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Paired ec_full -> ec_exact",
+   "measured": "-0.40 s [-0.51, -0.28]",
+   "simulated": "+0.01 s [-0.11, +0.12]; seeds 0-4: -0.03 [-0.05, +0.01]",
+   "verdict": "not_reproduced"
+  },
+  {
+   "anchor": "Paired hicache -> ec_exact",
+   "measured": "-26.96 s [-30.53, -23.61]",
+   "simulated": "-26.63 s [-30.26, -23.25]; seeds 0-4: -21.3 [-40.0, -4.6]",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Write hold (fix 3) switched on, times per run",
+   "measured": "28 to 30",
+   "simulated": "51 to 80",
+   "verdict": "not_reproduced"
+  },
+  {
+   "anchor": "Light load: campaign 34's first 30 minutes (mean TTFT, p50, share of prompt tokens from the GPU)",
+   "measured": "0.39 to 0.41 s, 0.09 s, 68 to 76 %",
+   "simulated": "0.36 to 0.40 s, 0.08 to 0.09 s, 70 to 77 % (same order across arms)",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "GPU model check: non-decode GPU time per prefilled token under a full pool; running requests in minutes 30-60 / 60-90 / 90-110",
+   "measured": "0.061 to 0.063 ms; 22.3 / 20.5 / 19.7",
+   "simulated": "0.061 to 0.063 ms; 22.2 / 20.5 / 19.5",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 32 (fixes off): the loop of refused reads appears; none with the fixes on",
+   "measured": "loop in all four hinted arms; none in campaign 34",
+   "simulated": "loop in all four hinted arms (six replicas of seed 0); none with the fixes on in any seed",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 32 mean TTFT: hicache / jit_p50 / jit_exact / ec_full / ec_exact",
+   "measured": "33.52 / 17.97 / 14.86 / 14.64 / 14.95 s",
+   "simulated": "31.80 / 15.10 / 13.50 / 13.64 / 13.57 s (median of six replicas of seed 0; -5 to -16 %)",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "Campaign 32 loop onset minute: jit_p50 / ec_exact / jit_exact / ec_full",
+   "measured": "42 (67 by the 5-in-a-row rule) / 79 / 80 / 84",
+   "simulated": "81 [42, 89] / 87 / 88 / 88; seeds 0-4: 26 to 108",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "Campaign 32 pending SSD writes at their peak",
+   "measured": "523 to 675 K tokens",
+   "simulated": "692 to 736 K tokens",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "Campaign 32 requests per minute, minutes 90-109 (hinted arms)",
+   "measured": "58.9 to 65.2",
+   "simulated": "56.3 to 58.3",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "The fixes: campaign 34 minus campaign 32, mean TTFT on each run's own requests",
+   "measured": "-3.7 to -6.5 s (hinted), -1.6 s (hicache)",
+   "simulated": "-2.9 to -4.0 s, -0.2 s",
+   "verdict": "roughly"
+  },
+  {
+   "anchor": "Campaign 28 (Triton backend, same users; Triton costs from the records, not fitted): mean TTFT hicache; hinted arms",
+   "measured": "115.7 s; 48.3 to 49.8 s",
+   "simulated": "121.4 s (+5 %); 49.6 to 50.2 s",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 28 requests per minute: hicache; hinted arms",
+   "measured": "41.3; 76.9 to 78.9",
+   "simulated": "39.3; 76.9 to 77.2",
+   "verdict": "reproduced"
+  },
+  {
+   "anchor": "Campaign 28 history recomputed, hinted arms",
+   "measured": "0.4 to 1.4 %",
+   "simulated": "0.2 to 0.4 % (that engine's next-use defect is not modelled)",
+   "verdict": "not_reproduced"
+  },
+  {
+   "anchor": "Campaign 33 (TraceLab on FA3, never saturates)",
+   "measured": "arms within 0.03 s",
+   "simulated": "none: TraceLab is a 'lengths' trace and kvsim_trace.py reads 'blocks' traces",
+   "verdict": "not_attempted"
+  },
+  {
+   "anchor": "Campaign 26 (44 users, 70 GB, Triton, x10 gaps)",
+   "measured": "0.41 to 6.6 s by arm",
+   "simulated": "none: that campaign used another trace in the old turn format; the setting can be run on FreeInference but its numbers are not anchors",
+   "verdict": "not_attempted"
+  }
+ ],
+ "fitted_constants": [
+  "FA3 prefill cost per token at position x: 1.45e-5 + 1.18e-9 x seconds. Fitted to the six cold-first-request medians of campaigns 32/34 (0.106 s at 4.8 K to 2.72 s at 53 K) and the loaded per-token cost at a 25 K prefix (0.0436 ms); reproduces the six medians within 10 %.",
+  "Per prefill batch 15 ms, plus 0.85 us per token loaded from host memory. Fitted to my regression on campaign 34 ec_full's batch lines under a full pool (calib_gpu_fit.py: 11 to 19 ms a batch, 0.6 to 1.3 ms per K cached tokens); check: non-decode GPU time per prefilled token 0.061 to 0.063 ms measured and simulated.",
+  "FA3 decode step: 3.3 ms + 0.30 ms x min(running, 8) + 0.0277 ms per K tokens of running context. Fitted to campaign34/checks/decode_scale.out (3.9 ms at 1 running; 23.0 to 23.1 ms at 18 to 26 running) and to the pure-decode intervals of ec_full under a full pool (23.6 to 23.8 ms); gives 23.6 ms at 20 running and 646 K.",
+  "Request ingestion plus first-token delivery 0.03 s, and reply-to-next-send lag 0.03 s. Fitted to the p50 TTFT of minutes 0 to 30 (0.09 s).",
+  "Read thread alone 24.0 K tokens/s (2.67 ms a page). Anchor: 2.5 to 3.4 ms a page uncontended in the campaign 34 logs.",
+  "Write thread alone 18.8 K tokens/s (3.4 ms a page). Anchor: 3.0 to 3.8 ms a page with reads idle.",
+  "Both threads busy: 21.4 K tokens/s in all (2.1 GB/s, iostat at 98 % utilisation), reads take 73 %. Anchors: reads 3.5 to 3.7 ms a page with the write thread 63 to 78 % busy and writes 8.7 to 11.6 ms a page under read load (campaign 34); campaign 32's write capacity against read rate (5.2 to 5.6 K tokens/s at 1.45 to 1.5 GB/s of reads). One split for both campaigns.",
+  "Lookup lag 0.02 s and landing lag 0.03 s. Measured on campaign 34 ec_full's log (calib_read_lags.py). The engine's own read-time model keeps its 0.904 s of lags inside the engine's estimator.",
+  "SSD capacity 24.69 M tokens, 2.8 % under volume bytes / 98,304 B. Fitted to the first cleaner pass of campaign 34's ec_full (5,275 s).",
+  "Not fitted, taken from the records: the Triton cost set (prefill 0.84e-6 + 6.42e-9 x s per token, 62 ms a batch, decode step 11.2 ms + 0.18 ms x running + 0.0357 ms per K tokens); checked on campaign 28 only.",
+  "Not fitted, taken from the engine's code or the run settings: KV pool 668,096 tokens, admission rule, 8,192-token prefill batches, host pool from HOST_GB, 256-token lookup threshold, lookup budgets (3 lookups a turn; hicache's 8 paced retries), hold margin 2 s, JIT margin 1 s, 512-page window, read budget half the host pool, pins 0.3 of it, write hold 50 K / 25 K, room retry, price 5e-5 with the harm rule, eviction tiers, cleaner 90 % to 80 % every 30 s.",
+  "No constant differs between arms; none was changed for campaign 32 (fixes off) or campaign 28 (Triton). Host room that no logged lock explained in campaign 32 is left at 0 (unbacked_room_tokens), not fitted."
+ ],
+ "not_modelled": [
+  "Page-level state: memory and SSD are tracked per node (a run of pages between divergence points), with engine-inserted spans evicted in one piece. Reads never fail on files the cleaner deleted between lookup and read (9 to 12 per arm in campaign 34); the cleaner is instantaneous and deletes whole nodes. Limits conclusions on cleaner order below node level and on the count of requests the cleaner hurts.",
+  "The node structure is fixed per run (all divergence points of the run's users known at the start). Likely source of the refusals jit_p50 shows here and the engine did not; limits fine conclusions about which host pages are evictable.",
+  "Scheduler-pass granularity: the prefetcher ticks every 0.25 s (probes every 0.5 s as in the engine); hicache's paced retries are placed 8 decode steps apart. Limits timing conclusions below about 0.3 s.",
+  "GPU detail: one prefill stream and one decode clock, no retraction, output reservation is half the output, host-to-GPU load is a per-token cost, TPOT not checked. A 2 % change in GPU time moves ec_full's mean TTFT from 10.6 s to 9.3 or 11.8 s, so absolute TTFT is good to about 10 %; arm differences on the same seed move much less.",
+  "The 0.25 to 0.5 M tokens of host room that no logged lock explained at campaign 32's first refusals. The loop appears anyway, but onset minutes are late (a few minutes for three arms, 15 to 40 for jit_p50), so onset timing is not a reliable output.",
+  "Write path detail: one FIFO of nodes at the device rate, no fixed cost per write, GPU-to-host copy takes no time, merged writes (fix 2) have no effect of their own, writes fail only if write_fail_p is set (R3 is inert by default). Fix 1 and fix 3 can be separated in the simulator; fix 2 cannot.",
+  "Defects of older engine copies (the next-use rank of queued turns before 2026-11-22) and outside requests; campaign 28 is compared as if it ran the current policies with the fixes off.",
+  "Run-to-run noise of the real system, beyond the --noise option (send jitter). The real spread at saturation was never measured, so simulated sub-second differences between hinted arms decide nothing about the GPU.",
+  "Other traces: 'lengths' traces (TraceLab) are not read, so campaign 33 was not attempted; campaign 26's trace is in the old turn format. Light-load conclusions rest on campaign 34's first 30 minutes only.",
+  "The nohint arm (next request id only: gate, hold, pins, queued turns last, LRU otherwise) has no anchor; no such arm ran on FA3.",
+  "The unified switches are my reading of draft v1 (CALIBRATION.md section 6 lists each). Three depend on formula choices that the draft may revise: lambda read off the eviction frontier is self-referential and is capped at 1e-3; F4's rent uses r with the device line in it; mirror off assumes an inline GPU-to-host copy at 2.8 us a token unless --d2h-s-per-token 0 is given."
+ ],
+ "how_to_run": "PY=\"CUDA_VISIBLE_DEVICES= nice -n 19 /home/wanhr/sglang/agent_cache/baselines/continuum/.venv/bin/python -I -B\"; cd /home/wanhr/sglang/agent_cache/results/design_unified_1126/sim\n\nOne run:\n$PY kvsim.py --arm ec_full --cap 128 --host-gb 160 --duration 7200 --seed 0 --out runs/x\nArms: hicache | jit_p50 | jit_exact | ec_full | ec_exact | nohint | unified. Options: --switches F1,R4 or all (arm unified), --hints none|program|dist|exact, --fixes on|off, --mirror on|off, --backend fa3|triton, --rate, --gap-scale, --gap-cap, --max-context, --gpu-tokens, --ssd-tokens, --noise 0.005 --noise-seed k, --d2h-s-per-token 0. The folder gets requests.csv (per request), series.csv (per 10 s, with mu, c, kappa, lambda, sigma) and summary.json; the campaign-style statistics are printed.\n\nPolicy comparison (arms x settings x seeds, at most 4 processes at nice 19, paired per user request by play, stream and index with a 2,000-draw bootstrap over users, as compare_arms.py does):\n$PY kvsim_compare.py --arms ec_full hicache \"unified@F1+R4\" \"ec_full@mirror=off\" --set cap=128,host_gb=160 --set cap=44,host_gb=70 --seeds 0-4 --out runs/y\nThe first arm is the baseline. An arm is NAME@option+option, where an option is a switch (F1 ... PR1, all) or any Config field as key=value; a setting is key=value,key=value over Config fields. Finished runs are reused unless --force is given. From Python: kvsim_compare.run_matrix(arms, settings, seeds, out, procs=4) then kvsim_compare.report(results, arms, settings, seeds); a single run is kvsim.run(kvsim.Config(arm=..., seed=...)) and kvsim.summary(sim).\n\nOther trace or MAX_CONTEXT: $PY kvsim_trace.py --build --max-context N (once; 27 s for the default).\nRedo the whole calibration and CALIBRATION.md: zsh rerun_calibration.sh [out folder] [--force] (about 6 minutes).",
+ "seed_spread": "Five seeds (tree order and arrivals) at campaign 34's setting, mean TTFT of requests sent before 6,600 s: hicache 28.1 +- 17.4 s (7.5 to 54.1); jit_p50 11.5 +- 5.4 (4.7 to 19.4); jit_exact 11.2 +- 5.3 (4.6 to 19.1); ec_full 11.2 +- 5.3 (4.7 to 19.0); ec_exact 11.1 +- 5.3 (4.6 to 19.0). Which users arrive moves an arm's level by a factor of four, so the level of the one-seed GPU runs says little; differences on the same users say more.\n\nPaired on the same users: hicache is behind the hinted arms in every seed (4.5 to 40 s); jit_p50 is behind ec_full in every seed (0.06 to 0.59 s); ec_full, jit_exact and ec_exact stay within 0.14 s of each other and change order between seeds.\n\nSame users with 5 ms of send jitter (five replicas of seed 0): the mean moves by 0.03 to 0.17 s for the hinted arms with the fixes on (0.4 s for hicache), and by 0.1 to 4.6 s with the fixes off, where the loop's start is a tipping point.\n\nFixes off across seeds: jit_p50 ranges 5.9 to 43.1 s and the loop starts anywhere between minute 26 and minute 108. With the Triton costs (campaign 28's setting) the hinted arms are 51.1 to 51.4 +- 5.3 s over seeds and hicache 124.3 +- 13.6 s."
+}

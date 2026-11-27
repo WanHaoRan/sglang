@@ -1,0 +1,93 @@
+{
+ "findings": [
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/unified_radix_cache.py",
+   "line": 1445,
+   "severity": "test_gap",
+   "what": "R1's flag at the prompt insert (cache_unfinished_req: `_turn_ends_session(req, reply_known=False)`) has no test. None of the five changed test files calls cache_unfinished_req, and mutation M26 breaks only the cache_finished_req site (line 1234).",
+   "scenario": "Emulated at run time with a class patch (source untouched): (a) the prompt site never flags, (b) it passes reply_known=True. The three cache suites stay green both times (149 cases, 0 failing). By the plan's numbers the prompt is most of an ended turn (1.51-1.56 M tokens in last turns against 0.23 M in replies), so (a) cuts R1 from 4.7 % to 0.7 % of writes unnoticed, for example if the merge drops these three lines. Under reply_key_source \"reply\", (b) reads the empty reply as the no-call key, and a table that marks that key ended then skips the SSD write of a live session's prompt.",
+   "fix": "Add a real-tree case beside test_an_explicit_end_skips_the_last_turns_write_and_retires_the_sessions_pages that runs cache.cache_unfinished_req for an ending and a non-ending turn (key source \"hint\") and asserts the recorded InsertParams.skip_storage_backup, plus one under key source \"reply\" that must stay False."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/test/registered/unit/mem_cache/test_storage_read_dispatch.py",
+   "line": 864,
+   "severity": "style",
+   "what": "Two new tests enter envs.<X>.override() in a bare `with` whose body can raise: here at 864-874 (an assertEqual at 866 inside the TRACK_STORED override, a nested override at 873), and TestNixlTouch._backend at test_hicache_nixl_storage.py:904 (the HiCacheNixl constructor inside the STORAGE_DIR override). The same test also takes the all-off default from the ambient environment (862-863).",
+   "scenario": "EnvField.override has no try/finally (environ.py:96-106). Checked: after a raising body the variable is still \"True\". A failing assertion at 866 leaves SGLANG_HICACHE_STORAGE_TRACK_STORED on for every later test of the process; a constructor error at 904 leaves SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR on a removed temp directory, where later backend tests then write. The repository's convention is written at test_next_turn_prefetch.py:2090 (\"Closed as a cleanup: override() skips its restore when the test body raises\") and test_hicache_nixl_cleaner.py:294. With SGLANG_HICACHE_STORAGE_TRACK_STORED=1 exported, as the campaign arm sets it, this test fails at 863: 1 failed, 148 passed over the three cache suites.",
+   "fix": "Enter the overrides through a contextlib.ExitStack closed in addCleanup (or inside mock.patch.dict(os.environ), as the cleaner file does), and pin both STORAGE switches to False with override() before the first _init_storage_retention()."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/unified_radix_cache.py",
+   "line": 702,
+   "severity": "bug",
+   "what": "The retire switch's condition \"a FULL-only cache without sidecar pools\" is read once, at the end of init_hicache (line 629), before draft sidecar pools exist. build_kv_cache calls create_tree_cache (which runs init_hicache) at kv_cache_builder.py:404 and maybe_register_hicache_draft only at :409; register_sidecar_pool (line 717) does not resolve again.",
+   "scenario": "Speculative decoding with a draft model whose KV goes to HiCache as sidecar pools (HiCacheDraftMode.SIDECAR), the prefetcher on and SGLANG_HICACHE_NIXL_RETIRE_ENDED_PAGES=1: retire is granted with no warning. A retired page keeps its draft files' mtime and the cleaner ranks a page by its newest file, so the page is not deleted first, while the tree has already dropped its stored mark. Checked on a CPU cache: retire_ended_pages is True at init, still True after register_sidecar_pool, and False when resolved again. Not campaign 34's setting (no draft model).",
+   "fix": "Resolve again at the end of register_sidecar_pool (the prefetcher is created later and then reads the right value), or test sidecar_pool_specs inside retire_storage_chain. Add the case to TestRetentionSwitches."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/unified_radix_cache.py",
+   "line": 699,
+   "severity": "test_gap",
+   "what": "The dependency checks are tested on the pure function only. Through the cache, each of the four conditions (lines 699-703) is exercised on its met side alone. HiCacheNixl's own condition (hicache_nixl.py:196: a file backend on a rank that writes) and the re-resolution at a runtime attach (storage_attachment.py:142) have no test.",
+   "scenario": "Emulated: with the cache passing host_cache_mode, python_tree_core, next_turn_prefetch or full_kv_only as constant True, the three cache suites stay green (4 runs, 149 cases, 0 failing). A server with the prefetcher off, or in buffer_only mode, could then be granted the write skip or the retire with every test passing. No test builds HiCacheNixl on an MLA rank other than 0, or on an object plugin, with a switch set, so \"no thread and both attributes off\" is unpinned there. None of the five files calls attach().",
+   "fix": "In the cache wiring test add one refusal per condition through _init_storage_retention (prefetch \"off\", host_memory_mode \"buffer_only\", a registered sidecar spec), with assertLogs on the \"stays off\" line and on the start-up line. Add a TestNixlTouch case with is_mla_model=True, tp_rank=1 and touch_interval_s set, and one attach case."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/unified_radix_cache.py",
+   "line": 2198,
+   "severity": "test_gap",
+   "what": "Two negative branches have no test: retire with the storage backend detached (`and self.enable_storage`, line 2198) and the match hook with the touch interval at 0 (line 748).",
+   "scenario": "Emulated: retire_storage_chain without the enable_storage check, and the hook running at interval 0, both leave the three cache suites green (149 cases, 0 failing). Without the first, an explicit end after a runtime detach reaches cache_controller.storage_backend.touch_pages with storage_backend None (cache_controller.py:701) and raises on the scheduler thread inside cache_finished_req. Without the second, every request match of every arm walks its chain, and a tree core other than the Python one has no take_stale_storage_keys.",
+   "fix": "Extend test_retire_takes_the_replies_no_later_prompt_repeated with a call under cache.enable_storage = False (no touch, marks kept), and test_a_probe_without_a_request_refreshes_nothing with a request match at touch_interval_s=0.0."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/unified_radix_cache.py",
+   "line": 3542,
+   "severity": "test_gap",
+   "what": "The PP branch of the rank agreement (`or self.pp_size > 1`) and the copy of storage_touched_at at a split (unified_tree_core.py:1440) have no test. The PP branch also computes PP rank 0's verdict, not a minimum over PP ranks, which the docstring \"on every rank\" (line 3535) and the test name do not say.",
+   "scenario": "Emulated: agreeing only when tp_world_size > 1, and a split that resets the fragment's stamp to -inf, both leave the three cache suites green. With PP > 1 and no reduce, ranks keep different marks, the heal submits different writes per rank and their ack queues stop matching. A fragment without the stamp is stale at once, so the next request match touches the whole chain again, which removes the \"at most once per interval\" bound of the refresh deviation. On the verdict: _pp_sync receives into the tensor (line 434), so a short write on PP rank 1 is still marked stored on every rank.",
+   "fix": "Extend test_a_write_short_on_any_rank_is_unstored_on_every_rank with tp_world_size=1, pp_size=2, and test_a_stale_tail_takes_its_fresh_head_along... with a match that splits a freshly stamped node followed by a match that must return nothing. Correct the _agree_stored docstring for PP, or refuse TRACK_STORED when PP > 1."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 724,
+   "severity": "plan_mismatch",
+   "what": "Retire takes a leaf as the session's own only when its node id is in SessionExtent.leaves (checked at unified_tree_core.py:2734). A reply that left memory and was read back by a staged read returns under a new id: insert_host makes a new node, the next turn's match splits it, and the reply half keeps that id. It then counts as another session's leaf and the walk stops under it. The plan's rule (childless and not registered) took such leaves. The report lists only the aborted-turn case of this limit.",
+   "scenario": "Checked on the CPU tree: first prompt [1,2] with a known reply leaf, then a read-back node [3,60] split by the next prompt [1,2,3,4]. take_retired_storage_pages returns 0 pages with the ids the prefetcher holds, and 3 pages when the re-read leaf counts as own. Staged reads in campaign 34: 1 in ec_full, 39 in ec_exact, 99 in jit_exact, 1,208 in jit_p50. The first arm is hardly touched; a jit_p50 arm is, for sessions whose re-read reply is still in memory at their end.",
+   "fix": "Record each turn's reply by its first page key (the chained content hash survives eviction and read-back) instead of the node id, or list the limit and count l3_retire lines with pages=0 in the arm. Add the case above to test_retire_keeps_the_first_prompt_and_stops_at_another_sessions_branch."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/storage/nixl/nixl_utils.py",
+   "line": 369,
+   "severity": "style",
+   "what": "Comment style. Docstrings of internal helpers run past two lines: stamp_pages 5 lines; take_retired_storage_pages 4; finish_storage_write, take_stale_storage_keys, retire_storage_chain, get_touch_interval_s and get_retire_ended_pages 3 each. 23 of the 30 new test docstrings have 3 to 6 lines, and several tell the incident in the past tense. storage_retention.py:4 and test_next_use_eviction.py:4 cite \"DESIGN.md, section 4\" in an untracked results folder whose v2 (DESIGN_v2.md) has Retain as section 5.",
+   "scenario": "comment-style.md: \"One or two lines. A genuinely intricate invariant may run longer; that is a rare exception, not a licence\"; documentation blocks: \"No: internal helpers, overrides, private methods\"; tests: \"stating in one or two lines which black-box behavior must not come back -- the live constraint, not the incident\". Examples of the incident form: test_storage_read_dispatch.py:642 (\"A write cut short was acked like a full one, so its host copy was evicted...\"), test_next_turn_prefetch.py:601 and :1213. The existing tests of these files mostly carry 0 to 2 lines.",
+   "fix": "Cut each to the one or two lines a reader cannot recover from the code (units, order, thread), state the constraint in the present tense, and cite the design by a tracked path or without the section number."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/storage/nixl/hicache_nixl.py",
+   "line": 196,
+   "severity": "style",
+   "what": "Function and file size. HiCacheNixl.__init__ grows from 118 to 137 lines with the touch set-up inline (lines 195-213); NextTurnPrefetcher.__init__ from 95 to 104. unified_radix_cache.py (4,243 to 4,458 lines) and unified_tree_core.py (3,187 to 3,338) were already over the limit and take the new methods. The class default `retention` sits between two methods (unified_radix_cache.py:679), placed there for the merge by the report's own account.",
+   "scenario": "general-code-style.md: \"Functions stay small. Keep each function under ~100 LOC; split larger ones into named helpers\" and \"Files stay small. Keep each file under ~2k LOC\".",
+   "fix": "Move lines 195-213 into a helper such as _start_touch_thread(nixlconfig). After the merge, move `retention` to the class header. Keep the six stored-mark tree methods together so they can leave unified_tree_core.py when it is next split."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py",
+   "line": 2638,
+   "severity": "nit",
+   "what": "Four new methods take two positional arguments: mark_storage_write(node_id, op_id), finish_storage_write(node_id, op_id, *, stored_at), NextTurnPrefetcher._on_explicit_end(rid, outlook, ...) and UnifiedRadixCache._commit_storage_write(entry, operation, ...). The touch job is a bare (keys, newest_ns) tuple.",
+   "scenario": "general-code-style.md: \"Prefer keyword arguments. Call functions of 2+ args by keyword, and design APIs to be called that way.\" The same change follows it elsewhere (_forget_session, take_stale_storage_keys, stored_votes).",
+   "fix": "Make op_id, outlook and operation keyword-only in these signatures and at their call sites."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 684,
+   "severity": "nit",
+   "what": "Small contracts that no test pins: the reason why=no_next of ntp_end (684); the REGISTRY_MAX_ENTRIES bound of _session_extents (722); the unit of at_ack= in l3_retire (pages, but every node of the test is one page, so nodes pass too); tokens= of h2s_skip (only the line count is asserted); the reset of the two id sets in _reset_full (unified_radix_cache.py:488-489).",
+   "scenario": "Emulated for the first two (no_next logged as entry; no bound on the extents): the three cache suites stay green. The others are by reading. The arm's R1 number is the sum of h2s_skip tokens=, and the X1 check counts ntp_end lines by why=.",
+   "fix": "Assert the full ntp_end fields at the exact-hint end, and the h2s_skip and l3_retire lines on a node of two pages."
+  }
+ ],
+ "verdict": "Lens: repository rules and tests. Eleven findings: one bug outside the campaign's setting, one plan mismatch, five test gaps (one minor), three style points and one nit. None is a default-off break.\n\nSwitches off: safe, as far as this lens can see.\n- I traced each changed path with every switch off: the match hook, both insert sites, the write submit, the ack drain, attach and detach, the prefetcher's commit and end paths, the NIXL constructor and close. Each is one false condition away from the old code. The h2s_done line is byte-identical, no thread starts and no file is touched.\n- The five changed suites give the reported counts: 30, 36, 83, 18, and 24 with 1 skipped.\n- Four existing suites give the same outcome on the base copy and on copy B (2 failed, 71 passed, 3 skipped on both; the two failures are on the base too).\n- ruff format and lint (F401, F821, UP037) show nothing new against the base.\n- scheduler.py, tokenizer_manager.py and model_runner.py are identical to HEAD. No dataclass, getattr or hasattr was added. All 30 tests sit in existing files and use temporary directories. Base plus steps_1_3.patch reproduces the copy.\n\nSwitches on (campaign 34's setting: TP = PP = 1, MHA, NIXL files): nothing in the rules or the tests blocks a two-hour arm, and I found no crash path. This lens does not prove the behaviour.\n- Two things the arm exercises have no test: R1's flag at the prompt insert, and the start-up wiring with a real backend.\n- In the first minutes, check the start-up line (all four on, no \"stays off\"), that h2s_skip tokens are near 4.7 % of inserted tokens (0.7 % means only the reply is skipped), and that l3_retire lines carry pages > 0.\n- Retire is weaker in arms that stage reads (the plan mismatch) and must not be used with draft sidecar pools (the bug).\n\nBefore the merge: fix the two bare overrides and add the missing cases.\n\nNot checked by me: any GPU or multi-rank run; the 122-file comparison beyond the nine files I ran; the 64 mutations, which need edits to the copy's source (the gaps above are outside them).\n\nWhere the new NIXL tests run: TestNixlTouch (3 cases) is in a file registered for the CUDA lane that imports NIXL at module scope, so without the nixl wheel it does not run at all. TestTouchedPages (4 cases) needs no NIXL. The report says only that nothing skips in this container.\n\nThe real tree moved during the review, not through copy B: nixl_cleaner.py and test_hicache_nixl_cleaner.py gained a keep_touched option and its test at 5:51 PM ET. That test file needs a three-way merge with B's hunk.\n\nMy throwaway checks are in /home/wanhr/sglang/agent_cache/results/design_unified_1126/impl/B/review_rules_tests/ (zz_review_rules_tests_gaps.py, zz_review_rules_tests_reread.py). Their copies in the copy's test folder are deleted, and the copy's source was not edited."
+}

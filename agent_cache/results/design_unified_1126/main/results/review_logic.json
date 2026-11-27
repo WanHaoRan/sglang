@@ -1,0 +1,69 @@
+{
+ "findings": [
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 1028,
+   "severity": "bug",
+   "what": "With READ_LINE on, the queue check works out the read line for every queued planned turn on every scheduler pass: one read_deadline() call per parked read, per queued turn. Under the deadline read order, which the switch needs, that estimate decides nothing there. It only reaches log fields (ntp_due backlog_pages and load_ms, ntp_refetch load_ms, ntp_admit trig_lead_ms). For a turn whose own read is already parked the line also counts that read, so the logged pages hold it twice.",
+   "scenario": "Timed on CPU with the test fakes (/home/wanhr/sglang/agent_cache/results/design_unified_1126/impl/A/review_logic/zz_review_logic_d.py). With 60 queued planned turns and 43 parked reads, campaign 34's saturated queue, one tick takes 0.80 ms against 0.115 ms with the switch off. With 60 and 30 it takes 0.63 ms; with 120 and 100, 3.07 ms against 0.20 ms. In the profile, 774,000 read_deadline calls in 300 ticks are most of the time. The real cache adds a sum over ongoing_prefetch per call. The tick runs once per scheduler pass (a decode step is about 24 ms) on the scheduler thread. Whether this lengthens a decode step was not measured.",
+   "fix": "In _check_queued under the deadline order, call _line_seconds only where its result is logged (inside the due_case == 0 branch, and when a refetch is handed back). Or build the parked reads' deadline order once per tick and answer each turn from it. Leave the turn's own parked read out of its line."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_use_eviction.py",
+   "line": 329,
+   "severity": "bug",
+   "what": "While prices are measured, host eviction asks ReturnChanceStrategy.holding_rate() about each victim just before it goes (next_turn_meter.py:177). holding_rate() goes through _session_registration(), which adopts nodes. A victim whose sibling was evicted earlier in the same pass is by then an only child, so its parent is adopted into the victim's session; without the meter that parent ranks as un-hinted. The prices log alone is enough to cause this, as is any switch that measures (MEASURED_PRICES, LATENESS_WEIGHT, READ_LINE), also in mode observe.",
+   "scenario": "Tree: H (8 host tokens) with leaf children X1 and Y1, the tails of two ended sessions, and an un-hinted leaf D with an older stamp than H. Evicting 12 host tokens through FullComponent.drive_host_eviction with the real strategy takes X1, Y1, D without the meter. With only SGLANG_LOG_HICACHE_PRICES_INTERVAL set it takes X1, Y1, H (/home/wanhr/sglang/agent_cache/results/design_unified_1126/impl/A/review_logic/zz_review_logic_a.py; the tree core is a stub that detaches leaves as _evict_host_leaf does). environ.py says of that switch 'Logging only: no decision reads it'. The engineer's side-by-side replay has no host-eviction event, so it could not show this.",
+   "fix": "Give holding_rate() a lookup of the session's registration that adopts nothing (no adopt(), no _tail_of.pop()). Add a test on a parent with two leaf children evicted in one pass."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 1797,
+   "severity": "bug",
+   "what": "After the starved-GPU rule drops a read, the 0.5 s wait is not started again. The dropped turn is a ready turn from that moment. But when admission takes it before the next tick, the meter never sees it queued, _starved_since stays, and the rule drops the next turn's read on the next pass, and so on, one per pass. Each of these decisions prices its recompute for an idle GPU while the GPU is prefilling the turns just dropped.",
+   "scenario": "Six planned turns are queued: a's read is on the read thread, b to f are parked behind 2,000 launched pages. Ticks are 25 ms apart and each dropped turn is admitted within its pass. Reads are dropped at 1.600 s (b), 1.625 (c), 1.650 (d), 1.675 (e) and 1.700 (f): five in 100 ms (/home/wanhr/sglang/agent_cache/results/design_unified_1126/impl/A/review_logic/zz_review_logic_e.py). Amendment A3 asks that no queued turn was ready for NTP_GPU_BOUND_S. The test in the copy only covers a dropped turn that stays queued.",
+   "fix": "After a successful drop set self._starved_since = now. Add the case where the dropped turn is admitted between two ticks."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 747,
+   "severity": "bug",
+   "what": "tick() runs the starved-GPU rule before it registers this pass's arrivals (plan.arrival_t is set in the queue loop below it). For a turn that arrived this pass, read_deadline() therefore still answers as for a staged read. parked_read_pages_ahead() then puts every parked read due earlier ahead of it, although at queue position 0 or 1 its read is dispatched as needed-now on the next pass. The same read is dropped or kept depending on which tick first saw the turn.",
+   "scenario": "The queue has been starved for 0.6 s with one reader. Turn x arrives 3.5 s before its predicted arrival, at position 1, and joins its staged read (126 pages behind 40K tokens: 607 ms to recompute, 345 ms to read). Three other staged reads due earlier are parked (900 pages). In the tick x arrives the rule logs ntp_starve land_ms=2595 rec_ms=607 and drops the read. With x registered one tick earlier the same read is kept (/home/wanhr/sglang/agent_cache/results/design_unified_1126/impl/A/review_logic/zz_review_logic_f.py).",
+   "fix": "Call _relieve_starved_gpu after the queue loop has registered arrivals, or skip plans whose arrival_t is None."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 1074,
+   "severity": "bug",
+   "what": "The absent mark of FREE_EMPTY_LOOKUPS is lifted only when the turn's match shrinks below it. When the match grows past it, _queued_baseline (the smaller of chain and absent_from) is below what is resident, so the queue check never asks again, and the gate (line 1672) answers absent. The mark says nothing about that span: the lookup that set it stopped at its first missing page.",
+   "scenario": "A turn arrives with none of its prompt in memory. Its lookup from token 0 finds nothing because the first pages are gone from the SSD (the cleaner deletes oldest-written files first, which are shared heads), so absent_from = 0. Another session then computes the 256-token head while the turn is queued: the turn's match is 256 and its own history beyond it is still on the SSD. With the switch, the queue check hands nothing back and gate(256) answers absent. Without it, the queue check re-asks and the gate answers reread, until the turn's three lookups are spent (/home/wanhr/sglang/agent_cache/results/design_unified_1126/impl/A/review_logic/zz_review_logic_b.py). It needs two live sessions on one head, so it is rare.",
+   "fix": "Drop the mark once the match is past it: in prefetch_gate set plan.absent_from = None when matched_tokens > plan.absent_from, and in _queued_baseline ignore the mark when the resident tokens exceed it. Add the growing-match case beside the shrinking one."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 903,
+   "severity": "nit",
+   "what": "The first bin of the admission error (predicted wait under 2 s) is fed by every turn that arrived to an empty queue: predicted wait exactly 0, error a few milliseconds. The hold never times such a turn (it acts from queue position 2). But those zeros fill the bin the hold reads for predicted waits of 1 to 2 s, and the HOLD_QUANTILE margin there falls to about zero. This follows the plan's binning.",
+   "scenario": "Take 216 empty-queue arrivals plus 40 turns predicted 1 to 1.9 s with errors between -1.2 and +1.5 s. The margin for a held read predicted 1.5 s is +0.19 s at q = 0.05 and 0.00 s at q = 0.1; from the 40 queued arrivals alone it is +1.02 s and +0.72 s (/home/wanhr/sglang/agent_cache/results/design_unified_1126/impl/A/review_logic/zz_review_logic_b.py). The planner's table shows the same bin: campaign 34 minutes 10 to 30, n 2,728, q25 to q95 all 0.0 (/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/seam_fp/out_f1_c34_ec_full_10_30.txt), against a q10 margin of 0.7 to 1.0 s where the hold releases.",
+   "fix": "Do not feed the tracker a turn whose predicted wait is 0 (queue position 0 at arrival), or keep those in a bin of their own."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_meter.py",
+   "line": 169,
+   "severity": "nit",
+   "what": "The frontier price is computed from a restore cost that contains the price itself: restore_s_per_token = (c + kappa) x read seconds per token, and kappa = c x late reads + lam x pending_write_tokens. The loop's gain is pending_write_tokens x read seconds per token x the victim's holding rate. Above 1, lam climbs to LAM_CEILING and stays, since at the ceiling each new sample is above it. This follows 01_PR1_prices.diff; DESIGN_v2.md section 7 asks for a price-free index for this reason.",
+   "scenario": "PriceMeter fed one victim a second (/home/wanhr/sglang/agent_cache/results/design_unified_1126/impl/A/review_logic/zz_review_logic_b.py). With 50K pending tokens and a holding rate of 1 per second (gain 1.95), lam is 3.9e-5 after 1 s and 1e-3, the ceiling, from 60 s on. At rate 0.5 (gain 0.98) it is 3.7e-4 after 15 minutes and still rising. At gain 0.39 it settles 64 % above the price-free value. In campaign 34 ec_full, pending writes at dispatch were 64 tokens at the median, 9.4K at q90, 34K at q99 and 65K at most, so the gain passes 1 only in the write-hold episodes; a tighter host pool keeps it there longer. At the ceiling the hold's q is 0.5 and the logged lam, kappa and k_us carry no information.",
+   "fix": "Price the frontier with the price-free cost, c x (1 + late reads) x read seconds per token, and keep the lam term only in the logged kappa."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_meter.py",
+   "line": 177,
+   "severity": "nit",
+   "what": "The frontier price leaves out every victim without a holding rate: a queued turn's history, and under an eviction policy with no registry (plain lru) every victim. lam then reads 0 once 30 s have passed with only such victims, and next_victim_price is 0 under such a policy too. MEASURED_PRICES is accepted in both cases and room is then priced as free.",
+   "scenario": "From the code, not run. MEASURED_PRICES with HOLD_QUANTILE on an arm with --radix-eviction-policy lru: lam = 0 for the whole run, so q = 0.05 always and, with LATENESS_WEIGHT, a staging pays no rent. Under return_chance, 30 s in which eviction takes only queued turns' history gives lam = 0 as well; held reads then start earliest and stay pinned longest while room is at its shortest. next_victim_price already prices a queued victim at the top rate (2 per second); on_host_evicted does not.",
+   "fix": "In on_host_evicted pass queued=1.0 / HOLDING_MIN_HORIZON_S, as next_victim_price does. Refuse MEASURED_PRICES at construction when the eviction strategy has no holding_rate."
+  }
+ ],
+ "verdict": "Switches off: yes, from this lens. Every changed line I traced (gate, queue check, hold, staged start, landing hook, departure) falls back to the base expression when its switch is off, and the five changed test files pass on the copy (117, 39, 25, 11, 33). I did not rerun the engineer's side-by-side replay; that proof belongs to the default-off reviewer.\n\nSwitches on: it will run, with one thing to fix before a saturated arm and two before the starved-GPU switch is used. Everything below is CPU only, on the test fakes or the cache fixture.\n\nWhat held up:\n- 190 random scenarios with random switch sets raised nothing.\n- Lookup and refetch counts never went negative, and a turn's lookups stay bounded.\n- Units and clocks are consistent (perf_counter throughout; the one monotonic use is a difference of two monotonic values).\n- The per-request tables (landing stamps, predicted waits) are emptied at admission, abort and expiry.\n- Estimators keep their seeds until they have samples.\n- Each decision reads the estimator that the plan and amendments A1 to A5 name.\n- A dispatched read is never revoked, and the starved rule does not fire while a ready turn is queued.\n\nWhat to act on:\n- **Before a saturated arm with READ_LINE:** the queue check costs 0.5 to 0.7 ms more per scheduler pass at campaign 34's queue, for values that are only logged (finding 1).\n- **Before RECOMPUTE_WHEN_STARVED is used** (it is left off in the unified arm): after its first drop the rule fires on every pass, and in the tick a turn arrives it misjudges that turn's read (findings 3 and 4).\n- **Before reading a log-only arm against ec_full:** measuring shifts eviction order under return_chance, so the prices log is not purely a log (finding 2).\n- **Second order:** the absent mark that outlives a grown match (finding 5), and three estimator weaknesses (findings 6 to 8).\n\nMy checks are /home/wanhr/sglang/agent_cache/results/design_unified_1126/impl/A/review_logic/zz_review_logic_a.py to zz_review_logic_f.py. None is left in the copy, and I changed no source."
+}

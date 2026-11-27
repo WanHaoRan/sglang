@@ -1,0 +1,34 @@
+=== c34 ec_full: read-failure lines 10 over 10 turns
+   post empty                 28 requests      824 K tokens
+   post first                 23 requests      143 K tokens
+   post nolookup_capped        3 requests       59 K tokens
+   post other                  4 requests        2 K tokens
+   post readfail               8 requests      259 K tokens
+   pre  other                  7 requests        4 K tokens
+   after the first pass: 1.287 M lost, of which first + readfail + empty lookups 1.226 M (95 %)
+=== c34 jit_exact: read-failure lines 12 over 12 turns
+   post empty                 31 requests      839 K tokens
+   post first                 21 requests      129 K tokens
+   post nolookup_capped       10 requests      303 K tokens
+   post other                  4 requests        2 K tokens
+   post readfail               8 requests      250 K tokens
+   pre  other                 10 requests       11 K tokens
+   after the first pass: 1.522 M lost, of which first + readfail + empty lookups 1.218 M (80 %)
+=== c34 ec_exact: read-failure lines 6 over 6 turns
+   post empty                 29 requests      855 K tokens
+   post first                 22 requests      138 K tokens
+   post nolookup_capped        1 requests       23 K tokens
+   post other                  2 requests        1 K tokens
+   post readfail               4 requests       59 K tokens
+   pre  other                  9 requests       14 K tokens
+   pre  readfail               1 requests       11 K tokens
+   after the first pass: 1.077 M lost, of which first + readfail + empty lookups 1.053 M (98 %)
+=== c34 jit_p50: read-failure lines 9 over 9 turns
+   post empty                 23 requests      670 K tokens
+   post first                 22 requests      135 K tokens
+   post nolookup_capped        7 requests      206 K tokens
+   post other                  9 requests       35 K tokens
+   post readfail               6 requests      203 K tokens
+   pre  nolookup_capped       12 requests      386 K tokens
+   pre  other                 11 requests       10 K tokens
+   after the first pass: 1.249 M lost, of which first + readfail + empty lookups 1.008 M (81 %)

@@ -1,0 +1,9 @@
+ec_full: logged passes end at [5275, 5977, 6589, 7200] s, groups [40400, 39850, 39650, 42200]; replay deletes at [5273.7, 5976.0, 6588.1, 7199.2] s, file times up to [771, 1314, 1853, 2492] s
+interval             | history lookups: logged zero/part/full | replay zero/part/full | differ | reads failed logged/replay | requests | recomputed K: recorded / replay / if nothing were deleted | requests losing >= 1,024: recorded / replay
+before pass 1        |     0 /   0 / 1382                  |     0 /   0 / 1382     |    0   |   1 /   1                 |  12707   |      71.2 /      71.2 /       8.4                      |    3 /    3
+pass 1 to pass 2     |    49 /   2 /  505                  |    49 /   2 /  505     |    0   |   5 /   5                 |   1516   |     639.5 /     639.5 /      61.8                      |   25 /   25
+pass 2 to pass 3     |    49 /   9 /  435                  |    49 /   9 /  435     |    0   |   3 /   3                 |   1318   |     543.4 /     543.4 /      14.8                      |   30 /   30
+pass 3 to pass 4     |    41 /  13 /  386                  |    41 /  13 /  386     |    0   |   1 /   1                 |     21   |      41.2 /      41.2 /       0.0                      |    1 /    1
+pass 4 to the end    |     2 /   0 /    1                  |     2 /   0 /    1     |    0   |   0 /   0                 |      0   |       0.0 /       0.0 /       0.0                      |    0 /    0
+(requests and tokens count requests sent before 6,600 s; lookups and reads count the whole run)
+live pages deleted by each pass (a later request's prompt holds them), of them held by >= 2 sessions: [(40400, 3323, 3323), (39850, 2506, 2305), (39650, 1209, 1165), (42200, 135, 135)]

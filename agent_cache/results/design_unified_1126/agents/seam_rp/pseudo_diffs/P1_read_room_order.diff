@@ -1,0 +1,258 @@
+# P1: who yields when a read is short of host room.
+# Pseudo-diff against HEAD b7074d9cae; not applied. Deadline read order and the next-turn prefetcher only
+# (TP = PP = 1); with an LRU policy there are no classes and today's path is kept.
+#
+# The working tree moved while this was written: at 18:23 UTC on 2026-11-26 someone else added a policy
+# option queued_order "lru" | "farthest" to both hint strategies (next_use_eviction.py, +27 lines; a test in
+# test_next_use_eviction.py): "farthest" keys the queued tier by -Queued.since, the last arrival first. That is
+# this plan's order inside the queued tier without the re-read time and without a head class. Build on it:
+# make the slack order a third value of queued_order ("slack": -(admit_at - now - reread_s), head class below
+# the margin) through its _queued_score(), rather than the separate edit of get_priority shown below. The
+# line numbers here are HEAD's.
+#
+# Today (unified_radix_cache.py:3038-3078): alloc; evict_host(alloc_len) over every unlocked leaf in policy
+# order, the queued tier included (:3041); then, with soft pins on, staged pins of sessions not back (:3043-3047);
+# then cut to the room left (:3048-3057); else refuse, revoke and report (:3058-3078).
+# With the switch: idle pages -> staged reads -> queued turns with slack -> wait (bounded) -> today's cut/refuse.
+#
+# Bounding eviction by class: host eviction is one min-heap walk over the evictable host leaves, keyed by the
+# policy's priority (components/full.py:242-261). Both hint policies return tuples whose first element is the
+# tier (next_use_eviction.py:157-172, 246-271), so a bound is a one-element tuple: (TIER_QUEUED,) compares
+# below every queued priority and above every idle one, and the walk stops at the first leaf at or past it
+# (checked on the real strategies: ../proto_checks.py B).
+#
+# A queued turn's slack: the prefetcher's tick already has each queued turn's position and the admission rate
+# (next_turn_prefetch.py:645, 652) and computes residual_wait(position, rate) per planned turn in _check_queued
+# (:839). Slack = that wait minus the time to read the turn's host-resident history back if it were evicted
+# now: L3LoadModel.seconds(own pages = ceil(req.host_hit_length / page), backlog = pages in flight plus pages
+# parked). The registration carries the admission time and the re-read time; the strategy subtracts its clock.
+
+--- a/python/sglang/srt/mem_cache/next_use_eviction.py
++++ b/python/sglang/srt/mem_cache/next_use_eviction.py
+@@ -44,3 +44,6 @@
+ TIER_SOON = 4
+ TIER_QUEUED = 5
++# A queued turn whose history could not be read back before its admission: never yields.
++TIER_QUEUED_HEAD = 6
+@@ -54,2 +57,3 @@
+ RETURN_TIER_QUEUED = 3
++RETURN_TIER_QUEUED_HEAD = 4
++# A queued turn yields only with at least this much slack. As NTP_HOLD_MARGIN_S.
++QUEUED_MIN_SLACK_S = 2.0
+@@ -77,5 +81,10 @@ class Queued(msgspec.Struct, frozen=True):
+     since: float
++    # Predicted admission (perf_counter seconds) and seconds to read the turn's resident
++    # history back; None until a tick has placed the turn in the queue.
++    admit_at: Optional[float] = None
++    reread_s: float = 0.0
++
++
++def _queued_priority(queued: Queued, *, now: float, tier: int, head_tier: int, node) -> tuple:
++    if queued.admit_at is None:
++        # No slack published (the switch is off): today's key.
++        return (tier, node.last_access_time)
++    slack = queued.admit_at - now - queued.reread_s
++    if slack < QUEUED_MIN_SLACK_S:
++        return (head_tier, node.last_access_time)
++    # Largest slack first.
++    return (tier, -slack)
+@@ class EvictionStrategy (evict_policy.py)
++    def host_bound(self, name: str) -> Optional[tuple]:
++        """A priority that every leaf of class `name` and later compares at or above;
++        None when the policy has no such class."""
++        return None
+@@ class NextUseStrategy
++    def host_bound(self, name: str) -> Optional[tuple]:
++        return {"queued": (TIER_QUEUED,), "head": (TIER_QUEUED_HEAD,)}.get(name)
+@@ -163,4 +180,10 @@ def get_priority(self, node: TreeNode) -> tuple[int, float]:
+         if isinstance(next_use, Queued):
+             if self._clock() - next_use.since > QUEUED_MAX_AGE_S:
+                 return (TIER_UNKNOWN, node.last_access_time)
+-            return (TIER_QUEUED, node.last_access_time)
++            return _queued_priority(
++                next_use, now=self._clock(), tier=TIER_QUEUED, head_tier=TIER_QUEUED_HEAD, node=node
++            )
+# ReturnChanceStrategy: the same two edits with RETURN_TIER_QUEUED / RETURN_TIER_QUEUED_HEAD (:253-256);
+# its three-element tuples take a trailing 0.0.
+# Without the switch nobody passes a bound or publishes admit_at, so every priority is today's.
+# With it, _on_arrival registers Queued with admit_at at once (position and rate are in hand there, :814-816),
+# so no queued turn sits in the yielding tier without a slack.
+
+--- a/python/sglang/srt/mem_cache/unified_cache/components/full.py
++++ b/python/sglang/srt/mem_cache/unified_cache/components/full.py
+@@ -234,10 +234,12 @@ def drive_host_eviction(
+         tracker: dict[ComponentType, int],
+         device_frees: dict[ComponentType, list[torch.Tensor]],
+         host_frees: dict[ComponentType, list[torch.Tensor]],
++        stop_at: Optional[tuple] = None,
+     ) -> None:
+@@ -249,5 +251,9 @@
+         while tracker[ct] < num_tokens and heap:
+-            _, x = heapq.heappop(heap)
++            priority, x = heapq.heappop(heap)
++            # A min-heap: once the smallest is at or past the bound, so is every leaf left.
++            # A parent pushed later is ranked on its own and may still go.
++            if stop_at is not None and priority >= stop_at:
++                break
+             if x not in self.tree_core.evictable_host_leaves:
+# stop_at is passed through UnifiedTreeCore.drive_host_eviction (unified_tree_core.py:1739-1765) and
+# UnifiedRadixCache.evict_host (unified_radix_cache.py:1493-1506, keyword-only, default None); ignored with a
+# one-time warning when the session-ref wrapper keys the heap (full.py:190-192), whose tuples start elsewhere.
+# The evict_host log line gains " stop=<none|queued|head>" at its end.
+
+--- a/python/sglang/srt/mem_cache/storage_read_scheduler.py
++++ b/python/sglang/srt/mem_cache/storage_read_scheduler.py
+@@ -92,3 +92,12 @@ def discard(self, handle: Hashable) -> bool:
+         return self._parked.pop(handle, None) is not None
++
++    def repark(self, read: ParkedRead) -> None:
++        """Put back a read that dispatch() handed out and that could not launch; it keeps
++        its park time and its place ahead of reads parked since."""
++        if read.handle in self._parked:
++            raise ValueError(f"read for {read.handle} is already parked")
++        self._parked = {read.handle: read, **self._parked}
++        self.stats.dispatched_total -= 1
++        self.stats.room_waits += 1
+
+--- a/python/sglang/srt/mem_cache/unified_radix_cache.py
++++ b/python/sglang/srt/mem_cache/unified_radix_cache.py
+@@ -3038,10 +3038,14 @@ def _launch_storage_hit(self, operation) -> bool:
+         alloc_len = hit_tokens
+         host_indices = cc.mem_pool_host.alloc(alloc_len)
+-        if host_indices is None:
++        if host_indices is None and self._read_room_order:
++            host_indices = self._make_read_room(request, alloc_len)
++            if host_indices is None and self._wait_for_room(operation):
++                return False
++        elif host_indices is None:
+             self.evict_host(alloc_len)
+             host_indices = cc.mem_pool_host.alloc(alloc_len)
+-        if host_indices is None and self.soft_pin_victims_fn is not None:
++        if host_indices is None and self.soft_pin_victims_fn is not None and not self._read_room_order:
+             shortfall = alloc_len - cc.mem_pool_host.available_size()
+# (the cut and the refusal below are unchanged and are what a read falls back to after the wait limit)
++
++    def _make_read_room(self, request: CacheRequestHandle, alloc_len: int) -> Optional[torch.Tensor]:
++        """Free the pages a read is short of, cheapest holders first; None when only
++        holders that must not yield are left."""
++        pool = self.cache_controller.mem_pool_host
++        strategy = self.tree_core.eviction_strategy
++        queued = self._read_is_for_a_queued_turn(request)
++
++        def short() -> int:
++            return alloc_len - pool.available_size()
++
++        # Idle holders: ended sessions, then idle prefixes in policy order.
++        self.evict_host(short(), stop_at=strategy.host_bound("queued"))
++        # Staged reads of sessions not back; only an arrived turn may take them.
++        if short() > 0 and queued and self.soft_pin_victims_fn is not None:
++            if self._bump_staged_reads(request, short()):
++                self.evict_host(short(), stop_at=strategy.host_bound("queued"))
++        # Queued turns whose history can be read back before their admission, most slack first.
++        if short() > 0 and queued:
++            self.evict_host(short(), stop_at=strategy.host_bound("head"))
++        return pool.alloc(alloc_len) if short() <= 0 else None
++
++    def _wait_for_room(self, operation) -> bool:
++        """Park the read again instead of refusing it: it keeps its anchor lock and its
++        ongoing_prefetch entry, so admission keeps passing its turn over. False once it has
++        waited room_wait_s, or for a staged read, which is left to its turn's arrival."""
++        request = operation.handle
++        now = time.perf_counter()
++        since = self._room_wait_since.setdefault(request, now)
++        if (
++            self._room_wait_s <= 0.0
++            or now - since >= self._room_wait_s
++            or not self._read_is_for_a_queued_turn(request)
++        ):
++            self._room_wait_since.pop(request, None)
++            return False
++        self._room_blocked_until = now + ROOM_RETRY_INTERVAL_S
++        self._reparked.add(request)
++        logger.info(
++            "HICACHE_EVT srs_room_wait rid=%s pages=%d short=%d waited_ms=%d",
++            request.rid, operation.storage_hit_count // self.page_size,
++            operation.storage_hit_count - self.cache_controller.mem_pool_host.available_size(),
++            round((now - since) * 1000),
++        )
++        return True
+@@ -3287,6 +3345,9 @@ def _dispatch_storage_reads(self) -> None:
++        # After a read found no room, nothing is tried again for a short while: each try
++        # rebuilds the eviction heap. "Now" reads included; the head waits like the rest.
++        if now < self._room_blocked_until:
++            return
+         decisions = srs.dispatch(
+@@ -3296,8 +3357,16 @@
+         for decision in decisions:
+             operation = decision.read.operation
++            if now < self._room_blocked_until:
++                # An earlier read of this pass is waiting for room: later deadlines wait behind it.
++                srs.repark(decision.read)
++                continue
+             operation.start_time = time.monotonic()
+             self._launch_storage_hit(operation)
++            if operation.handle in self._reparked:
++                self._reparked.discard(operation.handle)
++                srs.repark(decision.read)
++                continue
+             self._census_dispatching.discard(decision.read.handle)
+# ROOM_RETRY_INTERVAL_S = 0.25 (arbitrary; an evict_host call heapifies up to ~740 leaves in campaign 34).
+# _room_wait_since / _reparked are cleared in _reset_full, revoke_pending_prefetch and release_aborted_request.
+# _read_is_for_a_queued_turn(request): the prefetcher's _positions has the rid (a new hook next to
+# census_staged_fn); without a prefetcher every read counts as queued.
+# Fix of X2 on the way: the read asks eviction for what it is short of, not for its whole size.
+
+--- a/python/sglang/srt/mem_cache/next_turn_prefetch.py
++++ b/python/sglang/srt/mem_cache/next_turn_prefetch.py
+@@ -838,6 +838,8 @@ def _check_queued(
+         wait = residual_wait(position=position, rate=rate)
++        if self._queued_slack and wait is not None:
++            self._publish_queued(plan, req=req, admit_at=now + wait, backlog_pages=backlog_pages, now=now)
++
++    def _publish_queued(self, plan, *, req, admit_at, backlog_pages, now) -> None:
++        """Tell eviction when the queued turn is due and how long its resident history
++        would take to read back, on the turn's own deepest resident node and on the
++        session's tail; at most once per PROBE_INTERVAL_S a turn."""
++        if now - plan.last_slack_t < PROBE_INTERVAL_S:
++            return
++        plan.last_slack_t = now
++        parked = self._tree_cache.read_scheduler.parked_pages()
++        reread_s = self._load.seconds(
++            own_pages=math.ceil(req.host_hit_length / self._page_size),
++            backlog_pages=backlog_pages + parked,
++        )
++        queued = Queued(since=plan.arrival_t, admit_at=admit_at, reread_s=reread_s)
++        for node_id in (req.last_host_node, self._session_tail.get(plan.session)):
++            if node_id is not None:
++                self._next_use.register(node_id, queued)
++        plan.queued_node_id = req.last_host_node
+@@ -740,6 +742,9 @@ def _on_departure(self, req: Req, *, now: float) -> None:
+         plan = self._plans.pop(req.rid, None)
++        if plan is not None and plan.queued_node_id is not None and self._next_use is not None:
++            # Admitted or gone: the node is no longer a queued turn's.
++            self._next_use.forget(plan.queued_node_id)
+# req.last_host_node is the NodeId the arrival match set (schedule_batch.py:1156, 1643; root when nothing
+# matched: skip the root). Registering it closes X4: today only the previous turn's tail is registered
+# (:807-813), which may be gone, and under next_use nothing else of the session is.
+
+# Tests (CPU):
+#  test_next_use_eviction.py:
+#   - TestNextUseStrategy.test_queued_turns_yield_most_slack_first_and_a_turn_out_of_slack_never
+#     (pure, as test_tiers_and_the_order_within_each; both strategies)
+#   - TestNextUseStrategy.test_class_bounds_sit_between_the_idle_tiers_and_the_queued_ones   (derived property)
+#   - TestNextUseOnACpuTree.test_a_bounded_host_eviction_stops_at_the_queued_tier_and_reports_the_shortfall
+#     (host nodes through tree_core.insert_host; drive_host_eviction(stop_at=...))
+#   - TestNextUseOnACpuTree.test_a_parent_freed_by_its_childs_eviction_is_still_ranked_on_its_own
+#  test_storage_read_scheduler.py:
+#   - test_a_reparked_read_keeps_its_park_time_and_its_turn
+#  test_storage_read_dispatch.py, class TestParkAndDispatch, next to
+#  test_soft_pins_free_a_staged_read_so_the_asking_read_launches_whole (fixture cache_mode_fixture, a
+#  recording evict_host that frees room only for chosen stop_at values):
+#   - test_a_read_takes_idle_pages_then_staged_reads_then_queued_turns_with_slack
+#   - test_a_read_asks_eviction_for_its_shortfall                      (regression of X2)
+#   - test_with_only_the_head_left_the_read_waits_parked_and_is_not_reported_refused
+#   - test_a_read_that_waited_its_limit_is_cut_or_refused_as_before
+#   - test_a_staged_read_takes_idle_pages_only_and_never_waits
+#   - test_reads_behind_a_waiting_read_are_not_tried_in_the_same_pass
+#  test_next_turn_prefetch.py (fixture PrefetcherTestCase, DeadlineCache):
+#   - test_a_queued_turn_registers_its_own_resident_node_with_its_slack_and_forgets_it_at_admission

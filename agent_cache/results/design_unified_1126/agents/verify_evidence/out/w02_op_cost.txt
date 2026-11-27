@@ -1,0 +1,65 @@
+== c34 ec_full: fix-1 skipped pages 17135 = 1.10 M tokens; write ops 33973 of which merged 16464; groups 5000
+   unmerged write ops, ms per op:   pages | alone: n median mean | read covers >=50% of the op: n median mean | any overlap: n median
+     1-1   |  3106     4.0     4.5 |  1251   154.0   174.8 |  1261   153.0
+     2-4   |  3779    10.0    10.0 |  1313   186.0   198.1 |  1326   184.0
+     5-16  |  3483    26.0    28.3 |  1193   222.0   221.1 |  1199   221.0
+    17-64  |  1368    79.0    90.2 |   497   342.0   326.0 |   509   335.0
+    65-128 |   803   371.0   353.2 |   656   600.0   568.6 |   671   597.0
+   all writes (unmerged ops + groups): 3.10 ms/page alone (241978 pages), 11.19 ms/page with a read over >=50% (230461 pages)
+   reads: 2.40 ms/page alone (31203 pages), 3.54 ms/page with writes over >=50% (812324 pages)
+   minutes 60-70: reads 6.9 K tok/s, read thread busy 39.3 %; writes 4.3 K tok/s, write thread busy 40.4 %
+   minutes 70-80: reads 11.5 K tok/s, read thread busy 74.2 %; writes 4.2 K tok/s, write thread busy 63.0 %
+   minutes 80-90: reads 13.1 K tok/s, read thread busy 86.0 %; writes 4.3 K tok/s, write thread busy 68.3 %
+   minutes 90-110: reads 14.5 K tok/s, read thread busy 99.7 %; writes 4.4 K tok/s, write thread busy 73.6 %
+== c34 jit_exact: fix-1 skipped pages 22432 = 1.44 M tokens; write ops 34026 of which merged 15535; groups 4788
+   unmerged write ops, ms per op:   pages | alone: n median mean | read covers >=50% of the op: n median mean | any overlap: n median
+     1-1   |  3622     4.0     4.5 |   993   157.0   178.9 |  1007   156.0
+     2-4   |  4277     9.0     9.9 |  1186   181.0   197.7 |  1204   179.0
+     5-16  |  3944    26.0    28.2 |   937   238.0   229.4 |   946   236.5
+    17-64  |  1574    77.0    88.0 |   413   335.0   327.5 |   418   332.5
+    65-128 |   899   370.0   353.2 |   590   599.0   531.9 |   598   596.0
+   all writes (unmerged ops + groups): 3.08 ms/page alone (279028 pages), 11.41 ms/page with a read over >=50% (192611 pages)
+   reads: 2.54 ms/page alone (30706 pages), 3.57 ms/page with writes over >=50% (689423 pages)
+   minutes 60-70: reads 4.6 K tok/s, read thread busy 27.0 %; writes 4.2 K tok/s, write thread busy 33.7 %
+   minutes 70-80: reads 10.1 K tok/s, read thread busy 64.3 %; writes 4.3 K tok/s, write thread busy 57.3 %
+   minutes 80-90: reads 12.4 K tok/s, read thread busy 79.9 %; writes 4.4 K tok/s, write thread busy 63.0 %
+   minutes 90-110: reads 14.6 K tok/s, read thread busy 99.9 %; writes 4.5 K tok/s, write thread busy 73.7 %
+== c34 jit_p50: fix-1 skipped pages 26766 = 1.71 M tokens; write ops 33920 of which merged 18786; groups 5395
+   unmerged write ops, ms per op:   pages | alone: n median mean | read covers >=50% of the op: n median mean | any overlap: n median
+     1-1   |  2200     4.0     4.3 |  1473   178.0   191.1 |  1482   173.5
+     2-4   |  2674     9.0     9.8 |  1672   208.5   206.0 |  1682   207.5
+     5-16  |  2531    25.0    28.1 |  1438   244.5   238.1 |  1444   244.0
+    17-64  |   980    78.5    88.4 |   640   345.5   331.5 |   643   345.0
+    65-128 |   561   379.0   359.2 |   932   621.0   567.3 |   934   620.5
+   all writes (unmerged ops + groups): 3.13 ms/page alone (170120 pages), 11.66 ms/page with a read over >=50% (299253 pages)
+   reads: 2.63 ms/page alone (35545 pages), 3.74 ms/page with writes over >=50% (1038112 pages)
+   minutes 60-70: reads 13.2 K tok/s, read thread busy 90.6 %; writes 4.4 K tok/s, write thread busy 67.6 %
+   minutes 70-80: reads 14.7 K tok/s, read thread busy 99.9 %; writes 4.2 K tok/s, write thread busy 78.0 %
+   minutes 80-90: reads 14.6 K tok/s, read thread busy 99.9 %; writes 4.4 K tok/s, write thread busy 76.8 %
+   minutes 90-110: reads 14.6 K tok/s, read thread busy 99.9 %; writes 4.4 K tok/s, write thread busy 73.4 %
+== c34 ec_exact: fix-1 skipped pages 16645 = 1.07 M tokens; write ops 34201 of which merged 14515; groups 4294
+   unmerged write ops, ms per op:   pages | alone: n median mean | read covers >=50% of the op: n median mean | any overlap: n median
+     1-1   |  3733     4.0     4.6 |  1093   158.0   184.4 |  1103   157.0
+     2-4   |  4580     9.0     9.9 |  1171   195.0   202.6 |  1179   188.0
+     5-16  |  4277    25.0    27.5 |  1042   250.5   239.9 |  1058   248.0
+    17-64  |  1709    77.0    87.7 |   492   337.0   333.1 |   496   336.5
+    65-128 |   969   368.0   349.5 |   562   609.5   561.3 |   580   602.0
+   all writes (unmerged ops + groups): 3.06 ms/page alone (280923 pages), 11.79 ms/page with a read over >=50% (193554 pages)
+   reads: 2.61 ms/page alone (25058 pages), 3.54 ms/page with writes over >=50% (729864 pages)
+   minutes 60-70: reads 4.8 K tok/s, read thread busy 26.6 %; writes 4.3 K tok/s, write thread busy 35.5 %
+   minutes 70-80: reads 9.7 K tok/s, read thread busy 61.3 %; writes 4.3 K tok/s, write thread busy 57.1 %
+   minutes 80-90: reads 12.0 K tok/s, read thread busy 79.2 %; writes 4.4 K tok/s, write thread busy 65.2 %
+   minutes 90-110: reads 14.6 K tok/s, read thread busy 99.9 %; writes 4.2 K tok/s, write thread busy 74.2 %
+== c32 ec_full: fix-1 skipped pages 0 = 0.00 M tokens; write ops 29363 of which merged 0; groups 0
+   unmerged write ops, ms per op:   pages | alone: n median mean | read covers >=50% of the op: n median mean | any overlap: n median
+     1-1   |  4354     4.0     4.6 |  1828   133.0   149.4 |  1890   132.0
+     2-4   |  5426     9.0    10.0 |  2138   138.0   155.3 |  2210   136.0
+     5-16  |  5275    26.0    28.1 |  2273   162.0   184.2 |  2338   159.0
+    17-64  |  2393    80.0    91.0 |  1250   256.0   292.7 |  1296   247.0
+    65-128 |  1905   325.0   342.6 |  2133   829.0   796.2 |  2274   818.0
+   all writes (unmerged ops + groups): 3.03 ms/page alone (360314 pages), 9.51 ms/page with a read over >=50% (324815 pages)
+   reads: 2.15 ms/page alone (4646 pages), 3.92 ms/page with writes over >=50% (791029 pages)
+   minutes 60-70: reads 7.0 K tok/s, read thread busy 40.3 %; writes 4.2 K tok/s, write thread busy 45.8 %
+   minutes 70-80: reads 12.5 K tok/s, read thread busy 84.1 %; writes 4.5 K tok/s, write thread busy 87.5 %
+   minutes 80-90: reads 10.4 K tok/s, read thread busy 85.7 %; writes 7.4 K tok/s, write thread busy 96.9 %
+   minutes 90-110: reads 7.1 K tok/s, read thread busy 78.1 %; writes 10.8 K tok/s, write thread busy 99.9 %

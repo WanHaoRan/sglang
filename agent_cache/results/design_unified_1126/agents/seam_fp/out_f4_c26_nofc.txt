@@ -1,0 +1,16 @@
+== c26_nofc: cold prefills at an empty queue: n 2; ttft = nan ms + nan us/token x n + nan ns/token^2 x n^2 (residual p10 nan ms, p90 nan ms)
+   cold  1000-8000  tokens: n    2  ttft/token median   31.5 us  [p10   30.1, p90   31.5]
+   cold  8000-16000 tokens: n    0  ttft/token median    nan us  [p10    nan, p90    nan]
+   cold 16000-32000 tokens: n    0  ttft/token median    nan us  [p10    nan, p90    nan]
+   cold 32000-70000 tokens: n    0  ttft/token median    nan us  [p10    nan, p90    nan]
+   model: cold prefill of  8000 tokens = nan s (nan us/token; marginal nan us/token)
+   model: cold prefill of 16000 tokens = nan s (nan us/token; marginal nan us/token)
+   model: cold prefill of 24000 tokens = nan s (nan us/token; marginal nan us/token)
+   model: cold prefill of 32000 tokens = nan s (nan us/token; marginal nan us/token)
+   model: cold prefill of 48000 tokens = nan s (nan us/token; marginal nan us/token)
+   model: cold prefill of 64000 tokens = nan s (nan us/token; marginal nan us/token)
+   window 0-110 min: 11172 requests, 1597 with their own SSD read before admission (14.3 %), 0 of them staged before arrival
+   'alone' readers (arrived at an empty queue, read issued at arrival): 620; running requests at arrival median 21
+     queue wait = 125 ms + 33.2 us/token x L (OLS);   I/O = 21 ms + 2.11 ms/page (33.0 us/token)
+     lookup->park median 39 ms; park->dispatch median 0 ms; landing->admission median 27 ms; ttft - queue wait median 261 ms
+   readers that arrived behind others: 977; wait median 2.3 s; park->dispatch median 0.0 s; L median 17152

@@ -7,7 +7,9 @@ stall it risks against the rent it pays:
 - read_start: when to start reading a history back from storage (rule 1);
 - GapDistribution.chance_within: the chance of return within a horizon given the idle
   time so far, which ranks staged reads (rule 2) and eviction (rule 3);
-- PriceController: the price itself, moved by how much room reads were refused (rule 4).
+- PriceController: the price itself, moved by how much room reads were refused (rule 4);
+- GapDistribution.holding_rate: what holding a history is worth per second, which prices
+  the host room off its eviction victims (next_turn_prices.py).
 
 Pure policy: no clock, no cache; every time is passed in, in seconds.
 """
@@ -40,8 +42,12 @@ MAX_PLANNED_GAP_S = 1200.0
 MIN_REMAINING_POINTS = 4
 # Seconds of GPU prefill to recompute one token of history. Measured: first-turn prefill of
 # Qwen3-30B-A3B on an H200, 0.108-0.113 ms per token (agent_cache campaign 25); re-measure
-# for another model or GPU.
+# for another model or GPU. With measured prices it only seeds PrefillCostModel: the cost
+# grows with the length (FA3: 25 us a token at 8K, 59 us at 64K).
 RECOMPUTE_S_PER_TOKEN = 1.1e-4
+# Horizons the holding rate is searched over, in geometric steps up to MAX_PLANNED_GAP_S.
+# Arbitrary.
+HOLDING_HORIZON_STEPS = 48
 # Fewest gaps seen for a key, and fewest of them longer than the idle time, for the key's
 # own gaps to give a chance of return. Arbitrary; as the eviction replay used
 # (agent_cache/frozen/ec_policy_20261111/evict_replay).
@@ -104,6 +110,29 @@ class GapDistribution(msgspec.Struct, frozen=True):
         z = _STD_NORMAL.inv_cdf(q)
         sigma = self.sigma_low if z < 0.0 else self.sigma_high
         return self.median_s * math.exp(sigma * z)
+
+    def holding_rate(self, *, idle_s: float, min_horizon_s: float) -> float:
+        """Per second: the largest, over horizons h >= min_horizon_s, of
+        P(back within h | idle) / E[min(time left, h) | idle]. Times a restore cost per
+        token it is the index of holding the session's history. Taken on the survival
+        function: over support() the ratio jumps with the distance to the next point."""
+        alive = self.survival(idle_s)
+        if alive <= 0.0:
+            return 0.0
+        step = (MAX_PLANNED_GAP_S / min_horizon_s) ** (1.0 / HOLDING_HORIZON_STEPS)
+        best = 0.0
+        # Seconds held up to the horizon; the survival is taken as linear between horizons.
+        held_s = 0.0
+        previous_h, previous_left = 0.0, 1.0
+        horizon = min_horizon_s
+        for _ in range(HOLDING_HORIZON_STEPS + 1):
+            left = self.survival(idle_s + horizon) / alive
+            held_s += 0.5 * (previous_left + left) * (horizon - previous_h)
+            if held_s > 0.0:
+                best = max(best, (1.0 - left) / held_s)
+            previous_h, previous_left = horizon, left
+            horizon *= step
+        return best
 
     def support(self, points: int = SUPPORT_POINTS) -> tuple[float, ...]:
         """Equal-weight gaps, ascending: the mid-quantiles, capped at MAX_PLANNED_GAP_S."""
@@ -168,6 +197,7 @@ def read_start(
     read_s: float,
     wait_s: float,
     rent_per_s: float,
+    stall_weight: float = 1.0,
 ) -> Optional[float]:
     """Rule 1: seconds from now at which a staged read should start, 0 for now; None when
     reading at the turn's arrival costs no more. `remaining` is remaining_gaps(), `read_s`
@@ -175,17 +205,20 @@ def read_start(
     turn arriving now would see, `rent_per_s` the price times the tokens the read holds.
 
     A read started at s lands at s + read_s and the turn is due at its arrival plus
-    wait_s. Each second the turn waits on the read costs 1, each second the read waits
-    for the turn costs rent_per_s, and a turn that arrives before s starts its own read.
+    wait_s. Each second the turn waits on the read costs stall_weight, each second the
+    read waits for the turn costs rent_per_s, and a turn that arrives before s starts
+    its own read. stall_weight is the chance that no other turn is ready to take the
+    GPU while this one waits on its read: admission passes such a turn over, so with
+    ready turns queued its stall delays nobody else.
     """
     stall_at_arrival = max(0.0, read_s - wait_s)
     count = len(remaining)
-    if count == 0 or stall_at_arrival == 0.0:
+    if count == 0 or stall_at_arrival == 0.0 or stall_weight <= 0.0:
         return None
     prefix = list(itertools.accumulate(remaining, initial=0.0))
     total = prefix[-1]
     lead = read_s - wait_s
-    best_cost, best_start = stall_at_arrival, None
+    best_cost, best_start = stall_weight * stall_at_arrival, None
     # The cost is piecewise linear in s with a kink where a support point becomes due as
     # the read lands, so a minimum is at one of those starts or at now.
     for start in sorted({0.0, *(max(0.0, gap - lead) for gap in remaining)}):
@@ -195,7 +228,7 @@ def read_start(
             (late - arrived) * (start + lead) - (prefix[late] - prefix[arrived])
         )
         pinned = (total - prefix[late]) - (count - late) * (start + lead)
-        cost = (stall + rent_per_s * pinned) / count
+        cost = (stall_weight * stall + rent_per_s * pinned) / count
         if cost < best_cost:
             best_cost, best_start = cost, start
     return best_start

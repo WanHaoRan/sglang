@@ -1,0 +1,88 @@
+# R2: the write queue in eviction order instead of FIFO.
+# Pseudo-diff against HEAD b7074d9cae; not applied. TP = PP = 1 only (see "TP" below).
+#
+# Today: write_backup_storage (unified_radix_cache.py:2026-2061) builds the spec, puts a StorageOperation on
+# cc.backup_queue, a plain Queue (cache_controller.py:475; hybrid_cache_controller.py:1155-1171), and takes
+# the host lock. One thread drains it: backup_thread_func (:1392-1409) takes the first op and, with
+# write_coalesce_pages > 0, the mergeable ops behind it (_take_backup_group, :1424-1442). Submission order is
+# the order of the GPU->host acks, ancestors first (_finish_write_through_ack, :1840-1855).
+#
+# Plan A (the smallest): the rank is a snapshot taken at submit, the queue a PriorityQueue.
+#   rank = (0 if the node is already host-only else 1, the policy's priority of the node, op id)
+# A host-only node with a queued write is the one whose lock keeps eviction from room it would take now; a
+# node still on the GPU cannot leave host memory before the GPU gives it up. Within each, the order host and
+# GPU eviction use (one strategy orders both, full.py:194-261). The op id keeps FIFO among equals.
+
+--- a/python/sglang/srt/managers/cache_controller.py
++++ b/python/sglang/srt/managers/cache_controller.py
+@@ -224,6 +224,9 @@ class StorageOperation:
+         self.prefix_keys = prefix_keys
++        # Eviction-order rank taken at submit; () keeps queue order.
++        self.write_rank: tuple = ()
+@@ -332,3 +335,5 @@ def __init__(
+         self.write_coalesce_pages = (
+             envs.SGLANG_HICACHE_STORAGE_WRITE_COALESCE_PAGES.get()
+         )
++        self.write_eviction_order = envs.SGLANG_HICACHE_STORAGE_WRITE_EVICTION_ORDER.get()
+@@ -475,1 +480,1 @@ def _start_storage_threads(self):
+-        self.backup_queue = Queue()
++        self.backup_queue = _RankedQueue() if self.write_eviction_order else Queue()
+@@ -504,2 +509,2 @@ def _stop_storage_threads(self):
+             if hasattr(self, "backup_queue"):
+                 self.backup_queue.put_nowait(None)
++
++class _RankedQueue:
++    """The Queue calls the write thread makes (put, put_nowait, get, get_nowait, qsize, empty) over a
++    PriorityQueue of (rank, op id, op). None, the stop wake-up, sorts first: a bare None is not orderable
++    against tuples (../proto_checks.py D)."""
+
+--- a/python/sglang/srt/mem_cache/hybrid_cache/hybrid_cache_controller.py
++++ b/python/sglang/srt/mem_cache/hybrid_cache/hybrid_cache_controller.py
+@@ -1155,7 +1155,8 @@ def write_storage(
+         prefix_keys: Optional[List[str]] = None,
+         extra_pools: Optional[list[PoolTransfer]] = None,
++        write_rank: tuple = (),
+     ) -> int:
+         operation = StorageOperation(...)
++        operation.write_rank = write_rank
+         self.backup_queue.put(operation)
+
+--- a/python/sglang/srt/mem_cache/unified_radix_cache.py
++++ b/python/sglang/srt/mem_cache/unified_radix_cache.py
+@@ -2047,6 +2047,7 @@ def write_backup_storage(self, node_id: NodeId) -> None:
+         operation_id = self.cache_controller.write_storage(
+             spec.host_value, spec.token_ids, spec.hash_value, spec.prefix_keys,
+             extra_pools=aux_xfers or None,
++            write_rank=self.tree_core.storage_write_rank(node_id) if self._write_eviction_order else (),
+         )
+-        logger.info("HICACHE_EVT h2s_submit op=%d node=%d tokens=%d pending=%d", ...)
++        logger.info("HICACHE_EVT h2s_submit op=%d node=%d tokens=%d pending=%d host_only=%d", ...)
+# UnifiedTreeCore.storage_write_rank(node_id) -> (0 if node.evicted else 1, self.eviction_strategy.get_priority(node))
+
+# What stays as it is
+#   Groups: _take_backup_group takes "the ops behind the first" with get_nowait(), which now returns the next
+#   rank; a group is the best-ranked mergeable ops, acked as their last page lands.
+#   The lock: taken at submit, released at the ack, so a page still cannot leave host memory before its write
+#   is acked whatever the order. That, not the order, is what assume_stored relies on: it extends a hit to
+#   the left over pages that were resident at the first lookup (unified_radix_cache.py:2150-2184), and a
+#   resident page that has since been evicted had its write acked first. A child written before its parent
+#   leaves a hole on storage only while the parent is locked in host memory, where no lookup starts above it.
+#   A failed write breaks the premise under either order (R3 records it; the read is fail-soft).
+# TP
+#   Acks are drained by count, MIN over ranks (drain_storage_control_queues, :3563-3595), on the premise that
+#   every rank's ack queue holds the same ops in the same order. A priority pick depends on when each rank's
+#   thread looks at its queue, so ranks would release different host locks in the same pass and their trees
+#   would diverge. Hence TP = PP = 1; refuse the switch otherwise at init.
+# Plan B, if the order must be fresh (a node on the GPU at submit may be host-only by the time it is written;
+# a write waited 5.7-6.9 s at most in campaign 34, and 36-38 s at the median, 46-49 s at the p90, in the last
+# half hour of campaign 32's ec_full and jit_p50):
+#   the scheduler holds submissions and feeds the FIFO queue in eviction order, a write window at a time. The
+#   thread stays FIFO, so acks stay in one order on every rank. It costs a hook for nodes split while held
+#   (today the spec is built before any split can happen) and a per-pass pick. Not the smallest change.
+
+# Tests (CPU), test_storage_read_dispatch.py, class TestStorageWriteCoalescing (fixture write_controller,
+# queue_write with a rank, run_write_thread, _RecordingStore):
+#   - test_ranked_writes_leave_host_only_first_and_keep_queue_order_among_equals
+#   - test_a_group_merges_the_next_ranked_ops_and_acks_them_as_written
+#   - test_the_stop_wake_up_goes_through_a_ranked_queue          (bookkeeping: _stop_storage_threads' None)
+#   - test_writes_keep_queue_order_when_the_switch_is_off        (negative branch; the existing cases cover the path)

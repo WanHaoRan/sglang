@@ -78,6 +78,17 @@ def _safe_unlink(path: str) -> tuple[bool, int]:
         return False, 0
 
 
+def _touched_since_scan(group: _GroupInfo) -> bool:
+    """Whether a file of the group now has a newer mtime than the scan recorded."""
+    for path in group.paths:
+        try:
+            if os.stat(path).st_mtime > group.mtime:
+                return True
+        except OSError:
+            continue
+    return False
+
+
 class HiCacheL3Cleaner:
     """Delete old NIXL FILE cache entries when disk usage exceeds watermarks.
 
@@ -95,6 +106,7 @@ class HiCacheL3Cleaner:
         interval_sec: float = _DEFAULT_INTERVAL_SEC,
         recheck_groups: int = _DEFAULT_RECHECK_GROUPS,
         unlink_workers: Optional[int] = None,
+        keep_touched: bool = False,
     ) -> None:
         if isinstance(storage_dirs, str):
             storage_dirs = [storage_dirs] if storage_dirs else []
@@ -104,6 +116,9 @@ class HiCacheL3Cleaner:
         self.low_watermark = low_watermark
         self.interval_sec = interval_sec
         self.recheck_groups = max(1, recheck_groups)
+        # A scan takes seconds and the unlinks follow it: a group whose mtime moved forward
+        # since the scan is in use again and is left alone. For stores that refresh mtimes.
+        self.keep_touched = keep_touched
         self.unlink_workers = unlink_workers or max(
             8, 8 * max(len(self.storage_dirs), 1)
         )
@@ -188,6 +203,7 @@ class HiCacheL3Cleaner:
         deleted_groups = 0
         deleted_files = 0
         bytes_deleted = 0
+        kept_groups = 0
 
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=self.unlink_workers,
@@ -196,13 +212,17 @@ class HiCacheL3Cleaner:
             idx = 0
             while idx < len(ordered) and not self._stop.is_set():
                 batch = ordered[idx : idx + self.recheck_groups]
+                idx += len(batch)
+                if self.keep_touched:
+                    untouched = [g for g in batch if not _touched_since_scan(g)]
+                    kept_groups += len(batch) - len(untouched)
+                    batch = untouched
                 paths = list(self._iter_group_paths(batch))
                 for removed, removed_bytes in pool.map(_safe_unlink, paths):
                     if removed:
                         deleted_files += 1
                         bytes_deleted += removed_bytes
                 deleted_groups += len(batch)
-                idx += len(batch)
 
                 if all(
                     self._disk_usage_pct(path) < self.low_watermark for path in hot_dirs
@@ -220,6 +240,8 @@ class HiCacheL3Cleaner:
             {path: f"{initial_pcts[path]:.1f}%" for path in hot_dirs},
             {path: f"{pct:.1f}%" for path, pct in final_pcts.items()},
         )
+        if kept_groups:
+            logger.info("HICACHE_EVT l3_kept groups=%d", kept_groups)
         return True
 
     def _scan_base_dir(self, base_dir: str, groups: dict[str, _GroupInfo]) -> None:

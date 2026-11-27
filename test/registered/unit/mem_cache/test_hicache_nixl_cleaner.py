@@ -1,4 +1,5 @@
-"""Unit tests for the NIXL FILE L3 cleaner and for skipping writes of stored pages."""
+"""Unit tests for the NIXL FILE L3 cleaner, for skipping writes of stored pages, and
+for the mtimes set to steer the cleaner's order."""
 
 from sglang.test.ci.ci_register import register_cpu_ci
 
@@ -8,6 +9,7 @@ import importlib.util
 import os
 import shutil
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -18,6 +20,7 @@ from sglang.srt.mem_cache.storage.nixl.nixl_cleaner import (
     _safe_unlink,
 )
 from sglang.srt.mem_cache.storage.nixl.nixl_utils import (
+    TOUCH_STEP_NS,
     NixlBackendConfig,
     NixlFileManager,
 )
@@ -103,6 +106,53 @@ class TestHiCacheL3Cleaner(_NixlFileTestCase):
         self._run_single_group_cleanup()
         self.assertFalse(any(os.path.exists(path) for path in old_paths))
         self.assertTrue(all(os.path.exists(path) for path in new_paths))
+
+    def test_a_group_touched_after_the_scan_is_kept_whole_only_under_keep_touched(self):
+        """A scan takes seconds; a page whose mtime moves forward before its unlink is in
+        use again. One refreshed file keeps the whole page, and the next oldest goes."""
+        names = ("old", "mid", "new")
+        for keep_touched in (True, False):
+            with self.subTest(keep_touched=keep_touched):
+                paths = {
+                    name: [
+                        self._write_key(f"page-{name}_model_{rank}_2", mtime=mtime)
+                        for rank in range(2)
+                    ]
+                    for name, mtime in zip(names, (100.0, 150.0, 200.0))
+                }
+                cleaner = HiCacheL3Cleaner(
+                    self.base_dirs,
+                    tp_rank=0,
+                    high_watermark=80.0,
+                    low_watermark=70.0,
+                    recheck_groups=1,
+                    unlink_workers=1,
+                    keep_touched=keep_touched,
+                )
+                scan = cleaner._scan_base_dir
+
+                def scan_then_touch(base_dir, groups):
+                    scan(base_dir, groups)
+                    if base_dir == self.base_dirs[-1]:
+                        os.utime(paths["old"][0], (300.0, 300.0))
+
+                cleaner._scan_base_dir = scan_then_touch
+                # Full until one page is gone.
+                cleaner._disk_usage_pct = lambda path: (
+                    90.0
+                    if all(os.path.exists(p) for name in names for p in paths[name])
+                    else 60.0
+                )
+                # A tick that stops advancing over kept groups would loop: stop it.
+                stopper = threading.Timer(5.0, cleaner._stop.set)
+                stopper.start()
+                self.addCleanup(stopper.cancel)
+                self.assertTrue(cleaner._tick())
+                gone = "mid" if keep_touched else "old"
+                for name in names:
+                    for path in paths[name]:
+                        self.assertEqual(os.path.exists(path), name != gone, path)
+                shutil.rmtree(self.test_dir)
 
     def test_tick_deletes_hybrid_components_atomically(self):
         """Evict every pool component and TP rank for one logical page."""
@@ -309,6 +359,96 @@ class TestSkipStoredWrites(_NixlFileTestCase):
 
         with self.assertRaises(ValueError):
             cfg.get_skip_stored_writes()
+
+
+class TestTouchedPages(_NixlFileTestCase):
+    """Mtimes set to steer the unchanged cleaner: a chain memory serves is refreshed
+    with its head newest, an ended session's pages are set to zero."""
+
+    def _write_page(self, name: str, *, mtime: float) -> list[str]:
+        # Zero-copy MHA keeps two files per page, K and V.
+        return [
+            self._write_key(f"{name}_model_0_1{suffix}", mtime=mtime)
+            for suffix in ("_k", "_v")
+        ]
+
+    def _kept(self, pages: list[list[str]]) -> list[bool]:
+        return [all(os.path.exists(path) for path in page) for page in pages]
+
+    def test_a_refreshed_chain_loses_its_tail_before_its_head(self):
+        """Written head first, a chain loses its head first, and a lookup stops at the
+        first missing page; refreshed with the head newest, it loses its tail first."""
+        written = [self._write_page(f"page-w{i}", mtime=100.0 + i) for i in range(3)]
+        self._run_single_group_cleanup()
+        self.assertEqual(self._kept(written), [False, True, True])
+
+        refreshed = [self._write_page(f"page-r{i}", mtime=10.0 + i) for i in range(3)]
+        counts = self.file_manager.stamp_pages(refreshed, newest_ns=50 * 10**9)
+        self.assertEqual(counts, (6, 0))
+        self._run_single_group_cleanup()
+        self.assertEqual(self._kept(refreshed), [True, True, False])
+
+    def test_touching_a_deleted_file_creates_nothing_and_is_counted_gone(self):
+        """The cleaner may delete a page between its match and its touch: the touch
+        creates nothing (a lookup would take an empty file as stored) and is counted."""
+        gone = [
+            self.file_manager.get_file_path(f"page-gone_model_0_1{suffix}")
+            for suffix in ("_k", "_v")
+        ]
+        kept = self._write_page("page-kept", mtime=100.0)
+        newest_ns = 50 * 10**9
+        counts = self.file_manager.stamp_pages([gone, kept], newest_ns=newest_ns)
+        self.assertEqual(counts, (2, 2))
+        self.assertFalse(any(os.path.exists(path) for path in gone))
+        self.assertEqual(
+            [os.stat(path).st_mtime_ns for path in kept],
+            [newest_ns - TOUCH_STEP_NS] * 2,
+        )
+
+    def test_a_page_is_retired_only_once_every_file_of_it_is_at_zero(self):
+        """A retired page goes before any page still wanted, however old. The cleaner
+        ranks a page by its newest file: one file left untouched keeps it in place."""
+        wanted = self._write_page("page-wanted", mtime=100.0)
+        ended = self._write_page("page-ended", mtime=200.0)
+        half = self._write_page("page-half", mtime=300.0)
+        counts = self.file_manager.stamp_pages([ended, half[:1]], newest_ns=None)
+        self.assertEqual(counts, (3, 0))
+        self._run_single_group_cleanup()
+        self.assertEqual(self._kept([wanted, ended, half]), [True, False, True])
+        self._run_single_group_cleanup()
+        self.assertEqual(self._kept([wanted, half]), [False, True])
+
+    def test_nixl_config_resolves_the_touch_switches(self):
+        """Both are off by default; a top-level key wins over its env var and is never
+        forwarded as a NIXL plugin init param; a value of the wrong type raises."""
+        no_keys = NixlBackendConfig()
+        keys_off = NixlBackendConfig(
+            {"touch_interval_s": 0, "retire_ended_pages": False}
+        )
+        keys_on = NixlBackendConfig(
+            {"use_uring": "true", "touch_interval_s": 60, "retire_ended_pages": True}
+        )
+
+        def resolved(cfg):
+            return cfg.get_touch_interval_s(), cfg.get_retire_ended_pages()
+
+        with mock.patch.dict(os.environ):
+            os.environ.pop("SGLANG_HICACHE_NIXL_TOUCH_INTERVAL_S", None)
+            os.environ.pop("SGLANG_HICACHE_NIXL_RETIRE_ENDED_PAGES", None)
+            self.assertEqual(resolved(no_keys), (0.0, False))
+            self.assertEqual(resolved(keys_on), (60.0, True))
+            with envs.SGLANG_HICACHE_NIXL_TOUCH_INTERVAL_S.override(300.0):
+                with envs.SGLANG_HICACHE_NIXL_RETIRE_ENDED_PAGES.override(True):
+                    self.assertEqual(resolved(no_keys), (300.0, True))
+                    self.assertEqual(resolved(keys_off), (0.0, False))
+        self.assertEqual(keys_on.get_backend_initparams("POSIX"), {"use_uring": "true"})
+
+        for bad in ("300", True, -1):
+            with self.subTest(touch_interval_s=bad):
+                with self.assertRaises(ValueError):
+                    NixlBackendConfig({"touch_interval_s": bad}).get_touch_interval_s()
+        with self.assertRaises(ValueError):
+            NixlBackendConfig({"retire_ended_pages": "false"}).get_retire_ended_pages()
 
 
 if __name__ == "__main__":

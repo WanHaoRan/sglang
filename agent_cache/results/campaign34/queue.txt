@@ -12,3 +12,9 @@
 jit_p50 three_tier_wc_oracle_v2_nu_owned dist --hint-no-call engine_fa3fix_20261122 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1
 ec_full three_tier_wc_oracle_v2_nu_owned dist --hint-no-call engine_fa3fix_20261122 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning harm --hicache-storage-next-turn-soft-pins on --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}
 jit_exact three_tier_wc_oracle_v2_nu_owned oracle - engine_fa3fix_20261122 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1
+# Added 2026-11-23 21:1xZ at the author's request, so campaign 34 holds campaign 32's baseline and oracle arm too:
+# hicache (stock HiCache, no hints) and ec_exact (the four rules on exact hints), with campaign 32's flags on the fixed
+# copy and every fix switch of settings.env on. The host was restarted at 20:47Z on another H200 (GPU-36746535; the three
+# arms above and all of campaign 32 ran on GPU-0f61782e).
+hicache three_tier_wc none - engine_fa3fix_20261122 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1
+ec_exact three_tier_wc_oracle_v2_nu_owned oracle - engine_fa3fix_20261122 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning harm --hicache-storage-next-turn-soft-pins on --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}

@@ -138,6 +138,8 @@ class StorageAttachment:
             enable_storage_metrics=cache._enable_metrics_flag,
             extra_metric_labels=cache.extra_metric_labels,
         )
+        # The new backend states its own touch and retire support.
+        cache._init_storage_retention()
         return True, "Attached HiCache storage backend successfully."
 
     def detach(self) -> tuple[bool, str]:
@@ -416,6 +418,10 @@ class StorageAttachment:
             except Exception:
                 logger.exception("Failed to release host lock for backup op %s", ack_id)
         cache.pending_backup_tokens = 0
+        if cache.retention.track_stored:
+            # Nobody acks the dropped writes, and the next store attached may be
+            # another one: a mark kept would leave holes there that no child rewrites.
+            cache._forget_storage_copies(detached=True)
 
         for handle in list(cache._storage_prefetch_hit_remaining_by_reqid):
             cache.discard_storage_prefetch_accounting(handle)

@@ -173,6 +173,8 @@ class Checker:
         for stage in a.stage:
             name, fill, want = stage.split(":")
             took = await self.fill(int(fill), name)
+            if a.settle_s > 0:
+                await asyncio.sleep(a.settle_s)
             mid = await self.metrics()
             back = await self.send("A", prompt)
             after = await self.metrics()
@@ -251,6 +253,9 @@ def main(argv=None) -> int:
                     help="largest cache granule of the system (a prefix is cached up to a multiple of it)")
     ap.add_argument("--stage", action="append", default=[], metavar="NAME:FILL_TOKENS:cached|recomputed")
     ap.add_argument("--salt", default=None, help="fix the synthetic tokens (default: new ones every run)")
+    ap.add_argument("--settle-s", type=float, default=0.0,
+                    help="seconds to wait after a stage's filler prompts before the checked request: writes they "
+                         "queued can hold a small host pool, and a read then comes back a page short")
     ap.add_argument("--recompute-tol", type=float, default=EXACT_TOL,
                     help="logprob tolerance of a recomputed prompt against the cold run: exact by default; a scheduler "
                          "that chunks a prefill by its own budget (TokenCake) needs the cold-against-warm tolerance")

@@ -116,6 +116,47 @@ class TestStorageReadScheduler(CustomTestCase):
         self.assertEqual(srs.stats.window_holds, 1)
         self.assertEqual(dispatch(150.0), ["held"])
 
+    def test_the_line_ahead_of_a_read_is_the_now_reads_and_the_timed_ones_due_no_later(
+        self,
+    ):
+        """Dispatch serves "now" reads before any timed one and timed ones by deadline, so
+        that is the line a read waits in. Counting every parked read makes an early read
+        wait for late ones; counting none is how a planned 8 s read took 30 to 52 s."""
+        srs = scheduler()
+        for handle, pages in (("now", 1), ("early", 2), ("mid", 4), ("late", 8)):
+            srs.park(handle=handle, operation=None, pages=pages, now=0.0)
+        deadlines = {"now": None, "early": 110.0, "mid": 120.0, "late": 130.0}
+        self.assertEqual(
+            [
+                srs.pages_due_by(deadline, deadline_of=deadlines.get)
+                for deadline in (None, 100.0, 120.0, 500.0)
+            ],
+            [1, 1, 1 + 2 + 4, 15],
+        )
+
+    def test_ahead_of_a_parked_read_are_those_dispatch_takes_first(self):
+        """A read already parked waits for the reads ordered before it, not for one of
+        the same deadline parked after it: counted, that one makes the read look later
+        than it is and its turn give it up for a recompute."""
+        srs = scheduler()
+        for handle, pages in (("now", 1), ("mid", 2), ("mid-twin", 4), ("early", 8)):
+            srs.park(handle=handle, operation=None, pages=pages, now=0.0)
+        deadlines = {"now": None, "mid": 120.0, "mid-twin": 120.0, "early": 110.0}
+        ahead = {
+            handle: srs.pages_ahead_of(handle, deadline_of=deadlines.get)
+            for handle in deadlines
+        }
+        self.assertEqual(
+            ahead, {"now": 0, "early": 1, "mid": 1 + 8, "mid-twin": 1 + 8 + 2}
+        )
+        order = [
+            d.read.handle
+            for d in srs.dispatch(
+                now=100.0, deadline_of=deadlines.get, in_flight_pages=0, held_tokens=0
+            )
+        ]
+        self.assertEqual(order, sorted(ahead, key=ahead.get))
+
     def test_write_hold_stops_timed_reads_from_the_threshold_until_half_of_it(self):
         """Timed reads let through while SSD writes still lock host pages find no room.
         The hold has memory both ways (60 neither starts nor ends it); a "now" read,

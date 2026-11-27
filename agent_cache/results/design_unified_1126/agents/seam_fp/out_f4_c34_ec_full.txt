@@ -1,0 +1,23 @@
+== c34_ec_full: cold prefills at an empty queue: n 62; ttft = 53 ms + 12.3 us/token x n + 0.724 ns/token^2 x n^2 (residual p10 -33 ms, p90 25 ms)
+   cold  1000-8000  tokens: n   16  ttft/token median   29.6 us  [p10   21.4, p90   51.8]
+   cold  8000-16000 tokens: n   19  ttft/token median   25.6 us  [p10   20.8, p90   27.4]
+   cold 16000-32000 tokens: n   24  ttft/token median   30.7 us  [p10   26.5, p90   34.1]
+   cold 32000-70000 tokens: n    3  ttft/token median   51.1 us  [p10   39.9, p90   53.9]
+   model: cold prefill of  8000 tokens = 0.20 s (24.6 us/token; marginal 23.9 us/token)
+   model: cold prefill of 16000 tokens = 0.43 s (27.1 us/token; marginal 35.4 us/token)
+   model: cold prefill of 24000 tokens = 0.76 s (31.8 us/token; marginal 47.0 us/token)
+   model: cold prefill of 32000 tokens = 1.19 s (37.1 us/token; marginal 58.6 us/token)
+   model: cold prefill of 48000 tokens = 2.31 s (48.1 us/token; marginal 81.8 us/token)
+   model: cold prefill of 64000 tokens = 3.80 s (59.4 us/token; marginal 104.9 us/token)
+   window 0-110 min: 15562 requests, 2305 with their own SSD read before admission (14.8 %), 1 of them staged before arrival
+   'alone' readers (arrived at an empty queue, read issued at arrival): 105; running requests at arrival median 18
+     queue wait = 128 ms + 42.4 us/token x L (OLS);   I/O = 45 ms + 2.53 ms/page (39.6 us/token)
+     lookup->park median 19 ms; park->dispatch median 0 ms; landing->admission median 16 ms; ttft - queue wait median 116 ms
+     measured TTFT median 0.85 s vs recompute model median 0.56 s
+     recompute faster for 101/105; gain = TTFT - T_rec: median +0.22 s [p10 +0.03, p90 +0.71]; sum of positive gains 35.8 s = 2.30 ms per request of the window; sum of all +35.4 s
+       L   256-4000 : n   24  TTFT median 0.47 s, T_rec median 0.37 s, gain median +0.08 s, recompute faster 22/24
+       L  4000-12000: n   25  TTFT median 0.60 s, T_rec median 0.31 s, gain median +0.26 s, recompute faster 25/25
+       L 12000-24000: n   36  TTFT median 0.91 s, T_rec median 0.66 s, gain median +0.28 s, recompute faster 35/36
+       L 24000-40000: n   19  TTFT median 1.43 s, T_rec median 1.21 s, gain median +0.22 s, recompute faster 18/19
+       L 40000-70000: n    1  TTFT median 2.03 s, T_rec median 1.95 s, gain median +0.08 s, recompute faster 1/1
+   readers that arrived behind others: 2199; wait median 24.3 s; park->dispatch median 17.6 s; L median 23296

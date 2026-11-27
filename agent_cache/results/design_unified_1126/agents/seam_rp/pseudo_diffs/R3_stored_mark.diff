@@ -1,0 +1,156 @@
+# R3: a page counts as on the SSD only when the whole write is acknowledged.
+# Pseudo-diff against HEAD b7074d9cae; not applied.
+# State: two fields on the tree node, scheduler thread only. The write thread never sees them.
+
+--- a/python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py
++++ b/python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py
+@@ -132,6 +132,10 @@ class UnifiedTreeNode:
+         self._tlru_history_len = 0
+         self.external_cache_stored = False
++        # Host->storage write: the queued op's id, and whether every page of the node has
++        # an acked storage copy (a full ack, or pages read back from storage).
++        self.storage_write_op: Optional[int] = None
++        self.storage_stored = False
+         self.priority = priority
+@@ -1404,6 +1408,9 @@ def _split_node(
+         new_node.hit_count = child.hit_count
+         new_node.external_cache_stored = child.external_cache_stored
++        # The op and its ack cover both fragments.
++        new_node.storage_write_op = child.storage_write_op
++        new_node.storage_stored = child.storage_stored
+         new_node.creation_time = child.creation_time
+@@ -2228,6 +2235,7 @@ def insert_host(
+         new_node.hash_value = hash_value
++        new_node.storage_stored = True
+         new_node.component_data[BASE_COMPONENT_TYPE].host_value = host_value.clone()
+@@ -2596,6 +2604,42 @@ def finish_write_through(self, node_ids: list[NodeId], ack_id: int) -> None:
+             self.kv_events.record_store(node, medium=StorageMedium.CPU)
+
++    def mark_storage_write(self, node_id: NodeId, op_id: int) -> None:
++        self.node_by_id(node_id).storage_write_op = op_id
++
++    def finish_storage_write(self, node_id: NodeId, op_id: int, *, stored: bool) -> None:
++        """Clear op_id from the node and the split fragments above it, and record whether
++        their pages are stored."""
++        node = self._node_arena.get(node_id)
++        while (
++            node is not None
++            and node is not self.root_node
++            and node.storage_write_op == op_id
++        ):
++            node.storage_write_op = None
++            node.storage_stored = stored
++            node = node.parent
++
++    def unstored_ancestors(self, node_id: NodeId) -> list[NodeId]:
++        """Host-backed ancestors with no storage copy and no write queued, root side first."""
++        found = []
++        node = self.node_by_id(node_id).parent
++        while (
++            node is not None
++            and node is not self.root_node
++            and node.backuped
++            and not node.storage_stored
++            and node.storage_write_op is None
++        ):
++            found.append(node.id)
++            node = node.parent
++        found.reverse()
++        return found
++
++    def clear_storage_marks(self) -> None:
++        """The store was emptied: no node has a storage copy any more."""
++        for node in self._node_arena.values():
++            node.storage_stored = False
++
+
+--- a/python/sglang/srt/mem_cache/unified_radix_cache.py
++++ b/python/sglang/srt/mem_cache/unified_radix_cache.py
+@@ -2026,9 +2026,26 @@ class UnifiedRadixCache(BasePrefixCache):
+     @rank_consensus
+     def write_backup_storage(self, node_id: NodeId) -> None:
+         if not self.enable_storage or self.cache_controller is None:
+             return
++        if self._track_stored:
++            # A node whose write failed or was skipped leaves a hole above its children;
++            # write it first, as the write-through chain does for host copies.
++            for ancestor_id in self.tree_core.unstored_ancestors(node_id):
++                self._submit_storage_write(ancestor_id)
++        self._submit_storage_write(node_id)
++
++    def _submit_storage_write(self, node_id: NodeId) -> None:
+         spec = self.tree_core.build_storage_backup_spec(
+             node_id, self.hicache_storage_pass_prefix_keys
+         )
+         ...                                   # unchanged down to:
+         self.pending_backup_tokens += tokens
++        if self._track_stored:
++            self.tree_core.mark_storage_write(node_id, operation_id)
+@@ -3504,15 +3521,24 @@ def _drain_storage_control_queues_impl(
+         def _drain_backup():
+-            drained = 0
+-            for operation in _drain_queue(cc.ack_backup_queue, n_backup):
+-                drained += 1
++            operations = list(_drain_queue(cc.ack_backup_queue, n_backup))
++            # n_backup is None on the detach path, which no other rank mirrors.
++            stored = self._agree_stored(operations, synced=n_backup is not None)
++            for operation, is_stored in zip(operations, stored):
+                 if buffer_mode:
+                     self.buffer_pipeline.finish_storage_write_ack(operation.id)
+                 else:
+                     entry = self.ongoing_backup.pop(operation.id, None)
+                     if entry is not None:
+                         self.dec_host_lock_ref(entry.node_id, entry.lock_params)
+                         self.pending_backup_tokens -= entry.tokens
++                        if self._track_stored:
++                            self.tree_core.finish_storage_write(
++                                entry.node_id, operation.id, stored=is_stored
++                            )
+-                logger.info("HICACHE_EVT h2s_done op=%d tokens=%d pending=%d", ...)
++                logger.info("HICACHE_EVT h2s_done op=%d tokens=%d pending=%d stored=%d", ..., int(is_stored))
+                 ...
+-            return drained
++            return len(operations)
++
++    def _agree_stored(self, operations, *, synced: bool) -> list[bool]:
++        """Whether each acked write covered all its pages. completed_tokens is this rank's
++        own count, so with several TP ranks the verdict is the MIN over ranks; a rank that
++        writes nothing for a replicated pool (backup_skip) votes yes."""
++        cc = self.cache_controller
++        local = [
++            cc.backup_skip
++            or operation.completed_tokens >= len(operation.hash_value) * self.page_size
++            for operation in operations
++        ]
++        if not (self._track_stored and synced and local and self.tp_world_size > 1):
++            return local
++        votes = torch.tensor(local, dtype=torch.int)
++        self._all_reduce_attn_groups(votes, torch.distributed.ReduceOp.MIN)
++        return [bool(vote) for vote in votes.tolist()]
+@@ -3657,6 +3683,8 @@ def clear_storage_backend(self) -> bool:
+         if ok:
+             self.storage_existence_cache.clear()
++            if isinstance(self.tree_core, UnifiedTreeCore):
++                self.tree_core.clear_storage_marks()
+         return ok
+
+# Also: StorageAttachment._release_pending_storage_ops (storage_attachment.py:357-) pops ongoing_backup
+# entries on detach; call finish_storage_write(node, op, stored=False) there, or the node keeps a pending
+# mark for an op nobody will ack and unstored_ancestors() skips it for good.
+# The lock is released at the ack whatever the outcome, as today and as
+# test_pending_write_tokens_leave_with_each_acked_or_released_write pins: a store that fails every write
+# must not pin host memory.
+
+# Tests (CPU):
+#  test_storage_read_dispatch.py, class TestWriteBacklogHold, next to
+#  test_pending_write_tokens_leave_with_each_acked_or_released_write (same fixture: backup_ready_cache,
+#  finish_writes; _LockedTreeCore records mark_storage_write / finish_storage_write):
+#   - test_a_write_acked_short_unlocks_its_pages_and_leaves_them_unstored  (regression of B2: before the
+#     change a short ack is indistinguishable from a full one)
+#   - test_with_the_switch_off_no_node_is_marked                           (negative branch)
+#  test_next_use_eviction.py, class TestNextUseOnACpuTree (real CPU tree, cache.tree_core.insert_host):
+#   - test_a_split_while_the_write_is_queued_marks_both_fragments_at_the_ack   (derived property; the walk
+#     is checked standalone in ../proto_checks.py E)
+#   - test_pages_read_back_from_storage_are_stored_at_birth
+#   - test_a_child_write_first_rewrites_an_unstored_ancestor               (the heal)
+#   - test_clearing_the_store_clears_every_mark                            (bookkeeping: clear() and the marks)

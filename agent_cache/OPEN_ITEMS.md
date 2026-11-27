@@ -546,6 +546,13 @@ with exact hints. Fix 4 never acted (nothing was refused), and with all four on 
 one is needed. Left: the switches' defaults; history the SSD cleaner deletes is computed again from its first pass
 (minute 88); defect 1 (§1).
 
+**Added 2026-11-24 (same record):** campaign 32's `hicache` and `ec_exact` on the fixed engine (another H200 of the
+same speed). `ec_exact` goes as the other three (0 refused, -6.75 s on the same users) and is now the fastest arm,
+0.32 to 0.40 s ahead of `jit_exact` and `ec_full`. `hicache` gains only 3.06 s (31.88 s mean): the fixes clear its
+write backlog, but it loses its history to HiCache's own lookup budget (8 retries a request, 8 scheduler steps apart;
+94 % of its lookups find nothing), defect 1's shape outside the just-in-time gate. The author's decision (2026-11-24):
+the SGLang and HiCache baselines use this engine as it is; upstream's latest code is not tracked.
+
 - **Reads refused host room.** A read goes to the SSD only when host pages can be allocated for it
   (`_launch_storage_hit`; `srs_dispatch launched=0` otherwise). On FA3 refused and cut reads carry 82 to 95 % of the
   history the hinted arms computed again in minutes 60 to 110; on Triton no read was refused.
@@ -565,6 +572,35 @@ one is needed. Left: the switches' defaults; history the SSD cleaner deletes is 
   expected-cost timing does not read early.
 - **A check script:** `results/campaign28/checks/gpu_work.py` converts tokens at Triton's 0.11 ms a token; FA3's is
   0.042 to 0.047 ms.
+
+## 8. Found in the unified design's runs (campaigns 39 to 45, 2026-11-27)
+
+Record: `results/campaign35/DECISIONS.md` (findings 1 to 3); design: `results/design_unified_1126/DESIGN.md`
+(sections 4.5 and 7); review of the scheduler side: `results/design_unified_1126/impl/REVIEW_SCHED.md`.
+
+- **The measured price of host room is too low at saturation.** Campaign 40 measured lambda 1e-8 to 7e-7 per
+  token-second; the restore cost in the holding index counts the read-back stall at c (0.01 to 0.07 under load) and
+  not the recompute a displacement sometimes causes (about 1e-3 per token at mu near 100). Staged reads landed 6.3 s
+  before admission and seven pins reached the 600 s safety release. Campaign 45 (the fixed 5e-5) removes that and
+  ties on mean TTFT (+0.04 s [-0.04, +0.13]): wasted SSD reads and host room, not time, at this setting. Not built:
+  K0 = min(read stall, recompute) weighted by the chance the read fails.
+- **The cache rules cost +0.16 to +0.22 s on top of the hold in minutes 50 to 70** (campaigns 40 and 45 against
+  39), where alone they gain -0.38 s (campaign 35). Not the measured price (campaign 45). Candidates: the read line,
+  price learning off, the order among queued turns, the Retain switches; no arm separates them.
+- **The admission pass-over is built and off.** Campaign 44: a tie on the mean (-0.02 s [-0.22, +0.17]), median
+  7.17 -> 6.13 s, p99 49.9 -> 55.1 s. Whether to keep it for medians is the author's call.
+- **No drop time for a staged copy.** Under a falling hazard the model needs one (PROOFS.md, Theorem 3 b); the
+  engine keeps a staged pin until the turn arrives or the 600 s release.
+- **The prefill pass could start before its copy has landed.** Proposition 23: a pass started when the rest of the
+  copy equals the pass's own compute ends as early and never waits; the hold starts it at the first decode step after
+  landing, about 26 ms later per held turn (0.01 to 0.03 s of mean TTFT, below what a pair resolves). Not built.
+- **The SSD cleaner's scan runs in the scheduler's process.** Decode intervals are 17 to 39 % longer for the 11 s of a
+  pass; 0.1 to 0.3 s while passes run. Not built.
+- **Paused generation with HiCache work in flight.** `pause_generation(mode='retract')` followed by a weight update
+  with a cache flush asserts when a host-to-GPU load ack is pending (pre-existing; the review refuted it as a hold
+  defect). With the hold, a held batch is not retracted on such a pause and runs after `continue_generation`.
+- **Prefill timing stats include the hold.** `forward_entry_time` stays the admission stamp, so PREFILL_FORWARD and
+  the meter's prefill-cost fit include a hold's decode steps; only switches that are off read the fit.
 
 ## Traps
 

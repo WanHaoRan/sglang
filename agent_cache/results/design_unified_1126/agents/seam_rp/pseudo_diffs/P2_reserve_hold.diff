@@ -1,0 +1,131 @@
+# P2: reads against writes by the host reserve instead of the fixed 50 K / 25 K thresholds.
+# Pseudo-diff against HEAD b7074d9cae; not applied. Needs R3's marks to tell clean pages (without them every
+# unlocked host-only page counts as clean, which holds today: 0 short writes in campaigns 32 and 34).
+#
+# Today: every pass _dispatch_storage_reads feeds self.pending_backup_tokens to
+# StorageReadScheduler.update_write_hold (unified_radix_cache.py:3272; storage_read_scheduler.py:170-181):
+# on at >= write_hold_tokens, off at <= half; while on, dispatch() stops at the first timed read (:147-150).
+#
+# What the scheduler thread already has each pass (O(1) counters or sums over reads in flight):
+#   pending_write   self.pending_backup_tokens        (kept at submit :2060 and ack :3515)
+#   occ, pinned     cc.prefetch_tokens_occupied, self.pinned_prefetch_tokens   (:3291)
+#   in-flight read pages   self.storage_read_backlog_pages()                   (:3290, :2334-2337)
+#   n_parked, parked pages srs.parked_count(), srs.parked_pages()
+#   free            cc.mem_pool_host.available_size() (len(free_slots) + released, pool_host/base.py:447-448)
+#   total, wq, n_writes, n_prefetch, n_pins, n_leaves (sizes of the pool, a queue, three dicts and a set)
+#   mirror, upper bound   tree_core.evictable_size() + protected_size()        (host_room_tokens, :3134-3142)
+#   read rate       cc.storage_read_ms_per_page (the read thread's EWMA, cache_controller.py:1216-1228)
+# What it has only from the census walk (tally_host_tree, :3178-3223; one line every
+# SGLANG_LOG_HICACHE_HOST_CENSUS_INTERVAL seconds, 10 s in campaign 34, off by default; 2-3 ms p50 and
+# 6-11 ms max for 0.6-1.8 K nodes there): mirror (exact), host_only, evict_leaf, evict_casc, h_<reason>, anc.
+# So "free" is there each pass and "clean evictable room" is not. The cheap stand-in, the tokens of
+# tree_core.evictable_host_leaves (42-59 leaves p50), is 20-30 times too small: evict_leaf p50 19-28 K
+# against evict_casc p50 0.64-0.86 M, because eviction walks up a chain leaf by leaf. On campaign 34's census
+# samples the rule below never holds with leaf + cascade room and holds in 2-15 % of samples with leaf-only
+# room (out/p2_whatif_c34.out), against 0.3-0.6 % of samples at or over the fixed 50 K.
+# New inputs: the write thread's rate (an EWMA like the read thread's), the host allocation rate (backups
+# and read launches, counted where they allocate), and a paced walk for the evictable room.
+
+--- a/python/sglang/srt/mem_cache/storage_read_scheduler.py
++++ b/python/sglang/srt/mem_cache/storage_read_scheduler.py
+@@ -181,1 +181,26 @@ def update_write_hold(self, write_backlog_tokens: int) -> bool:
+         return self.write_held != was_held
++
++    def set_write_hold(self, held: bool) -> bool:
++        """Set the write hold from outside (the reserve rule); True if it flipped."""
++        was_held, self.write_held = self.write_held, held
++        return held != was_held
++
++
++# Arbitrary; the hold ends once the reserve covers twice the need, so it does not flap.
++RESERVE_RELEASE_FACTOR = 2.0
++
++
++def reserve_hold(
++    *,
++    held: bool,
++    pending_tokens: int,
++    reserve_tokens: int,
++    alloc_tokens_per_s: float,
++    write_tokens_per_s: Optional[float],
++) -> bool:
++    """Hold timed reads while the host room that can be handed out without losing an only
++    copy is less than what backups and landings will ask for until the pending writes have
++    drained. No write rate yet means no hold."""
++    if pending_tokens <= 0 or not write_tokens_per_s:
++        return False
++    need = alloc_tokens_per_s * pending_tokens / write_tokens_per_s
++    return reserve_tokens < need * (RESERVE_RELEASE_FACTOR if held else 1.0)
+
+--- a/python/sglang/srt/mem_cache/hybrid_cache/hybrid_cache_controller.py
++++ b/python/sglang/srt/mem_cache/hybrid_cache/hybrid_cache_controller.py
+@@ _write_backup_group / _page_backup_group, where h2s_io is logged
++        self._observe_storage_write(pages=..., seconds=...)
+# HiCacheController._observe_storage_write: the write thread's ms-per-page EWMA, published as
+# cc.storage_write_ms_per_page after STORAGE_READ_RATE_MIN_SAMPLES samples; a copy of _observe_storage_read
+# (cache_controller.py:1216-1228). It is measured while reads share the device, so the drain time follows the
+# split the device gives (3-4 ms a page alone, 9-12 ms under reads in campaign 34).
+
+--- a/python/sglang/srt/mem_cache/unified_radix_cache.py
++++ b/python/sglang/srt/mem_cache/unified_radix_cache.py
+@@ -3270,13 +3270,9 @@ def _dispatch_storage_reads(self) -> None:
+         now = time.perf_counter()
+         self._release_stale_pins(now)
+-        if srs.update_write_hold(self.pending_backup_tokens):
++        if self._update_write_hold(now):
+             logger.info(
+                 "HICACHE_EVT srs_write_hold state=%s pending_write_tokens=%d parked=%d "
+-                "parked_pages=%d",
++                "parked_pages=%d reserve=%d alloc_tps=%d write_tps=%d",
+                 ...
++
++    def _update_write_hold(self, now: float) -> bool:
++        srs = self.read_scheduler
++        if not self._hold_by_reserve:
++            return srs.update_write_hold(self.pending_backup_tokens)
++        ms_per_page = self.cache_controller.storage_write_ms_per_page
++        held = reserve_hold(
++            held=srs.write_held,
++            pending_tokens=self.pending_backup_tokens,
++            reserve_tokens=self._host_reserve_tokens(now),
++            alloc_tokens_per_s=self._host_alloc_rate.per_s(now),
++            write_tokens_per_s=None if ms_per_page is None else self.page_size * 1000.0 / ms_per_page,
++        )
++        return srs.set_write_hold(held)
++
++    def _host_reserve_tokens(self, now: float) -> int:
++        """Free host pages plus the host-only pages no lock holds (leaf and cascade), from a
++        tree walk at most once per RESERVE_WALK_INTERVAL_S; between walks the allocations
++        made since are taken off, never added."""
++        if now - self._reserve_walk_t >= RESERVE_WALK_INTERVAL_S:
++            bits, counts = self._census_holders()
++            tally = tally_host_tree(self.tree_core.root_node, holder_bits=bits, holder_counts=counts)
++            self._reserve_walk_t = now
++            self._reserve_evictable = tally.evict_leaf + tally.evict_casc - tally.evict_unstored
++            self._reserve_alloc_mark = self._host_alloc_tokens
++        spent = self._host_alloc_tokens - self._reserve_alloc_mark
++        return self.cache_controller.mem_pool_host.available_size() + max(
++            0, self._reserve_evictable - spent
++        )
+# RESERVE_WALK_INTERVAL_S = 1.0 (arbitrary; a walk is 2-3 ms, so under 0.5 % of the scheduler thread).
+# _host_alloc_tokens += n where host pages are taken: _execute_kv_backup (:1781-1799) and _launch_storage_hit
+# (:3105). _host_alloc_rate: tokens per second over a sliding 5 s (a small msgspec.Struct with add()/per_s()).
+# host_census.py: HostTreeTally gains evict_unstored (evictable tokens of nodes with storage_stored False),
+# logged as a census field "dirty".
+
+# TP: the rates and the walk's clock are rank-local, so two ranks may disagree on the hold and then launch
+# different reads. Today's rule reads a count every rank agrees on. P2 therefore needs TP = PP = 1 (checked at
+# init, as the prefetcher's create() does) or a MAX-reduce of the hold bit each pass.
+
+# Tests (CPU):
+#  test_storage_read_scheduler.py (pure, next to test_write_hold_stops_timed_reads_from_the_threshold_until_half_of_it):
+#   - test_reserve_rule_holds_only_when_the_reserve_is_short_of_the_drain_need   (cases of ../proto_checks.py C:
+#     campaign 34's worst pending against 0.6 M: no hold; a 44 K room: hold at 15 K pending)
+#   - test_reserve_rule_releases_at_twice_the_need_and_never_holds_without_a_write_rate
+#   - test_a_hold_set_from_outside_stops_timed_reads_and_not_now_reads
+#  test_host_census.py (fixture attach(), census()):
+#   - test_unstored_evictable_tokens_are_counted_apart   (every host token still lands in exactly one field)
+#  test_storage_read_dispatch.py, class TestWriteBacklogHold (fixture cache_mode_fixture):
+#   - test_the_reserve_rule_replaces_the_threshold_only_when_its_switch_is_on
+#   - test_between_walks_allocations_come_off_the_reserve
+#  class TestControllerReadRate: test_write_rate_is_published_only_after_the_minimum_samples

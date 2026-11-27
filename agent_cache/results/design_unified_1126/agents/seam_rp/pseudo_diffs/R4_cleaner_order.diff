@@ -1,0 +1,289 @@
+# R4: the SSD-tier order through file modification times. The cleaner (nixl_cleaner.py) is not changed.
+# Pseudo-diff against HEAD b7074d9cae; not applied. The retire half needs R3's marks and the prefetcher.
+#
+# Where a chain's file paths are known
+#   page key   UnifiedTreeNode.hash_value: one hex SHA-256 per 64-token page of the node's key
+#              (unified_tree_core.py:126; filled at _add_new_node :1484-1485 through
+#              compute_node_hash_values, mem_cache/utils.py:172-181; at insert_host :2230 for pages read back;
+#              sliced at _split_node :1424-1426). k_j = H(k_{j-1}, tokens of page j), seeded by the parent's
+#              last hash (utils.py:148-158), so a key names the whole prefix up to its page.
+#   file name  HiCacheNixl: <key>_<model>_<tp_rank>_<tp_size> (hicache_nixl.py:116-119, 191-192), then "_k" and
+#              "_v" under the zero-copy layout (:666-675; campaigns 28-35: two 3 MiB files a page), one file
+#              otherwise; path = <base dir>/<2 hex bucket>/<name> (nixl_utils.py:284-289,
+#              nixl_routing.py:16-24). A pure function of the page key and the backend's config: the write
+#              thread already computes it for touch_if_stored (hicache_nixl.py:853-875).
+#   So: the tree (scheduler thread) knows the keys, the backend knows the paths. The scheduler thread hands
+#   over key lists only; path building (one blake2b a file) and every utime run on the backend's own thread.
+#
+# Enumerating a chain
+#   at a request   match_prefix returns last_host_node, the deepest node memory serves (GPU or host,
+#                  unified_tree_core.py:989-995). The chain is that node and its ancestors; a partial match
+#                  has already split the node (:881-886), so whole nodes only. Request matches carry
+#                  params.req (schedule_batch.py:1624-1635): arrival (scheduler.py:3140), every admission pass
+#                  (:4025) and the re-match after the prompt insert (unified_radix_cache.py:1378). The
+#                  prefetcher's probes pass no req.
+#   at the end     on_turn_committed gets tail_node_id (unified_radix_cache.py:1240), the node of the last
+#                  pages inserted. The turn just ran, so its whole prompt is on the GPU and every node of the
+#                  chain is in the tree. The session's own pages are those past its first prompt
+#                  (campaign 34 trace: later sessions take 2.63 M tokens from other sessions' first prompts,
+#                  1.86 M of them after the owner ended, and 0.027 M from other sessions' later turns).
+#
+# utime calls (campaign 34 ec_full, two files a page; out/client_stats_c34_ec_full.out)
+#   retire   p50 678, p90 1,842, max 3,034 per ended session; 484 K in the run = 68/s
+#   refresh  largest single request 1,920-2,032; mean 137/s at 900 s, 239/s at 300 s, 643/s at 60 s
+#            (upper bounds: sessions counted as disjoint)
+#   cost     1.1-1.6 us per os.utime on this host's ext4 with warm inodes (out/utime_bench.out, measured on
+#            /dev/vda1; the SSD volume is ext4 too; a cold inode costs a metadata read, not measured)
+
+--- a/python/sglang/srt/mem_cache/hicache_storage.py
++++ b/python/sglang/srt/mem_cache/hicache_storage.py
+@@ -346,3 +346,10 @@ class HiCacheStorage(ABC):
+     def take_stored_write_skips(self) -> int:
+         """Pages a set call found already stored and did not write, since the last call."""
+         return 0
++
++    def touch_pages(self, page_keys: List[str], *, newest_ns: Optional[int]) -> None:
++        """Queue an mtime change for stored pages, off the caller's thread: the first key
++        gets newest_ns and each later one slightly less; None sets every mtime to zero.
++        A store with no age-ordered cleaner ignores it."""
++        return None
+
+--- a/python/sglang/srt/mem_cache/storage/nixl/hicache_nixl.py
++++ b/python/sglang/srt/mem_cache/storage/nixl/hicache_nixl.py
+@@ -57,6 +57,11 @@
++# Arbitrary; spreads a chain's stamps so its order survives filesystems that keep
++# coarser stamps than nanoseconds (a 1,000-page chain spans one second).
++_TOUCH_STEP_NS = 1_000_000
++# Arbitrary; one l3_touch line at most this often.
++_TOUCH_LOG_INTERVAL_S = 10.0
+@@ -187,4 +192,14 @@ def __init__(
+         if self._l3_cleaner is not None:
+             self._l3_cleaner.start()
++        # Mtime changes asked by the scheduler thread; None unless a switch is on.
++        self._touch_queue: Optional[queue.SimpleQueue] = None
++        self._touch_thread: Optional[threading.Thread] = None
++        if self.file_manager is not None and nixlconfig.get_touch_enabled():
++            self._touch_queue = queue.SimpleQueue()
++            self._touch_thread = threading.Thread(
++                target=self._touch_loop, name="hicache-l3-touch", daemon=True
++            )
++            self._touch_thread.start()
+@@ -620,6 +635,9 @@ def close(self):
+         if self._l3_cleaner is not None:
+             self._l3_cleaner.stop()
+             self._l3_cleaner = None
++        if self._touch_thread is not None:
++            self._touch_queue.put(None)
++            self._touch_thread.join(timeout=5.0)
++            self._touch_thread = None
+@@ -879,3 +897,44 @@ def take_stored_write_skips(self) -> int:
+         return skipped
++
++    def touch_pages(self, page_keys: List[str], *, newest_ns: Optional[int]) -> None:
++        if self._touch_queue is not None and page_keys:
++            self._touch_queue.put((list(page_keys), newest_ns))
++
++    def _page_file_paths(self, page_key: str) -> List[str]:
++        names = (
++            self._get_key_list_from_meta([page_key])
++            if self.is_zero_copy
++            else [self._get_suffixed_key(page_key)]
++        )
++        return [self.file_manager.get_file_path(name) for name in names]
++
++    def _touch_loop(self) -> None:
++        files = gone = 0
++        last_log = time.monotonic()
++        while True:
++            job = self._touch_queue.get()
++            if job is None:
++                return
++            page_keys, newest_ns = job
++            # Head first: a cleaner scan in the middle of the job sees a refreshed prefix,
++            # never a fresh tail under a stale head.
++            for index, page_key in enumerate(page_keys):
++                stamp = 0 if newest_ns is None else newest_ns - index * _TOUCH_STEP_NS
++                for path in self._page_file_paths(page_key):
++                    try:
++                        os.utime(path, ns=(stamp, stamp))
++                        files += 1
++                    except OSError:
++                        # Never written on this rank, or already deleted by the cleaner.
++                        gone += 1
++            if time.monotonic() - last_log >= _TOUCH_LOG_INTERVAL_S:
++                logger.info("HICACHE_EVT l3_touch files=%d gone=%d", files, gone)
++                files = gone = 0
++                last_log = time.monotonic()
+
+--- a/python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py
++++ b/python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py
+@@ class UnifiedTreeNode.__init__ (next to storage_stored)
++        # time.monotonic() of the last mtime refresh queued for the node's pages.
++        self.storage_touched_at = 0.0
+@@ _split_node
++        new_node.storage_touched_at = child.storage_touched_at
+@@ new methods (next to finish_storage_write)
++    def take_stale_storage_keys(
++        self, node_id: NodeId, *, now: float, min_interval_s: float
++    ) -> list[str]:
++        """Page keys, head first, of the stored nodes from the root down to the deepest node
++        on node_id's path whose last refresh is older than min_interval_s; stamps them. A
++        stale node takes everything above it along, so a head is never older than its tail."""
++        path = []
++        node = self.node_by_id(node_id)
++        while node is not None and node is not self.root_node:
++            path.append(node)
++            node = node.parent
++        stale_from = next(
++            (
++                depth
++                for depth, node in enumerate(path)
++                if node.storage_stored and now - node.storage_touched_at >= min_interval_s
++            ),
++            None,
++        )
++        if stale_from is None:
++            return []
++        page_keys: list[str] = []
++        for node in reversed(path[stale_from:]):
++            if node.storage_stored and node.hash_value:
++                node.storage_touched_at = now
++                page_keys.extend(node.hash_value)
++        return page_keys
++
++    def take_retired_storage_keys(
++        self,
++        tail_node_id: NodeId,
++        *,
++        keep_tokens: int,
++        is_foreign: Callable[[UnifiedTreeNode], bool],
++    ) -> tuple[list[str], list[NodeId]]:
++        """An ended session's own pages: (page keys of its stored nodes, ids of its nodes whose
++        write is still queued). Own means on the tail's root path past the first keep_tokens,
++        below the deepest path node with an off-path child that is_foreign, plus the childless
++        off-path children on the way (replies the next prompt did not repeat). Stored nodes
++        handed out stop counting as stored."""
++        path = []
++        node = self.node_by_id(tail_node_id)
++        while node is not None and node is not self.root_node:
++            path.append(node)
++            node = node.parent
++        end = sum(len(node.key) for node in path)
++        page_keys: list[str] = []
++        pending: list[NodeId] = []
++
++        def take(owned: UnifiedTreeNode) -> None:
++            if owned.storage_write_op is not None:
++                pending.append(owned.id)
++            elif owned.storage_stored and owned.hash_value:
++                owned.storage_stored = False
++                page_keys.extend(owned.hash_value)
++
++        below = None
++        for node in path:                       # tail first
++            start = end - len(node.key)
++            others = [child for child in node.children.values() if child is not below]
++            if start < keep_tokens or any(is_foreign(child) for child in others):
++                break
++            for child in others:
++                take(child)
++            take(node)
++            below, end = node, start
++        return page_keys, pending
+
+--- a/python/sglang/srt/mem_cache/unified_radix_cache.py
++++ b/python/sglang/srt/mem_cache/unified_radix_cache.py
+@@ -678,6 +678,9 @@ def match_prefix(self, params: MatchPrefixParams) -> MatchResult:
+         result = self.tree_core.match_prefix(params)
+         self._apply_cache_actions(result.cache_actions)
++        # A request's match is memory serving the chain; the prefetcher's probes carry no req.
++        if self._touch_interval_s > 0.0 and params.req is not None and self.enable_storage:
++            self._refresh_served_chain(result.last_host_node)
+         for component in self._components_tuple:
++
++    def _refresh_served_chain(self, node_id: NodeId) -> None:
++        page_keys = self.tree_core.take_stale_storage_keys(
++            node_id, now=time.monotonic(), min_interval_s=self._touch_interval_s
++        )
++        if page_keys:
++            self.cache_controller.storage_backend.touch_pages(
++                page_keys, newest_ns=time.time_ns()
++            )
++
++    def retire_storage_chain(
++        self, tail_node_id: NodeId, *, keep_tokens: int, is_foreign_id: Callable[[NodeId], bool]
++    ) -> None:
++        """Mtime zero for an ended session's own pages; a page whose write is still queued
++        is retired at its ack, or the write would make it look new again."""
++        page_keys, pending = self.tree_core.take_retired_storage_keys(
++            tail_node_id,
++            keep_tokens=keep_tokens,
++            is_foreign=lambda node: bool(node.children) or is_foreign_id(node.id),
++        )
++        self._retire_at_ack.update(pending)
++        if page_keys:
++            self.cache_controller.storage_backend.touch_pages(page_keys, newest_ns=None)
++        logger.info(
++            "HICACHE_EVT l3_retire node=%d pages=%d at_ack=%d keep_tokens=%d",
++            tail_node_id, len(page_keys), len(pending), keep_tokens,
++        )
+@@ _drain_backup (after finish_storage_write)
++                        if entry.node_id in self._retire_at_ack:
++                            self._retire_at_ack.discard(entry.node_id)
++                            self.tree_core.finish_storage_write(entry.node_id, operation.id, stored=False)
++                            cc.storage_backend.touch_pages(operation.hash_value, newest_ns=None)
+
+--- a/python/sglang/srt/mem_cache/next_turn_prefetch.py
++++ b/python/sglang/srt/mem_cache/next_turn_prefetch.py
+@@ -512,10 +512,14 @@ def on_turn_committed(
+         if rotation_tail_declined or not req.finished():
+             return
++        # Before the pop below: an exact hint's end is read off _rid_session.
++        explicit_end = self._retire_ended and self.ends_session(req, reply_known=True)
+         session = self._rid_session.pop(req.rid, None)
+@@ -520,6 +524,15 @@
+         hint = self._resolve_hint(req)
+         if hint is None:
++            if explicit_end and session is not None and tail_node_id is not None:
++                first_len = self._session_first_len.pop(session, None)
++                if first_len is not None:
++                    self._tree_cache.retire_storage_chain(
++                        tail_node_id,
++                        keep_tokens=first_len,
++                        is_foreign_id=lambda node_id: self._next_use is not None
++                        and self._next_use.lookup(node_id)[0],
++                    )
+             # The session ended (or the client sends no hints): evict it first.
+@@ -548,3 +561,7 @@
+         self._rid_session[hint.next_rid] = hint.session
++        # The session's first prompt, page-aligned: pages up to it may be another session's.
++        self._session_first_len.setdefault(
++            hint.session, len(req.origin_input_ids) // self._page_size * self._page_size
++        )
+
+# _session_first_len is bounded like the registry (drop the oldest past REGISTRY_MAX_ENTRIES) and popped
+# where _session_tail is (:530-531, :1506).
+# The dead reply leaves are registered nowhere (registry.move() dropped them, next_use_eviction.py:109-116),
+# another session's tail or an un-hinted request's is registered (ended or not), so is_foreign tells them
+# apart; a child with children is a branch others built on.
+
+# Tests (CPU):
+#  test_hicache_nixl_cleaner.py (fixture _NixlFileTestCase, _write_key, _run_single_group_cleanup; the first
+#  five are run against the real cleaner in ../proto_checks.py A and pass):
+#   - test_a_retired_page_goes_before_an_older_untouched_one
+#   - test_a_page_with_one_file_left_unretired_keeps_its_place      (the group's mtime is the max over files)
+#   - test_a_refreshed_chain_loses_its_tail_before_its_head         (and the head first without the refresh)
+#   - test_a_touch_after_the_cleaners_scan_does_not_save_the_page   (pins the race X3 as a known limit)
+#   - test_touching_a_deleted_file_creates_nothing_and_is_counted_gone   (@skipUnless nixl, as
+#     test_drop_stored_pages_keeps_unstored_pages_aligned: HiCacheNixl.__new__ + _touch_loop on a queue)
+#   - test_nixl_config_resolves_the_touch_switches                  (as test_nixl_config_resolves_skip_stored_writes)
+#  test_next_use_eviction.py, TestNextUseOnACpuTree (real CPU tree; host nodes through tree_core.insert_host):
+#   - test_a_stale_tail_takes_its_fresh_head_along_and_a_second_match_takes_nothing
+#   - test_only_stored_nodes_are_refreshed
+#   - test_retire_keeps_the_first_prompt_and_stops_at_another_sessions_branch
+#   - test_retire_takes_the_replies_no_later_prompt_repeated
+#  test_storage_read_dispatch.py:
+#   - test_a_node_retired_while_its_write_is_queued_is_retired_at_the_ack
+#  test_next_turn_prefetch.py:
+#   - test_only_an_explicit_end_retires_and_only_past_the_sessions_first_prompt
+#   - test_a_probe_without_a_request_refreshes_nothing              (negative branch of the match hook)

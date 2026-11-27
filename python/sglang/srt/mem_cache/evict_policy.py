@@ -12,6 +12,11 @@ class EvictionStrategy(ABC):
     def get_priority(self, node: TreeNode) -> Union[float, Tuple]:
         pass
 
+    def peek_priority(self, node: TreeNode) -> Union[float, Tuple]:
+        """get_priority for a caller that is not evicting. A strategy that keeps state as
+        it ranks overrides this to answer the same and keep none."""
+        return self.get_priority(node)
+
 
 class LRUStrategy(EvictionStrategy):
     def get_priority(self, node: TreeNode) -> float:

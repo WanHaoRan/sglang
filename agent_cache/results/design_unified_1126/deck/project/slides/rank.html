@@ -1,0 +1,28 @@
+<section id="rank" class="foot">
+<div class="head">
+<p class="eyebrow">The four actions · Retain, part 2</p>
+<h2 class="title">One index ranks every holder of host memory</h2>
+</div>
+<div class="row-wide">
+<div class="grow">
+<div class="formula">
+<p class="math"><i>ν</i> = (<i>K</i>₀ / <i>L</i>) / (<i>τ</i>* + <i>W</i> − <i>ρ</i>)⁺</p>
+<p class="small"><i>K</i>₀: cost of a restoring read · <i>τ</i>*: expected seconds held per return (the best <i>τ</i> / <i>F</i>) · <i>W</i>: queue wait · <i>ρ</i>: seconds a re-read copy would sit in memory before admission</p>
+<p class="ink-b">The copy with the longest time to its next use on the GPU, net of what a re-read would hold anyway, yields first.</p>
+</div>
+<table class="t">
+<tr><th style="width:40%">Holder</th><th style="width:22%"><i>τ</i>*</th><th style="width:38%">Yields</th></tr>
+<tr><td>Session that is over</td><td>never back</td><td>first</td></tr>
+<tr><td>Idle session, heavy-tailed hint</td><td>1 / return rate</td><td>longest idle first</td></tr>
+<tr><td>Idle session, exact hint</td><td>time to return</td><td>farthest return first</td></tr>
+<tr><td>Queued turn</td><td>0</td><td>latest arrival first; the head never</td></tr>
+</table>
+</div>
+<div class="col-s" style="width:560px">
+<div class="card-hot in1"><p class="ink-b">A long queue flattens what a hint is worth</p><p class="small">Same tool hint, idle 0 s and 10 s: <i>τ</i>* = 2.6 s and 11.9 s. Their indexes differ 4.6 times with no queue and 1.4 times behind a 20 s queue: the measured tie of our designs at saturation.</p></div>
+<div class="card-s in2"><p class="ink-b">Found in the engine</p><p class="small">Among queued turns it evicts the least recently used, the turn nearest admission. Late in a run 111 to 171 queued turns per half hour lost history they had on arrival.</p></div>
+</div>
+</div>
+<p class="footer">(<i>z</i>)⁺ = max(<i>z</i>, 0). Admission is first come, first served, so the latest arrival is admitted last. Checked on 4,000 random cases.</p>
+<aside>The previous slide ignored the queue. Put it back: after the session returns, its turn still waits W seconds before the GPU takes it, so the copy is next needed at the return plus W. And if the copy is dropped and read back, the read copy itself sits in memory for some time rho before admission. The index then takes one form for every holder of host memory: K zero over L, divided by tau star plus W minus rho. K zero is the cost of restoring by a read at the prices c and kappa. tau star is the expected time the copy is held per return, the best ratio of tau to F from the previous slide: it is one over the return rate for a heavy-tailed hint, the time to return for an exact hint, zero for a turn that has already arrived, and infinite for a session that is over. In words: the copy with the longest time to its next use on the GPU, net of what a re-read would hold anyway, yields first. That gives the whole order at once. Sessions that are over go first. Idle sessions go by their hint. Queued turns go last, and among them the latest arrival first, because admission is first come first served and the latest arrival is admitted last; a turn whose re-read could not land before its admission never yields. Two things follow. First, a long queue flattens what a hint is worth. Take two sessions on the same tool hint, one idle for zero seconds and one for ten: their holding times are 2.6 and 11.9 seconds. With no queue their indexes differ 4.6 times. Add a 20 second queue wait to both and they differ 1.4 times. That is the measured tie: at saturation, designs with exact hints, with the hint table and with no forecast at all sit within a second of each other. Second, the engine did not follow this order among queued turns. It evicts the least recently used, which is the turn nearest admission, and late in a run 111 to 171 queued turns per half hour lost history they had when they arrived.</aside>
+</section>

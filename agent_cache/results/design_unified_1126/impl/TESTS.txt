@@ -1,0 +1,22 @@
+Unit tests on the working tree against the baseline engine copy (frozen/engine_fa3fix_20261122), 2026-11-27, CPU
+only (GPU hidden, niced), one pytest run per file; scripts run_dir_tree.sh, run_tests_tree.sh, run_tests_top.sh.
+
+test/registered/unit/mem_cache, 122 files (dir_merged_worktree.txt): the Retain copy's counts apart from seven
+  files with added tests; the files that need a GPU fail with the same counts as before the change.
+test/registered/unit/managers, 75 files (tests_managers_*.txt): identical summaries on both trees apart from the two
+  new component files (scheduler_components/test_prefill_load_hold.py, test_admission_pass_over.py), which do not
+  import on the baseline. Before the class-level defaults of 03:24Z, four cases of test_scheduler_hicache_events.py
+  and test_scheduler_chunked_req_gate.py failed on the load-hold wiring (they build a Scheduler without __init__);
+  the two frozen copies made before that (engine_loadhold_20261126, engine_unified_20261126) still fail them.
+test/registered/unit/server_args, 12 files (tests_server_args_*.txt): identical.
+test/registered/unit/test_*.py, 26 files (tests_top_*.txt): identical (test_environ.py and the ratchets included).
+Failing on both trees for reasons outside this work: managers/test_disagg_idle_step_counters.py (module
+  parameterized missing), managers/test_hisparse_unit.py, test_cuda_vmm_utils.py (needs a GPU).
+
+After the review fixes (2026-11-27 05:31Z to 06:04Z, *_fixes.txt): every file of mem_cache (122), managers (75),
+server_args (12), utils (20), the 26 top-level files and the 54 related files gives the summary it gave before the
+fixes, apart from added tests (pass-over and hold component and wiring tests, the held-batch memory check, the cleaner
+re-check under the stored-write skip, the farthest warning, the weight-version case of a held batch). The tie fix
+(queued turns at their own arrival) came after campaign 44's copy was frozen; its test fails on that copy and passes
+on the working tree. Formatting: ruff-format 0.15.1 (the repo's hook) finds no hunk in this work's lines that HEAD
+does not already have in the same file.

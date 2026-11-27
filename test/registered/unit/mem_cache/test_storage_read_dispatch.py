@@ -12,13 +12,14 @@ import logging
 import unittest
 from array import array
 from collections import defaultdict
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from queue import Queue
 from types import MethodType, SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import torch
 
+from sglang.srt.environ import envs
 from sglang.srt.managers.cache_controller import (
     STORAGE_READ_RATE_MIN_SAMPLES,
     HiCacheController,
@@ -26,6 +27,7 @@ from sglang.srt.managers.cache_controller import (
 from sglang.srt.mem_cache.base_prefix_cache import CacheRequestHandle
 from sglang.srt.mem_cache.hicache_storage import (
     STORAGE_BATCH_SIZE,
+    HiCacheStorage,
     PoolName,
     PoolTransfer,
 )
@@ -34,16 +36,24 @@ from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
     PrefetchSubmission,
     StorageOperation,
 )
+from sglang.srt.mem_cache.next_turn_estimators import LAG_MIN_SAMPLES, ReadPathLags
 from sglang.srt.mem_cache.radix_cache import RadixKey
 from sglang.srt.mem_cache.storage_prefetch import StoragePrefetchRetries
 from sglang.srt.mem_cache.storage_read_scheduler import StorageReadScheduler
+from sglang.srt.mem_cache.storage_retention import (
+    RetentionSwitches,
+    resolve_retention_switches,
+)
 from sglang.srt.mem_cache.unified_cache.storage_attachment import StorageAttachment
 from sglang.srt.mem_cache.unified_cache.unified_tree_core import StorageBackupSpec
 from sglang.srt.mem_cache.unified_radix_cache import (
     PREFETCH_PIN_MAX_AGE_S,
     UnifiedRadixCache,
     _OngoingPrefetch,
+    _OngoingWriteThrough,
 )
+from sglang.srt.runtime_context import publish, reset_context
+from sglang.srt.server_args import ServerArgs
 from sglang.test.test_utils import CustomTestCase
 
 PAGE = 2
@@ -456,6 +466,81 @@ class TestReadOwnerHooks(CustomTestCase):
         self.prefetch(cache)
         self.assertEqual(cache.asked, [])
 
+    def test_the_gate_that_reads_the_prompt_gets_it_whole_from_the_match_on(self):
+        """The prefetcher cuts a plan's key to what the prompt repeats of it. A retry that
+        knows where the last hit ended asks storage for that span only; handed the same
+        cut, the gate would take the prompt for one that leaves the key early. The gate
+        bound for the prompt is asked in place of the two-argument one."""
+        cache = self.gated_cache(allow=False)
+        asked = []
+
+        def gate(handle, matched_tokens, prompt_tail):
+            asked.append((handle.rid, matched_tokens, list(prompt_tail)))
+            return True
+
+        cache.prefetch_gate_prompt_fn = gate
+        cache.prefetch_from_storage(
+            CacheRequestHandle("a", 0),
+            7,
+            array("q", range(2 * PAGE, 10 * PAGE)),
+            matched_prefix_tokens=list(range(2 * PAGE)),
+            storage_hit_end=6 * PAGE,
+        )
+        self.assertEqual(asked, [("a", 2 * PAGE, list(range(2 * PAGE, 10 * PAGE)))])
+        self.assertEqual(cache.asked, [])
+        (submitted,) = cache.cache_controller.submit_prefetch.call_args_list
+        self.assertEqual(len(submitted.args[1]), 4 * PAGE)
+        # Its "recompute" is a decline like any other: no read for admission to wait on.
+        cache.prefetch_gate_prompt_fn = lambda handle, matched_tokens, prompt_tail: (
+            False
+        )
+        declined = CacheRequestHandle("b", 0)
+        cache.prefetch_from_storage(
+            declined, 7, array("q", range(8 * PAGE)), matched_prefix_tokens=[]
+        )
+        self.assertFalse(cache.has_ongoing_prefetch(declined))
+        self.assertEqual(cache._prefetch_outcome_stats["declined_gate"], 1)
+
+    def test_every_answered_lookup_is_reported_once_with_what_it_asked_and_found(self):
+        """The prefetcher gives a lookup back when it found nothing worth reading, and
+        marks where storage ends. A lookup terminated before it ran also carries a count
+        of zero, which is no answer; nor is one whose request is gone."""
+        cache = cache_mode_fixture()
+        cache.prefetch_threshold = 2 * PAGE
+        reported = []
+        cache.prefetch_lookup_fn = lambda handle, **answer: reported.append(
+            (handle.rid, answer)
+        )
+        for rid, hit_tokens in (("empty", 0), ("short", PAGE), ("found", 4 * PAGE)):
+            _, operation = hit(cache, rid, hit_tokens)
+            operation.storage_start = 6 * PAGE
+            operation.stats_requested_tokens = 8 * PAGE
+        _, cut_short = hit(cache, "terminated", 0)
+        cut_short.is_terminated = lambda: True
+        del cache.ongoing_prefetch[hit(cache, "gone", 4 * PAGE)[0]]
+        drain(cache, 5)
+        self.assertEqual(
+            reported,
+            [
+                (
+                    rid,
+                    dict(
+                        storage_start=6 * PAGE,
+                        requested_tokens=8 * PAGE,
+                        hit_tokens=hit_tokens,
+                    ),
+                )
+                for rid, hit_tokens in (
+                    ("empty", 0),
+                    ("short", PAGE),
+                    ("found", 4 * PAGE),
+                )
+            ],
+        )
+        self.assertEqual(
+            cache.read_scheduler.parked_handles(), [CacheRequestHandle("found", 0)]
+        )
+
     def test_a_held_read_holds_no_memory_and_keeps_its_turn_waiting(self):
         """The turn must not be admitted past a read that is only delayed: it would
         recompute history the SSD was about to return."""
@@ -473,6 +558,118 @@ class TestReadOwnerHooks(CustomTestCase):
         cache.read_not_before_fn = lambda handle, read, ahead_pages: None
         cache._dispatch_storage_reads()
         self.assertEqual(launched(cache), ["a"])
+
+
+class TestReadLine(CustomTestCase):
+    """What the next-turn prefetcher's read-time estimate reads from the cache: the line
+    ahead of a read, and the read path's lags once it installs their measuring."""
+
+    def test_the_line_is_the_launched_reads_and_the_parked_ones_ordered_no_later(self):
+        """A read staged now is dispatched after the reads needed now and the timed ones
+        due before it, and waits behind what the read thread already holds; the reads due
+        later do not delay it."""
+        cache = cache_mode_fixture(window_pages=4)
+        urgent, _ = hit(cache, "urgent", 2 * PAGE)
+        early, _ = hit(cache, "early", 3 * PAGE)
+        late, _ = hit(cache, "late", 5 * PAGE)
+        cache.deadlines.update({early: 120.0, late: 300.0})
+        drain(cache, 3)
+        self.assertEqual(
+            [cache.storage_read_line_pages(due) for due in (None, 200.0, 400.0)],
+            [2, 2 + 3, 2 + 3 + 5],
+        )
+        # The window lets the first two go: launched pages stay ahead of a read needed now.
+        cache._dispatch_storage_reads()
+        self.assertEqual(launched(cache), ["urgent", "early"])
+        self.assertEqual(
+            [cache.storage_read_line_pages(due) for due in (None, 400.0)], [5, 5 + 5]
+        )
+
+    def test_only_a_parked_read_can_be_dropped_and_its_turn_is_then_free_to_admit(self):
+        """The starved-GPU rule gives a read up so its turn recomputes the span. A parked
+        read holds no host memory and nothing of it is in flight; one handed to the read
+        thread must be left to land. After the drop admission finds nothing to wait on."""
+        cache = cache_mode_fixture(window_pages=2)
+        cache.cache_controller.pp_prefetch_decisions = {}
+        dispatched, _ = hit(cache, "dispatched", 2 * PAGE)
+        parked, operation = hit(cache, "parked", 4 * PAGE)
+        operation.storage_start = 6 * PAGE
+        cache.deadlines[parked] = 60.0
+        drain(cache, 2)
+        cache._dispatch_storage_reads()
+        self.assertEqual(launched(cache), ["dispatched"])
+        self.assertEqual(
+            (cache.parked_read_span(dispatched), cache.parked_read_span(parked)),
+            (None, (6 * PAGE, 4 * PAGE)),
+        )
+        self.assertEqual(cache.parked_read_pages_ahead(parked), 2)
+        self.assertFalse(cache.drop_parked_read(dispatched))
+        self.assertTrue(cache.has_ongoing_prefetch(dispatched))
+        self.assertTrue(cache.drop_parked_read(parked))
+        self.assertFalse(cache.drop_parked_read(parked))
+        self.assertEqual(cache.read_scheduler.parked_count(), 0)
+        self.assertTrue(cache.check_prefetch_progress(parked))
+        self.assertEqual(cache.cache_controller.mem_pool_host.allocs, [2 * PAGE])
+
+    def test_the_lags_are_taken_at_park_dispatch_and_landing_once_installed(self):
+        """Lookup lag: submit to park. Fixed lag: dispatch to insertion, less the pages
+        ahead at dispatch and its own at the read thread's rate, so a read behind another
+        is not charged that read's time. A cache nobody asked measures nothing."""
+        plain = cache_mode_fixture()
+        _, untouched = hit(plain, "a", 4 * PAGE)
+        drain(plain, 1)
+        plain._dispatch_storage_reads()
+        self.assertNotIn("dispatched_at", vars(untouched))
+
+        cache = cache_mode_fixture(write_hold_tokens=10 * PAGE)
+        cache.read_lags = lags = ReadPathLags()
+        cache.cache_controller.storage_read_ms_per_page = 10.0
+        cache.cache_controller.mem_pool_host.free = Mock()
+        cache._check_hybrid_prefetch_result = Mock(return_value=True)
+        cache._apply_cache_actions = Mock()
+        cache.dec_host_lock_ref = Mock()
+        cache.tree_core.commit_hicache_transfers = Mock()
+        cache.tree_core.insert_host = lambda *args: SimpleNamespace(
+            cache_actions=[],
+            host_insert_dropped=False,
+            prefix_len=0,
+            inserted_host_node=5,
+        )
+
+        def read(rid, clock, *, landed_after):
+            """One read of four pages: looked up 30 ms before it parks at 200 s."""
+            _, operation = hit(cache, rid, 4 * PAGE)
+            operation.start_time = 100.0
+            operation.completed_tokens = 4 * PAGE
+            operation.pool_storage_result = None
+            clock.monotonic.return_value = 100.03
+            clock.perf_counter.return_value = 200.0
+            drain(cache, 1)
+            cache._dispatch_storage_reads()
+            clock.perf_counter.return_value = 200.0 + landed_after
+            return operation
+
+        with patch(f"{LOGGER}.time") as clock:
+            for turn in range(LAG_MIN_SAMPLES - 1):
+                cache._handle_prefetch_result(
+                    read(f"r{turn}", clock, landed_after=0.05)
+                )
+            self.assertIsNone(lags.fixed.seconds)
+            first = read("first", clock, landed_after=0.09)
+            second = read("second", clock, landed_after=0.09)
+            self.assertEqual((first.ahead_pages, second.ahead_pages), (0, 4))
+            cache._handle_prefetch_result(second)
+            # The write hold comes on and goes off: one hold of 4 s.
+            for pending, now in ((10 * PAGE, 300.0), (0, 304.0)):
+                cache.pending_backup_tokens = pending
+                clock.perf_counter.return_value = now
+                cache._dispatch_storage_reads()
+        self.assertAlmostEqual(lags.lookup.seconds, 0.03)
+        self.assertAlmostEqual(lags.fixed.seconds, 0.01)
+        self.assertEqual(
+            (lags.write_hold.samples, lags.write_hold.ewma_s, lags.write_hold_since),
+            (1, 4.0, None),
+        )
 
 
 class TestPinnedStaging(CustomTestCase):
@@ -564,6 +761,51 @@ def finish_writes(cache, *written_tokens):
         cc.ack_backup_queue.put(operation)
 
 
+class _MarkingTreeCore(_LockedTreeCore):
+    """Also records the stored marks the cache asks the tree for."""
+
+    def __init__(self):
+        super().__init__()
+        self.queued = {}
+        self.finished = []
+
+    def mark_storage_write(self, node_id, *, op_id):
+        self.queued[node_id] = op_id
+
+    def finish_storage_write(self, node_id, *, op_id, stored_at, retire):
+        self.finished.append((node_id, op_id, stored_at is not None))
+        return []
+
+    def unstored_ancestors(self, node_id):
+        return []
+
+
+def stored_tracking_cache(node_pages, **switches):
+    """backup_ready_cache on one rank with SGLANG_HICACHE_STORAGE_TRACK_STORED resolved
+    on, and the other Retain switches as given."""
+    cache = backup_ready_cache(node_pages)
+    build_spec = cache.tree_core.build_storage_backup_spec
+    cache.tree_core = _MarkingTreeCore()
+    cache.tree_core.build_storage_backup_spec = build_spec
+    cache.enable_storage = True
+    cache.retention = RetentionSwitches(track_stored=True, **switches)
+    cache._storage_skip_nodes = set()
+    cache._retire_at_ack = set()
+    cache.tp_world_size = cache.pp_size = 1
+    cache.cache_controller.backup_skip = False
+    cache.cache_controller.storage_backend = Mock(spec=HiCacheStorage)
+    return cache
+
+
+def event_lines(logs, kind):
+    """The HICACHE_EVT lines of one kind, without the logger prefix."""
+    return [
+        line.split("HICACHE_EVT ")[1]
+        for line in logs.output
+        if f"HICACHE_EVT {kind} " in line
+    ]
+
+
 class TestWriteBacklogHold(CustomTestCase):
     """Host tokens locked by SSD writes not yet acked, and the read hold they drive."""
 
@@ -584,6 +826,95 @@ class TestWriteBacklogHold(CustomTestCase):
         StorageAttachment(cache)._release_pending_storage_ops()
         self.assertEqual((cache.pending_backup_tokens, cache.ongoing_backup), (0, {}))
         self.assertEqual(dict(cache.tree_core.locks), {1: 0, 2: 0, 3: 0})
+
+    def test_a_write_acked_short_unlocks_its_pages_and_leaves_them_unstored(self):
+        """Any ack returns the lock and the pending tokens (a store that fails every
+        write must not pin host memory); only one covering every page marks the node."""
+        cache = stored_tracking_cache({1: 4, 2: 6})
+        with self.assertLogs(LOGGER, level="INFO") as logs:
+            for node_id in (1, 2):
+                cache.write_backup_storage(node_id)
+            op = dict(cache.tree_core.queued)
+            finish_writes(cache, 4 * PAGE, 6 * PAGE - 1)
+            drain(cache, 0, write_acks=2)
+        self.assertEqual(
+            cache.tree_core.finished, [(1, op[1], True), (2, op[2], False)]
+        )
+        self.assertEqual(
+            (cache.pending_backup_tokens, dict(cache.tree_core.locks)),
+            (0, {1: 0, 2: 0}),
+        )
+        done = event_lines(logs, "h2s_done")
+        self.assertEqual([line.split()[-1] for line in done], ["stored=1", "stored=0"])
+        self.assertEqual(len(event_lines(logs, "h2s_short")), 1)
+
+    def test_with_the_switch_off_no_node_is_marked(self):
+        """Off, the tree is asked for no mark (this tree core has none to give) and the
+        ack line keeps exactly the fields earlier campaigns' scripts read."""
+        cache = backup_ready_cache({1: 4})
+        with self.assertLogs(LOGGER, level="INFO") as logs:
+            cache.write_backup_storage(1)
+            finish_writes(cache, 2 * PAGE)
+            drain(cache, 0, write_acks=1)
+        (done,) = event_lines(logs, "h2s_done")
+        self.assertRegex(done, r"^h2s_done op=\d+ tokens=4 pending=0$")
+        self.assertEqual(event_lines(logs, "h2s_short"), [])
+
+    def test_a_write_short_on_any_rank_is_unstored_on_every_rank(self):
+        """completed_tokens is a rank's own count: the verdict is the minimum over TP
+        ranks. A rank that writes nothing votes yes; the detach path asks no other."""
+        cache = stored_tracking_cache({1: 4, 2: 4})
+        cache.tp_world_size = 2
+        reduced_with = []
+
+        def the_other_rank_cut_the_second_write(votes, op):
+            reduced_with.append(op)
+            votes.copy_(torch.minimum(votes, torch.tensor([1, 0], dtype=votes.dtype)))
+
+        cache._all_reduce = the_other_rank_cut_the_second_write
+        for node_id in (1, 2):
+            cache.write_backup_storage(node_id)
+        finish_writes(cache, 4 * PAGE, 4 * PAGE)
+        drain(cache, 0, write_acks=2)
+        self.assertEqual(
+            [stored for *_, stored in cache.tree_core.finished], [True, False]
+        )
+        self.assertEqual(reduced_with, [torch.distributed.ReduceOp.MIN])
+
+        cache._all_reduce = Mock()
+        cache.cache_controller.backup_skip = True
+        cache.write_backup_storage(1)
+        finish_writes(cache, 0)
+        drain(cache, 0, write_acks=1)
+        self.assertTrue(cache.tree_core.finished[-1][2])
+        cache._all_reduce.assert_called_once()
+
+        cache.cache_controller.backup_skip = False
+        cache.write_backup_storage(2)
+        finish_writes(cache, 4 * PAGE)
+        drain(cache, 0, write_acks=None)
+        self.assertTrue(cache.tree_core.finished[-1][2])
+        cache._all_reduce.assert_called_once()
+
+    def test_a_split_of_a_skipped_node_skips_both_fragments(self):
+        """A node split while its host copy is in flight gets a write per fragment: the
+        skip or the retire decided for it follows both, or half an ended turn stays."""
+        cache = stored_tracking_cache(
+            {}, skip_ended_writes=True, retire_ended_pages=True
+        )
+        cache.ongoing_write_through = {
+            ack_id: _OngoingWriteThrough(ack_id, None, [ack_id]) for ack_id in (7, 8, 9)
+        }
+        cache._storage_skip_nodes = {7}
+        cache._retire_at_ack = {8}
+        for node_id in (7, 8, 9):
+            cache._replace_pending_write_through_node(
+                node_id, node_id, [10 * node_id, node_id]
+            )
+        self.assertEqual(
+            (cache._storage_skip_nodes, cache._retire_at_ack), ({7, 70}, {8, 80})
+        )
+        self.assertEqual(cache.ongoing_write_through[9].publish_node_ids, [90, 9])
 
     def test_timed_read_stays_parked_until_the_write_backlog_halves(self):
         """Fed the cache's pending write tokens, the hold parks a timed read from the
@@ -610,6 +941,194 @@ class TestWriteBacklogHold(CustomTestCase):
             if "srs_write_hold" in line
         ]
         self.assertEqual(states, ["on", "off"])
+
+
+class TestRetentionSwitches(CustomTestCase):
+    ALL_ON = RetentionSwitches(
+        track_stored=True,
+        skip_ended_writes=True,
+        touch_interval_s=300.0,
+        retire_ended_pages=True,
+    )
+
+    def switch_cache(self, *, prefetch="on") -> UnifiedRadixCache:
+        """A real CPU cache meeting every condition, attached to a store that offers
+        the touch interval and the retire."""
+        from test_session_unified_radix_cache import make_params
+
+        reset_context()
+        self.addCleanup(reset_context)
+        publish(
+            ServerArgs(model_path="dummy", hicache_storage_next_turn_prefetch=prefetch),
+            role="scheduler",
+        )
+        cache = UnifiedRadixCache(make_params(enable_session=False, page_size=2))
+        store = Mock(
+            spec=HiCacheStorage, touch_interval_s=300.0, retire_ended_pages=True
+        )
+        cache.cache_controller = SimpleNamespace(storage_backend=store)
+        return cache
+
+    def pin_env_switches(self, *, track_stored: bool, skip_ended_writes: bool) -> None:
+        # Closed as a cleanup: override() skips its restore when the test body raises.
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(
+            envs.SGLANG_HICACHE_STORAGE_TRACK_STORED.override(track_stored)
+        )
+        stack.enter_context(
+            envs.SGLANG_HICACHE_STORAGE_SKIP_ENDED_WRITES.override(skip_ended_writes)
+        )
+
+    def test_a_switch_missing_what_it_needs_stays_off_and_says_so(self):
+        """Each switch acts through something else: granted without it, a skipped write
+        leaves a hole no child rewrites and a retire zeroes half a page's files."""
+        wanted = self.ALL_ON
+        met = dict(
+            host_cache_mode=True,
+            python_tree_core=True,
+            single_pp_rank=True,
+            next_turn_prefetch=True,
+            full_kv_only=True,
+        )
+        self.assertEqual(resolve_retention_switches(wanted, **met), (wanted, []))
+        marks_and_touch = RetentionSwitches(track_stored=True, touch_interval_s=300.0)
+        no_retire = RetentionSwitches(
+            track_stored=True, skip_ended_writes=True, touch_interval_s=300.0
+        )
+        cases = {
+            "host_cache_mode": (RetentionSwitches(), 4),
+            "python_tree_core": (RetentionSwitches(), 4),
+            "single_pp_rank": (RetentionSwitches(), 4),
+            "next_turn_prefetch": (marks_and_touch, 2),
+            "full_kv_only": (no_retire, 1),
+        }
+        for unmet, (granted, refusals) in cases.items():
+            with self.subTest(unmet=unmet):
+                resolved, refused = resolve_retention_switches(
+                    wanted, **{**met, unmet: False}
+                )
+                self.assertEqual((resolved, len(refused)), (granted, refusals))
+        # A retired page read back from the SSD is refreshed, or it stays first to go.
+        no_touch = RetentionSwitches(
+            track_stored=True, skip_ended_writes=True, retire_ended_pages=True
+        )
+        resolved, refused = resolve_retention_switches(no_touch, **met)
+        self.assertEqual(
+            (resolved, len(refused)),
+            (RetentionSwitches(track_stored=True, skip_ended_writes=True), 1),
+        )
+        # Without the marks nothing else may act; switches not asked for say nothing.
+        no_marks = RetentionSwitches(skip_ended_writes=True, touch_interval_s=300.0)
+        resolved, refused = resolve_retention_switches(no_marks, **met)
+        self.assertEqual((resolved, len(refused)), (RetentionSwitches(), 2))
+        self.assertEqual(
+            resolve_retention_switches(
+                RetentionSwitches(), **dict.fromkeys(met, False)
+            ),
+            (RetentionSwitches(), []),
+        )
+
+    def test_the_cache_reads_two_switches_from_the_envs_and_two_from_its_store(self):
+        """The marks and the write skip are environment switches; the touch interval and
+        the retire come from the attached store, and a test double claims neither."""
+        cache = self.switch_cache()
+        store = cache.cache_controller.storage_backend
+        self.pin_env_switches(track_stored=False, skip_ended_writes=False)
+        # Nothing asked for: every switch off, and no line in the server log.
+        cache.cache_controller.storage_backend = None
+        with self.assertNoLogs(LOGGER, level="INFO"):
+            cache._init_storage_retention()
+        self.assertEqual(cache.retention, RetentionSwitches())
+
+        cache.cache_controller.storage_backend = store
+        self.pin_env_switches(track_stored=True, skip_ended_writes=True)
+        with self.assertLogs(LOGGER, level="INFO") as logs:
+            cache._init_storage_retention()
+        self.assertEqual(cache.retention, self.ALL_ON)
+        self.assertIn(
+            "HiCache retention: track_stored=1 skip_ended_writes=1 "
+            "touch_interval_s=300 retire_ended_pages=1",
+            logs.output[-1],
+        )
+        cache.cache_controller.storage_backend = Mock()
+        cache._init_storage_retention()
+        self.assertEqual(
+            cache.retention,
+            RetentionSwitches(track_stored=True, skip_ended_writes=True),
+        )
+
+    def test_the_cache_passes_the_resolver_what_the_server_really_has(self):
+        """Every condition is read off the server: one passed as met when it is not
+        grants the write skip without a prefetcher, or a retire that misses files."""
+        self.pin_env_switches(track_stored=True, skip_ended_writes=True)
+        marks_and_touch = RetentionSwitches(track_stored=True, touch_interval_s=300.0)
+        unmet = {
+            "the prefetcher": ("off", {}, marks_and_touch),
+            "host memory as a cache": (
+                "on",
+                {"host_memory_mode": "buffer_only"},
+                RetentionSwitches(),
+            ),
+            "the python tree core": (
+                "on",
+                {"tree_core": SimpleNamespace()},
+                RetentionSwitches(),
+            ),
+            "PP = 1": ("on", {"pp_size": 2}, RetentionSwitches()),
+        }
+        for name, (prefetch, changed, granted) in unmet.items():
+            with self.subTest(unmet=name):
+                cache = self.switch_cache(prefetch=prefetch)
+                vars(cache).update(changed)
+                with self.assertLogs(LOGGER, level="WARNING") as logs:
+                    cache._init_storage_retention()
+                self.assertEqual(cache.retention, granted)
+                self.assertTrue(
+                    all("stays off: it needs" in line for line in logs.output)
+                )
+
+        # A draft model's sidecar pools are registered after the cache is built: each of
+        # its pages then has a file the touch does not name.
+        cache = self.switch_cache()
+        cache._init_storage_retention()
+        self.assertEqual(cache.retention, self.ALL_ON)
+        with self.assertLogs(LOGGER, level="WARNING") as logs:
+            cache.register_sidecar_pool(SimpleNamespace(name="draft"))
+        self.assertEqual(
+            cache.retention,
+            RetentionSwitches(
+                track_stored=True, skip_ended_writes=True, touch_interval_s=300.0
+            ),
+        )
+        self.assertIn(
+            "SGLANG_HICACHE_NIXL_RETIRE_ENDED_PAGES stays off", logs.output[0]
+        )
+
+    def test_a_runtime_attach_resolves_the_switches_for_the_store_attached(self):
+        """A store attached at runtime states its own touch and retire support: switches
+        kept from before would refresh files its cleaner does not order, or stay off."""
+        cache = self.switch_cache()
+        self.pin_env_switches(track_stored=True, skip_ended_writes=False)
+        controller = SimpleNamespace(
+            storage_backend=None, mem_pool_host=SimpleNamespace(entries=[])
+        )
+
+        def attach_storage_backend(**kwargs):
+            controller.storage_backend = Mock(
+                spec=HiCacheStorage, touch_interval_s=300.0, retire_ended_pages=False
+            )
+
+        controller.attach_storage_backend = attach_storage_backend
+        cache.cache_controller = controller
+        cache._init_storage_retention()
+        self.assertEqual(cache.retention, RetentionSwitches(track_stored=True))
+        attached, _ = StorageAttachment(cache).attach(storage_backend="nixl")
+        self.assertTrue(attached)
+        self.assertEqual(
+            cache.retention,
+            RetentionSwitches(track_stored=True, touch_interval_s=300.0),
+        )
 
 
 class TestAdmitSiteReleasesThePin(CustomTestCase):

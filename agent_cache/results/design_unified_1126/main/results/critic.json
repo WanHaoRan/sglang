@@ -1,0 +1,258 @@
+{
+ "missing": [
+  {
+   "item": "Host-to-GPU load at admission blocks the prefill pass: the largest GPU-time term a tier move adds, and the draft gives it no decision",
+   "where": "Code under /home/wanhr/sglang/python/sglang/srt/: managers/scheduler.py:4118-4122 (the copy starts when the prefill batch is built) and :4006-4012 (the pass-over hook reads already use); managers/cache_controller.py:978-1017 (start_loading), :64-65 and :91-94 (per-layer events); mem_cache/memory_pool.py:2545-2572 (the forward waits on them); mem_cache/unified_radix_cache.py:3980-3999 (is_load_back_event_done, already used by the disaggregated decode path), :3806-3815 (finish counts MIN-reduced across ranks). DESIGN.md section 1.2: 'about 0.4 s, done at admission'.",
+   "action": "Fetch",
+   "unified_rule": "The load is a job of C = L / beta_GH (2.5 us a token, 46 GB/s at the median) due at the turn's prefill pass. Release it one load time before that pass and pass over the turn until its load has landed, as section 5.3 does for SSD reads, so decode steps run beside the copy. A blocked GPU-second costs mu.",
+   "size_and_evidence": "Measured, campaign 34 (ec_full, jit_exact; jit_p50 and ec_exact agree). Minutes 28-110: 95-98 % of admitted requests load 22.6-26.2 K tokens; the copy takes 57-66 ms per request. A 40-step decode interval holding one small prefill batch is longer than a pure-decode interval by the copy's own time: +46 / +65 / +80 / +114 ms at copies of 39 / 65 / 85 / 114 ms, slope 0.88-0.96 (se 0.04-0.07). Blocked time: 40-53 ms per admitted request, 9.7-12.1 % of GPU wall time (two per-pass baselines; interval regressions give 5-8 %; the simulator's calibration charges 0.85 us a token, 22 ms). In minutes 90-110 that is 123-137 s blocked against 43 GPU-s of lost-history recompute. Inferred: by (N - B) g, 4.4-5.8 s of the 28 s late mean and 2.8-3.2 s of the 10.96 s run mean. On the workflow's simulator (sim/kvsim.py, seeds 0-2) removing its own 0.85 us charge gives -1.9 to -2.6 s; removing 37 ms per load-carrying batch gives -3.6 to -4.2 s and 5.6-7.3 % more requests. Not established: how much a copy slows the decode steps beside it (GPU run needed). The loading turn would hold its GPU slots about 65 ms longer (0.14 slot). Prior art in the literature notes: KVFlow prefetches host to GPU for agents scheduled next (agents/literature/NOTES.md:374). Files: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/load_block3_c34.out, load_block_c34_ec_full.out, gpu_budget.out, sim_load.out.",
+   "cheap_now": false
+  },
+  {
+   "item": "Regime: FP8 KV, or a dense model (every byte rate and the number of running requests change)",
+   "where": "Campaigns 28-34 ran kv_cache_dtype auto = bf16, 98,304 B a token (server_args.txt of the campaign 34 runs); start_server.sh's default is fp8_e5m2 (facts_calib.md). Dense second model: /home/wanhr/sglang/agent_cache/OPEN_ITEMS.md:520.",
+   "action": "model",
+   "unified_rule": "State the rules in bytes: with b halved the GPU pool, the host pool and the SSD rate double in tokens, the load copy halves, and the read-or-recompute tie moves toward reading. With a dense model gamma rises several times, so mu gamma L (cleaner losses, lookup cap) weighs more.",
+   "size_and_evidence": "Inferred, not measured. FP8 KV at campaign 34's load: host 3.26 M + GPU 1.34 M tokens hold the live set (128 users x 31.2 K = 4.0 M), so SSD reads nearly stop; about 40 requests run instead of 20. Extrapolating the review's decode-step fit (3.5 + 0.47 x running + 0.0162 x context K ms), (N - B) g falls from about 50 s to about 35 s, more than any policy in the draft. Accuracy of FP8 KV on this model was not checked.",
+   "cheap_now": false
+  },
+  {
+   "item": "GPU pool room has no price and no Preempt rule: admission stops at the first ready turn that does not fit",
+   "where": "managers/scheduler.py:4045-4072 (break on NO_TOKEN); managers/schedule_policy.py:1289 and :1401-1408 (the fit test counts the whole prompt that is not on the GPU plus the output). DESIGN.md section 1.6 relaxes host, device and SSD capacity only.",
+   "action": "Preempt",
+   "unified_rule": "Add a fourth price lambda_G for GPU pool room. A ready turn that does not fit yields to the next ready turn that fits, with a bound on how often it is skipped.",
+   "size_and_evidence": "Measured, campaign 34 ec_full and jit_exact, minutes 28-110, batch lines with a queue: the pool is 97.1-97.4 % used (16-19 K tokens idle); a ready queued turn would fit in 76-83 % of lines; greedy first-fit would place 12.3-14.9 K tokens (1.85-2.23 % of the pool). The blocked head is long: p50 34-37 K tokens against 24 K for all requests. Simulator, seeds 0-2: a pool 2 % larger gives -0.27 to -0.39 s mean TTFT (-0.37 to -0.72 s late), 1 % gives -0.10 to -0.20 s. Inferred from the decode-step fit: one more running request is worth about 0.7 s of mean TTFT, a price of about 5e-5 s per token-second, where host room is priced about 0. Open loop: who waits (long contexts) was not checked. Files: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/hol_c34.out, pool_use_c34.out, sim_load.out.",
+   "cheap_now": true
+  },
+  {
+   "item": "The cleaner's scan runs in the scheduler's process and slows every pass while it runs",
+   "where": "mem_cache/storage/nixl/nixl_cleaner.py:121-130 (a thread in the server process), :168-223 (_tick: full scan, sort, unlink), :246-270 (per-file Python loop over about 780 K files).",
+   "action": "Retain",
+   "unified_rule": "The SSD's order (sigma) must not cost GPU time: keep the order in memory (the engine wrote or touched every file) or scan in another process, and delete at the frontier in small steps instead of 10 % of the volume per pass.",
+   "size_and_evidence": "Measured, campaign 34 ec_full and jit_exact, 8 passes of 10.6-12.1 s: the 40-step decode interval is 1.27-1.61 s during a pass against 1.05-1.19 s in the two minutes before (+17 to +39 %); read ms per page is unchanged. That is 1.5-3.5 GPU-s per pass, a pass every 10-12 minutes. Inferred through (N - B) g: 0.1-0.3 s of mean TTFT while passes run. The scan grows with the file count. R4 as planned (file times only) keeps this cost. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/cleaner_pass_c34.out.",
+   "cheap_now": true
+  },
+  {
+   "item": "The mirror (host copies of running requests' KV) is in section 4.3 but not among the candidate changes",
+   "where": "mem_cache/unified_cache/unified_tree_core.py:2145-2146 and :1748-1752 (reclaim only under write_back); mem_cache/unified_radix_cache.py:975-990 (write_back copies inline at GPU eviction); managers/scheduler.py:3160-3167 (a lookup needs a host-backed anchor).",
+   "action": "Retain",
+   "unified_rule": "A backup is due when the GPU gives the page up. Making it later than the end of prefill pays only if the copy does not block the GPU; this is the same condition as the load (first item).",
+   "size_and_evidence": "Census, campaign 34 from minute 28: mirror 0.64 M of 1.63 M host tokens, 0.63 M of it locked by running requests (critic/out/misc_counts_c34.out). The review: queued histories 1.6-1.7 M against 0.90-0.92 M of host-only room; its open-loop replay cuts SSD read demand by 56-61 %. The workflow's simulator (/home/wanhr/sglang/agent_cache/results/design_unified_1126/sim/calibration_runs/logs/notes.out): mirror off with a free copy -0.22 s mean, p99 54 to 32 s, SSD share 0.140 to 0.078; with the copy inline at GPU eviction +7.8 s. So no mean gain while c = 0, a large one on readers' tail and on the load at which the SSD starts to starve the GPU (a tight pool, 112 GB: 0.49 M of host-only room, inferred).",
+   "cheap_now": false
+  },
+  {
+   "item": "Device wear: the model prices device time and capacity, not bytes written",
+   "where": "mem_cache/unified_radix_cache.py:1840-1855 and :2026-2061 (every acked GPU-to-host copy is written). DESIGN.md section 4.2: 'with an idle device, write at once (it is free)'.",
+   "action": "Price",
+   "unified_rule": "Add a price per token written. A write is then worth making when its page's clean index nears lambda (its due date), never for an ended session, and for outputs only once a prompt repeats them.",
+   "size_and_evidence": "Measured from h2s_io: campaign 34 ec_full and jit_exact wrote 3.0 TB in 2 h to the 2.5 TB device, 14.4 device-writes a day; campaign 32 hicache 8.2 TB, 39 a day. ev_write: 46-58 % of submitted tokens are never read back from the SSD (43 % at saturation). Drive endurance ratings of a few device-writes a day are general knowledge, not from the records. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/wear.out.",
+   "cheap_now": false
+  },
+  {
+   "item": "Regime: several GPUs or TP ranks, pipeline or data parallelism, PD disaggregation, speculative decoding",
+   "where": "mem_cache/next_turn_prefetch.py:455-475 (create() refuses TP > 1, PP > 1, DP attention, PD disaggregation, EAGLE, a non-Python tree core and buffer mode); mem_cache/unified_radix_cache.py:2113-2118 (hits MIN-reduced across ranks); nixl_cleaner.py:123 (cleaner on rank 0 only). The cookbook deploys the larger Qwen3 models with --tp 8 (/home/wanhr/sglang/docs/cookbook/autoregressive/Qwen/Qwen3.mdx:75).",
+   "action": "model",
+   "unified_rule": "Every measured input of a rule (c, mu, lambda, the admission error, write and read rates, a clock) is rank-local; a decision taken from it must be reduced across ranks or taken on one rank. With several replicas the Fetch decision gains a term: go to the replica that holds the prefix (its queue) or to another one and read from a shared SSD.",
+   "size_and_evidence": "None of F1-F5, P1, P2, PR1 runs with TP > 1 today; R2 and R3 need a consensus step (seam_rp). All evidence is one GPU, TP = 1. Size not established.",
+   "cheap_now": false
+  },
+  {
+   "item": "Regime: larger and smaller host pools",
+   "where": "Records: campaign26/DECISIONS.md (70 against 100 GB), campaign34 census; --hicache-size 160 in the runs.",
+   "action": "model",
+   "unified_rule": "The rules only act between two pool sizes: above the live set every arm ties; below about the queued histories the SSD, not the GPU, sets the rate and c rises again.",
+   "size_and_evidence": "Inferred from sizes: 128 users hold about 4.0 M tokens; GPU 0.67 M + host 1.63 M hold 57 % of it. A 320 GB pool would hold all of it (campaign 26 at 100 GB: arms tie at 0.41 s with under 1 % of turns reading). At 112 GB host-only room is 0.49 M against 1.4-1.7 M of queued histories, so most admitted turns need a read: 2.2 requests/s x 26 K tokens is 57 K tokens/s against a 21.4 K device. That regime has no run yet.",
+   "cheap_now": false
+  },
+  {
+   "item": "Regime: faster disks or several storage directories",
+   "where": "mem_cache/storage/nixl/hicache_nixl.py:88-90 (several storage dirs), :121-135 (one NIXL agent, one read thread, one write thread).",
+   "action": "model",
+   "unified_rule": "With beta several times larger the read line vanishes, x = (r - W)+ is 0 almost always, kappa is 0 and Retain order matters less; what is left is the fixed path (lookup pass, landing pass, the load copy) and the single read thread.",
+   "size_and_evidence": "Inferred. Uncontended reads are device-bound today (0.05 s + 2.84 ms a page, ev_fetch), so a faster device shortens them in proportion until the one read thread or the 128-page transfer binds; not measured. The first item (the load copy) is untouched by disk speed.",
+   "cheap_now": false
+  },
+  {
+   "item": "Interaction: P1's slack and F1's quantile use the same biased estimate of the admission time; the head class is defined in seconds",
+   "where": "mem_cache/next_turn_prefetch.py:839 (residual_wait in _check_queued), :1448-1481 (hold); seam_rp's P1 plan (slack = wait minus re-read time; head class under 2 s).",
+   "action": "Preempt",
+   "unified_rule": "Rank queued turns by ready turns ahead (admission passes over the rest), and protect the first k ready turns whose histories fit the room; use seconds only for the re-read test, with the estimate that counts readers ahead by their landing.",
+   "size_and_evidence": "ev_fetch: in minutes 90-110 position over rate puts the GPU turn 9-10 s too late at the median, because 51 % of the turns ahead wait on their own reads. P1 acts in exactly that phase, so a 2 s head class would miss turns that are next. Also measured here: reads waiting in the line keep their anchor chains locked, 50 K tokens on average in ec_full (h_parked + ancestors; max 0.46 M) and 115 K in jit_p50; a 'wait instead of refuse' rule adds to it. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/misc_counts_c34.out.",
+   "cheap_now": true
+  },
+  {
+   "item": "Interaction: recompute against the born-clean rule (a recompute is not room-free)",
+   "where": "Write-through copies a recomputed span to host at the end of prefill (unified_tree_core.py:1060-1080 per seam_rp); the write thread then stats and touches each page while the node stays host-locked (mem_cache/storage/nixl/hicache_nixl.py:853-879; unified_radix_cache.py:2055-2060).",
+   "action": "Fetch",
+   "unified_rule": "K_rec = mu gamma L + lambda L x (time until the GPU gives the span up) + the write thread's check. Where room is short a recompute needs the same L host tokens as the read it replaces; a span that is born clean needs no host copy while lambda is high.",
+   "size_and_evidence": "At campaign 34: 0 refusals, so no effect. In campaign 32 this is the recompute, write, room loop (74-93 % of writes were rewrites). A recompute also refreshes the chain's file times through fix 1's touch, which a read does not, so F4 and 'recompute when starved' change the cleaner's order. Skipping the host copy collides with the rule that a lookup needs a host-backed anchor (scheduler.py:3160-3167).",
+   "cheap_now": false
+  },
+  {
+   "item": "Interaction: a refresh of file times against the cleaner",
+   "where": "nixl_cleaner.py:176-205 (order fixed at the scan, unlinks later), :270 (a page's time is the newest of its files); nixl_utils.py:320-333 and hicache_nixl.py:853-875 (touch_if_stored on a skipped rewrite).",
+   "action": "Retain",
+   "unified_rule": "One owner of the SSD order: the engine sets a page's class (retired, ended first prompt, live) and the cleaner re-reads a file's time before the unlink.",
+   "size_and_evidence": "Three points beyond seam_rp's X3 race. (1) A retire (time 0) is undone by any later touch_if_stored: right when a later session reuses the page, wrong for an ended session's resubmitted pages (4.8-6.7 % of submits are second submits, ev_write). (2) Every file of a page must be set, or the page keeps its newest time. (3) A pass removes 10 % of the volume and unlinks in its last second, so a refresh has to beat the scan, 10-12 s earlier. Measured loss today: 10 reads per arm fail on files deleted under parked reads (ev_ssd).",
+   "cheap_now": true
+  },
+  {
+   "item": "Interaction: skipped or reordered writes, and cleaner holes, against assume_stored",
+   "where": "mem_cache/unified_radix_cache.py:2150-2184 (a retry assumes the span left of a known hit is stored); managers/cache_controller.py:1103-1147 (a missing file fails its 128-page batch and all later ones).",
+   "action": "Retain",
+   "unified_rule": "A span counts as stored only on the engine's own mark (R3), not by position; with R1 or a chain-aware cleaner on, drop the assumption or check the mark.",
+   "size_and_evidence": "Write order alone is safe (seam_rp). R1's skipped pages and the cleaner's deletions are not: the read allocates host room for the whole span, evicting others, and completes only the leading run. Today 10 failed reads per arm lost up to 51 K tokens each (ev_ssd); with R1 the exposure is sessions that resume after an explicit end.",
+   "cheap_now": true
+  },
+  {
+   "item": "Interaction: the prices' own bookkeeping runs on the scheduler thread, and the prices vanish where the orders act",
+   "where": "seam_rp P2 (a tree walk once a second); seam_fp PR1 (49 survival calls per victim, O(queue + parked) per tick); mem_cache/host_census.py (the walk).",
+   "action": "Price",
+   "unified_rule": "At saturation scheduler-thread time is priced at mu like GPU time. Since lambda is proportional to c + kappa, it is 0 where P1 and Retain order act: those must be rank rules there, not price comparisons.",
+   "size_and_evidence": "Census walk: 2.6 ms on average, 9 ms at most (campaign 34 ec_full). Per decode step the hinted arms are +0.04 to +0.18 ms (se 0.06) against the LRU arm and +2.3 to +4.8 us per queued request; not established as a cost of the policy code, the arms ran on two GPU units. P2 would hold 0 times at this setting (ev_write), so its walk can only cost. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/step_overhead_c34.out.",
+   "cheap_now": true
+  },
+  {
+   "item": "Shared prefixes between sessions are first out of host memory",
+   "where": "mem_cache/next_use_eviction.py:175-185 and :246-249 at HEAD (a node of no single session ranks before every scored session); :205-237 (a branch point belongs to no session).",
+   "action": "Retain",
+   "unified_rule": "The index of a shared head is (K / L) x (rate of new sessions that match it + the rates of its sessions); rank it in the scored tier by its own time between uses.",
+   "size_and_evidence": "Measured, campaign 34 ec_full: 620 first requests could reuse 1.97 M tokens (22.5 % of their prompts); 1.25 M (63 %) came from the SSD, 0.27 M from the GPU, 0.29 M from host memory, 0.15 M were lost. 124 first requests read in minutes 0-70. Inferred: about 8 TTFT-seconds a run weighted by c, and 2.5 % of the read volume. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/lost_bins_c34.out.",
+   "cheap_now": true
+  },
+  {
+   "item": "Lookups: every file is statted, on one lookup thread; the cost is the scheduler pass, and F5 does not cover turns without a plan",
+   "where": "hicache_nixl.py:645-664 (batch_exists); managers/cache_controller.py:1278-1305 (lookup thread); managers/scheduler.py:3220-3267 (a second re-issue budget of 8, used by the prefix-shrank re-query).",
+   "action": "Fetch",
+   "unified_rule": "An in-memory set of stored page keys answers 'absent' in the same pass and gives the cleaner its order without a scan; a lookup is then charged only when it can hit.",
+   "size_and_evidence": "Measured, campaign 34: latency p50 2-4 ms, p90 10-11 ms, 0.017-0.023 ms per page asked; 39-50 s of lookup-thread time and 2.9-4.0 M stats per run; 1.05-1.07 lookups under way at once on average (max 7). So the thread and the stats cost nothing; the 17-28 ms per empty lookup at light load is the pass (ev_prices, seam_fp). First requests (4 % of requests, no plan) keep their empty lookups under F5. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/lookups_c34.out.",
+   "cheap_now": false
+  },
+  {
+   "item": "Page granularity: history under one 64-token page is computed again on every turn",
+   "where": "page_size 64 in the runs; mem_cache/unified_radix_cache.py:2102 (keys are page-aligned).",
+   "action": "model",
+   "unified_rule": "None: not a policy's to move at a fixed page size; a smaller page multiplies files and stats.",
+   "size_and_evidence": "Measured, campaign 34 ec_full: 11,525 of 15,562 requests lose 1-63 tokens, 372 K tokens in all (24 per request), 15.7 GPU-s; inferred 0.10 s of mean TTFT through (N - B) g. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/lost_bins_c34.out.",
+   "cheap_now": false
+  },
+  {
+   "item": "Fixed constant: the 512-page dispatch window (and reads that cannot be reordered once dispatched)",
+   "where": "mem_cache/storage_read_scheduler.py:151-153; mem_cache/unified_radix_cache.py:628; one FIFO read thread (managers/cache_controller.py:1188-1214).",
+   "action": "Fetch",
+   "unified_rule": "Commit to the device only what it serves before the next scheduler pass plus one read: committed pages are the latest a more urgent read can be delayed, window / beta seconds at weight c.",
+   "size_and_evidence": "Measured, campaign 34 ec_full from minute 70 (1,926 dispatches): pages in flight before a dispatch p50 390, p90 696; 23 % of dispatches are 'now' reads entering with 512 or more in flight; 13 % find the thread empty. ev_fetch: 1.0-1.35 s in the thread's FIFO at saturation. Where the window is full c = 0, so no mean effect; up to about 1.3 s on one reader's stall. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/misc_counts_c34.out.",
+   "cheap_now": true
+  },
+  {
+   "item": "Fixed constants: pin budget 0.3 of the host pool, read budget of half the pool, 600 s pin release, 120 s lead horizon",
+   "where": "unified_radix_cache.py:633-635 (pin budget), :172 and :3370 (600 s); managers/cache_controller.py:599 and storage_read_scheduler.py:154-156 (read budget); next_turn_prefetch.py:121 (lead, just-in-time only).",
+   "action": "Preempt",
+   "unified_rule": "Each is a cap that the landing quantile and lambda already imply: a pin's cost is lambda L (D - l); keep them as hard limits only.",
+   "size_and_evidence": "Measured, campaign 34 ec_full: all 2,660 pins end at admission, longest 22 s, none skipped; in flight plus pinned at dispatch at most 238 K of the 814 K budget. jit_p50: 17 pins skipped at the budget, 415 ended by plan expiry, longest 368 s, none reached 600 s; 'now' reads overshot the read budget once (880 K). No effect to claim. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/misc_counts_c34.out.",
+   "cheap_now": true
+  },
+  {
+   "item": "Fixed constant: the 256-token thresholds (lookup, read, cut, gate 'covered')",
+   "where": "unified_radix_cache.py:302, :506, :2103, :2189, :3056, :3440-3450; next_turn_prefetch.py:1411-1446 (gate).",
+   "action": "Fetch",
+   "unified_rule": "Read a span iff mu gamma L exceeds c times the read's fixed path: one page at saturation, thousands of tokens on an idle GPU.",
+   "size_and_evidence": "Measured, campaign 34 ec_full: 54 requests lose 64-255 tokens, 7.3 K tokens in the run (0.3 GPU-s). 4,764 of 5,380 'covered' gate answers have 64-255 tokens missing, almost all the reply tail the replay never re-sends (F5 way B). Nothing to gain. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/lost_bins_c34.out.",
+   "cheap_now": true
+  },
+  {
+   "item": "Fixed constants: poll intervals, lag seeds and estimator windows",
+   "where": "next_turn_prefetch.py:102 (0.5 s probe), :115-116 (2 s room retry, 8), :125 and :128 (1 s and 2 s margins), :134, :137 (0.5 s GPU-bound), :141; next_turn_estimators.py:24-26 (60 s and 300 s rate windows, 5 admissions), :106 (+0.5), :127-135 (0.5, 0.044, 0.36 s lags); next_use_eviction.py:59-62 at HEAD (5 s grace, 600 s queued age); the 30 s return horizon; nixl_cleaner.py:19-22 (30 s, 50 groups, watermarks).",
+   "action": "Price",
+   "unified_rule": "Replace seeds by measured values where a rule reads them (lags, recompute cost); the rest are sampling periods bounded below by a scheduler pass (24 ms decoding, 50-400 ms for a prefill pass).",
+   "size_and_evidence": "From the other studies: lag seeds 0.904 s against 0.05 s measured, which makes the hold's margin about 3 s (ev_fetch); the 30 s horizon under-ranks short-idle sessions 2-10 times (seam_fp); eviction order was worth at most 0.1 s wherever isolated (review). Measured here: 13 % of dispatches at saturation find the read thread empty, an idle gap of at most one pass each (under 0.5 % of device time).",
+   "cheap_now": true
+  },
+  {
+   "item": "GPU-to-host copy bandwidth",
+   "where": "managers/cache_controller.py:846-870 (start_writing, a separate stream, acked on a later pass).",
+   "action": "model",
+   "unified_rule": "None needed while the copy is asynchronous; it becomes the first item's problem if it is moved to GPU eviction (write_back copies inline).",
+   "size_and_evidence": "Measured, campaign 34 ec_full: 2.08-2.10 us a token (47 GB/s), 3.6-4.2 ms per request, no blocking detectable (regression coefficient -2.0 +- 1.8 us a token). GPU eviction itself: 19.3 s of scheduler-thread time in the run, 0.5-1.6 ms per request. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/gpu_time_c34_ec_full.out.",
+   "cheap_now": true
+  },
+  {
+   "item": "Chunked prefill, decode interference, per-batch overheads, and token latency outside the objective",
+   "where": "managers/scheduler.py:1300-1364 (prefill_decode_interval, 0 in the campaigns); chunked_prefill_size 8192, max_prefill_tokens 16384 (server_args.txt).",
+   "action": "model",
+   "unified_rule": "The objective counts TTFT only; a prefill pass also stalls every running stream. If token latency is counted, prefill and copy waits get a second weight (the number of running requests).",
+   "size_and_evidence": "Measured, campaign 34: the pure decode step is 23.4-23.9 ms in every arm and regime (a busy read thread does not move it); the mean 40-step interval is 1.25 s against 0.95 s pure, so prefill passes add 31 % to inter-token time, a third to a half of it the copy wait of the first item. ev_prices: prefill chunks do not let other turns in. Context rewrites of 8 K tokens or more are 5.4 M of 23.3 M new tokens. A per-batch constant could not be separated from the copy wait. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/gpu_budget.out.",
+   "cheap_now": false
+  },
+  {
+   "item": "Partial reads, cuts, re-eviction after a read, and the second lookup budget",
+   "where": "unified_radix_cache.py:3048-3057 (cut), :3058-3078 (refusal); managers/scheduler.py:3240-3267 (prefix-shrank re-query spends the 8-attempt re-issue budget); next_turn_prefetch.py:917-934 (ntp_reevict).",
+   "action": "Preempt",
+   "unified_rule": "Cut or refuse only when c x (wait for room) exceeds mu gamma x (tokens given up): never at saturation. Count both lookup budgets the same way (F5).",
+   "size_and_evidence": "Measured, campaign 34: 0 cuts, 0 refusals, 0 refused backups in ec_full and jit_p50. 107 (ec_full) and 163 (jit_p50) requests had their GPU prefix shrink before admission (13.6-16 K tokens at the median) and spent a re-issue attempt. ntp_reevict: 1,330 events on 767 requests in ec_full, 563 at the cap; ev_prices puts the tokens lost that way at 32 K. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/misc_counts_c34.out.",
+   "cheap_now": true
+  },
+  {
+   "item": "Eviction granularity and the GPU's own retention",
+   "where": "mem_cache/unified_cache/components/full.py:194-261 (whole leaves); unified_radix_cache.py:3041 (a read asks for its whole size).",
+   "action": "Retain",
+   "unified_rule": "The same index on the GPU would keep a finished turn's KV for sessions due back within a load time; at saturation that means holding a slot, priced at lambda_G.",
+   "size_and_evidence": "Measured, campaign 34 ec_full: host eviction freed 93.5 M tokens for 58.2 M asked (1.61 times), GPU eviction 361 M for 260 M (1.39 times); mean free host memory 16.9 K tokens. At saturation the next admission follows a finish within 0.03 s at the median, and only 4.7-5.4 % of returning turns arrive before it: keeping the GPU copy saves at most about 2 ms per request, and holding the slot for the gap is about break-even (inferred). At light load 14 % of returning requests load from host, 16-31 ms each (ev_prices). File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/gpu_sticky_c34.out.",
+   "cheap_now": false
+  },
+  {
+   "item": "Subagent streams",
+   "where": "/home/wanhr/sglang/agent_cache/scripts/replay_programs.py:383 (each stream is its own session with its own hints).",
+   "action": "Fetch",
+   "unified_rule": "A parent's return is due when its child stream ends: the child's end hint is an exact due date for the parent's prefix, better than the parent's gap entry.",
+   "size_and_evidence": "Measured, campaign 34 ec_full: 183 requests in 19 subagent streams, in 11 of 676 sessions (1.1 % of requests); a child's first request shares 59 % of its prompt with KV already held. Too few to move a mean. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/subagents.out.",
+   "cheap_now": false
+  },
+  {
+   "item": "What the hint does not carry",
+   "where": "/home/wanhr/sglang/agent_cache/scripts/gap_hints.py and replay_programs.py:394-413 (three quantiles and the end, per harness and model); next_turn_prefetch.py:596-601 (the replay sends the reply key; a real engine decodes its own reply).",
+   "action": "Fetch",
+   "unified_rule": "Add the length of the prefix the next prompt will keep (a rewrite or compaction drops the tail), and widen an entry by its measured coverage before the index reads it.",
+   "size_and_evidence": "Measured, campaign 34 ec_full: the true gap falls inside [p10, p90] for 72.4 % of 16,118 hints (13.6 % below, 13.9 % above; nominal 80 %). ev_write: 1.36 M written tokens were dropped by the next prompt (5.5 % of writes), and staged reads fetched 0.49 M dead tokens in jit_p50. ev_fetch: per-harness keys are sharper than pooled ones for 16 % of requests. File: /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/critic/out/subagents.out.",
+   "cheap_now": false
+  },
+  {
+   "item": "The objective and the replay: slot waits, known output lengths, replies never re-sent",
+   "where": "DESIGN.md section 1.4 (sum of TTFT); managers/schedule_policy.py:1282-1289 (the pool reserves the remaining output, known exactly in the replay); campaign34/DECISIONS.md (slot waits).",
+   "action": "model",
+   "unified_rule": "Report the wait for a session slot and readers' p90 beside mean TTFT; state that B is optimistic when output lengths are not known.",
+   "size_and_evidence": "Campaign 34: mean slot wait 63-70 s per user, outside TTFT. On the simulator the load change of the first item moves the slot wait by 16 to 121 s. Inferred: with a usual max_new_tokens the pool reserves up to 4,096 x the ratio per running request, 2-9 % of the pool. ev_write: 15 % of write tokens are outputs the replay never re-sends.",
+   "cheap_now": true
+  }
+ ],
+ "overclaims": [
+  "F1 (landing quantile) is a relabelled margin: today's fixed 2 s is already the 20th percentile of the measured error on held reads in all four campaign 34 arms and within 1-4 % of the best cost near lambda / c = 2e-5 (ev_fetch). The rule moves mean TTFT by at most 0.013 s weighted by c and about 1 % of the host pool; at saturation q is a ratio of two numbers near zero and needs a clamp.",
+  "F2 and F3 change nothing at campaign 34: the existing GPU-bound filter already decides the same way (wait >= read in 3,929 of 3,973 'arrival' decisions, re-counted here; 1 staged read in the run). F3 alone turns 412 decisions into early reads at saturation and is +0.31 s on the workflow's simulator. Claim them as one guard, not a gain.",
+  "F4 (read or recompute by price) is worth at most 0.004 s per returning request with perfect choice and loses when keyed on an idle GPU (ev_prices); it is +4.0 s on the simulator. Section 2's 'recompute always wins on an idle FA3 GPU' is wrong: the request's own times tie near 44-55 K tokens.",
+  "F5 is a defect fix (a lookup is charged before its result), worth 0.007-0.16 s plus 6-13 ms per returning turn at light load. It is not derived from the prices.",
+  "R1 saves 4.6-4.8 % of write tokens and under 1 % of device time at saturation, with no TTFT effect. R2, R3, R5 and P2 have nothing to act on at campaign 34: writes are acked in 0.6-0.8 s, no write was acked short in six arms, no unstored unlocked page exists, and the reserve rule would hold 0 times. What removed campaign 32's condition was merging (fix 2). They are guards.",
+  "P1 has no measurable effect on the mean: 0 soft-pin bumps in campaigns 32 and 34, and its target (111-171 queued turns per half hour that lose resident history) sits where c = 0, so by the draft's own identity it moves who waits. Claim it on readers' p90, after a repeat run.",
+  "PR1 and the title: at every measured operating point lambda is 1-2e-7 or about 0, kappa is 0 as a price, c is nearly binary and the engine's price never moved. Only mu is large, and section 6 states it three times too low (1 + ready turns against N - B = 109). The three prices decide nothing in campaigns 32 to 34, and the room that is dearest at saturation, the GPU pool, has no price in the draft.",
+  "R4 as written ('ended sessions' chains first') makes the SSD tier worse (3.6-4.0 s against 1.6-1.9 s, ev_ssd); the form that works keeps first prompts and refreshes on lookup hits. Its 1.6-1.9 s is inferred through the identity: the late TTFT rise starts at minute 85-86, before the first pass.",
+  "Optimality and any distance from a floor: each rule is exact for a priced single-session problem; under hard capacity the index order is a heuristic and weak duality fails in the saturated closed loop. A floor built on today's GPU seconds per request takes as given that 8-12 % of them are a prefill pass waiting on the host-to-GPU copy, that 2-3 % of the GPU pool idles behind a head that does not fit, and that the cleaner's scan slows the loop 17-39 % for 11 s per pass. On the simulator the copy wait alone is worth 1.9-4.2 s of a 10.6 s mean, several times the 0.4-0.5 s the draft's candidates can still move.",
+  "Section 1.2: the load is not 'about 0.4 s'. The copy takes 57-66 ms per request (2.5 us a token); 0.4 s is the wait for pool room after a landing. Recompute cost is not 'nearly constant in the context length': cold prefill grows with position (25 us a token at 8 K, 59 us at 64 K; seam_fp, ev_prices). Section 2's '0.9 s of lags' are seeds; an uncontended read measures 0.05 s plus 0.044 ms a token.",
+  "Section 3.3: campaign 26 does not support the falling-hazard explanation. Its hints were sharp (p90/p10 median 3.7, hazard still rising within a read time for 86 % of readers' entries; ev_fetch). The paper should name which setting exercises the rising-hazard case.",
+  "Section 4.2: '56 to 67 % of prompt positions are read back' is 38-49 % of submitted tokens and 51-66 % of live sessions' prompt pages (ev_write). 'With an idle device, write at once (it is free)' leaves out wear: 3.0 TB written in 2 h to a 2.5 TB device.",
+  "Section 4.3: the mirror is not held 'for nothing'. It is what keeps GPU eviction from waiting on a copy: on the simulator dropping it is -0.22 s if the copy were free and +7.8 s with the copy inline.",
+  "Section 5.2: the 50 K / 25 K hold is not 'one threshold of this comparison'. At every hold but one it counted prompt pages of a request still running, which hold nothing eviction could take (ev_write).",
+  "Section 7 item 8: 'N g' should read (N - B) g, and 'same GPU work per request means the same mean TTFT whatever the read timing' is contradicted on one run per arm by jit_p50 (+0.8 to +1.3 s of TTFT for +3.2 s of stall; ev_prices). Item 9's stability claim should be stated in transfers, not tokens (ev_write).",
+  "Evidence base: one run per arm, arms within 0.7 s, and the saturated setting's run-to-run spread was never measured; on the simulator the arrival draw alone moves ec_full's mean between 8.8 and 19.0 s over three seeds. Everything is one GPU with TP = 1, bf16 KV, one mixture-of-experts model, replies never re-sent and output lengths known to admission. State these beside every gain."
+ ],
+ "ranked_build_list": [
+  "1. Load pass-over (new; Fetch and Preempt on the GPU tier). Start a turn's host-to-GPU copy when it is chosen for admission, keep decoding, and prefill the turn once the copy's event is done (unified_radix_cache.py:3980 has the gate, :3806 the cross-rank count). Largest expected effect by far: 8-12 % of GPU time at saturation, 1.9-4.2 s of a 10.6 s mean on the simulator (inferred). Medium effort in the scheduler's admission loop. Needs a GPU A/B at campaign 34's setting and a repeat for spread. First step with no risk: log the copy wait per admission.",
+  "2. R4 in ev_ssd's form, with X1's explicit-end predicate: touch on lookup hits, then the three file-time classes, and the re-check before unlink. Add: take the cleaner's scan out of the scheduler's process (new). Removes 0.33 s over the run (1.6-1.9 s late, inferred) and 0.1-0.3 s of scan slowdown while passes run.",
+  "3. First-fit admission among ready turns with a bound on skips (new; Preempt on GPU room). About 2 % of the pool, 0.3 s on the simulator. A few lines at scheduler.py:4045-4072; check long-context turns' p90.",
+  "4. F5, way B then way A, with the scheduler's second re-issue budget counted the same way: 0.007-0.16 s and 6-13 ms per returning turn at light load.",
+  "5. P1 by rank (ready turns ahead, the first k chains locked) with X2, not by a time slack. Readers' tail and re-read volume only; no mean effect to claim.",
+  "6. PR1 as a log line only, with mu = N - B, a GPU-room price, copy-wait ms and bytes written; replace the Triton recompute constant and the 0.9 s lag seeds by fits. No decision should read lambda or kappa at saturation.",
+  "7. Shared heads ranked by their own time between uses (new, small): 63 % of first requests' reusable tokens come from the SSD today; about 2.5 % less read volume, TTFT about 0.",
+  "8. For tight host pools and for wear (campaign 37 and after): mirror reclaim and writes at their due date, both only once copies run beside decode (step 1); R1 goes with them.",
+  "9. F1, F2 with F3, R2, R3, R5, P2: guards behind switches if wanted; no gain to claim at campaigns 32 to 34. Leave F4 off.",
+  "10. Before any claim: one repeat of the saturated setting for the spread, and the scope stated (one GPU, TP = 1, bf16 KV). FP8 KV and TP > 1 are untested and would change the number of running requests and every byte rate."
+ ]
+}

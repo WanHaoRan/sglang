@@ -1,0 +1,29 @@
+<section id="restore" class="foot">
+<div class="head">
+<p class="eyebrow">The four actions · Fetch, part 3</p>
+<h2 class="title">Fetch: read or recompute, by price</h2>
+</div>
+<div class="row-wide">
+<div class="grow">
+<div class="formula">
+<p class="small">A returning turn misses <i>L</i> tokens of history. Two ways to restore them:</p>
+<p class="math-s">read: <i>c</i> · (<i>V</i> + <i>L</i> / <i>β</i> − <i>W</i>)⁺ + <i>κ</i> · <i>L</i> / <i>β</i></p>
+<p class="math-s">recompute: <i>μ</i> · <i>γ</i> · <i>L</i></p>
+<p class="small">A read stalls only its own turn, and only past the queue wait. A recompute is GPU work, at the price of a GPU-second.</p>
+<p class="ink-b">Per token the read wins once <i>μ</i> &gt; (<i>c</i> + <i>κ</i>) / (<i>γ</i> · <i>β</i>), about 1.1 to 1.3 here.</p>
+</div>
+<div class="card-s"><p class="tag">Measured</p><p class="small">At an idle GPU the rule could gain 19 TTFT-seconds in two hours at best; simulated, it loses 0.1 to 0.6 s, so it stays off. The engine’s fixed 256-token threshold is the priced value at saturation.</p></div>
+</div>
+<div style="width:800px">
+<table class="t">
+<tr><th style="width:40%">Regime</th><th style="width:20%"><i>μ</i>, <i>c</i></th><th style="width:40%">Restore by</th></tr>
+<tr><td>Idle GPU, nobody arriving</td><td>1, 1</td><td>recompute below 44–55K tokens</td></tr>
+<tr><td>Light load, turns keep arriving</td><td>1.7–2.8, 0.9</td><td>read; recompute short spans only</td></tr>
+<tr><td>Saturated</td><td>109, 0</td><td>read, from a few pages up</td></tr>
+<tr><td>SSD the bottleneck, no turn ready</td><td>1, 1</td><td>recompute what the SSD cannot deliver in time</td></tr>
+</table>
+</div>
+</div>
+<p class="footer"><i>V</i>: wait in the SSD’s line · <i>β</i>: SSD tokens per second (21K) · <i>γ</i>: GPU seconds per token; on this GPU a cold prefill takes 0.03 s + 0.012 ms a token + 1.4 μs a token per thousand tokens of position, an uncontended read 0.05 s + 0.044 ms a token</p>
+<aside>Fetch has one more decision: whether to bring a missing history back from the SSD at all, or to recompute it. The two costs are short formulas. A read costs the stall it adds beyond the queue wait, at weight c, plus its device time at kappa: it stalls only its own turn. A recompute costs GPU work, mu times gamma times L: at the price of a GPU-second it delays every turn behind. Per token, the read wins once mu exceeds c plus kappa over gamma times beta, which on this box is about 1.1 to 1.3. So the answer depends on the regime. On a truly idle GPU with nobody arriving, the two are close: an uncontended read takes 0.05 seconds plus 0.044 milliseconds a token, a cold prefill 0.03 seconds plus 0.012 milliseconds a token and a term that grows with length, so recompute is faster below 44 to 55 thousand tokens. But at light load turns keep arriving: 0.7 to 2.2 of them arrive during a history-sized recompute and wait behind it, so the price of GPU time is 1.7 to 2.8 and the read wins except for short spans. At saturation mu is 109 and c is zero: read everything from a few pages up, and the engine’s fixed 256-token read threshold turns out to be the priced value there. The fourth row is the case to watch: when the SSD is the bottleneck and no queued turn is ready, the GPU idles while reads wait in line, and recomputing what the SSD cannot deliver in time uses GPU time nobody else wants. Measured on the runs so far, the idle-GPU case touches 0.2 to 1.4 percent of returning requests and the best rule gains 3 to 19 TTFT-seconds in two hours, which is nothing; the starved case has not occurred in a run yet. On the simulator the rule loses 0.1 to 0.6 seconds in every setting, even when it is restricted to moments with no ready turn waiting, so it is built but switched off.</aside>
+</section>

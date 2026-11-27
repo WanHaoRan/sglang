@@ -1,0 +1,51 @@
+Pseudo-diff (seam_fp, nothing applied). Paths relative to /home/wanhr/sglang, line numbers at HEAD (b7074d9cae).
+The switches follow .claude/skills/env-var-conventions: typed EnvField descriptors on Envs, off by default, grouped
+under the existing HiCache section right after the four campaign-34 switches; the logging knob sits beside the
+census interval in the Logging section. Read once in NextTurnPrefetcher.__init__ (general-code-style: extract
+init-static values at construction), as SGLANG_HICACHE_NEXT_TURN_ROOM_RETRY is at next_turn_prefetch.py:394-396.
+
+--- python/sglang/srt/environ.py
+@@ -362,2 +362,5 @@  (Logging)
+     # Seconds between HICACHE_EVT host_census lines (what holds host memory); 0 disables.
+     SGLANG_LOG_HICACHE_HOST_CENSUS_INTERVAL = EnvFloat(0.0)
++    # Seconds between HICACHE_EVT prices lines (c, mu, kappa, lambda and the estimators behind them, measured by
++    # the next-turn prefetcher); 0 disables the line and the measuring. Logging only: no decision reads it.
++    SGLANG_LOG_HICACHE_PRICES_INTERVAL = EnvFloat(0.0)
+@@ -782,3 +785,24 @@  (HiCache storage backends and mmap allocation)
+     # Next-turn prefetcher: a read refused host room is retried on its own paced budget
+     # and does not spend the turn's lookup allowance.
+     SGLANG_HICACHE_NEXT_TURN_ROOM_RETRY = EnvBool(False)
++    # Next-turn prefetcher: decisions take the measured prices (lateness weight, GPU and host-room price, the
++    # fitted prefill cost) instead of --hicache-storage-next-turn-memory-price and RECOMPUTE_S_PER_TOKEN.
++    SGLANG_HICACHE_NEXT_TURN_MEASURED_PRICES = EnvBool(False)
++    # Next-turn prefetcher: a held read of a queued turn starts by the landing quantile of the measured
++    # admission error instead of NTP_HOLD_MARGIN_S (F1).
++    SGLANG_HICACHE_NEXT_TURN_HOLD_QUANTILE = EnvBool(False)
++    # Next-turn prefetcher, expected-cost timing: a second of stall is weighed by the share of admissions
++    # that left no ready turn waiting (F2).
++    SGLANG_HICACHE_NEXT_TURN_LATENESS_WEIGHT = EnvBool(False)
++    # Next-turn prefetcher: read-time estimates count the parked reads due earlier and the write hold, with the
++    # read path's measured lags in place of the load model's seeds (F3).
++    SGLANG_HICACHE_NEXT_TURN_READ_LINE = EnvBool(False)
++    # Next-turn prefetcher: a turn arriving with no ready turn waiting recomputes its history when that is
++    # cheaper than reading it back (F4).
++    SGLANG_HICACHE_NEXT_TURN_RECOMPUTE_BY_PRICE = EnvBool(False)
++    # Next-turn prefetcher: a lookup that finds nothing in storage spends none of the turn's lookup allowance,
++    # and the turn's key is cut to what its prompt shares with it (F5).
++    SGLANG_HICACHE_NEXT_TURN_FREE_EMPTY_LOOKUPS = EnvBool(False)
+     SGLANG_HUGEPAGE_SIZE = EnvStr("")
+
+Dependencies between the switches (checked in NextTurnPrefetcher.__init__, a ValueError as create() raises today):
+  HOLD_QUANTILE       needs arrival_hold on (the hold exists) and MEASURED_PRICES (a knob price of 5e-5 gives
+                      q = 0.5 at light load for a 20K read: the median, where a late read costs 1:1).
+  LATENESS_WEIGHT     needs read_timing expected_cost.
+  READ_LINE           needs --hicache-storage-read-order deadline; with read_timing expected_cost it also needs
+                      LATENESS_WEIGHT (campaign 34 replay: the line alone turns 349 of 1,525 late-run decisions
+                      into "start now").
+  RECOMPUTE_BY_PRICE  needs arrival_gate on, MEASURED_PRICES and READ_LINE (the load model's 0.9 s of lag seeds
+                      would make recompute win at every size), and SGLANG_HICACHE_NIXL_SKIP_STORED_WRITES (a
+                      recomputed prefix is otherwise written to the SSD again).
+  FREE_EMPTY_LOOKUPS  needs arrival_gate on.
+  MEASURED_PRICES     turns the measuring on whatever SGLANG_LOG_HICACHE_PRICES_INTERVAL says.
+Tests enter every override through an ExitStack closed in addCleanup, as RoomRetryTestCase does
+(test_next_turn_prefetch.py:1793-1796): EnvField.override has no try/finally (OPEN_ITEMS.md section 6).

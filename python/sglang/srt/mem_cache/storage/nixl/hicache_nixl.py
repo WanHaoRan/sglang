@@ -1,10 +1,14 @@
 import logging
 import os
+import queue
+import threading
 import time
 import uuid
+import weakref
 from dataclasses import dataclass
 from typing import Any, List, Optional
 
+import msgspec
 import torch
 
 from sglang.srt.environ import envs
@@ -35,6 +39,74 @@ except ImportError as e:
     ) from e
 
 logger = logging.getLogger(__name__)
+
+# Arbitrary; the touch thread logs one l3_touch line at most this often (seconds).
+_TOUCH_LOG_INTERVAL_S = 10.0
+# Arbitrary; seconds close() waits for the touch thread to finish its queued jobs.
+_TOUCH_JOIN_TIMEOUT_S = 5.0
+
+
+class _TouchJob(msgspec.Struct, frozen=True):
+    """One HiCacheStorage.touch_pages call, queued for the touch thread."""
+
+    page_keys: list[str]
+    # Wall-clock ns for the first page's mtime; None gives every page mtime zero.
+    newest_ns: Optional[int]
+
+
+# What an idle interval hands the touch thread in place of a job.
+_NO_TOUCH_JOB = _TouchJob(page_keys=[], newest_ns=None)
+
+
+def _run_touch_job(
+    *, backend_ref: "weakref.ref[HiCacheNixl]", job: _TouchJob
+) -> Optional[tuple[int, int]]:
+    """(files stamped, files missing), or None once the backend is gone. The backend is
+    held only for the call, so that an idle touch thread does not keep it alive."""
+    backend = backend_ref()
+    if backend is None:
+        return None
+    return backend._stamp_touch_job(job)
+
+
+def _touch_loop(
+    *,
+    jobs: queue.SimpleQueue,
+    backend_ref: "weakref.ref[HiCacheNixl]",
+    abandoned: threading.Event,
+) -> None:
+    """The hicache-l3-touch thread: does the queued jobs until the stop wake-up (None),
+    a backend dropped without close(), or close() giving up on it."""
+    stamped = missing = 0
+    last_log = time.monotonic()
+    stopping = False
+    while not stopping:
+        try:
+            job = jobs.get(timeout=_TOUCH_LOG_INTERVAL_S)
+        except queue.Empty:
+            # Only the log line below is due: it flushes what was counted since.
+            job = _NO_TOUCH_JOB
+        stopping = job is None or abandoned.is_set()
+        if not stopping and job.page_keys:
+            try:
+                counts = _run_touch_job(backend_ref=backend_ref, job=job)
+            except Exception:
+                # One failing job must not end the thread: the jobs behind it would
+                # queue up unread and every later refresh and retire be lost.
+                logger.warning("NIXL L3 touch failed", exc_info=True)
+                counts = (0, 0)
+            if counts is None:
+                stopping = True
+            else:
+                stamped += counts[0]
+                missing += counts[1]
+        now = time.monotonic()
+        if (stamped or missing) and (
+            stopping or now - last_log >= _TOUCH_LOG_INTERVAL_S
+        ):
+            logger.info("HICACHE_EVT l3_touch files=%d gone=%d", stamped, missing)
+            stamped = missing = 0
+            last_log = now
 
 
 def _parse_storage_dirs(raw: Optional[str]) -> List[str]:
@@ -170,6 +242,7 @@ class HiCacheNixl(HiCacheStorage):
             if self.file_manager is not None
             else []
         )
+        self._init_touch(nixlconfig)
         cleaner_config = nixlconfig.get_l3_cleaner_config()
         self._l3_cleaner: Optional[HiCacheL3Cleaner] = (
             HiCacheL3Cleaner(
@@ -177,6 +250,11 @@ class HiCacheNixl(HiCacheStorage):
                 tp_rank,
                 high_watermark=cleaner_config["high_watermark"],
                 low_watermark=cleaner_config["low_watermark"],
+                # A page refreshed after the cleaner's scan read its old mtime is kept;
+                # the stored-write skip, the touch and the retire all refresh mtimes.
+                keep_touched=self.skip_stored_writes
+                or self.touch_interval_s > 0.0
+                or self.retire_ended_pages,
             )
             if (
                 cleanup_dirs
@@ -187,6 +265,38 @@ class HiCacheNixl(HiCacheStorage):
         )
         if self._l3_cleaner is not None:
             self._l3_cleaner.start()
+
+    def _init_touch(self, nixlconfig: NixlBackendConfig) -> None:
+        # Mtime changes for the cleaner's order need this rank's own files.
+        touches = self.file_manager is not None and not self.backup_skip
+        self.touch_interval_s = nixlconfig.get_touch_interval_s() if touches else 0.0
+        self.retire_ended_pages = touches and nixlconfig.get_retire_ended_pages()
+        # Jobs from the scheduler thread, done by the touch thread; None while both
+        # switches are off.
+        self._touch_queue: Optional[queue.SimpleQueue] = None
+        self._touch_thread: Optional[threading.Thread] = None
+        if self.touch_interval_s > 0.0 or self.retire_ended_pages:
+            logger.info(
+                "HiCacheNixl: touch_interval_s=%g retire_ended_pages=%s",
+                self.touch_interval_s,
+                self.retire_ended_pages,
+            )
+            self._touch_queue = queue.SimpleQueue()
+            # Set by close() when the thread outlives its join: drop the jobs left.
+            self._touch_abandoned = threading.Event()
+            # A weak reference: a thread holding the backend would keep one that was
+            # dropped without close() alive, with its registered host memory.
+            self._touch_thread = threading.Thread(
+                target=_touch_loop,
+                kwargs=dict(
+                    jobs=self._touch_queue,
+                    backend_ref=weakref.ref(self),
+                    abandoned=self._touch_abandoned,
+                ),
+                name="hicache-l3-touch",
+                daemon=True,
+            )
+            self._touch_thread.start()
 
     def _get_suffixed_key(self, key: str) -> str:
         return key + self.config_suffix
@@ -621,6 +731,21 @@ class HiCacheNixl(HiCacheStorage):
         if self._l3_cleaner is not None:
             self._l3_cleaner.stop()
             self._l3_cleaner = None
+        if self._touch_thread is not None:
+            # The jobs queued before the stop wake-up are still done.
+            self._touch_queue.put(None)
+            # __del__ may run on the touch thread itself, which cannot join itself.
+            if self._touch_thread is not threading.current_thread():
+                self._touch_thread.join(timeout=_TOUCH_JOIN_TIMEOUT_S)
+                if self._touch_thread.is_alive():
+                    self._touch_abandoned.set()
+                    logger.warning(
+                        "NIXL L3 touch thread still busy %g s after close(); "
+                        "the jobs left in its queue are dropped",
+                        _TOUCH_JOIN_TIMEOUT_S,
+                    )
+            self._touch_thread = None
+            self._touch_queue = None
         while self._host_regs:
             reg = self._host_regs.pop()
             try:
@@ -877,6 +1002,29 @@ class HiCacheNixl(HiCacheStorage):
     def take_stored_write_skips(self) -> int:
         skipped, self._stored_write_skips = self._stored_write_skips, 0
         return skipped
+
+    def touch_pages(self, page_keys: List[str], *, newest_ns: Optional[int]) -> None:
+        if self._touch_queue is not None and page_keys:
+            self._touch_queue.put(
+                _TouchJob(page_keys=list(page_keys), newest_ns=newest_ns)
+            )
+
+    def _page_file_paths(self, page_key: str) -> List[str]:
+        # Must name the files _batch_preprocess writes for a page on this rank: K and V
+        # under zero copy (K alone for MLA), one file otherwise.
+        names = (
+            self._get_key_list_from_meta([page_key])
+            if self.is_zero_copy
+            else [self._get_suffixed_key(page_key)]
+        )
+        return [self.file_manager.get_file_path(name) for name in names]
+
+    def _stamp_touch_job(self, job: _TouchJob) -> tuple[int, int]:
+        # Runs on the touch thread: path building and every utime stay off the caller's.
+        return self.file_manager.stamp_pages(
+            [self._page_file_paths(page_key) for page_key in job.page_keys],
+            newest_ns=job.newest_ns,
+        )
 
     def batch_set_v1(
         self,

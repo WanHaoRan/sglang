@@ -11,6 +11,6 @@ for f in "$@"; do
     grep -q "^$label " "$CMP/manifest.txt" || echo "$label $run $prog" >> "$CMP/manifest.txt"
   done < "$AC/results/$f/manifest.txt"
 done
-cd "$AC" && python3 -I -B frozen/oracle_scripts_staging/c28_users/compare_arms.py "results/$1" --cut "$CUT" > "$CMP/compare_arms.out" 2>&1
+cd "$AC" && python3 -I -B frozen/oracle_scripts_staging/c28_users/compare_arms.py "$CMP" --cut "$CUT" > "$CMP/compare_arms.out" 2>&1
 echo "arms: $(cut -d' ' -f1 "$CMP/manifest.txt" | tr '\n' ' ')"
 sed -n '4,20p' "$CMP/compare_arms.out" | grep -E "^[a-z_]+ +\|" | cut -c1-180

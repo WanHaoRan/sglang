@@ -1,0 +1,7 @@
+# <label> <server arm> <hints> <client flags joined by commas, or -> <engine folder in frozen/> [extra server flags ...]
+# Campaign 44: campaign 40's arm (the whole unified design at campaign 35's setting: 128 users, 160 GB host pool, 2 h)
+# with one more rule, the admission pass-over (Preempt on GPU room): behind a waiting request refused for room,
+# admission tries up to 8 later requests that fit; a request passed 8 times stops the walk again until admitted.
+# settings.env is campaign 40's plus SGLANG_PREFILL_PASS_OVER_LOOKAHEAD=8; requests pair with campaign 40's
+# unified_load (and campaign 35's ec_full) by user, stream and index. Held until its pre-flight passes.
+unified_load_po three_tier_wc_oracle_v2_nu_owned dist --hint-no-call engine_unified_po_20261127 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning off --hicache-storage-next-turn-soft-pins on --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30,"queued_order":"farthest"}

@@ -1,0 +1,152 @@
+{
+ "summary": "I rebuilt the waiting queue per request from the server logs (it matches the logged #queue-req on 98-100 % of batch lines) and measured the draft's prices per minute on campaign 34 (five arms), 33 and 32. The weight mu is the main correction: section 6's \"1 + ready turns waiting\" gives 30.6 in campaign 34's hinted arms at saturation, while the data give 91-94 TTFT-seconds per GPU-second (campaign 32 against 34, minutes 90-110) and 99-102 in the last ten minutes, which is N - B = 109 (users in session minus the 19 running), not N. The review's missing 27 % is 15 % longer decode (decode time per request = B x g: 8.8 -> 19.5 s) and 14 % pauses that had not settled. c behaves as drafted (0.93-0.98 until minute 28, 0.06 in minutes 28-70, 0.00 after), but the stall term it weighs is under 100 TTFT-seconds per run, and it does not explain jit_p50: 3.2 s more reader stall per request came with 0.8-1.3 s more TTFT on the same requests against three arms (recompute explains 0.03-0.18 s), an effective weight of 0.35 before the user cap and 0.11 after it, on one run per arm. kappa, as c times the reads past their latest start, is 0 in every regime (18-20 late reads exist only where c = 0), and lambda as the index of the marginal holder is 1-2e-7 at light load and under 1e-8 once the GPU saturates, against the engine's fixed 5e-5. F4 touches 0.2-1.4 % of returning requests; recomputing saves the request 0.31-0.36 s, but 0.7-2.2 turns arrive during the recompute and lose 0.4-0.9 s in total, so recomputing every idle arrival loses and even an oracle gains at most 0.004 s per returning request. The draft's rule with mu = 1 + ready turns is wrong on 25-50 % of its recomputes; adding the arrivals during the recompute to mu cuts that to 4-20 %. F5's history loss is 23-591 K tokens per run in the gate arms (at most 0.16 s per request) but 53.6 M in hicache (81 % of its lost history), and each empty lookup also costs its turn 19-28 ms at light load. What is left to recompute in campaign 34's best arms is 1.5-1.9 M tokens (64-83 GPU-seconds, about 0.4-0.5 s per request at mu), 63-71 % of it from the SSD cleaner.",
+ "findings": [
+  {
+   "question": "1a. mu(t): how large is the weight of a GPU-second in each regime, by the draft's definition and as measured?",
+   "answer": "Campaign 34 ec_full, by minute range. 0-28: 1 + ready queue = 1.0-1.3. 28-70: 17.6 by the definition, but the ready queue empties so rarely that an admission is followed by 65 more before it does (N - B = 71). 70-90: 30.6 against N - B = 102. 90-110: 30.6 against N - B = 109 (N = 128, 19 running; total queue 60, ready queue 30). jit_exact and ec_exact are the same within 1; jit_p50 20-23 at saturation; hicache 52-82 (nearly all its queue is ready). Measured (finding 2a): 91-94 in minutes 90-110, 99-102 in minutes 100-110. At light load a history-sized recompute (0.5-0.8 s) delayed 0.7-2.2 later turns, an effective mu of 1.7-2.8, not 1.0-1.3. Campaign 33 (TraceLab): 1.0-1.2, 1.5-3.0 in minutes 28-60.",
+   "method": "scripts/qstate.py rebuilds arrival, admission and lookup/read spans per request from ReqTimeStats and HICACHE_EVT lines; ready = no lookup or read of its own under way. scripts/part1_prices.py and part1_regimes.py give per-minute time averages (out/prices_<camp>_<arm>.csv, out/part1_regimes.out). Busy-period count = admissions that follow an admission before the ready queue next empties, capped at N - B.",
+   "confidence": "measured",
+   "implication": "PR1 should not log mu as 1 + ready turns: it is 3 to 3.5 times too low at saturation in the hinted arms and about 2 times too low for a history-sized job at light load. Use N - B (or the admissions until the ready queue empties) once the ready queue stays non-empty, and 1 + ready + arrival rate x g / 2 for a job of g GPU-seconds otherwise. The engine does not see N, so it needs a count of active sessions."
+  },
+  {
+   "question": "1b. c(t): share of admissions with no other ready turn left waiting, and with pool room",
+   "answer": "Campaign 34 ec_full: 0.98 (minutes 0-8), 0.94 (8-28; 0.86 with pool use under 0.90), 0.06 (28-70; 0.02), 0.00 from minute 60 on. The other four arms are within 0.01-0.03 of this. Three other measures agree (non-reading arrivals admitted within 0.25 s; share of time with an empty ready queue; the share of readers' own stall time with no ready turn waiting, stall-weighted: 0.83-0.99 in minutes 8-28, 0.001-0.075 in 28-70, 0.000 after). Campaign 33: 0.92-0.99, 0.54-0.89 in minutes 28-60. The c-weighted stall of a whole run is 74 TTFT-seconds in c34 ec_full (0.83 x 69 s + 0.075 x 219 s), 83 in jit_p50, 17-89 in campaign 33's arms.",
+   "method": "scripts/part1_prices.py (c_adm, c_room, c_arr, c_time per minute), scripts/part3_state_summary.py (c seen by readers, from out/f4_readers_*.csv). Pool room = GPU pool use under 0.90 on the last batch line before the admission.",
+   "confidence": "measured",
+   "implication": "c can be measured cheaply and has the shape the draft claims. With this c, every read-timing change (F1, F2, F3) has under 100 TTFT-seconds per run at stake in these settings, about 0.005 s per request in campaign 34 and at most 0.015 s on TraceLab. Whether c is the right weight is finding 2b."
+  },
+  {
+   "question": "1c. kappa(t): parked reads past their latest start",
+   "answer": "Campaign 34 ec_full, time-average count: 0.00 (minutes 0-28), 0.02 (28-70), 3.2 (70-90), 18.2 (90-110), with 28 reads parked and the read thread 100 % busy from minute 90 (27 % in 28-70, 80 % in 70-90). jit_exact 20.2 and ec_exact 19.4 at 90-110. jit_p50 saturates the read thread from minute 70: 20.6 (70-90), 31.3 (90-110). hicache 0.2-0.4 throughout (read thread 34-38 % busy). Campaign 32 ec_full: 3.9 (70-90), 1.3 (90-110, reads refused). Campaign 33: 0. As the draft defines the price (c times that count) it is 0 in every regime, because late reads exist only where c = 0.00.",
+   "method": "scripts/part1_prices.py. A read is late at time t when it is parked and t > due - its own read time. due = the first admission of a later arrival while the request still waited (pass-over), or the first moment no earlier arrival was ready and the pool had room (scripts/readers.py).",
+   "confidence": "measured",
+   "implication": "Section 8's row 'GPU and SSD saturated: kappa > 0' holds as a count, not as a price on mean TTFT. Due-date order on the device (Fetch 3.4, P2) then has no measured value for the mean; it only decides which readers wait. It would matter if the stall weight is the 0.1-0.35 of finding 2b."
+  },
+  {
+   "question": "1d. lambda(t) as the index of the marginal host holder, against the engine's logged price",
+   "answer": "Host memory is not full until minute 8 (free 1.05 M tokens, no host eviction): lambda = 0. Minutes 8-28 (free 5 K, host turnover 160-190 s, hazard of return at that age 0.0042-0.0044 per s for live sessions and 0.0018-0.0020 counting ended ones, exposed stall 4.7-5.1e-5 s per token read, c 0.93): lambda = 1.9-2.1e-7 s per token-second (0.8-1.0e-7 with ended sessions); hicache the same; jit_exact 0.7-1.8e-8 because its reads land before arrival. Minutes 28-60 (turnover 100 s, c 0.07): 5-8e-9. From minute 60 (turnover 42-68 s): 0, since c = 0; with stall counted at weight 1 it would be 1.3-1.5e-5 at minutes 90-110. Campaign 33: 1.0-2.6e-7 all run. Engine: ec_full logged 5e-05 in all 1,451 / 1,445 / 1,456 updates (campaigns 34 / 32 / 33); ec_exact fell to its 1e-07 floor in 1,128 of 1,450 updates.",
+   "method": "scripts/part1_lambda.py: lambda = c x (readers' stall / tokens read) x hazard(host turnover). Turnover = host-only tokens (census) / host eviction rate. Hazard from the run's own gaps per stream (returns in an age bin over idle time at risk). Outputs out/part1_lambda_c34.out, part1_lambda_others.out. Not validated by a memory sweep at this setting; the age of the marginal holder is fuzzy (the age at which half of returning requests needed the SSD is 140-480 s at light load).",
+   "confidence": "inferred",
+   "implication": "The fixed 5e-5 charges 240-640 times the measured index at light load and thousands of times it once the GPU saturates, so rule 1 will almost never read early (it staged 1 read). The stake is small either way (finding 1b). At saturation the marginal holder is a queued turn's history, and by the draft's own definition its index is about 0: host eviction order among clean pages has no first-order value there. Reading lambda off the eviction frontier is feasible with the census."
+  },
+  {
+   "question": "1e. Do the regimes of section 8 appear, and in which minutes?",
+   "answer": "Campaign 34, ec_full / jit_exact / ec_exact. Minutes 0-8: room free (not in the table): c 0.98, mu 1.0, lambda 0. Minutes 8-28: light load, room short: c 0.93-0.94, mu 1.3, lambda about 1e-7, kappa 0, 0.5-2.7 % of returning requests read. Minutes 28-70: GPU saturated, SSD keeps up: c 0.05-0.06, N - B 71, late reads 0.02, readers' stall 0.13-0.37 s. Minutes 70-90: read line filling (read thread 70-80 % busy, stall 5-6 s). Minutes 90-110: both saturated: c 0.00, N - B 109, 18-20 late reads, stall 27-31 s per reader, readers 30-32 % of returning. jit_p50 reaches 'both saturated' at minute 70; hicache never does (read thread 34-38 % busy). Campaign 33 stays in the light-load row. Campaign 32 matches 34 to minute 70, then its refusals cut the reads.",
+   "method": "scripts/part1_regimes.py over the per-minute tables; out/part1_regimes.out, part1_c34.out, part1_c33_c32.out.",
+   "confidence": "measured",
+   "implication": "The table's minute ranges hold (28-70 and 90-110). Three entries need changing: 'mu ~ N' should read N - B and section 6's formula does not produce it; 'kappa > 0' is a count with zero weight; the light-load row is also campaign 34's minutes 8-28 and all of campaign 33, with c 0.93 rather than 1 and an effective mu near 2 for a recompute."
+  },
+  {
+   "question": "2a. Does summed TTFT move with GPU work per request at about mu?",
+   "answer": "Yes, at N - B. Minutes 90-110, campaign 32 minus 34, same arm: TTFT +52.2 / +52.4 / +51.0 s (ec_full, jit_exact, ec_exact), GPU seconds per request +0.570 / +0.577 / +0.560, of which recomputed history is 1.00 / 0.96 / 0.97. Ratio 91.4 / 94.2 / 94.2 TTFT-seconds per GPU-second (jit_p50 77.4; hicache against ec_full inside campaign 34: 94.3). N x dg = 73.0 s splits into TTFT 71 %, decode +10.7 s (15 %: decode time per request is B x g, 8.81 -> 19.53 s with B = 18.9) and pause per finished request +10.3 s (14 %: 31.7 users pausing in campaign 32 against 21.7 at steady state). (52.2 + 10.3) / 0.571 = 109 = N - B. By 5-minute window the ratio climbs 68, 78, 87, 102, 99. Minute by minute, minutes 85-110: 85.9 [79.3, 93.2], 89.1 [81.2, 98.0], 86.0 [77.0, 95.8]. Before the cap (hicache against ec_full, minutes 28-60): 95.1 [82.1, 107.9] against N - B = 82 and 1 + ready queue = 44.",
+   "method": "scripts/part2_identity.py (N, throughput, TTFT, decode, pause per 5-minute window; out/part2_identity.out) and scripts/part2b_minutes.py (per-minute least squares with bootstrap over minutes; out/part2b_minutes.out). Recompute GPU seconds = (ideal_cached - cached) x the run's loaded cost (out/prefill_fit.json). The pause term's reading as a transient is inferred from the state counts.",
+   "confidence": "measured",
+   "implication": "Section 1.5 should read mean TTFT = (N - B) g - Z, so mu = N - B (0.85 N), and 0.73 N is that value before the pauses settle. Everything the cache can still do at saturation is recompute x about 100: 1 M tokens of history = 43 GPU-seconds = about 4,300-4,700 TTFT-seconds."
+  },
+  {
+   "question": "2b. Does read lateness leave the mean unchanged once c is near 0 (jit_p50 against ec_full, campaign 34)?",
+   "answer": "Not fully. After the user cap (minutes 85-110): jit_p50 has 8.7 more turns reading and 7.8 fewer ready, so the queue is +0.9 (11 % not offset); TTFT +0.37 s for +6.4 s of stall per request (paired on the same requests +0.11 s). Before the cap (minutes 60-85): 11.6 more reading, 7.5 fewer ready, queue +4.0 (35 % not offset), 1.8 more users in session, 2.4 fewer pausing; TTFT +1.66 s (paired +2.37 s) for +5.0 s of stall, while recompute differs by 0.003 GPU-seconds per request (0.3 s). Over minutes 28-110 against ec_full, jit_exact and ec_exact: paired +0.82 / +0.89 / +1.30 s for +3.2 s of stall; c S + mu gamma U predicts 0.1-0.3 s. Arms that do not differ in stall still differ by up to 0.84 s in the same window (ec_exact against ec_full).",
+   "method": "scripts/part2c_queue_split.py (queue = ready + reading turns per phase; out/part2c_queue_split.out), scripts/part2b_minutes.py part B (minute regressions: stall coefficient 0.32-0.47, intervals 0.15-0.65), out/part2_identity.out. One run per arm; the mechanism behind the uncompensated part is not established.",
+   "confidence": "weak",
+   "implication": "The identity's stall term under-predicts jit_p50's deficit: c = 0 explains 20-30 % of it, an effective stall weight of 0.2-0.35 explains all of it. Do not build on 'stall is free at saturation' without a repeat run; if the weight is 0.1-0.35, jit_p50-style early reads cost about 1 s and due-date order on the SSD has value. The repeat is the GPU run that would settle it."
+  },
+  {
+   "question": "3a. F4 inputs: for requests that read from the SSD, the GPU's state at arrival, the stall, the tokens read and the recompute time",
+   "answer": "Campaign 34, first 40 minutes: 232 of 5,521 returning requests read (ec_full; 165 hicache, 150 + 68 staged jit_p50, 30 + 33 staged jit_exact, 64 + 20 staged ec_exact). Of ec_full's 232: 78 arrived to an empty ready queue (57 with pool use under 0.90), 13 behind 1-3 ready turns, 141 behind 4 or more. Stall 0.83 s (empty, room), 1.01 s (empty, pool full), 0.27 s (queue; median 0). Tokens read 20.4 K on average. Recompute 0.68 s at the idle cost, 0.88 s loaded. Campaign 33: 104 readers in hicache (84 empty queue), 81 + 41 staged in jit_p50, 24 in ec_full, 3 + 64 staged in jit_exact. Costs: idle prefill = 31 ms + 0.0122 ms per token + 1.4 us per token per K of position (20 K cold 0.56 s, 30 K 1.03 s; n 309, R2 0.998; TraceLab 0.0133 and 1.35, n 2,481); loaded 0.043 ms per token for a 20 K history (0.86 s). Read at sparse load: 0.04-0.35 s + 2.1-3.1 ms per page (0.033-0.048 ms per token). Host-to-GPU load after admission: +0.03-0.04 s for 20-29 K tokens.",
+   "method": "scripts/prefill_fit.py (idle: TTFT - queue wait of requests admitted at once with no host or SSD part, at most 12 running; loaded: intervals between decode log lines), scripts/readers.py and part3_f4.py (out/f4_readers_<camp>_<arm>.csv, out/part3_state_summary.out, out/part3c_loadback.out).",
+   "confidence": "measured",
+   "implication": "Section 2's constants need replacing: the lags are 0.04-0.35 s at sparse load, not 0.9 s; recompute cost rises with position, so the request's own crossover is near 44-50 K tokens, not 'always'; the load is 0.03-0.04 s, not 0.4 s."
+  },
+  {
+   "question": "3b. F4 at an idle GPU: how many requests, and what would recomputing instead of reading have saved or lost?",
+   "answer": "Idle arrivals (no ready turn waiting, pool room): campaign 34 first 40 minutes 75 (1.36 % of returning; 0.51 % of the run's) in ec_full, 45 (0.81 %) hicache, 46 (0.83 %) jit_p50, 3 and 4 in the exact-hint arms; campaign 33: 77 (1.26 %) hicache, 61 (1.00 %) jit_p50, 14 (0.23 %) ec_full, 0 in jit_exact, ec_exact and oracle_v2. Own TTFT: +0.31 to +0.36 s saved per request (stall 0.87-1.13 s against 0.51-0.78 s; 72 of 75 faster). But each recompute delays the 0.7-2.2 turns admitted meanwhile by 0.41-0.91 s in total. Net if every idle arrival recomputed: -49 / -18 / -14 TTFT-seconds (c34 ec_full / hicache / jit_p50) and -20 / -16 / -2 (c33 hicache / jit_p50 / ec_full). Only reads under about 16 K tokens (c34) or 24 K (c33) gain. Best case (recompute only where it gains): +5.9 to +9.8 TTFT-seconds in campaign 34's 40 minutes (0.001-0.002 s per returning request) and +3.0 to +22.6 in campaign 33 (at most 0.0037 s, 0.6 % of the 0.63 s mean).",
+   "method": "scripts/part3_f4.py: gain = c_i x stall - g - delay of others, where delay = sum over later admissions of (g - time with an empty ready queue since due)+. Checked by a natural experiment (scripts/part3b_externality_check.py): 543 turns that arrived during a 12 K+ token prefill at light load waited 0.69 s more than the baseline, against 0.51 s predicted by this serial model and 0.29 s by a chunk-sharing model, so the delay is if anything understated. First order, open loop; the delay of the 9-17 running token streams is not in TTFT and not counted.",
+   "confidence": "inferred",
+   "implication": "F4 is not worth building for these settings: at most 0.004 s per returning request with perfect choice, negative if keyed on 'GPU idle'. With exact hints it has nothing to act on (reads land before arrival). It could matter only at a much lower arrival rate or with a slower SSD."
+  },
+  {
+   "question": "3c. Which rule in mu, c and the read-time estimate chooses right most often, and how often is it wrong?",
+   "answer": "The draft's rule, recompute iff (1 + ready turns) x g < c x (read time - W)+: 36-70 recomputes in campaign 34's arms and 15-64 in campaign 33's, 25-50 % of them wrong, net -40.7 to +3.5 TTFT-seconds (negative in 5 of the 6 runs where it acts). With the engine's read estimate (0.9 s + 3 ms per page) it is worse: -11 to -75. Best found: recompute iff no ready turn waits, c over the last 60 s >= 0.8 and (1 + arrival rate x g / 2) x g < measured read time: 23-48 recomputes a run, 4-20 % wrong (1-7 requests, costing 0.4-2.7 s), net +2.9 to +18.8 TTFT-seconds, 29-84 % of the best case (0 % in c33 ec_full). Of the idle arrivals where recomputing loses, a queue formed behind it in 19 of 36 (c34 ec_full) and 10 of 26 (c33 hicache); the recompute was simply slower than the read in 3 and 13.",
+   "method": "scripts/part3_f4.py scores each rule against the sign of the per-request gain; the read-time fit is in-sample (stall = a + b x pages on idle arrivals of the same run); out/part3_f4_c34_40min.out, part3_f4_c34_whole.out, part3_f4_c33.out.",
+   "confidence": "inferred",
+   "implication": "If F4 is built at all, mu must count the turns that arrive during the recompute (2.6 per second on FreeInference, 1.0 on TraceLab) and the read estimate must be the measured sparse-load one. Even then the gain is 3-19 TTFT-seconds per two-hour run."
+  },
+  {
+   "question": "4. F5: lookups that find nothing and still spend the turn's allowance",
+   "answer": "Share of lookups finding nothing, by half hour (0-30 / 30-60 / 60-90 / 90-110): c34 ec_full 92 / 81 / 67 / 57 % (1,203 / 1,526 / 1,623 / 1,067), jit_exact 97 / 91 / 69 / 57 %, hicache 99 / 96 / 92 / 93 %; campaign 33 97-100 %. Turns whose every lookup found nothing: 3,794 in c34 ec_full, 2,999 in c33 ec_full. History recomputed with no lookup left: c34 ec_full 0 / 0 / 41 K (2 turns) / 18 K (1) = 2.5 GPU-s, 271 TTFT-s, 0.017 s per request; jit_exact 0 / 0 / 141 K (4) / 162 K (6) = 13.5 GPU-s, 1,471 TTFT-s, 0.094 s; ec_exact 23 K (1 turn); jit_p50 591 K (19 turns), 0.158 s; hicache 0 / 15.3 M (654 turns) / 22.5 M (971) / 15.8 M (650) = 2,127 GPU-s, 223,072 TTFT-s, 22.4 of its 31.9 s. Campaign 32: ec_full 1.08 M (35) / 2.98 M (92), jit_exact 1.42 M (55) / 2.80 M (84), hicache 10.6 / 14.5 / 11.1 M. Campaign 33: 0 tokens in all arms. Direct cost at light load: a turn with an empty lookup waits 19-28 ms longer (median 15-17 ms against 1 ms): 5.7-8.2 ms per returning turn in campaign 34's first 28 minutes, 12-13 ms on TraceLab (58-63 s a run, 2 % of the 0.60 s mean), 15-21 ms in hicache.",
+   "method": "scripts/part45_recompute.py: 'cap' = at least 256 tokens of history lost, no lookup started at or before the cached length, and the turn was capped (ntp_gate capped, ntp_reevict capped=1, or hicache's 'reissue cap reached'); it assumes the SSD still held the history. TTFT at stake = GPU seconds x the busy-period mu of the admission minute. scripts/part4_empty_lookup_stall.py for the direct cost. Totals agree with campaign34/checks/cap_share_ec_full.out (59,056 tokens) and storm_cause_hicache.out.",
+   "confidence": "measured",
+   "implication": "For the gate arms F5's history part is small on the fixed engine (0.007-0.16 s per request, all after minute 30) and was 4 M tokens an arm in campaign 32. Its direct part, not listed in the draft, is the larger light-load gain: fix B of OPEN_ITEMS section 1 (no lookup for text no tier holds) removes 6-13 ms per returning turn, more than F4's best case. For the hicache baseline the allowance is 81 % of its lost history."
+  },
+  {
+   "question": "5. The remaining recompute in campaign 34's best arms, by cause",
+   "answer": "Requests sent before 6,600 s, ec_full / jit_exact / ec_exact. New text (no cache policy changes it): 23.3 M tokens, about 990-1,000 GPU-s (first requests 6.8 M, returning new text 11.0-11.1 M, rewrites of 8 K+ tokens 5.4 M). Lost history: 1.67 / 1.91 / 1.48 M tokens = 71.8 / 83.3 / 64.2 GPU-s (1.0-1.3 % of GPU time) = 0.45 / 0.53 / 0.40 s per request at mu (mean TTFT 10.7-11.0 s). By cause in ec_full: cleaner 1.19 M (lookups finding nothing after a pass 791 K, reads failing on deleted files 260 K, first requests' shared prefixes 143 K) = 52.0 GPU-s; page rounding (under 256 tokens a request) 380 K = 15.7; lookup cap 59 K = 2.5; re-evicted after a landed read 32 K = 1.4; tails and other 7 K = 0.3. jit_exact: cleaner 1.17 M, rounding 380 K, cap 303 K, re-evicted 50 K. ec_exact: cleaner 1.03 M, rounding 382 K, re-evicted 41 K, cap 23 K. Before the first pass (5,252-5,275 s) only 9-15 returning requests lost 256+ tokens (62-159 K in all) and no first request lost a shared prefix. Minutes 90-110 in ec_full: 1.0 M tokens, 43 GPU-s, about 1.8 s of the 28.0 s mean, 88 % cleaner.",
+   "method": "scripts/part45_recompute.py: lost = ideal_cached - cached per request, classed from the request's own lookups, reads, gate lines and read failures; cleaner = a lookup starting at the cached length found nothing after the first pass, by timing (the logs do not name deleted pages). GPU seconds at the run's loaded fit. Outputs out/part45_c34_best.out, lost_requests_c34_*.csv.",
+   "confidence": "measured",
+   "implication": "At saturation the cache policy has about 0.4-0.5 s per request left over the run (1.8 s in minutes 90-110), and two thirds or more of it is the cleaner (R4). Lookup cap and re-eviction together are under 0.1 s in ec_full and ec_exact. Anything larger has to come from GPU seconds per request outside the cache (decode is about 84 % of it) or from a real stall weight (finding 2b)."
+  }
+ ],
+ "surprises": [
+  "mu at saturation is N - B, not N and not 1 + ready turns. Decode time per request is exactly B x g (8.8 s at g = 0.465, 19.5 s at g = 1.035), so the closed-loop identity is mean TTFT = (N - B) g - Z. With the pause term added back, campaign 32 against 34 gives 109 TTFT-seconds per GPU-second, which is N - B.",
+  "Half of the queue at saturation is not ready: in campaign 34 ec_full, minutes 90-110, 60 turns queue but only 30 are ready (jit_p50: 60 and 22). That is why the section 6 formula reads 31.",
+  "Chunked prefill does not let other turns in. Turns arriving during a long prefill at light load waited 0.69 s more (543 cases), above the serial prediction of 0.51 s and far above a chunk-sharing prediction of 0.29 s. A recompute on an 'idle' GPU therefore delays the 1-2.6 turns a second that arrive, and F4 loses on net.",
+  "By the draft's own prices, read timing is worth under 100 TTFT-seconds a run in campaign 34 (c is 0 exactly where reads are late), yet jit_p50's 0.8-1.3 s deficit is real on paired requests and the identity explains only 20-30 % of it. Before the user cap, 35 % of its extra reading turns were not offset by a shorter ready queue.",
+  "kappa is 0 as a price in every regime, and lambda is 1-2e-7 at light load and about 0 at saturation: of the four prices only mu is large where the queues are long.",
+  "ec_exact's learned price fell to its 1e-07 floor, which happens to be the order of the index measured at light load; ec_full's fixed 5e-05 is 240-640 times that.",
+  "An empty lookup costs its turn 19-28 ms at light load because admission skips the turn for one scheduler pass, on 30-49 % of returning turns. That is a larger light-load gain than read-or-recompute.",
+  "Idle FA3 prefill is far from linear: 0.0122 ms per token plus 1.4 us per token per K of position (R2 0.998), so a 45 K history costs 0.044 ms per token and the request's own read-or-recompute crossover is near 44-50 K tokens.",
+  "Read lags at sparse load are 0.04-0.35 s (the engine's seed and the draft use 0.9 s), and the host-to-GPU load after admission is 0.03-0.04 s for 20-29 K tokens (the draft says about 0.4 s).",
+  "Before the first cleaner pass campaign 34's best arms lose almost nothing: 9-15 requests with 256+ tokens of lost history in 88 minutes. hicache never saturates the SSD (read thread 34-38 % busy) because its own recompute holds the request rate at 55-59 a minute."
+ ],
+ "artifacts": [
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/README.txt",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/lib.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/qstate.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/readers.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/prefill_fit.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/part1_prices.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/part1_regimes.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/part1_lambda.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/part2_identity.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/part2b_minutes.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/part2c_queue_split.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/part3_f4.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/part3b_externality_check.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/part3c_loadback.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/part3_state_summary.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/part45_recompute.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/scripts/part4_empty_lookup_stall.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/prefill_fit.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/prefill_fit.json",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part1_regimes.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part1_c34.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part1_c33_c32.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part1_lambda_c34.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part1_lambda_others.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/prices_c34_ec_full.csv",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/prices_c34_jit_exact.csv",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/prices_c34_hicache.csv",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/prices_c34_jit_p50.csv",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/prices_c34_ec_exact.csv",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/prices_c33_ec_full.csv",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/prices_c32_ec_full.csv",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part2_identity.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part2b_minutes.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part2c_queue_split.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part3_f4_c34_40min.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part3_f4_c34_whole.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part3_f4_c33.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part3_state_summary.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part3b_externality_check.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part3c_loadback.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/f4_readers_c34_ec_full.csv",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/f4_readers_c33_hicache.csv",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part45_c34_best.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part45_c34_other.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part45_c32_c33.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/part4_empty_lookup_stall.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/lost_requests_c34_ec_full.csv",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/out/lost_requests_c34_hicache.csv",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/ev_prices/ext/"
+ ]
+}

@@ -1,0 +1,14 @@
+== c33_ec_exact: cold prefills at an empty queue: n 508; ttft = 65 ms + 12.6 us/token x n + 0.704 ns/token^2 x n^2 (residual p10 -40 ms, p90 63 ms)
+   cold  1000-8000  tokens: n   38  ttft/token median   26.4 us  [p10   20.9, p90   35.9]
+   cold  8000-16000 tokens: n  238  ttft/token median   25.7 us  [p10   23.7, p90   31.3]
+   cold 16000-32000 tokens: n  195  ttft/token median   29.9 us  [p10   26.9, p90   35.8]
+   cold 32000-70000 tokens: n   37  ttft/token median   39.8 us  [p10   37.0, p90   46.4]
+   model: cold prefill of  8000 tokens = 0.21 s (26.4 us/token; marginal 23.9 us/token)
+   model: cold prefill of 16000 tokens = 0.45 s (27.9 us/token; marginal 35.2 us/token)
+   model: cold prefill of 24000 tokens = 0.77 s (32.2 us/token; marginal 46.4 us/token)
+   model: cold prefill of 32000 tokens = 1.19 s (37.2 us/token; marginal 57.7 us/token)
+   model: cold prefill of 48000 tokens = 2.29 s (47.8 us/token; marginal 80.2 us/token)
+   model: cold prefill of 64000 tokens = 3.76 s (58.7 us/token; marginal 102.8 us/token)
+   window 0-110 min: 6776 requests, 13 with their own SSD read before admission (0.2 %), 12 of them staged before arrival
+   'alone' readers (arrived at an empty queue, read issued at arrival): 0; running requests at arrival median nan
+   readers that arrived behind others: 1; wait median 10.7 s; park->dispatch median 2.8 s; L median 15680

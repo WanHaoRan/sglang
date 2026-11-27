@@ -171,6 +171,11 @@ class HiCacheStorage(ABC):
     It abstracts the underlying storage mechanism, allowing different implementations to be used.
     """
 
+    # Set by a store whose cleaner deletes the oldest pages first: seconds between
+    # refreshes of a page that memory serves (0 never), and whether it retires pages.
+    touch_interval_s = 0.0
+    retire_ended_pages = False
+
     # todo, the page size of storage backend does not have to be the same as the same as host memory pool
     def register_mem_pool_host(self, mem_pool_host: HostKVCache):
         self.mem_pool_host = mem_pool_host
@@ -346,6 +351,13 @@ class HiCacheStorage(ABC):
     def take_stored_write_skips(self) -> int:
         """Pages a set call found already stored and did not write, since the last call."""
         return 0
+
+    def touch_pages(self, page_keys: List[str], *, newest_ns: Optional[int]) -> None:
+        """Queue an mtime change for stored pages, off the caller's thread: the first
+        key gets newest_ns (wall-clock ns) and each later one slightly less, so a chain
+        passed head first keeps its head newest; None gives every page mtime zero.
+        A store without an age-ordered cleaner ignores it."""
+        return None
 
 
 class MetadataCache:

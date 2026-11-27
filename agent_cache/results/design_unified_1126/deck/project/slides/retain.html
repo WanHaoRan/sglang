@@ -1,0 +1,24 @@
+<section id="retain" class="foot">
+<div class="head">
+<p class="eyebrow">The four actions · Retain, part 1</p>
+<h2 class="title">Retain: keep a copy while its index is above the price</h2>
+</div>
+<div class="row-wide">
+<div class="grow">
+<div class="formula">
+<p class="math" style="font-size:40px"><i>ν</i>(<i>a</i>) = (<i>K</i> / <i>L</i>) · max over <i>h</i> of <i>F</i>(<i>h</i> | <i>a</i>) / <i>τ</i>(<i>h</i> | <i>a</i>)</p>
+<p class="ink-b">Keep while <i>ν</i>(<i>a</i>) &gt; <i>λ</i>. Drop at the first idle age where it is not.</p>
+<p class="small"><i>K</i>: what it costs if the copy is gone when the session returns · <i>L</i>: its tokens · <i>F</i>(<i>h</i> | <i>a</i>): chance of return within <i>h</i> more seconds · <i>τ</i>(<i>h</i> | <i>a</i>): expected seconds the copy is held if kept <i>h</i> more, E[min(time to return, <i>h</i>)] · <i>λ</i>: price of a host token-second</p>
+</div>
+<div class="card-s"><p class="tag">Why</p><p class="small">Keeping for <i>h</i> more seconds costs rent <i>λ</i> · <i>L</i> · <i>τ</i> and saves <i>K</i> with chance <i>F</i>. Some <i>h</i> pays exactly when <i>ν</i> &gt; <i>λ</i>. A session that has been kept faces the same test again, so the first age that fails it is the best moment to drop.</p></div>
+</div>
+<div class="col-s" style="width:620px">
+<div class="card-s in1"><p class="ink-b">Exact hint, back in <i>R</i>₀ seconds</p><p class="small"><i>ν</i> = <i>K</i> / (<i>L</i> · <i>R</i>₀): evict the farthest next use. Belady’s rule.</p></div>
+<div class="card-s in2"><p class="ink-b">Return rate falling</p><p class="small"><i>ν</i> = (<i>K</i> / <i>L</i>) · <i>h</i>(<i>a</i>): with one law for all, evict the longest idle. LRU.</p></div>
+<div class="card-s in3"><p class="ink-b">Session over</p><p class="small"><i>ν</i> = 0: first out, and nothing of it is worth writing.</p></div>
+<div class="card-s in4"><p class="ink-b">Two modes, 1 s or 40 s</p><p class="small">Keep through the gap between them: looking only at the rate now would drop it and cost 1.8 times more.</p></div>
+</div>
+</div>
+<p class="footer"><i>ν</i> is the Gittins index of a job of unknown size (the gap), and the slope of the lower convex hull of the curve (expected seconds held, chance still away). Checked exactly on 12 gap laws and 37 prices.</p>
+<aside>Retain decides which copies a tier keeps. Take one idle session whose prefix of L tokens sits in host memory. Keeping it costs rent: lambda, the price of a host token-second, times L, for every second it stays. Dropping it costs K if the session returns and the copy is gone: K is the restore cost, a read or a recompute. The session has been idle for a seconds, and the only news over time is that it is not back yet. Suppose we keep the copy for h more seconds. The rent is lambda L times tau, the expected seconds it is actually held, and with chance F, the chance of return within h, we save K. So some horizon pays exactly when K times F exceeds lambda L tau for some h, which is the statement that the index nu, K over L times the best ratio of F to tau, exceeds lambda. And a session that was kept faces the very same test later, so the best policy is simple: keep while the index is above the price, and drop at the first age where it is not. This index is the Gittins index of a job of unknown size, where the job is the gap. It contains the classical policies. With an exact hint, the index is K over L times the time to return: evict the farthest next use, which is Belady’s rule. With a falling return rate the best horizon is zero and the index is the rate itself: with one law for all sessions, evict the one idle the longest, which is LRU. For a session that is over the index is zero. And for a gap with two modes, say one second or forty, the index looks ahead across the dead stretch, where a rule that only looks at the current rate would drop the copy at once and pay 1.8 times more.</aside>
+</section>

@@ -1,0 +1,28 @@
+<section id="ssd" class="foot">
+<div class="head">
+<p class="eyebrow">The four actions · Retain, part 4</p>
+<h2 class="title">The same index one tier down: what the SSD keeps</h2>
+</div>
+<div class="row-wide">
+<div class="grow">
+<table class="t">
+<tr><th style="width:44%">Pages on the SSD</th><th style="width:28%">Worth</th><th style="width:28%">Deleted</th></tr>
+<tr><td>Own pages of a session that is over</td><td>nothing</td><td>first</td></tr>
+<tr><td>Tail of a live session’s chain</td><td>one recompute, if it returns cold</td><td>before its head</td></tr>
+<tr><td>Head of a live session’s chain</td><td>the whole chain below it</td><td>after its tail</td></tr>
+<tr><td>First prompt shared by sessions</td><td>the sum over those sessions</td><td>last</td></tr>
+</table>
+<div class="formula">
+<p class="ink-b">A lookup stops at the first missing page, so a chain is only as good as its head.</p>
+<p class="small">The engine’s cleaner deletes the oldest-written file first, and a live session’s oldest file is its head. The new order needs file times only: a chain in use is stamped recent, a finished session’s own pages oldest.</p>
+</div>
+</div>
+<div class="col-s" style="width:700px">
+<div class="card-hot in1"><p class="mid">71 %</p><p class="small">of the history still recomputed was deleted by the cleaner under live sessions, all after its first pass at minute 88.</p></div>
+<div class="card-s in2"><p class="ink-b">Measured, then replayed page by page</p><p class="small">Starting the cleaner at minute 50 instead of 88 costs 0.77 s over the run. In the replay, refreshing a chain’s file times on use leaves 0.1 s late in the run; with finished sessions’ own pages first, 0.03 s.</p></div>
+<div class="card-s in3"><p class="ink-b">First prompts outlive their sessions</p><p class="small">Deleting a finished session’s whole chain first would cost 3.6 to 4.0 s: for 84 % of the shared history new sessions find, a holder was already over.</p></div>
+</div>
+</div>
+<p class="footer">Campaign 34, the current design: 128 users, 2 h, cleaner at 90 % of a 2.3 TiB volume; seconds of mean TTFT in minutes 90–110. The replay reproduces all 9,103 SSD lookups. With foresight a cleaner would lose nothing: live chains are 3.9M of 22.6M stored tokens.</p>
+<aside>The index also says what the SSD should keep when it fills. On the SSD a page is worth the recompute it saves, and pages are chained: each page’s key includes everything before it, and a lookup stops at the first missing page. So a chain is only as good as its head. The order follows. The own pages of a session that is over are worth nothing and go first. In a live session’s chain the tail goes before the head, because a tail without its head cannot be found, while a head without its tail still serves a partial hit. A first prompt shared by several sessions is worth the sum over all of them and goes last. The engine’s cleaner does not follow this. When the volume reaches 90 percent it deletes the oldest-written file first, and the oldest file of a live session is its head. In the two-hour runs this is the largest thing left: 71 percent of the history the current design still recomputes, 1.19 million tokens, comes from pages the cleaner deleted under live sessions, all of it after the first pass at minute 88. The cost is measured: the same design on the same users, with the cleaner starting at minute 50 instead of minute 88, is 0.77 seconds slower over the run, with an interval from 0.61 to 0.92. A page-by-page replay of the run, which reproduces every one of its 9,103 SSD lookups, sizes the fix. Late in the run today’s order costs 1.3 to 1.7 seconds of mean TTFT, at the measured weight of a GPU-second; a regression inside the run finds about half of that, so the GPU run decides the size. Refreshing the file times of a chain whenever it is used leaves about a tenth of a second, and putting finished sessions’ own pages first as well leaves three hundredths or less. One tempting rule is wrong: deleting a finished session’s whole chain first would cost 3.6 to 4 seconds, twice today’s loss, because first prompts are shared: for 84 percent of the shared history that new sessions find, at least one earlier holder was already over, and its end would have retired the shared head. So a finished session’s first prompt outlives it. A cleaner that knew the future would lose nothing even on a quarter of the volume, because the chains of live sessions are 3.9 of the 22.6 million stored tokens: capacity is not the constraint, telling live pages from dead ones is. The change needs no new cleaner and no index, only file times: a chain in use is stamped recent, and a finished session’s own pages are stamped oldest. The same rule one tier up concerns the host copy of pages the GPU still holds, 0.65 of the 1.63 million host tokens: it is worth keeping if making that copy late would block the scheduler, and wasted room if the copy could run aside; which of the two holds in the engine is not settled.</aside>
+</section>

@@ -1,0 +1,25 @@
+<section id="gpusec" class="foot">
+<div class="head">
+<p class="eyebrow">The model · the queue, part 1</p>
+<h2 class="title">A second of GPU work delays every turn behind it</h2>
+</div>
+<div class="row-wide">
+<div class="grow">
+<div class="formula">
+<p class="small">Users send their next request only after the reply and their pause, so the loop is closed:</p>
+<p class="math"><i>R</i> = <i>N</i> / <i>X</i> − <i>Z</i></p>
+<p class="small">When the GPU is never idle it completes <i>X</i> = 1 / <i>g</i> requests a second, so</p>
+<p class="math"><i>R</i> = <i>N</i> · <i>g</i> − <i>Z</i></p>
+<p class="small">One more GPU-second per request costs <i>N</i> seconds of response time each, and <i>N</i> − <i>B</i> seconds of TTFT: the <i>B</i> turns already past their first token lose no TTFT.</p>
+</div>
+</div>
+<div class="col-s" style="width:700px">
+<div class="card-s in1"><p class="math-s"><i>μ</i> · the price of a GPU-second</p><p class="small">Seconds of TTFT, summed over all turns, per second of GPU work added now.</p></div>
+<div class="card-s in2"><p class="ink-b">Light load</p><p class="small"><i>μ</i> is 1 to 3: the work delays its own turn, the few waiting, and those that arrive during it.</p></div>
+<div class="card-s in3"><p class="ink-b">Saturated</p><p class="small"><i>μ</i> = <i>N</i> − <i>B</i>, about 108 here; the runs measured 94.</p></div>
+<div class="card-hot in4"><p class="ink-b">One request in a hundred recomputing its history costs every request about a second.</p></div>
+</div>
+</div>
+<p class="footer"><i>R</i>: mean time from a request to the end of its reply · <i>N</i>: users in session (128) · <i>X</i>: requests completed per second · <i>Z</i>: mean pause · <i>g</i>: GPU-seconds per request · <i>B</i>: turns running past their first token (about 20)</p>
+<aside>The queue enters the model through two weights. This is the first. In an agent workload a user sends the next request only after the reply has arrived and the pause, the tool call, is over. That makes the system a closed loop, and a closed loop obeys the response time law: the mean time from a request to the end of its reply, R, equals the number of users N divided by the throughput X, minus the mean pause Z. It holds for any policy. Now suppose the GPU is never idle. Then the throughput is one over g, the GPU-seconds a request takes, and the law reads R equals N times g minus Z. So if every request needs one more second of GPU work, every request’s response time grows by N seconds: with 128 users, 128 seconds. For the time to first token the factor is N minus B, where B is the number of turns already past their first token, about 20 here, because those lose nothing in TTFT. We call this factor mu, the price of a GPU-second: the seconds of TTFT, summed over all turns, that one second of added GPU work costs. At light load mu is between one and three: the work delays its own turn, the few turns waiting, and the turns that arrive while it runs. At saturation it is about 108, and the runs measured 94. The consequence for a cache policy is blunt. Recomputing a 25 thousand token history takes about a second of GPU time. If one request in a hundred does that, the average request needs a hundredth of a second more GPU time, and every request waits about one second longer.</aside>
+</section>

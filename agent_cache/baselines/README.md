@@ -159,12 +159,16 @@ Mean TTFT by send time, 5-minute windows:
   fp8_e5m2 KV rule rewrites fa3 to triton anyway; campaigns 28 and 29 run bf16 KV (`KV_DTYPE=auto`), where the
   automatic resolution is fa3 (`model_override_base.py`), so the pin no longer matches it.
 
-## The full comparison, prepared and not launched
+## The full comparison
+
+Campaign 30 (FreeInference) ran 2026-11-24 at campaign 34's setting, with stock SGLang on FA3, Continuum with and
+without LMCache, and every server bound to 127.0.0.1: record `results/campaign30/DECISIONS.md`, paired with campaign
+34's arms in `results/campaign30/checks/vs_c34/` (`common/update_compare.sh campaign30/checks/vs_c34 6600 campaign34
+campaign30`). `results/campaign31/` (TraceLab) is prepared and not launched.
 
 `results/campaign30/` (FreeInference) and `results/campaign31/` (TraceLab) copy the settings of campaigns 28 and 29
-(0.1 users/s, cap 128, 160 GB host, x1 gaps, 2 h) and queue the five baselines; each fork's own stock base is a
-commented line. Our own arms are those campaigns' (same users, paired by request). About 2 h 10 min an arm, 11 h a
-trace:
+(0.1 users/s, cap 128, 160 GB host, x1 gaps, 2 h) and queue the baselines; each fork's own stock base is a commented
+line. About 2 h 10 min an arm:
 
 ```bash
 # host: both traces, one after the other; the launcher's log names each arm's LAUNCH and DONE
@@ -184,8 +188,9 @@ added to its manifest, as `results/baseline_smoke_compare/` does.
   `CTX=65536`.
 - One server on the GPU at a time: vLLM's memory profiling aborts when another process allocates during a boot, so
   two runners must never share the box (`common/run_official.sh` refuses a busy GPU and waits for a live launcher).
-- A single pinned host allocation fails above about 122 GiB on this host: TokenCake (vLLM 0.22's CPU offloading pins
-  its tier as one tensor) gets 120 GiB; LMCache and SGLang pin in pieces and get the full 160 GB.
+- A single torch-pinned allocation over 128 GiB fails on this host: torch rounds pinned requests up to a power of two,
+  and 256 GiB is more than the host's 196 GiB of RAM. TokenCake (vLLM 0.22's CPU offloading pins its tier as one
+  tensor) gets 120 GiB; LMCache pins in pieces and SGLang registers its pool at its size, and both get the full 160 GB.
 - TokenCake's experiment driver sets `CUDA_VISIBLE_DEVICES` to the GPU's UUID, which vLLM 0.22 cannot parse;
   `tokencake/official/dag.sh` puts a failing `nvidia-smi` stub first on its PATH so it passes the index.
 - TokenCake's first boot builds FlashInfer kernels for about 35 minutes (cached afterwards); its driver keeps vLLM's

@@ -1,0 +1,15 @@
+ec_full: tag ec_full, client ran 7230 s, server lines kept 455687 of 455943, host pool held 0 tokens before -> results/compare_c37_designs/runs/ec_full
+ec_full: 16883 requests / 679 streams; returning TTFT mean 13.584 p50 0.259 p90 72.428 s; device/host/storage/recompute 7190/5367/3301/346
+wrote ../results/compare_c37_designs/ec_wait_split.png
+Over the 14,836 returning requests the arm sent before minute 110 (All four rules): mean TTFT 12.55 s. Requests served in 2 h:
+16,883; users admitted: 665 of the 729 that arrive.
+Recorded waits at x1, one run per arm. 0.1 users arrive a second and at most 128 are in session; the others wait for a slot, a wait
+TTFT leaves out. Prompts are synthetic token ids of the recorded lengths and outputs have the recorded length; sessions with a
+request over 65,536 tokens are left out. Exact hints are the true next-request times; p50 hints are the median wait after the tool
+call the reply makes, from a table the client keeps online for each harness and model. The rules arm gets that table's p10, p50 and
+p90 and an end-of-session signal: it starts reads by expected cost at a learned price on host memory, evicts by chance of return,
+and lets an arrived request's read take room from early reads. Attention runs on FlashAttention 3. Engine fixes on: pages the SSD
+already holds are not written again; queued writes are merged into transfers of up to 128 pages; timed reads wait while pending
+writes hold 50,000 host tokens; a read refused host memory is retried without spending the turn's lookups.
+  all four rules: 12.55 = after admission 0.17 + queue 1.14 + read and GPU 4.01 + read only 7.24
+wrote ../results/compare_c37_designs

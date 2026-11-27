@@ -1,0 +1,25 @@
+<section id="loop" class="foot">
+<div class="head">
+<p class="eyebrow">The setting · sessions</p>
+<h2 class="title">An agent session is a loop: a turn, a tool call, the next turn</h2>
+</div>
+<div class="lane" style="height:190px">
+<div class="bx bx-blue" style="left:0px;top:0px;width:230px;height:100px"><p class="bx-tw">Turn 1</p></div>
+<div class="bx bx-dash" style="left:246px;top:0px;width:230px;height:100px"><p class="bx-tm">tool runs</p></div>
+<div class="bx bx-blue" style="left:492px;top:0px;width:230px;height:100px"><p class="bx-tw">Turn 2</p></div>
+<div class="bx bx-dash" style="left:738px;top:0px;width:150px;height:100px"><p class="bx-tm">tool runs</p></div>
+<div class="bx bx-blue" style="left:904px;top:0px;width:230px;height:100px"><p class="bx-tw">Turn 3</p></div>
+<div class="bx bx-dash" style="left:1150px;top:0px;width:284px;height:100px"><p class="bx-tm">a person reads and types</p></div>
+<div class="bx bx-blue" style="left:1450px;top:0px;width:214px;height:100px"><p class="bx-tw">Turn 4</p></div>
+<p class="pin-lbl-m" style="left:0px;top:116px">request: the whole conversation so far</p>
+<p class="pin-lbl-m" style="left:246px;top:152px">gap: the session is idle, its next request is on its way</p>
+<p class="pin-lbl-or" style="left:1150px;top:116px;width:500px">a gap can be 1 s or 20 minutes</p>
+</div>
+<div class="row">
+<div class="card in1"><p class="h3">Turn</p><p class="small">One request to the model. The agent sends the whole conversation again, 25.5K tokens on average, of which 1.1K are new (what the tool returned), and the model writes about 280 tokens.</p></div>
+<div class="card in2"><p class="h3">Gap</p><p class="small">The pause before the session’s next request. After nine turns in ten the agent runs a tool: half are back within 1.0 s, one in ten takes over 8 s. After the others a person answers: half take over 68 s, one in ten over 12 minutes.</p></div>
+<div class="card in3"><p class="h3">Prefix cache (KV)</p><p class="small">The model’s attention state for the tokens it has already read: 98 KB a token, 2.5 GB for an average session. With it a turn computes only its new tokens; without it, the whole prompt again.</p></div>
+</div>
+<p class="footer">Workload: FreeInference, recorded coding-agent sessions replayed at their recorded pace. Model: Qwen3-30B-A3B on one H200. Gap figures: the sessions as replayed (103K gaps).</p>
+<aside>Start with what is being served. An agent session is a loop. A turn is one request to the model: the agent framework sends the whole conversation so far, the model replies, and the reply usually asks for a tool call, such as running a test or reading a file. While the tool runs, the session is idle; we call that pause a gap. Then the next turn arrives with everything the previous one had plus the tool’s output. In the workload used here, recorded coding-agent sessions from the FreeInference trace, a request carries 25.5 thousand tokens on average and only 1.1 thousand of them are new. Most gaps are tool calls and short, half of them under one second, but one in ten takes over 8 seconds, and when a person has to answer, half of the gaps exceed 68 seconds and one in ten exceeds twelve minutes. The serving engine keeps the model’s attention state for the tokens already read, the prefix cache or KV cache, so that a turn computes only its new tokens. That state is large: 98 kilobytes a token, about 2.5 gigabytes for an average session.</aside>
+</section>

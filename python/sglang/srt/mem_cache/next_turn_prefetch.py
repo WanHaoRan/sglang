@@ -34,6 +34,13 @@ to the turn's arrival; a landed read gives its pin back once its entry has passe
 with soft pins the read of an arrived turn takes room from staged reads; and the price
 follows how much room reads were refused. No forecast ends such a plan.
 
+Env switches, each off by default (next_turn_switches.py; "Four actions, three prices",
+agent_cache/results/design_unified_1126/), put measured prices in place of the constants. A
+meter (next_turn_meter.py) reads the lateness weight c, the GPU price mu and the room price
+lam off the queue and host eviction; they weigh a staged read's start, the hold's margin and
+read-or-recompute at the gate. Read-time estimates then count the line of parked reads, and
+a lookup that finds nothing in storage is not one of a turn's reads.
+
 The decisions use this rank's wall clock, so create() refuses multi-rank setups.
 """
 
@@ -44,7 +51,7 @@ import itertools
 import logging
 import math
 import re
-from typing import TYPE_CHECKING, Annotated, Optional, TypeVar
+from typing import TYPE_CHECKING, Annotated, Optional, Sequence, TypeVar
 
 import msgspec
 import msgspec.structs
@@ -61,10 +68,12 @@ from sglang.srt.mem_cache.next_turn_estimators import (
     ArrivalOffset,
     L3LoadModel,
     Rate,
+    ReadPathLags,
     residual_wait,
     trigger_time,
     wait_at_arrival,
 )
+from sglang.srt.mem_cache.next_turn_meter import PriceMeter, ready_turns
 from sglang.srt.mem_cache.next_turn_policy import (
     RECOMPUTE_S_PER_TOKEN,
     GapDistribution,
@@ -73,7 +82,15 @@ from sglang.srt.mem_cache.next_turn_policy import (
     read_start,
     remaining_gaps,
 )
+from sglang.srt.mem_cache.next_turn_prices import (
+    PriceBoard,
+    RecomputeQuote,
+    landing_quantile,
+    quote_recompute,
+)
+from sglang.srt.mem_cache.next_turn_switches import Switches
 from sglang.srt.mem_cache.next_use_eviction import (
+    REGISTRY_MAX_ENTRIES,
     NextUseStrategy,
     Queued,
     Registration,
@@ -114,6 +131,12 @@ MAX_REFETCHES = 2
 # campaign 32 a refused request was admitted a median 6 to 7.5 s after its last refusal.
 NTP_ROOM_RETRY_S = 2.0
 NTP_MAX_ROOM_RETRIES = 8
+# With SGLANG_HICACHE_NEXT_TURN_FREE_EMPTY_LOOKUPS, lookups a turn gets back for finding
+# nothing in storage. Arbitrary, as NTP_MAX_ROOM_RETRIES; it bounds a turn that keeps asking.
+NTP_MAX_FREE_LOOKUPS = 8
+# Read line: horizon and just-in-time timing count it only while c is at least this.
+# Arbitrary; c is above 0.8 or below 0.15 except while the GPU saturates (campaign 34).
+READ_LINE_MIN_C = 0.5
 # Deadline read order: a lookup is issued at most this long before the predicted
 # admission, and at most this many parked reads may wait for dispatch.
 # 120 s is about three drains of the prefetch cap (42 s at 302 pages/s, measured
@@ -239,6 +262,32 @@ class ResolvedHint(msgspec.Struct, frozen=True):
     entry_key: Optional[str] = None
 
 
+class TurnOutlook(msgspec.Struct, frozen=True):
+    """What a turn's hint says of its session: its name when the hint or the previous
+    turn gives one, whether a next-turn action came at all, and why it ends if so."""
+
+    session: Optional[str]
+    hinted: bool
+    # "entry": the reply picked a table entry marked ended; "no_next": an exact hint's
+    # chain names no further turn. None: the hint does not end the session.
+    end_why: Optional[str] = None
+
+
+class SessionExtent(msgspec.Struct):
+    """What a session's turns left in the tree, kept to retire its pages at its end."""
+
+    # Its first prompt seen, page-aligned; pages up to it may be another session's.
+    first_prompt_tokens: int
+    # Last page key of what each turn committed: its reply, a leaf unless a prompt
+    # repeats it. A key, not a node id: a reply read back from the SSD is a new node.
+    leaf_keys: list[str] = []
+
+
+class _ExactHintSession(str):
+    """A session name that an exact (v1) hint recorded for its next rid. Only such a
+    session ends by naming no next turn; a table's (v2) by an entry marked ended."""
+
+
 def _event_value(key: Optional[str]) -> str:
     """A key as a HICACHE_EVT value; a key can come from model output."""
     if key is None:
@@ -291,6 +340,23 @@ class TurnPlan(msgspec.Struct):
     refetch_capped: bool = False
     # Arrival gate: SSD lookups let through for this turn, by any trigger.
     lookups: int = 0
+    # Free empty lookups. Tokens of the key that the arrived turn's prompt repeats from
+    # the start; None until the gate has seen that prompt.
+    shared_tokens: Optional[int] = None
+    # Storage held nothing worth reading from this token on at the turn's last lookup;
+    # None before any answered.
+    absent_from: Optional[int] = None
+    # The lookup under way was charged by the gate (lookups) and by the queue check
+    # (refetches): an empty answer gives both back, at most NTP_MAX_FREE_LOOKUPS times.
+    lookup_charged: bool = False
+    refetch_charged: bool = False
+    free_lookups: int = 0
+    # The gate is being asked by the prefetcher's own staged lookup, which asks for the
+    # key's tail before any prompt exists.
+    staging_call: bool = False
+    # The starved-GPU rule gave the turn's parked read up: the gate declines every later
+    # lookup for it, and the turn computes that history again.
+    recompute: bool = False
     # Room retry: a read for the turn was refused or cut for host room and not retried
     # yet, when (the Scheduler's perf_counter clock), and the free retries taken.
     room_refused: bool = False
@@ -343,6 +409,8 @@ class NextTurnPrefetcher:
         memory_price: float = 5e-5,
         price_learning: str = "off",
         soft_pins: str = "off",
+        explicit_ends: bool = False,
+        retire_ended: bool = False,
     ):
         self._mode = mode
         self._tree_cache = tree_cache
@@ -422,8 +490,69 @@ class NextTurnPrefetcher:
         self._forecast_ends_session = not (
             self._expected_cost or self._scores_return_chance
         )
+        self._init_end_handling(explicit_ends=explicit_ends, retire_ended=retire_ended)
         self._session_tail: dict[str, int] = {}
         self._rid_session: dict[str, str] = {}
+        self._init_switched_changes(
+            mode=mode, arrival_gate=arrival_gate, price_learning=price_learning
+        )
+
+    def _init_switched_changes(
+        self, *, mode: str, arrival_gate: str, price_learning: str
+    ) -> None:
+        """The changes behind env switches (next_turn_switches.py) and the meter that
+        measures for them and for the prices line (next_turn_meter.py)."""
+        tree_cache = self._tree_cache
+        switches = Switches.read(
+            acting=mode == "on",
+            gated=mode == "on" and arrival_gate == "on",
+            holding=self._hold_arrived,
+            parking=self._deadline_mode,
+            staging_by_cost=self._expected_cost and self._stages_reads,
+            price_learning=price_learning,
+            priced_eviction=self._next_use is not None,
+        )
+        self._measured_prices = switches.measured_prices
+        self._free_empty_lookups = switches.free_empty_lookups
+        self._lateness_weight = switches.lateness_weight
+        self._read_line = switches.read_line
+        self._hold_quantile = switches.hold_quantile
+        self._recompute_by_price = switches.recompute_by_price
+        self._recompute_when_starved = switches.recompute_when_starved
+        if self._free_empty_lookups or self._recompute_by_price:
+            tree_cache.prefetch_gate_prompt_fn = self.prefetch_gate
+        if self._free_empty_lookups:
+            tree_cache.prefetch_lookup_fn = self.on_lookup_result
+        # The meter and its price board; None when no switch and no log asks for them.
+        self._meter: Optional[PriceMeter] = None
+        self._prices: Optional[PriceBoard] = None
+        if switches.measuring:
+            self._meter = PriceMeter(
+                tree_cache=tree_cache,
+                page_size=self._page_size,
+                ready_after_s=NTP_GPU_BOUND_S,
+                hold_margin_s=NTP_HOLD_MARGIN_S,
+                log_interval_s=switches.prices_log_interval_s,
+                read_deadline=self.read_deadline,
+            )
+            self._prices = self._meter.board
+            tree_cache.tree_core.host_eviction_observer = self._meter.on_host_evicted
+            tree_cache.prefetch_landed_fn = self.on_read_landed
+            if self._deadline_mode:
+                # From here on the cache times its lookups, dispatches and landings.
+                tree_cache.read_lags = ReadPathLags()
+        # rid -> the wait its queue position predicted when a turn with no plan was first
+        # seen queued; a planned turn keeps its own in pred_wait_ql.
+        self._pred_wait: dict[str, float] = {}
+        # rid -> the tick clock when the turn's last storage read landed.
+        self._landed_at: dict[str, float] = {}
+        # Since when every queued turn has been waiting on a read of its own, or since the
+        # starved rule last gave one up; None when the queue is empty or a turn is ready.
+        self._starved_since: Optional[float] = None
+        # The load model for estimates that count the read line in pages: _load itself
+        # until the read path's own lags are measured, then with them for its seeds.
+        self._line_load = self._load
+        self._line_measured = False
 
     @classmethod
     def create(
@@ -495,6 +624,8 @@ class NextTurnPrefetcher:
             memory_price=memory_price,
             price_learning=price_learning,
             soft_pins=soft_pins,
+            explicit_ends=tree_cache.retention.explicit_ends,
+            retire_ended=tree_cache.retention.retire_ended_pages,
         )
 
     def on_turn_committed(
@@ -511,13 +642,23 @@ class NextTurnPrefetcher:
 
         if rotation_tail_declined or not req.finished():
             return
+        if self._meter is not None:
+            self._meter.observe_prefill(req, at_once_s=NTP_GPU_BOUND_S)
         # The session recorded for this rid by the previous turn's hint, if any.
         session = self._rid_session.pop(req.rid, None)
         # A running request that is aborted also finishes through insertion.
         if len(key) == 0 or isinstance(req.finished_reason, FINISH_ABORT):
-            self._end_session(rid=req.rid, session=session, now=now)
+            self._end_session(rid=req.rid, session=session, now=now, why="abort")
             return
         hint = self._resolve_hint(req)
+        if (
+            hint is None
+            and self._explicit_ends
+            and not self._ends_without_forecast(
+                req=req, named_session=session, tail_node_id=tail_node_id
+            )
+        ):
+            return
         if hint is None:
             # The session ended (or the client sends no hints): evict it first.
             self._register_next_use(
@@ -545,7 +686,12 @@ class NextTurnPrefetcher:
             ),
             now=now,
         )
-        self._rid_session[hint.next_rid] = hint.session
+        self._rid_session[hint.next_rid] = (
+            _ExactHintSession(hint.session)
+            if self._explicit_ends and hint.entry_key is None
+            else hint.session
+        )
+        self._note_session_turn(hint.session, req=req, tail_node_id=tail_node_id)
         plan = TurnPlan(
             next_rid=hint.next_rid,
             session=hint.session,
@@ -622,6 +768,121 @@ class NextTurnPrefetcher:
             entry_key=entry.key,
         )
 
+    def _turn_outlook(
+        self, req: Req, *, reply_known: bool, named_session: Optional[str]
+    ) -> TurnOutlook:
+        # named_session: what the previous turn's hint recorded for this rid, if any.
+        hints = req.kv_hints
+        if hints is None or all(
+            action.action_type != NEXT_TURN_ACTION_TYPE for action in hints.actions
+        ):
+            # An exact hint ends its session by naming no next turn. A client without
+            # hints, and a table's turn that came without its table, state nothing.
+            exact = isinstance(named_session, _ExactHintSession)
+            return TurnOutlook(
+                session=named_session,
+                hinted=False,
+                end_why="no_next" if exact else None,
+            )
+        table = read_next_turn_table(hints)
+        if table is None:
+            # An exact hint that names a next turn, or an action that could not be read.
+            return TurnOutlook(session=named_session, hinted=True)
+        if self._reply_key_source == "hint":
+            key = table.replay_reply_key
+        elif reply_known and req.tokenizer is not None:
+            key = reply_key(req.tokenizer.decode(req.output_ids))
+        else:
+            return TurnOutlook(session=table.session, hinted=True)
+        entry = pick_gap_entry(table, key)
+        ended = entry is not None and entry.ended
+        return TurnOutlook(
+            session=table.session, hinted=True, end_why="entry" if ended else None
+        )
+
+    def ends_session(self, req: Req, *, reply_known: bool) -> bool:
+        """The hint says this turn is its session's last. No usable entry, an expired
+        plan and an abort are not ends: such a session may send its next turn."""
+        outlook = self._turn_outlook(
+            req,
+            reply_known=reply_known,
+            named_session=self._rid_session.get(req.rid),
+        )
+        return outlook.end_why is not None
+
+    def _init_end_handling(self, *, explicit_ends: bool, retire_ended: bool) -> None:
+        # The cache skips writes or retires pages of ended sessions, so only a hint that
+        # states the end may end one: a session ended by mistake sends its next turn.
+        self._explicit_ends = explicit_ends or retire_ended
+        # An ended session's own pages get mtime zero on the SSD.
+        self._retire_ended = retire_ended
+        # Per session until its explicit end; the oldest goes past REGISTRY_MAX_ENTRIES.
+        self._session_extents: dict[str, SessionExtent] = {}
+
+    def _ends_without_forecast(
+        self, *, req: Req, named_session: Optional[str], tail_node_id: Optional[int]
+    ) -> bool:
+        """A finished turn with no usable forecast, where an end must be explicit: False
+        when the session is live and its tail forgotten, True to register an end."""
+        outlook = self._turn_outlook(req, reply_known=True, named_session=named_session)
+        if outlook.end_why is not None:
+            self._on_explicit_end(
+                rid=req.rid, outlook=outlook, tail_node_id=tail_node_id
+            )
+            return True
+        if not outlook.hinted and outlook.session is None:
+            # A client without hints: registered as ended, as with the switches off.
+            return True
+        # A hint without a usable forecast, or a known session's turn that came without
+        # one: the session is live, not ended.
+        self._note_session_turn(outlook.session, req=req, tail_node_id=tail_node_id)
+        self._forget_session(
+            rid=req.rid,
+            session=outlook.session,
+            why="no_entry" if outlook.hinted else "no_hint",
+        )
+        return False
+
+    def _note_session_turn(
+        self, session: Optional[str], *, req: Req, tail_node_id: Optional[int]
+    ) -> None:
+        if not self._retire_ended or session is None or tail_node_id is None:
+            return
+        extent = self._session_extents.get(session)
+        if extent is None:
+            first_pages = len(req.origin_input_ids) // self._page_size
+            extent = SessionExtent(first_prompt_tokens=first_pages * self._page_size)
+            self._session_extents[session] = extent
+            while len(self._session_extents) > REGISTRY_MAX_ENTRIES:
+                del self._session_extents[next(iter(self._session_extents))]
+        leaf_key = self._tree_cache.get_last_hash_value(tail_node_id)
+        if leaf_key is not None:
+            extent.leaf_keys.append(leaf_key)
+
+    def _on_explicit_end(
+        self, *, rid: str, outlook: TurnOutlook, tail_node_id: Optional[int]
+    ) -> None:
+        _log_event(
+            "ntp_end",
+            rid,
+            sess=_event_value(outlook.session),
+            explicit=1,
+            why=outlook.end_why,
+        )
+        extent = (
+            None
+            if outlook.session is None
+            else self._session_extents.pop(outlook.session, None)
+        )
+        # A session seen for one turn only has no page known to be its own.
+        if extent is None or tail_node_id is None:
+            return
+        self._tree_cache.retire_storage_chain(
+            tail_node_id,
+            keep_tokens=extent.first_prompt_tokens,
+            own_leaf_keys=frozenset(extent.leaf_keys),
+        )
+
     def _return_forecast(self, hint: ResolvedHint, *, now: float) -> ReturnForecast:
         idle_from = now + self._offset.seconds
         if not self._scores_samples or hint.entry_key is None:
@@ -637,14 +898,20 @@ class NextTurnPrefetcher:
         """One scheduler pass: follow the queue and advance every plan that is due
         a check. Returns the queued requests to prefetch again (none in observe)."""
         queued = {req.rid: req for req in waiting_queue}
+        admitted = 0
         for rid, req in self._queued.items():
             if rid not in queued:
-                self._on_departure(req, now=now)
+                admitted += self._on_departure(req, now=now)
         self._queued = queued
         self._last_now = now
         self._positions = {req.rid: position for position, req in enumerate(waiting_queue)}
         if self._deadline_mode:
             self._refresh_load_model()
+        if self._meter is not None:
+            self._follow_prices(waiting_queue, admitted=admitted, now=now)
+        starved = self._recompute_when_starved and self._gpu_starved(
+            waiting_queue, now=now
+        )
         # The hold times reads of turns with no plan, so it needs a fresh rate regardless.
         if not self._plans and not self._hold_arrived:
             return []
@@ -667,6 +934,13 @@ class NextTurnPrefetcher:
                 admissible += 1
             plan = self._plans.get(req.rid)
             if plan is None:
+                if self._prices is not None and req.rid not in self._pred_wait:
+                    # What a planned turn is predicted at its arrival.
+                    predicted, _ = wait_at_arrival(
+                        queue_len=position, rate=rate, wait_ewma=None
+                    )
+                    if predicted is not None:
+                        self._pred_wait[req.rid] = predicted
                 continue
             if plan.arrival_t is None:
                 self._on_arrival(
@@ -693,6 +967,10 @@ class NextTurnPrefetcher:
             backlog_pages=backlog_pages,
             now=now,
         )
+        if starved:
+            # After the queue loop: a turn that arrived this pass is registered by now, so
+            # every parked read's deadline is the one dispatch will order it by.
+            self._relieve_starved_gpu(waiting_queue, now=now)
         return refetch
 
     def _queue_ahead(self, waiting_queue: list[Req], *, now: float) -> int:
@@ -702,14 +980,47 @@ class NextTurnPrefetcher:
         without a turn that has nothing to read and is still queued, the wait is none."""
         if not self._expected_cost:
             return len(waiting_queue)
-        cache = self._tree_cache
-        ready_since = {}
-        for req in waiting_queue:
-            if not cache.has_ongoing_prefetch(req.cache_request_handle):
-                ready_since[req.rid] = self._ready_since.get(req.rid, now)
-        self._ready_since = ready_since
-        gpu_bound = any(now - since >= NTP_GPU_BOUND_S for since in ready_since.values())
+        self._ready_since = ready_turns(
+            waiting_queue, tree_cache=self._tree_cache, seen=self._ready_since, now=now
+        )
+        gpu_bound = any(
+            now - since >= NTP_GPU_BOUND_S for since in self._ready_since.values()
+        )
         return len(waiting_queue) if gpu_bound else 0
+
+    def _follow_prices(
+        self, waiting_queue: list[Req], *, admitted: int, now: float
+    ) -> None:
+        """Show the meter this pass: the admissions, the queue left, and the sessions whose
+        next turn is not running, which with the turns running are the users in session."""
+        rate = self._admissions.rate(now)
+        price_line = self._meter.follow(
+            waiting_queue,
+            admitted=admitted,
+            plans=len(self._plans),
+            # Every plan held is a session between turns or queued; a queued turn with
+            # no plan is one more.
+            sessions_waiting=len(self._plans)
+            + sum(req.rid not in self._plans for req in waiting_queue),
+            rate=rate,
+            load=self._load,
+            now=now,
+        )
+        if price_line is not None:
+            _log_event("prices", "-", **price_line)
+
+    def _memory_price(self, now: float) -> float:
+        """Host room's price for a priced decision: the eviction frontier's when prices are
+        measured, else the knob's or the learned one."""
+        return self._prices.lam(now) if self._measured_prices else self._price.price
+
+    def _staging_price(self, now: float) -> float:
+        """Host room's price for a read staged before its turn: the frontier answers the
+        evictions already made, so a staging also pays for the holder it would evict next."""
+        price = self._memory_price(now)
+        if not self._measured_prices:
+            return price
+        return max(price, self._meter.next_victim_price(load=self._load, now=now))
 
     def on_refetch_result(self, *, req: Req, issued: bool) -> None:
         """The Scheduler re-issued the prefetch tick() asked for; `issued` says
@@ -719,6 +1030,7 @@ class NextTurnPrefetcher:
             return
         decision, plan.pending_refetch = plan.pending_refetch, None
         if issued:
+            plan.refetch_charged = not decision.room_retry
             if decision.room_retry:
                 # Without the arrival gate nothing else takes the retry.
                 self._take_room_retry(plan)
@@ -737,23 +1049,47 @@ class NextTurnPrefetcher:
             **room,
         )
 
-    def _on_departure(self, req: Req, *, now: float) -> None:
+    def _on_departure(self, req: Req, *, now: float) -> int:
+        """A request left the waiting queue: 1 when it was admitted, 0 when aborted."""
         self._hold_logged.discard(req.rid)
         plan = self._plans.pop(req.rid, None)
+        predicted = self._pred_wait.pop(req.rid, None)
+        landed = self._landed_at.pop(req.rid, None)
         stats = req.time_stats
         if stats.forward_entry_time <= 0:
             if plan is not None:
-                self._end_session(rid=req.rid, session=plan.session, now=now)
+                self._end_session(
+                    rid=req.rid, session=plan.session, now=now, why="abort"
+                )
                 _log_event(
                     "ntp_expire", req.rid, staged=int(plan.staged), reason="abort"
                 )
-            return
+            return 0
         if req.rid not in self._admitted:
             self._record_admission(req, now=now)
-        if plan is None:
-            return
         wait = stats.forward_entry_time - stats.wait_queue_entry_time
+        reader = req.storage_hit_length > 0
+        landed_after = None if landed is None else landed - stats.wait_queue_entry_time
+        if self._meter is not None:
+            self._meter.observe_admission(
+                predicted=predicted if plan is None else plan.pred_wait_ql,
+                wait=wait,
+                reader=reader,
+                landed_after=landed_after,
+            )
+        if plan is None:
+            return 1
         due = plan.due_case > 0
+        measured = {}
+        if self._prices is not None:
+            measured = {
+                "reader": int(reader),
+                "land_ms": _ms(
+                    stats.forward_entry_time - landed
+                    if reader and landed is not None
+                    else None
+                ),
+            }
         _log_event(
             "ntp_admit",
             req.rid,
@@ -767,7 +1103,9 @@ class NextTurnPrefetcher:
                 stats.forward_entry_time - plan.trigger_at if due else None
             ),
             case=plan.due_case,
+            **measured,
         )
+        return 1
 
     def _record_admission(self, req: Req, *, now: float) -> None:
         self._admitted[req.rid] = now
@@ -808,7 +1146,8 @@ class NextTurnPrefetcher:
             rid=plan.next_rid,
             session=plan.session,
             tail_node_id=self._session_tail.get(plan.session),
-            next_use=Queued(since=now),
+            # Its own arrival: turns first seen in one tick keep their queue order.
+            next_use=Queued(since=arrival),
             now=now,
         )
         plan.pred_wait_ql, plan.pred_wait_ewma = wait_at_arrival(
@@ -836,6 +1175,8 @@ class NextTurnPrefetcher:
     ) -> bool:
         """Case 2: the turn waits in the queue and its pages must be back by
         admission. True asks the Scheduler to re-issue the request's prefetch."""
+        if plan.recompute:
+            return False
         wait = residual_wait(position=position, rate=rate)
         est = None if rate is None else f"res{rate.window_s:.0f}"
         if wait is None and position <= 1:
@@ -844,16 +1185,15 @@ class NextTurnPrefetcher:
         if wait is None:
             return False
         admission_at = now + wait
-        baseline = max(len(plan.key), req.storage_prefetch_last_match_len or 0)
         # Not even a read of the whole key would need to start yet: skip the probe.
         if not self._deadline_mode and now < trigger_time(
             admission_at=admission_at,
-            load_s=self._load_seconds(baseline, backlog_pages),
+            load_s=self._load_seconds(self._queued_chain(plan, req=req), backlog_pages),
             margin_s=TRIGGER_MARGIN_S,
         ):
             return False
         if now - plan.last_probe_t >= PROBE_INTERVAL_S:
-            plan.missing_tokens = baseline - self._resident_tokens(plan, now=now)
+            plan.missing_tokens = self._probe_missing(plan, req=req, now=now)
             if plan.missing_tokens < self._tree_cache.prefetch_threshold:
                 # The history came back by another read: nothing left to retry.
                 plan.room_refused = False
@@ -866,6 +1206,15 @@ class NextTurnPrefetcher:
         ):
             return False
         if plan.due_case == 0:
+            if self._read_line:
+                # Under the deadline order this estimate times nothing and is only logged:
+                # the line is counted here and at a refetch, not for every turn every pass.
+                load_s, backlog_pages = self._queued_line_seconds(
+                    plan, req=req, position=position, admission_at=admission_at, now=now
+                )
+                trigger_at = trigger_time(
+                    admission_at=admission_at, load_s=load_s, margin_s=TRIGGER_MARGIN_S
+                )
             self._mark_due(
                 plan,
                 case=2,
@@ -882,7 +1231,6 @@ class NextTurnPrefetcher:
         return self._wants_refetch(
             plan,
             req=req,
-            baseline=baseline,
             position=position,
             admissible_ahead=admissible_ahead,
             wait_s=wait,
@@ -890,12 +1238,55 @@ class NextTurnPrefetcher:
             now=now,
         )
 
+    def _queued_chain(self, plan: TurnPlan, *, req: Req) -> int:
+        """Tokens of history a queued turn can have in any tier: its key, or its last
+        lookup's match if longer; once a prompt or an answer is known, the key as repeated."""
+        if plan.shared_tokens is None and plan.absent_from is None:
+            return max(len(plan.key), req.storage_prefetch_last_match_len or 0)
+        return len(plan.key) if plan.shared_tokens is None else plan.shared_tokens
+
+    def _probe_missing(self, plan: TurnPlan, *, req: Req, now: float) -> int:
+        """Probe the queued turn's key: tokens of its history in neither device nor host
+        memory, as far as storage was found to reach."""
+        resident = self._resident_tokens(plan, now=now)
+        if plan.absent_from is not None and resident > plan.absent_from:
+            # Memory reaches past where the last lookup stopped: that lookup says nothing
+            # of what storage holds beyond.
+            plan.absent_from = None
+        chain = self._queued_chain(plan, req=req)
+        if plan.absent_from is not None:
+            chain = min(chain, plan.absent_from)
+        return chain - resident
+
+    def _queued_line_seconds(
+        self,
+        plan: TurnPlan,
+        *,
+        req: Req,
+        position: int,
+        admission_at: float,
+        now: float,
+    ) -> tuple[float, int]:
+        # The queue check's estimate with the read line counted, timed as read_deadline()
+        # answers for the turn. A read of its own already parked stands in the line.
+        cache = self._tree_cache
+        handle = req.cache_request_handle
+        if cache.read_scheduler.is_parked(handle):
+            ahead_pages = cache.parked_read_pages_ahead(handle)
+        else:
+            ahead_pages = cache.storage_read_line_pages(
+                None if position <= 1 else admission_at
+            )
+        seconds = self._seconds_in_line(
+            plan.missing_tokens, ahead_pages=ahead_pages, timed=position > 1, now=now
+        )
+        return seconds, ahead_pages
+
     def _wants_refetch(
         self,
         plan: TurnPlan,
         *,
         req: Req,
-        baseline: int,
         position: int,
         admissible_ahead: int,
         wait_s: float,
@@ -917,7 +1308,7 @@ class NextTurnPrefetcher:
         ):
             return False
         # The last probe may predate a read that has since landed.
-        plan.missing_tokens = baseline - self._resident_tokens(plan, now=now)
+        plan.missing_tokens = self._probe_missing(plan, req=req, now=now)
         if plan.missing_tokens < cache.prefetch_threshold:
             plan.room_refused = False
             return False
@@ -934,6 +1325,10 @@ class NextTurnPrefetcher:
             if plan.refetch_capped:
                 return False
         plan.last_refetch_t = now
+        if self._read_line:
+            load_s, _ = self._queued_line_seconds(
+                plan, req=req, position=position, admission_at=now + wait_s, now=now
+            )
         plan.pending_refetch = RefetchDecision(
             missing_tokens=plan.missing_tokens,
             position=position,
@@ -1075,7 +1470,17 @@ class NextTurnPrefetcher:
         if now - plan.last_probe_t >= PROBE_INTERVAL_S:
             plan.missing_tokens = len(plan.key) - self._resident_tokens(plan, now=now)
         enough = plan.missing_tokens >= self._tree_cache.prefetch_threshold
-        load_s = self._load_seconds(plan.missing_tokens, backlog_pages)
+        if self._read_line and self._prices.c(now) < READ_LINE_MIN_C:
+            # This timing weighs no cost against an early start, so once ready turns
+            # mostly wait the line is left out: it could only start reads earlier.
+            load_s = self._load_seconds(plan.missing_tokens, backlog_pages)
+        else:
+            load_s, backlog_pages = self._line_seconds(
+                plan.missing_tokens,
+                deadline=self.read_deadline(_handle(plan)) if self._read_line else None,
+                backlog_pages=backlog_pages,
+                now=now,
+            )
         if self._just_in_time:
             start_at = trigger_time(
                 admission_at=admission_at,
@@ -1158,15 +1563,8 @@ class NextTurnPrefetcher:
             or plan.stagings >= NTP_MAX_STAGINGS
         ):
             return recheck
-        read_s = self._read_seconds(plan.missing_tokens, backlog_pages)
-        start_in = read_start(
-            remaining=remaining,
-            read_s=read_s,
-            wait_s=wait,
-            rent_per_s=self._price.price * plan.room_tokens,
-        )
-        self._log_start_decision(
-            plan, start_in=start_in, read_s=read_s, wait_s=wait, now=now
+        start_in, read_s, backlog_pages = self._staged_start(
+            plan, remaining=remaining, wait=wait, backlog_pages=backlog_pages, now=now
         )
         if start_in is None:
             return recheck
@@ -1200,12 +1598,59 @@ class NextTurnPrefetcher:
         plan.staged = cache.has_ongoing_prefetch(handle)
         return recheck
 
+    def _staged_start(
+        self,
+        plan: TurnPlan,
+        *,
+        remaining: tuple[float, ...],
+        wait: float,
+        backlog_pages: int,
+        now: float,
+    ) -> tuple[Optional[float], float, int]:
+        """Rule 1 on the engine's own estimates: (seconds until the plan's read should
+        start, None = at arrival; seconds from issuing it to usable pages, margin
+        included; pages served before it)."""
+        load_s, backlog_pages = self._line_seconds(
+            plan.missing_tokens,
+            # The deadline the staged read gets once it is parked.
+            deadline=self.read_deadline(_handle(plan)) if self._read_line else None,
+            backlog_pages=backlog_pages,
+            now=now,
+        )
+        read_s = load_s + NTP_JIT_MARGIN_S
+        price = self._staging_price(now)
+        stall_weight = self._prices.c(now) if self._lateness_weight else 1.0
+        start_in = read_start(
+            remaining=remaining,
+            read_s=read_s,
+            wait_s=wait,
+            rent_per_s=price * plan.room_tokens,
+            stall_weight=stall_weight,
+        )
+        self._log_start_decision(
+            plan,
+            start_in=start_in,
+            read_s=read_s,
+            wait_s=wait,
+            price=price,
+            stall_weight=stall_weight,
+            line_pages=backlog_pages,
+            now=now,
+        )
+        return start_in, read_s, backlog_pages
+
     def on_read_landed(self, handle: CacheRequestHandle, node_id: int) -> None:
-        """A storage read's span was inserted as node_id. Under return_chance eviction
-        it belongs to the session of the plan it was read for; without this a span
-        read back under a prompt that sessions share ranks as un-hinted."""
+        """A storage read's span was inserted as node_id. While prices are measured the
+        landing is stamped for its turn's admission. Under return_chance eviction the span
+        joins the session of the plan it was read for, or it would rank as un-hinted."""
         plan = self._plans.get(handle.rid)
-        if plan is None:
+        if self._prices is not None and (
+            plan is not None or handle.rid in self._queued
+        ):
+            # The last tick's clock: a landing is drained before its pass's tick, so this
+            # is at most one pass early.
+            self._landed_at[handle.rid] = self._last_now
+        if plan is None or self._return_chance is None:
             return
         tail_id = self._session_tail.get(plan.session)
         if tail_id is not None:
@@ -1264,6 +1709,9 @@ class NextTurnPrefetcher:
         start_in: Optional[float],
         read_s: float,
         wait_s: float,
+        price: float,
+        stall_weight: float,
+        line_pages: int,
         now: float,
     ) -> None:
         """One ec_start event per change of decision, not one per probe."""
@@ -1274,6 +1722,9 @@ class NextTurnPrefetcher:
         if decision == plan.decision:
             return
         plan.decision = decision
+        weighed = {"c": f"{stall_weight:.2f}"} if self._lateness_weight else {}
+        if self._read_line:
+            weighed["line_pages"] = line_pages
         _log_event(
             "ec_start",
             plan.next_rid,
@@ -1283,7 +1734,8 @@ class NextTurnPrefetcher:
             idle_ms=_ms(now - plan.t_commit),
             read_ms=_ms(read_s),
             wait_ms=_ms(wait_s),
-            price=f"{self._price.price:.3g}",
+            price=f"{price:.3g}",
+            **weighed,
         )
 
     def _release_staged(self, plan: TurnPlan, *, tokens: int, now: float) -> None:
@@ -1355,9 +1807,13 @@ class NextTurnPrefetcher:
                 # recomputed, while its own turn and those waiting for the GPU wait.
                 lost_tokens = min(tokens, staged_left)
                 staged_left -= lost_tokens
-                self._price.charge(
-                    lost_tokens * RECOMPUTE_S_PER_TOKEN * max(1, queue_ahead)
-                )
+                if self._measured_prices:
+                    harm_s = self._prices.mu(now) * self._meter.prefill_cost.seconds(
+                        new_tokens=lost_tokens, total_tokens=lost_tokens
+                    )
+                else:
+                    harm_s = lost_tokens * RECOMPUTE_S_PER_TOKEN * max(1, queue_ahead)
+                self._price.charge(harm_s)
         staged_tokens = sum(
             cache.pinned_prefetch_tokens_of(_handle(plan))
             for plan in self._plans.values()
@@ -1408,23 +1864,53 @@ class NextTurnPrefetcher:
         wait = residual_wait(position=position, rate=self._last_rate)
         return None if wait is None else now + wait
 
-    def prefetch_gate(self, handle: CacheRequestHandle, matched_tokens: int) -> bool:
+    def prefetch_gate(
+        self,
+        handle: CacheRequestHandle,
+        matched_tokens: int,
+        new_input_tokens: Optional[Sequence[int]] = None,
+    ) -> bool:
         """May this prefetch look up the SSD? Every read trigger ends here. A read
-        already under way has been joined by now, so a new one means history is missing."""
+        already under way has been joined by now, so a new one means history is missing.
+        new_input_tokens is the prompt from the match on, where the cache passes it."""
         plan = self._plans.get(handle.rid)
         # A first turn, a client without hints, a plan gone: only a lookup can tell.
         if plan is None:
             return True
-        chain = len(plan.key)
-        if chain - matched_tokens < self._tree_cache.prefetch_threshold:
+        threshold = self._tree_cache.prefetch_threshold
+        history = self._history_tokens(
+            plan, matched_tokens=matched_tokens, new_input_tokens=new_input_tokens
+        )
+        if plan.absent_from is not None and matched_tokens > plan.absent_from:
+            # The match reaches past where the last lookup stopped: that lookup says
+            # nothing of what storage holds beyond.
+            plan.absent_from = None
+        # Storage had nothing from the mark on; a match below it leaves the span up to it.
+        chain = history if plan.absent_from is None else min(history, plan.absent_from)
+        quote = None
+        if plan.recompute:
+            decision = "recompute"
+        elif chain - matched_tokens < threshold:
             # The history is resident and the rest is new. It is on the SSD only if
             # another session shares this prefix, which is not worth a lookup per turn.
-            decision = "covered"
+            decision = "covered" if history - matched_tokens < threshold else "absent"
             plan.room_refused = False
+        elif (
+            quote := self._recompute_quote(
+                plan,
+                handle,
+                matched=matched_tokens,
+                missing=chain - matched_tokens,
+                new_input_tokens=new_input_tokens,
+            )
+        ) is not None and quote.wins:
+            # Spends no lookup: the turn's next call is priced again.
+            decision = "recompute"
         elif self._room_retry_due(plan, now=self._last_now):
             # The read before it found no host room a while ago: retrying spends no lookup.
             decision = "retry"
             self._take_room_retry(plan)
+            plan.lookup_charged = False
         elif plan.lookups > MAX_REFETCHES:
             # A re-read beats a recompute, but not without limit: reads that keep being
             # evicted before admission only evict others.
@@ -1433,8 +1919,17 @@ class NextTurnPrefetcher:
         else:
             decision = "read" if plan.lookups == 0 else "reread"
             plan.lookups += 1
+            plan.lookup_charged = True
             # A charged lookup retries any refused read; a new refusal marks the plan again.
             plan.room_refused = False
+        priced = {}
+        if quote is not None:
+            priced = {
+                "rec_ms": _ms(quote.recompute_s),
+                "read_ms": _ms(quote.read_s),
+                "mu": f"{quote.mu:.2f}",
+                "c": f"{quote.c:.2f}",
+            }
         _log_event(
             "ntp_gate",
             handle.rid,
@@ -1442,8 +1937,159 @@ class NextTurnPrefetcher:
             matched=matched_tokens,
             chain=chain,
             lookups=plan.lookups,
+            **priced,
         )
         return decision in ("read", "reread", "retry")
+
+    def _recompute_quote(
+        self,
+        plan: TurnPlan,
+        handle: CacheRequestHandle,
+        *,
+        matched: int,
+        missing: int,
+        new_input_tokens: Optional[Sequence[int]],
+    ) -> Optional[RecomputeQuote]:
+        """Read-or-recompute for the turn's missing history, as priced. None behind another
+        queued turn or a ready one (itself, once it has waited): a queue hides the read."""
+        if (
+            not self._recompute_by_price
+            or new_input_tokens is None
+            or plan.staging_call
+            # On the load model's seeds a recompute would win at every size.
+            or not self._line_measured
+        ):
+            return None
+        board = self._prices
+        others = len(self._queued) - (handle.rid in self._queued)
+        if others > 0 or board.ready_waiting > 0:
+            return None
+        now = self._last_now
+        # Without free empty lookups the key's tail may be text the prompt does not have.
+        missing = min(missing, len(new_input_tokens))
+        read_s, _ = self._line_seconds(missing, deadline=None, backlog_pages=0, now=now)
+        return quote_recompute(
+            board=board,
+            cost=self._meter.prefill_cost,
+            matched=matched,
+            missing=missing,
+            total=matched + len(new_input_tokens),
+            read_s=read_s,
+            now=now,
+        )
+
+    def _gpu_starved(self, waiting_queue: list[Req], *, now: float) -> bool:
+        """True once every queued turn has been waiting on a read of its own for
+        NTP_GPU_BOUND_S, with the read path's lags measured: the SSD holds the GPU up."""
+        if not waiting_queue or self._meter.ready_since:
+            self._starved_since = None
+            return False
+        if self._starved_since is None:
+            self._starved_since = now
+        return now - self._starved_since >= NTP_GPU_BOUND_S and self._line_measured
+
+    def _relieve_starved_gpu(self, waiting_queue: list[Req], *, now: float) -> None:
+        """The first queued turn with a plan and a read still parked recomputes the span, if
+        that is sooner than the read lands. One a pass; a drop restarts the starved wait."""
+        cache = self._tree_cache
+        for req in waiting_queue:
+            handle = req.cache_request_handle
+            plan = self._plans.get(req.rid)
+            span = None if plan is None else cache.parked_read_span(handle)
+            if span is None:
+                continue
+            start, tokens = span
+            land_s = self._seconds_in_line(
+                tokens,
+                ahead_pages=cache.parked_read_pages_ahead(handle),
+                timed=self.read_deadline(handle) is not None,
+                now=now,
+            )
+            recompute_s = self._meter.prefill_cost.seconds(
+                new_tokens=tokens, total_tokens=start + tokens
+            )
+            if recompute_s < land_s:
+                parked = cache.read_scheduler.parked_count()
+                if cache.drop_parked_read(handle):
+                    plan.recompute = True
+                    self._starved_since = now
+                    _log_event(
+                        "ntp_starve",
+                        req.rid,
+                        land_ms=_ms(land_s),
+                        rec_ms=_ms(recompute_s),
+                        tokens=tokens,
+                        parked=parked,
+                    )
+            return
+
+    def _history_tokens(
+        self,
+        plan: TurnPlan,
+        *,
+        matched_tokens: int,
+        new_input_tokens: Optional[Sequence[int]],
+    ) -> int:
+        """Tokens of history the turn can have in any tier: the plan's key, cut under free
+        empty lookups to what the turn's prompt repeats of it (a staged lookup has none)."""
+        key = plan.key
+        if not self._free_empty_lookups or plan.staging_call:
+            return len(key)
+        if (
+            plan.shared_tokens is None
+            and new_input_tokens is not None
+            and matched_tokens < len(key)
+        ):
+            # The tree matched this very prompt up to matched_tokens.
+            prompt_tail = RadixKey(
+                new_input_tokens,
+                key.extra_key,
+                is_bigram=key.is_bigram,
+                cache_salt=key.cache_salt,
+            )
+            plan.shared_tokens = matched_tokens + prompt_tail.match_at(
+                key, offset=matched_tokens
+            )
+        return len(key) if plan.shared_tokens is None else plan.shared_tokens
+
+    def on_lookup_result(
+        self,
+        handle: CacheRequestHandle,
+        *,
+        storage_start: int,
+        requested_tokens: int,
+        hit_tokens: int,
+    ) -> None:
+        """A storage lookup for handle answered: of requested_tokens from storage_start
+        on it found the first hit_tokens. Called inside the cache's drain, so it only
+        marks the plan: an empty answer gives back what the lookup was charged."""
+        plan = self._plans.get(handle.rid)
+        if plan is None:
+            return
+        found = hit_tokens >= self._tree_cache.prefetch_threshold
+        # A lookup stops at the first page missing, so nothing is stored past its hit.
+        plan.absent_from = storage_start + (hit_tokens if found else 0)
+        refunded = False
+        if not found and plan.free_lookups < NTP_MAX_FREE_LOOKUPS:
+            if plan.lookup_charged:
+                plan.lookups -= 1
+                refunded = True
+            if plan.refetch_charged:
+                plan.refetches -= 1
+                refunded = True
+            if refunded:
+                plan.free_lookups += 1
+                plan.refetch_capped = False
+        plan.lookup_charged = plan.refetch_charged = False
+        _log_event(
+            "ntp_lookup",
+            handle.rid,
+            start=storage_start,
+            asked=requested_tokens,
+            hit=hit_tokens,
+            refunded=int(refunded),
+            lookups=plan.lookups,
+        )
 
     def read_not_before(
         self, handle: CacheRequestHandle, read: ParkedRead, ahead_pages: int
@@ -1461,11 +2107,20 @@ class NextTurnPrefetcher:
         wait = residual_wait(position=position, rate=self._last_rate)
         if wait is None:
             return None
-        load_s = self._load.seconds(own_pages=read.pages, backlog_pages=ahead_pages)
+        # ahead_pages already counts the line, so the lags must not fold a read ahead in.
+        load_s = self._line_load.seconds(
+            own_pages=read.pages, backlog_pages=ahead_pages
+        )
+        margin_s, by_quantile = NTP_HOLD_MARGIN_S, {}
+        if self._hold_quantile:
+            margin_s, quantile = self._hold_margin(
+                tokens=read.pages * self._page_size, wait_s=wait
+            )
+            by_quantile = {"margin_ms": _ms(margin_s), "q": f"{quantile:.2f}"}
         not_before = trigger_time(
             admission_at=self._last_now + wait,
             load_s=load_s,
-            margin_s=NTP_HOLD_MARGIN_S,
+            margin_s=margin_s,
         )
         if not_before > self._last_now and handle.rid not in self._hold_logged:
             self._hold_logged.add(handle.rid)
@@ -1477,24 +2132,87 @@ class NextTurnPrefetcher:
                 wait_ms=_ms(wait),
                 load_ms=_ms(load_s),
                 hold_ms=_ms(not_before - self._last_now),
+                **by_quantile,
             )
         return not_before
 
-    def _refresh_load_model(self) -> None:
-        """Replace the load model's per-page seeds with the read thread's EWMA."""
-        ms_per_page = self._tree_cache.cache_controller.storage_read_ms_per_page
-        if ms_per_page is None:
-            return
-        s_per_page = ms_per_page / 1000.0
-        if self._load.read_s_per_page == s_per_page:
-            return
-        self._load = msgspec.structs.replace(
-            self._load, read_s_per_page=s_per_page, backlog_s_per_page=s_per_page
+    def _hold_margin(self, *, tokens: int, wait_s: float) -> tuple[float, float]:
+        """(seconds before its load estimate requires that a held read starts, the quantile
+        q behind it); the fixed margin until enough admissions were seen at this wait."""
+        now = self._last_now
+        quantile = landing_quantile(
+            price=self._memory_price(now),
+            tokens=tokens,
+            lateness_weight=self._prices.c(now),
         )
+        margin_s = self._meter.admission_error.margin(
+            quantile, predicted_wait_s=wait_s, fallback_s=NTP_HOLD_MARGIN_S
+        )
+        return margin_s, quantile
 
-    def _end_session(self, *, rid: str, session: Optional[str], now: float) -> None:
-        """The session's next turn is not coming: its tail is evicted first."""
+    def _refresh_load_model(self) -> None:
+        """Replace the load model's per-page seeds with the read thread's EWMA; with the
+        read line counted, also keep a model on the read path's measured lags."""
+        ms_per_page = self._tree_cache.cache_controller.storage_read_ms_per_page
+        s_per_page = None if ms_per_page is None else ms_per_page / 1000.0
+        if s_per_page is not None and self._load.read_s_per_page != s_per_page:
+            self._load = msgspec.structs.replace(
+                self._load, read_s_per_page=s_per_page, backlog_s_per_page=s_per_page
+            )
+        self._line_load = self._load
+        if not self._read_line:
+            return
+        lags = self._tree_cache.read_lags
+        lookup_s, fixed_s = lags.lookup.seconds, lags.fixed.seconds
+        self._line_measured = lookup_s is not None and fixed_s is not None
+        if self._line_measured:
+            # The seeds fold one read ahead in, which the line counts in pages.
+            self._line_load = msgspec.structs.replace(
+                self._load,
+                alloc_lag_s=lookup_s,
+                drain_lag_s=max(0.0, fixed_s),
+                read_fixed_s=0.0,
+            )
+
+    def _line_seconds(
+        self,
+        tokens: int,
+        *,
+        deadline: Optional[float],
+        backlog_pages: int,
+        now: float,
+    ) -> tuple[float, int]:
+        """(seconds from issuing a read of `tokens` to its pages being inserted, pages
+        ahead). With the read line, parked reads due by `deadline` (None = now) count."""
+        if not self._read_line:
+            return self._load_seconds(tokens, backlog_pages), backlog_pages
+        ahead_pages = self._tree_cache.storage_read_line_pages(deadline)
+        seconds = self._seconds_in_line(
+            tokens, ahead_pages=ahead_pages, timed=deadline is not None, now=now
+        )
+        return seconds, ahead_pages
+
+    def _seconds_in_line(
+        self, tokens: int, *, ahead_pages: int, timed: bool, now: float
+    ) -> float:
+        # A read of `tokens` behind ahead_pages of the line, on the lags measured with no
+        # read ahead folded in; a timed read also waits out what is left of a write hold.
+        seconds = self._line_load.seconds(
+            own_pages=math.ceil(tokens / self._page_size), backlog_pages=ahead_pages
+        )
+        if timed:
+            seconds += self._tree_cache.read_lags.write_hold_left_s(now)
+        return seconds
+
+    def _end_session(
+        self, *, rid: str, session: Optional[str], now: float, why: str
+    ) -> None:
+        """The session's next turn is not coming: its tail is evicted first, or only
+        forgotten where an end must be explicit."""
         if session is None:
+            return
+        if self._explicit_ends:
+            self._forget_session(rid=rid, session=session, why=why)
             return
         self._register_next_use(
             rid=rid,
@@ -1504,6 +2222,14 @@ class NextTurnPrefetcher:
             now=now,
         )
         self._session_tail.pop(session, None)
+
+    def _forget_session(self, *, rid: str, session: Optional[str], why: str) -> None:
+        """Not an explicit end, so the session may send its next turn: its tail ranks
+        as un-hinted instead of ended."""
+        previous = None if session is None else self._session_tail.pop(session, None)
+        if self._next_use is not None and previous is not None:
+            self._next_use.forget(previous)
+        _log_event("ntp_end", rid, sess=_event_value(session), explicit=0, why=why)
 
     def _register_next_use(
         self,
@@ -1547,6 +2273,7 @@ class NextTurnPrefetcher:
         # means nothing below it is in storage, and a fetch there is dropped.
         gate = cache.is_backuped(anchor) or cache.is_root(anchor)
         if gate and not cache.has_ongoing_prefetch(handle):
+            plan.staging_call = True
             cache.prefetch_from_storage(
                 handle,
                 anchor,
@@ -1562,6 +2289,7 @@ class NextTurnPrefetcher:
                 cache_salt=plan.key.cache_salt,
                 storage_hit_end=None,
             )
+            plan.staging_call = False
         _log_event(
             "ntp_stage",
             plan.next_rid,
@@ -1581,8 +2309,11 @@ class NextTurnPrefetcher:
             # Pops the loaded-span records and any paced retry left for the rid.
             self._tree_cache.finish(handle, CacheRequestOutcome.ABORT)
         self._rid_session.pop(plan.next_rid, None)
+        self._landed_at.pop(plan.next_rid, None)
         if self._forecast_ends_session:
-            self._end_session(rid=plan.next_rid, session=plan.session, now=now)
+            self._end_session(
+                rid=plan.next_rid, session=plan.session, now=now, why="expired"
+            )
         _log_event(
             "ntp_expire", plan.next_rid, staged=int(plan.staged), reason="timeout"
         )

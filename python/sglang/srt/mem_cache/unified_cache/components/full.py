@@ -246,10 +246,13 @@ class FullComponent(TreeComponent):
         ]
         heapq.heapify(heap)
         ct = self.component_type
+        observer = self.tree_core.host_eviction_observer
         while tracker[ct] < num_tokens and heap:
             _, x = heapq.heappop(heap)
             if x not in self.tree_core.evictable_host_leaves:
                 continue
+            if observer is not None:
+                observer(x, len(x.component_data[ct].host_value))
             self.tree_core._evict_host_leaf(x, tracker, device_frees, host_frees)
             if (
                 x.parent is not None
@@ -259,6 +262,24 @@ class FullComponent(TreeComponent):
                     heap,
                     (self.session_ref_eviction_strategy(x.parent), x.parent),
                 )
+
+    def _peek_host_priority(self, node: UnifiedTreeNode):
+        # session_ref_eviction_strategy's answer through peek_priority: nothing is being
+        # evicted, so the strategy must keep no state of this ranking.
+        priority = self.tree_core.eviction_strategy.peek_priority(node)
+        if self.tree_core.enable_session_radix_cache:
+            ref = self.session_ref(node)
+            return ref > 0, ref, priority
+        return priority
+
+    def next_host_victim(self) -> Optional[UnifiedTreeNode]:
+        """The host leaf drive_host_eviction would take first; None when none is evictable."""
+        leaves = self.tree_core.evictable_host_leaves
+        if not leaves:
+            return None
+        # Ties go by node, as in the eviction heap.
+        _, victim = min((self._peek_host_priority(n), n) for n in leaves)
+        return victim
 
     def acquire_component_lock(
         self,

@@ -1,0 +1,160 @@
+# R1: skip the SSD write of an ended session's last turn (its chain goes first out: R4_cleaner_order.diff).
+# Pseudo-diff against HEAD b7074d9cae; not applied. Needs R3's marks (the heal in write_backup_storage).
+#
+# Where the end signal is in hand:
+#   req.kv_hints rides on the Req from arrival (managers/scheduler.py:2814). Today it is read only in
+#   NextTurnPrefetcher._resolve_hint (next_turn_prefetch.py:581-623), from on_turn_committed (:520), which
+#   cache_finished_req calls after the insert (unified_radix_cache.py:1234-1241).
+#   Insert sites, both on the scheduler thread with the Req in hand:
+#     prompt  cache_unfinished_req -> self.insert()  unified_radix_cache.py:1357  (end of prefill,
+#             scheduler_components/batch_result_processor.py:383; chunks come with chunked=True and
+#             back nothing up until the last piece)
+#     output  cache_finished_req   -> self.insert()  unified_radix_cache.py:1150
+#   The GPU->host copy is queued inside the insert (BackupKV -> _execute_and_commit_kv_backup, :1722-1759)
+#   and the SSD write is submitted at that copy's ack (writing_check :3737-3780 -> _finish_write_through_ack
+#   :1840-1855 -> write_backup_storage :2026-2061). The decision is taken at the insert and carried to the
+#   ack by node id.
+#   What is known when:
+#     exact hint (v1)                       at arrival: a turn some earlier turn named as next carries no
+#                                           next-turn action (rid in _rid_session)
+#     table (v2), reply key source "hint"   at arrival: table.replay_reply_key picks an entry with ended
+#                                           (the replay; campaigns 26-35)
+#     table (v2), reply key source "reply"  at finish only: the key is read from req.output_ids, so only
+#                                           the output's pages can be skipped
+#   "No usable entry" and an expired plan are not ends (bug X1): campaign 34 ec_full registered 981 sessions
+#   as ended, 410 of them sent their next turn (median 2.3 s later); jit_p50 1,564 and 946.
+
+--- a/python/sglang/srt/mem_cache/next_turn_prefetch.py
++++ b/python/sglang/srt/mem_cache/next_turn_prefetch.py
+@@ -623,6 +623,27 @@ class NextTurnPrefetcher:
+             entry_key=entry.key,
+         )
+
++    def ends_session(self, req: Req, *, reply_known: bool) -> bool:
++        """The hint says this turn is its session's last. No usable entry, a plan that
++        expired and an abort are not ends: such a session may send its next turn."""
++        table = read_next_turn_table(req.kv_hints)
++        if table is None:
++            # Exact hints: a turn an earlier turn named as next, with no next of its own.
++            return (
++                read_next_turn_hint(req.kv_hints) is None
++                and req.rid in self._rid_session
++            )
++        if self._reply_key_source == "hint":
++            key = table.replay_reply_key
++        elif reply_known and req.tokenizer is not None:
++            key = reply_key(req.tokenizer.decode(req.output_ids))
++        else:
++            return False
++        entry = pick_gap_entry(table, key)
++        return entry is not None and entry.ended
++
+
+--- a/python/sglang/srt/mem_cache/base_prefix_cache.py
++++ b/python/sglang/srt/mem_cache/base_prefix_cache.py
+@@ -97,6 +97,8 @@ class InsertParams:
+     session_id: Optional[str] = None
+     track_adopted_ranges: bool = False
++    # The turn ends its session: nodes this insert backs up to host are not written to storage.
++    skip_storage_backup: bool = False
+
+--- a/python/sglang/srt/mem_cache/unified_cache/cache_action.py
++++ b/python/sglang/srt/mem_cache/unified_cache/cache_action.py
+@@ -69,5 +69,6 @@ class BackupKV(msgspec.Struct, frozen=True):
+     node_ids: list[NodeId]
++    skip_storage: bool = False
+
+--- a/python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py
++++ b/python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py
+@@ -1310,3 +1310,5 @@ def _insert_walk_step(self, state: _InsertWalkState) -> None:
+         if self._inc_hit_count_and_check(node, state.params.chunked):
+-            step_actions.append(self._build_backup_kv_action(node))
++            step_actions.append(
++                self._build_backup_kv_action(node, skip_storage=state.params.skip_storage_backup)
++            )
+@@ -1393,4 +1395,6 @@ def _insert_tail_step(self, state: _InsertWalkState) -> None:
+         if self._should_backup_after_insert(state):
+             state.pending_actions.append(
+-                self._build_backup_kv_action(state.target_node)
++                self._build_backup_kv_action(
++                    state.target_node, skip_storage=state.params.skip_storage_backup
++                )
+             )
+@@ -2371,5 +2375,5 @@ def _build_backup_kv_action(
+-        self, node: UnifiedTreeNode, write_back: bool = False
++        self, node: UnifiedTreeNode, write_back: bool = False, skip_storage: bool = False
+     ) -> BackupKV:
+         ...
+-        return BackupKV([target.id for target in chain])
++        return BackupKV([target.id for target in chain], skip_storage=skip_storage)
+
+--- a/python/sglang/srt/mem_cache/unified_radix_cache.py
++++ b/python/sglang/srt/mem_cache/unified_radix_cache.py
+@@ -463,3 +463,5 @@ def _reset_full(self) -> None:
+         self.ongoing_backup: dict[int, _OngoingBackup] = {}
++        # Nodes of an ended session's last turn: backed up to host, not written to storage.
++        self._storage_skip_nodes: set[NodeId] = set()
+@@ -1148,3 +1150,6 @@ def cache_finished_req(
+             insert_params.key = radix_key
+             insert_params.value = values
++            insert_params.skip_storage_backup = self._turn_ends_session(
++                req, reply_known=True
++            )
+             result = self.insert(insert_params)
+@@ -1355,3 +1360,6 @@ def cache_unfinished_req(self, req: Req, chunked: bool = False, **kwargs) -> None:
+         insert_params.key = radix_key
+         insert_params.value = values
++        insert_params.skip_storage_backup = self._turn_ends_session(
++            req, reply_known=False
++        )
+         result = self.insert(insert_params)
++
++    def _turn_ends_session(self, req: Req, *, reply_known: bool) -> bool:
++        return (
++            self._skip_ended_writes
++            and self.next_turn_prefetch is not None
++            and self.next_turn_prefetch.ends_session(req, reply_known=reply_known)
++        )
+@@ -1754,6 +1762,8 @@ def _execute_and_commit_kv_backup(
+             publish_node_ids = self._backup_publish_node_ids(node_id, comp_xfers)
++            if action.skip_storage:
++                self._storage_skip_nodes.update(publish_node_ids)
+             self._track_write_through_node(
+@@ -1831,6 +1841,8 @@ def _replace_pending_write_through_node(
+         if not replaced:
+             return
++        if old_node_id in self._storage_skip_nodes:
++            self._storage_skip_nodes.update(new_node_ids)
+@@ -2028,6 +2040,11 @@ def write_backup_storage(self, node_id: NodeId) -> None:
+         if not self.enable_storage or self.cache_controller is None:
+             return
++        if node_id in self._storage_skip_nodes:
++            # No op, no host lock, no pending tokens: the host copy is evictable at once.
++            self._storage_skip_nodes.discard(node_id)
++            logger.info("HICACHE_EVT h2s_skip node=%d reason=ended", node_id)
++            return
+
+# What the skip leaves behind: a host-backed node with storage_stored False and no write queued. If the
+# session sends another turn after all, or another session extends the node, the child's write_backup_storage
+# finds it through unstored_ancestors() and writes it first (R3_stored_mark.diff), so the chain has no hole
+# on storage. With skip-stored writes on (fix 1) that rewrite of pages still on the SSD costs a stat and a
+# utime a file.
+#
+# Not skipped: the GPU->host copy (the mirror is unchanged); nodes a refused backup left GPU-only above the
+# turn (they ride the same BackupKV chain and are flagged with it: 0, 0 and 11 refusals in campaign 34's three
+# arms; a later child write heals them).
+
+# Tests (CPU), test_next_turn_prefetch.py:
+#   class TestGapTable (fixture: table(), make_req, hints):
+#   - test_only_an_explicit_end_ends_the_session: "_end" entry -> True; a key with no entry and no default
+#     -> False (today's _resolve_hint returns None for both); reply mode before the reply exists -> False;
+#     an entry with p50 None -> False.   (regression of X1: fails on HEAD's single None)
+#   class TestPlanRegistration:
+#   - test_an_exact_hint_session_ends_at_the_turn_with_no_next: the turn named by the previous hint and
+#     carrying none -> True; a first request with no hints at all -> False (an un-hinted client must keep
+#     its writes).
+# test_storage_read_dispatch.py (fixture backup_ready_cache):
+#   - test_an_ended_turns_nodes_take_no_write_no_lock_and_no_pending_tokens
+#   - test_a_split_of_a_skipped_node_skips_both_fragments   (bookkeeping: _replace_pending_write_through_node)
+# test_next_use_eviction.py, TestNextUseOnACpuTree (real CPU tree):
+#   - test_a_turn_after_a_skipped_one_writes_the_skipped_node_first   (the heal; derived property)

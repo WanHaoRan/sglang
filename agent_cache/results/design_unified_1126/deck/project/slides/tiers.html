@@ -1,0 +1,20 @@
+<section id="tiers" class="foot">
+<div class="head">
+<p class="eyebrow">The setting · three tiers</p>
+<h2 class="title">The prefix caches of 128 sessions do not fit in memory</h2>
+</div>
+<table class="t">
+<tr><th style="width:17%">Where the KV is</th><th style="width:41%">What it holds</th><th style="width:42%">What a returning 25K-token session pays</th></tr>
+<tr><td>GPU memory</td><td>668K tokens, about 20 running turns</td><td>nothing</td></tr>
+<tr><td>Host memory</td><td>1.63M tokens (160 GB); 0.65M copy what the GPU holds, 0.97M are left for other sessions</td><td>a copy to the GPU: under 0.1 s</td></tr>
+<tr><td>SSD</td><td>2.3 TiB, about 25M tokens; one device, 2.1 GB/s for reads and writes together</td><td>a read, then the copy: about 1.1 s on an idle device, plus its wait in the device’s line (40 s late in a run)</td></tr>
+<tr><td>Nowhere</td><td>the tokens only</td><td>recompute: about 0.8 s on an idle GPU; on a busy one every waiting turn waits behind it</td></tr>
+</table>
+<div class="row">
+<div class="card-s in1" style="flex:1"><p class="mid">320 GB</p><p class="small">of KV for 128 sessions in progress (3.3M tokens); memory holds half.</p></div>
+<div class="card-s in2" style="flex:1"><p class="mid">21K tokens/s</p><p class="small">is all the SSD can move, in or out: less than one session a second.</p></div>
+<div class="card-s in3" style="flex:1"><p class="mid">2.4 turns/s</p><p class="small">is what the GPU admits when saturated; each needs its session’s KV on the GPU.</p></div>
+</div>
+<p class="footer">One H200, Qwen3-30B-A3B, 16-bit KV: 98,304 bytes a token, 6 MiB a 64-token page. Measured in campaign 34 (128 users, 160 GB host pool, FlashAttention 3).</p>
+<aside>The prefix cache can be in three places. GPU memory holds 668 thousand tokens of KV, enough for about 20 turns running at once. Host memory holds 1.63 million tokens in a 160 gigabyte pool; the engine keeps a host copy of every page the GPU holds, so 0.65 million of those tokens mirror the GPU and 0.97 million are left for sessions that are not on the GPU. The SSD holds about 25 million tokens, but it is one device that moves 2.1 gigabytes a second, reads and writes together, which is 21 thousand tokens a second: less than one average session a second. Where a session’s KV is decides what its next turn pays. On the GPU, nothing. In host memory, a copy that takes under a tenth of a second. On the SSD, a read into host memory and then the copy: about 1.1 seconds on an idle device, after waiting its place in the device’s line, and late in a busy run that wait reaches 40 seconds. If the KV is nowhere, the GPU recomputes it: about 0.8 seconds for 25 thousand tokens on an idle GPU, and on a busy GPU every turn waiting behind it waits as well. With 128 sessions in progress the KV adds up to about 320 gigabytes, and memory holds half of it. So KV has to move between tiers all the time, and the questions are when, which, and in what order.</aside>
+</section>

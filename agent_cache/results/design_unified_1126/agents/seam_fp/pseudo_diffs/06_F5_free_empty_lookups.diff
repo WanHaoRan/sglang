@@ -1,0 +1,166 @@
+Pseudo-diff F5 (seam_fp, nothing applied): lookups that find nothing are free (OPEN_ITEMS.md section 1, defect 1).
+Switch SGLANG_HICACHE_NEXT_TURN_FREE_EMPTY_LOOKUPS (EnvBool False); needs the arrival gate.
+Both ways of OPEN_ITEMS section 1, B first: B removes the lookup that cannot find anything, A makes the allowance
+count reads, as MAX_REFETCHES's own comment says (next_turn_prefetch.py:108-110).
+
+OPEN_ITEMS section 1's anchors at HEAD (it was written at fe7d9a10bc):
+  plan key = previous prompt + reply        next_turn_prefetch.py:549-569 (key from unified_radix_cache.py:1139-1150)
+  gate: chain - matched                     next_turn_prefetch.py:1418-1419
+  queue check: baseline - resident          next_turn_prefetch.py:847, 856, 920
+  a lookup asks for the request's prompt    scheduler.py:3157, 3171 (unchanged)
+  MAX_REFETCHES = 2                         next_turn_prefetch.py:110; counted at 1428-1437 (gate), 726 and 924-935
+  the lookup's result                       cache_controller.py:1287-1309 (storage thread) -> prefetch_hit_queue ->
+                                            unified_radix_cache.py:3418-3463, drained on the SCHEDULER thread
+  tests that pin today's behaviour          test_next_turn_prefetch.py:1597-1612 and 774-797
+One correction: "a lookup's result is known only in the storage thread, and nothing reports it back to the plan".
+The result does reach the scheduler thread: the drain revokes a miss at 3431-3458. Nothing tells the plan there;
+that is the seam for way A.
+
+Way B: cut the plan's key to what the turn's prompt shares with it.
+--- python/sglang/srt/mem_cache/next_turn_prefetch.py
+@@ class TurnPlan (after `lookups`, line 293)
++    # Tokens of the key that the arrived turn's prompt repeats, from the start; None until its first gate call.
++    shared_tokens: Optional[int] = None
++    # Storage holds nothing of the turn's prompt from this offset on, as of its last lookup; None = not known.
++    absent_from: Optional[int] = None
++    # The gate (lookups) and the queue check (refetches) charged the lookup now under way; its result may
++    # give both back.
++    lookup_charged: bool = False
++    refetch_charged: bool = False
++    # Lookups given back: bounds a turn whose lookups keep finding nothing.
++    free_lookups: int = 0
+@@ new helper
++    def _shared_chain(self, plan, matched_tokens, new_input_tokens) -> int:
++        """History the turn can have in any tier: the key up to where its prompt leaves it, and no further than
++        storage was found to reach."""
++        if not self._free_empty_lookups:
++            return len(plan.key)
++        if plan.shared_tokens is None and new_input_tokens is not None:
++            # The first matched_tokens were matched in the tree for this very prompt.
++            key_tail = plan.key.raw_token_ids()[matched_tokens:]
++            plan.shared_tokens = min(
++                len(plan.key), matched_tokens + common_prefix_len(key_tail, new_input_tokens)
++            )
++        chain = len(plan.key) if plan.shared_tokens is None else plan.shared_tokens
++        return chain if plan.absent_from is None else min(chain, max(plan.absent_from, matched_tokens))
+   common_prefix_len(a, b): bisect on slice equality (C speed; at most 17 compares of <= 65K ints), in
+   mem_cache/next_turn_policy.py or a utils module; once per turn.
+@@ prefetch_gate: `chain = len(plan.key)` -> `chain = self._shared_chain(plan, matched_tokens, new_input_tokens)`
+   (shown in 05_F4; when chain - matched < threshold because of absent_from the decision is logged "absent",
+    otherwise "covered"; both spend nothing.)
+@@ prefetch_gate, the charged branch (1433-1437)
+             decision = "read" if plan.lookups == 0 else "reread"
+             plan.lookups += 1
++            plan.lookup_charged = True
+@@ _check_queued (847) and _wants_refetch (920): the queue check uses the same length
+-        baseline = max(len(plan.key), req.storage_prefetch_last_match_len or 0)
++        baseline = self._queued_baseline(plan, req)
++    def _queued_baseline(self, plan, req) -> int:
++        if not self._free_empty_lookups or (plan.shared_tokens is None and plan.absent_from is None):
++            return max(len(plan.key), req.storage_prefetch_last_match_len or 0)
++        chain = len(plan.key) if plan.shared_tokens is None else plan.shared_tokens
++        return chain if plan.absent_from is None else min(chain, plan.absent_from)
+   (storage_prefetch_last_match_len is dropped from the max when the shared length is known: it is the match at
+    the last lookup and can exceed the key only by tokens no plan claims.)
+
+Way A: the lookup's result reaches the plan; an empty one is given back and not repeated.
+--- python/sglang/srt/mem_cache/unified_radix_cache.py
+@@ hooks (after prefetch_refused_fn, line 331)
++        # Told every storage lookup's result for a live read: (request, storage_start, requested tokens, hit
++        # tokens). Runs inside the drain, so it must not call the cache.
++        self.prefetch_lookup_fn: Optional[Callable[..., None]] = None
+@@ _drain_and_alloc_storage_hit (3429-3431)
+                 if hit_tokens > 0:
+                     self._record_storage_prefetch_hit(request, hit_tokens)
++                if self.prefetch_lookup_fn is not None:
++                    self.prefetch_lookup_fn(
++                        request,
++                        storage_start=operation.storage_start,
++                        requested_tokens=operation.stats_requested_tokens,
++                        hit_tokens=hit_tokens,
++                    )
+                 if operation.is_terminated():
+--- python/sglang/srt/mem_cache/next_turn_prefetch.py
+@@ __init__
++        self._free_empty_lookups = (
++            mode == "on" and arrival_gate == "on" and envs.SGLANG_HICACHE_NEXT_TURN_FREE_EMPTY_LOOKUPS.get()
++        )
++        if self._free_empty_lookups:
++            tree_cache.prefetch_lookup_fn = self.on_lookup_result
++    def on_lookup_result(
++        self, handle: CacheRequestHandle, *, storage_start: int, requested_tokens: int, hit_tokens: int
++    ) -> None:
++        """A storage lookup for handle answered. Called inside the cache's drain, so it only marks the plan."""
++        plan = self._plans.get(handle.rid)
++        if plan is None:
++            return
++        found = hit_tokens >= self._tree_cache.prefetch_threshold
++        # Pages are found from the start of the asked span and the lookup stops at the first one missing.
++        plan.absent_from = storage_start + (hit_tokens if found else 0)
++        refunded = False
++        if not found and plan.free_lookups < NTP_MAX_FREE_LOOKUPS:
++            if plan.lookup_charged:
++                plan.lookups -= 1
++                refunded = True
++            if plan.refetch_charged:
++                plan.refetches -= 1
++                refunded = True
++            if refunded:
++                plan.free_lookups += 1
++                plan.refetch_capped = False
++        plan.lookup_charged = plan.refetch_charged = False
++        _log_event(
++            "ntp_lookup", handle.rid, start=storage_start, asked=requested_tokens, hit=hit_tokens,
++            refunded=int(refunded), lookups=plan.lookups,
++        )
++# Lookups a turn may get back for finding nothing. Arbitrary; as NTP_MAX_ROOM_RETRIES.
++NTP_MAX_FREE_LOOKUPS = 8
+@@ on_refetch_result (720-727): the queue check's count is marked so an empty answer can give it back
+         if issued:
+             if decision.room_retry:
+                 self._take_room_retry(plan)
+             else:
+                 plan.refetches += 1
++                plan.refetch_charged = self._free_empty_lookups
+                 plan.room_refused = False
+   (today plan.refetches counts every issued refetch, also one whose lookup then finds nothing: the queue check's
+    half of defect 1, next_turn_prefetch.py:726, where issued = has_ongoing_prefetch right after the call and a
+    lookup under way counts as a read under way. The gate charges first, in the same Scheduler call
+    (_on_next_turn_refetch, scheduler.py:3211-3218), then on_refetch_result; the drain answers passes later.)
+
+Why the absent mark is safe. A page of the session's own history is written through at the end of the turn that
+made it, and a pending write locks its host pages (write_backup_storage, unified_radix_cache.py:2055-2060), so a
+span that is missing from memory was either written before it left memory or never: its storage state does not
+improve while the turn waits. What can change it: another session writing a shared prefix (the mark then costs a
+recompute of what appeared meanwhile), and the SSD cleaner (a later lookup finds less and moves the mark down).
+A match that shrinks below absent_from re-opens the lookup, because _shared_chain takes max(absent_from, matched)
+only for the "nothing to read" test and the next lookup asks from the new match.
+
+The staged lookup is not an arrival. _stage (next_turn_prefetch.py:1535-1572) calls prefetch_from_storage with the
+key's own tail before the turn exists, and the gate runs inside that call. It must neither set shared_tokens (the
+tail trivially shares everything with itself) nor price a recompute (F4):
+@@ _stage (1549)
+         if gate and not cache.has_ongoing_prefetch(handle):
++            plan.staging_call = True
+             cache.prefetch_from_storage(
+ ...
+             )
++            plan.staging_call = False
+@@ _shared_chain / prefetch_gate
++        if plan.staging_call:
++            return len(plan.key)          # and the recompute branch is skipped
+(TurnPlan gains staging_call: bool = False. The refund and the absent mark do apply to a staged lookup: an empty
+one gives back the lookup it took at the gate; the staging count, NTP_MAX_STAGINGS, stays spent.)
+
+What the records say (agents/seam_fp/out_f5_*.txt, out_f5_tail_check.txt), campaign 34, requests to minute 110:
+- 63 to 75 % of SSD lookups found nothing (4,883 to 5,759 of 7,451 to 8,110 an arm); on TraceLab (campaign 33
+  ec_full) 3,686 of 3,710.
+- 3,981 and 4,293 planned turns (ec_full, jit_exact) had an arrival lookup that found nothing; for 91.5 to 91.9 %
+  of them chain - matched equals the previous reply's length to within one page, and for 0.6 to 0.8 % history was
+  really missing from memory. Way B removes these lookups.
+- At an empty queue such a turn waited a median 17.7 ms for admission against 1.1 to 1.4 ms for a turn the gate
+  called covered (campaign 33: 15.5 against 0.9 ms, on 2,469 of 6,778 requests).
+- Turns admitted without their history after the gate answered capped: 3 (ec_full), 10 (jit_exact), 26 (jit_p50),
+  1 (ec_exact), carrying 4.6, 19.8, 51.7 and 2.1 % of the history each arm computed again (0.06, 0.30, 0.85 and
+  0.02 M tokens); in all but 3 of jit_p50's 26 every lookup the turn had made found nothing. Campaign 32 ec_full:
+  133 turns, 4.2 M tokens, 20 %.

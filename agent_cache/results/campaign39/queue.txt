@@ -1,0 +1,10 @@
+# <label> <server arm> <hints> <client flags joined by commas, or -> <engine folder in frozen/> [extra server flags ...]
+# Campaign 39: campaign 35's setting (FreeInference on FA3, 0.1 users/s, at most 128 in session, 160 GB host, recorded
+# waits x1, 2 h) with the load hold on (settings.env: SGLANG_HICACHE_PREFILL_LOAD_HOLD_STEPS=16): a prefill batch that
+# loads 8,192 tokens or more from host memory waits up to 16 decode steps for the copy, so decoding runs beside it.
+# Requests pair with campaigns 34 and 35 by user, stream and index.
+# ec_full_load: campaign 35's ec_full line on the engine copy that adds only the hold (engine_loadhold_20261126:
+# the baseline engine plus scheduler_components/prefill_load_hold.py and its switch; diff -rq against
+# engine_fa3fix_20261122 lists environ.py, scheduler.py, the new module, and two files whose new arguments keep
+# their old defaults).
+ec_full_load three_tier_wc_oracle_v2_nu_owned dist --hint-no-call engine_loadhold_20261126 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning harm --hicache-storage-next-turn-soft-pins on --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30}

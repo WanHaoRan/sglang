@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import atexit
+import itertools
 import logging
 import threading
 import time
 from dataclasses import replace
 from queue import Queue
-from typing import TYPE_CHECKING, Callable, Iterator, NamedTuple, Optional, Sequence, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Collection,
+    Iterator,
+    NamedTuple,
+    Optional,
+    Sequence,
+    TypeVar,
+)
 
 import msgspec
 import torch
@@ -39,7 +49,12 @@ from sglang.srt.mem_cache.buffer_mode.storage_existence_cache import (
     StorageExistenceCache,
 )
 from sglang.srt.mem_cache.common import RetractionBackup
-from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer, SidecarPoolSpec
+from sglang.srt.mem_cache.hicache_storage import (
+    HiCacheStorage,
+    PoolName,
+    PoolTransfer,
+    SidecarPoolSpec,
+)
 from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
     HybridCacheController,
     PPPrefetchDecision,
@@ -57,6 +72,11 @@ from sglang.srt.mem_cache.storage_prefetch import StoragePrefetchRetries
 from sglang.srt.mem_cache.storage_read_scheduler import (
     ParkedRead,
     StorageReadScheduler,
+)
+from sglang.srt.mem_cache.storage_retention import (
+    RetentionSwitches,
+    resolve_retention_switches,
+    stored_votes,
 )
 from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
 from sglang.srt.mem_cache.unified_cache.cache_action import (
@@ -111,6 +131,7 @@ if TYPE_CHECKING:
     from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
         PrefetchOperation,
     )
+    from sglang.srt.mem_cache.next_turn_estimators import ReadPathLags
     from sglang.srt.mem_cache.pool_host import PoolEntry
     from sglang.srt.server_args import ServerArgs
 
@@ -193,6 +214,21 @@ class _OngoingPrefetch(NamedTuple):
 
 
 class UnifiedRadixCache(BasePrefixCache):
+    # Set by the next-turn prefetcher under env switches; None = off. Class-level defaults,
+    # unlike the hooks of __init__: a cache built without it has them too.
+    # The gate that also reads the prompt, asked in place of prefetch_gate_fn: (request,
+    # matched tokens, prompt from the match on).
+    prefetch_gate_prompt_fn: Optional[
+        Callable[[CacheRequestHandle, int, Sequence[int]], bool]
+    ] = None
+    # Told the answer of every storage lookup whose read is still wanted (storage_start,
+    # requested_tokens, hit_tokens); runs inside the drain, so it must not call the cache.
+    prefetch_lookup_fn: Optional[Callable[..., None]] = None
+    # The read path's lags, fed at park, dispatch and landing once installed; None = off.
+    read_lags: Optional[ReadPathLags] = None
+    # The Retain switches; all off on a cache that never ran _init_storage_retention.
+    retention = RetentionSwitches()
+
     def __init__(
         self,
         params: CacheInitParams,
@@ -463,6 +499,10 @@ class UnifiedRadixCache(BasePrefixCache):
         self.ongoing_backup: dict[int, _OngoingBackup] = {}
         # Host tokens locked by submitted storage writes not yet acked (cache mode).
         self.pending_backup_tokens = 0
+        # Decided before a node's storage write is submitted or acked: skip it (an ended
+        # session's last turn), or zero its pages' mtime at the ack. Ids are not reused.
+        self._storage_skip_nodes: set[NodeId] = set()
+        self._retire_at_ack: set[NodeId] = set()
         if self.buffer_pipeline is not None:
             self.buffer_pipeline.reset()
 
@@ -602,6 +642,7 @@ class UnifiedRadixCache(BasePrefixCache):
                 extra_metric_labels=self.extra_metric_labels,
             )
         self._init_storage_read_scheduling()
+        self._init_storage_retention()
         self.host_census = HostCensusLog.maybe_create(
             enabled=self.cache_controller is not None
             and self.cache_controller.enable_storage
@@ -650,6 +691,43 @@ class UnifiedRadixCache(BasePrefixCache):
             self.read_scheduler.write_hold_tokens,
         )
 
+    def _init_storage_retention(self) -> None:
+        """Resolve the Retain switches (storage_retention.py) for this cache and the
+        storage backend it has now; also run at each runtime attach."""
+        cc = self.cache_controller
+        backend = None if cc is None else cc.storage_backend
+        touch_interval_s, retire_ended_pages = 0.0, False
+        # Only a HiCacheStorage says what its cleaner honours.
+        if isinstance(backend, HiCacheStorage):
+            touch_interval_s = backend.touch_interval_s
+            retire_ended_pages = backend.retire_ended_pages
+        requested = RetentionSwitches(
+            track_stored=envs.SGLANG_HICACHE_STORAGE_TRACK_STORED.get(),
+            skip_ended_writes=envs.SGLANG_HICACHE_STORAGE_SKIP_ENDED_WRITES.get(),
+            touch_interval_s=touch_interval_s,
+            retire_ended_pages=retire_ended_pages,
+        )
+        self.retention, refused = resolve_retention_switches(
+            requested,
+            host_cache_mode=self.host_memory_mode == "cache",
+            python_tree_core=isinstance(self.tree_core, UnifiedTreeCore),
+            single_pp_rank=self.pp_size == 1,
+            next_turn_prefetch=get_memory().hicache_storage_next_turn_prefetch != "off",
+            full_kv_only=self.tree_components == (ComponentType.FULL,)
+            and not self.sidecar_pool_specs,
+        )
+        for reason in refused:
+            logger.warning("HiCache retention: %s", reason)
+        if requested != RetentionSwitches():
+            logger.info(
+                "HiCache retention: track_stored=%d skip_ended_writes=%d "
+                "touch_interval_s=%g retire_ended_pages=%d",
+                self.retention.track_stored,
+                self.retention.skip_ended_writes,
+                self.retention.touch_interval_s,
+                self.retention.retire_ended_pages,
+            )
+
     def register_sidecar_pool(
         self, spec: SidecarPoolSpec, entry: Optional[PoolEntry] = None
     ) -> None:
@@ -658,6 +736,10 @@ class UnifiedRadixCache(BasePrefixCache):
                 raise RuntimeError("HiCache controller is not attached.")
             self.cache_controller.register_host_pool_entry(entry)
         self.sidecar_pool_specs.append(spec)
+        if self.retention.retire_ended_pages:
+            # A draft model's pools are registered after init_hicache: retire was
+            # granted to a cache that had no sidecar file then.
+            self._init_storage_retention()
 
     def release_host_resources(self) -> None:
         if self.linker is not None:
@@ -679,6 +761,13 @@ class UnifiedRadixCache(BasePrefixCache):
         # Apply the walk's actions (e.g. a pending write-through relocation on
         # a split) before the finalizers, which can evict or raise.
         self._apply_cache_actions(result.cache_actions)
+        # A request's match is memory serving the chain; a probe carries no request.
+        if (
+            self.retention.touch_interval_s > 0.0
+            and params.req is not None
+            and self.enable_storage
+        ):
+            self._refresh_served_chain(result.last_host_node)
         for component in self._components_tuple:
             result = component.finalize_match_result_in_cache(params, result)
         # Finalizers must not emit actions; the walk's were applied above.
@@ -686,6 +775,19 @@ class UnifiedRadixCache(BasePrefixCache):
         if self.linker is not None and params.req is not None:
             result = self.linker.match(params.key, params.req, result)
         return result
+
+    def _refresh_served_chain(self, node_id: NodeId) -> None:
+        """The storage cleaner deletes the oldest mtime first: give the stored pages of
+        a chain that memory serves a recent one once any of them is an interval old."""
+        page_keys = self.tree_core.take_stale_storage_keys(
+            node_id,
+            now=time.monotonic(),
+            min_interval_s=self.retention.touch_interval_s,
+        )
+        if page_keys:
+            self.cache_controller.storage_backend.touch_pages(
+                page_keys, newest_ns=time.time_ns()
+            )
 
     def supports_fast_match_prefix(self) -> bool:
         return self.tree_core.supports_fast_match_prefix()
@@ -1147,6 +1249,9 @@ class UnifiedRadixCache(BasePrefixCache):
 
             insert_params.key = radix_key
             insert_params.value = values
+            insert_params.skip_storage_backup = self._turn_ends_session(
+                req, reply_known=True
+            )
             result = self.insert(insert_params)
 
             # Keep the prompt as an independent radix node. Finished requests
@@ -1354,6 +1459,10 @@ class UnifiedRadixCache(BasePrefixCache):
 
         insert_params.key = radix_key
         insert_params.value = values
+        # The reply is not generated yet: a hint read off the reply ends nothing here.
+        insert_params.skip_storage_backup = self._turn_ends_session(
+            req, reply_known=False
+        )
         result = self.insert(insert_params)
 
         if result.rotation_tail_declined:
@@ -1431,6 +1540,15 @@ class UnifiedRadixCache(BasePrefixCache):
 
     # ---- Internal Helpers ----
 
+    def _turn_ends_session(self, req: Req, *, reply_known: bool) -> bool:
+        return (
+            self.retention.skip_ended_writes
+            # Detached, no write comes to spend a skip: its node id would stay for good.
+            and self.enable_storage
+            and self.next_turn_prefetch is not None
+            and self.next_turn_prefetch.ends_session(req, reply_known=reply_known)
+        )
+
     def _apply_cache_actions(
         self, actions: list[CacheAction | ComponentAction]
     ) -> None:
@@ -1504,6 +1622,14 @@ class UnifiedRadixCache(BasePrefixCache):
         if freed > 0:
             logger.info("HICACHE_EVT evict_host tokens=%d requested=%d", freed, num_tokens)  # EVAL-PATCH
         return freed
+
+    def next_host_victim(self) -> Optional[UnifiedTreeNode]:
+        """The host leaf that eviction of FULL host room would take next; None when none
+        is evictable. One priority per evictable leaf: not for every pass."""
+        component = self.components[BASE_COMPONENT_TYPE]
+        if not isinstance(component, FullComponent):
+            return None
+        return component.next_host_victim()
 
     # ---- Decode retraction ----
 
@@ -1752,6 +1878,8 @@ class UnifiedRadixCache(BasePrefixCache):
             if not write_back:
                 lock_params = self.inc_lock_ref(node_id).to_dec_params()
             publish_node_ids = self._backup_publish_node_ids(node_id, comp_xfers)
+            if action.skip_storage:
+                self._storage_skip_nodes.update(publish_node_ids)
             self._track_write_through_node(
                 node_id, lock_params, publish_node_ids=publish_node_ids
             )
@@ -1831,6 +1959,11 @@ class UnifiedRadixCache(BasePrefixCache):
         if not replaced:
             return
 
+        if self.retention.explicit_ends:
+            # The fragments inherit what was decided for the node's storage write.
+            for decided in (self._storage_skip_nodes, self._retire_at_ack):
+                if old_node_id in decided:
+                    decided.update(new_node_ids)
         self.ongoing_write_through[ack_id] = _OngoingWriteThrough(
             lock_node_id,
             lock_params,
@@ -2027,6 +2160,32 @@ class UnifiedRadixCache(BasePrefixCache):
     def write_backup_storage(self, node_id: NodeId) -> None:
         if not self.enable_storage or self.cache_controller is None:
             return
+        if self.retention.skip_ended_writes and node_id in self._storage_skip_nodes:
+            # No op, no host lock, no pending tokens: the host copy can be evicted now.
+            self._storage_skip_nodes.discard(node_id)
+            self._retire_at_ack.discard(node_id)
+            logger.info(
+                "HICACHE_EVT h2s_skip node=%d tokens=%d reason=ended",
+                node_id,
+                len(self.tree_core.get_hash_values(node_id)) * self.page_size,
+            )
+            return
+        # A page parked for retire belongs to an ended session: no lookup will come
+        # through the chain above it, which the retire has just zeroed.
+        if self.retention.track_stored and node_id not in self._retire_at_ack:
+            self._heal_storage_chain_above(node_id)
+        self._submit_storage_write(node_id)
+
+    def _heal_storage_chain_above(self, node_id: NodeId) -> None:
+        """A lookup stops at the first page missing on storage: before a node's write,
+        queue every ancestor a failed, skipped or retired write left without a copy."""
+        if self._retire_at_ack:
+            # Something is built on these pages after their session's end: keep them.
+            self._retire_at_ack.difference_update(self.tree_core.ancestor_ids(node_id))
+        for ancestor_id in self.tree_core.unstored_ancestors(node_id):
+            self._submit_storage_write(ancestor_id)
+
+    def _submit_storage_write(self, node_id: NodeId) -> None:
         spec = self.tree_core.build_storage_backup_spec(
             node_id, self.hicache_storage_pass_prefix_keys
         )
@@ -2058,7 +2217,42 @@ class UnifiedRadixCache(BasePrefixCache):
             tokens=tokens,
         )
         self.pending_backup_tokens += tokens
+        if self.retention.track_stored:
+            self.tree_core.mark_storage_write(node_id, op_id=operation_id)
         logger.info("HICACHE_EVT h2s_submit op=%d node=%d tokens=%d pending=%d", operation_id, node_id, tokens, self.pending_backup_tokens)  # EVAL-PATCH
+
+    def retire_storage_chain(
+        self,
+        tail_node_id: NodeId,
+        *,
+        keep_tokens: int,
+        own_leaf_keys: Collection[str],
+    ) -> None:
+        """Give an ended session's own storage pages mtime zero, so the cleaner deletes
+        them first; a page whose write is on its way is retired at its ack instead."""
+        if not (self.retention.retire_ended_pages and self.enable_storage):
+            return
+        retired = self.tree_core.take_retired_storage_pages(
+            tail_node_id, keep_tokens=keep_tokens, own_leaf_keys=own_leaf_keys
+        )
+        # A write that write_backup_storage is going to skip leaves nothing to retire.
+        pending = [
+            node_id
+            for node_id in retired.pending_node_ids
+            if node_id not in self._storage_skip_nodes
+        ]
+        self._retire_at_ack.update(pending)
+        if retired.page_keys:
+            self.cache_controller.storage_backend.touch_pages(
+                retired.page_keys, newest_ns=None
+            )
+        logger.info(
+            "HICACHE_EVT l3_retire node=%d pages=%d at_ack=%d keep_tokens=%d",
+            tail_node_id,
+            len(retired.page_keys),
+            sum(len(self.tree_core.get_hash_values(node_id)) for node_id in pending),
+            keep_tokens,
+        )
 
     def is_backuped(self, node_id: NodeId) -> bool:
         return self.tree_core.is_backuped(node_id)
@@ -2150,6 +2344,8 @@ class UnifiedRadixCache(BasePrefixCache):
         # Prefix-covered writes justify extending a known hit to the left,
         # never beyond its confirmed right endpoint (including the SWA window).
         storage_start = len(matched_prefix_tokens or [])
+        # The gate reads the prompt whole, not cut to a known hit.
+        prompt_tail = new_input_tokens
         boundary_tokens = int(self.tree_core.is_eagle)
         assume_stored = (
             storage_hit_end is not None
@@ -2198,8 +2394,8 @@ class UnifiedRadixCache(BasePrefixCache):
             # Paced: the limiter clears as transfers finish, not on the next pass.
             self.storage_prefetch_retries.poll_miss(req_id, storage_hit_end)
             return
-        if self.prefetch_gate_fn is not None and not self.prefetch_gate_fn(
-            request, storage_start
+        if not self._prefetch_gate_allows(
+            request, matched_tokens=storage_start, prompt_tail=prompt_tail
         ):
             stats["declined_gate"] += 1
             return
@@ -2289,6 +2485,21 @@ class UnifiedRadixCache(BasePrefixCache):
             # allocation (_launch_storage_hit).
             self.cache_controller.prefetch_tokens_occupied += len(prefetch_key)
 
+    def _prefetch_gate_allows(
+        self,
+        request: CacheRequestHandle,
+        *,
+        matched_tokens: int,
+        prompt_tail: Sequence[int],
+    ) -> bool:
+        """The next-turn prefetcher's say on a storage lookup; no gate bound allows it. The
+        gate that also reads the prompt is asked in place of the other."""
+        if self.prefetch_gate_prompt_fn is not None:
+            return self.prefetch_gate_prompt_fn(request, matched_tokens, prompt_tail)
+        return self.prefetch_gate_fn is None or self.prefetch_gate_fn(
+            request, matched_tokens
+        )
+
     def _prefetch_timeout_check_linear_func(self, operation: PrefetchOperation) -> bool:
         return (
             time.monotonic() - operation.start_time
@@ -2335,6 +2546,16 @@ class UnifiedRadixCache(BasePrefixCache):
         # slight overcount, finished unacked reads also count here
         return sum(len(info.operation.hash_value) for info in self.ongoing_prefetch.values() 
                    if info.host_indices is not None)
+
+    def storage_read_line_pages(self, deadline: Optional[float]) -> int:
+        """Pages the read thread serves before a read parked now with this deadline (None =
+        needed now): the launched reads, and the parked ones dispatch orders no later."""
+        pages = self.storage_read_backlog_pages()
+        if self.read_scheduler is not None:
+            pages += self.read_scheduler.pages_due_by(
+                deadline, deadline_of=self._read_deadline
+            )
+        return pages
 
     def bind_prefetch_ticket(self, req_id: str, decision: bool = True) -> None:
         # PP0 also records misses/skips; only hits travel with the request relay.
@@ -2519,6 +2740,7 @@ class UnifiedRadixCache(BasePrefixCache):
             # storage span unresolved until admission proves that L2 -> L1
             # load-back actually materialized it for this request.
             self._resolve_storage_prefetch_tokens(request, insert_result.prefix_len)
+            self._observe_read_landing(operation, completed_tokens=completed_tokens)
             if loaded_from_storage > 0 and insert_result.inserted_host_node is not None:
                 self._pin_prefetch(
                     request, insert_result.inserted_host_node, loaded_from_storage
@@ -2549,6 +2771,35 @@ class UnifiedRadixCache(BasePrefixCache):
             self.cache_controller.prefetch_tokens_occupied,
         )
         return
+
+    def _report_storage_lookup(
+        self, operation: PrefetchOperation, *, hit_tokens: int
+    ) -> None:
+        """Tell the next-turn prefetcher what a storage lookup found. A terminated lookup
+        may not have run: its count is no answer."""
+        if self.prefetch_lookup_fn is None or operation.is_terminated():
+            return
+        self.prefetch_lookup_fn(
+            operation.handle,
+            storage_start=operation.storage_start,
+            requested_tokens=operation.stats_requested_tokens,
+            hit_tokens=hit_tokens,
+        )
+
+    def _observe_read_landing(
+        self, operation: PrefetchOperation, *, completed_tokens: int
+    ) -> None:
+        """Feed the read path's fixed lag: from dispatch to the pages' insertion, less the
+        pages ahead at dispatch and its own at the read thread's rate."""
+        if self.read_lags is None or operation.dispatched_at is None:
+            return
+        ms_per_page = self.cache_controller.storage_read_ms_per_page
+        if ms_per_page is None:
+            return
+        pages = operation.ahead_pages + completed_tokens // self.page_size
+        self.read_lags.fixed.observe(
+            time.perf_counter() - operation.dispatched_at - pages * ms_per_page / 1000.0
+        )
 
     def _check_hybrid_prefetch_result(
         self,
@@ -2985,6 +3236,33 @@ class UnifiedRadixCache(BasePrefixCache):
             - self._prefetch_occupied_span(prefetch_key, _host_indices),
         )
 
+    def parked_read_span(self, request: CacheRequestHandle) -> Optional[tuple[int, int]]:
+        """(first token, tokens) of the request's storage hit while it is parked for
+        dispatch; None once it went to the read thread, or with no read under way."""
+        info = self.ongoing_prefetch.get(request)
+        if (
+            info is None
+            or self.read_scheduler is None
+            or not self.read_scheduler.is_parked(request)
+        ):
+            return None
+        return info.operation.storage_start, info.operation.storage_hit_count
+
+    def parked_read_pages_ahead(self, request: CacheRequestHandle) -> int:
+        """Pages the read thread serves before the request's parked read: the launched
+        reads, and the parked ones dispatch orders before it."""
+        return self.storage_read_backlog_pages() + self.read_scheduler.pages_ahead_of(
+            request, deadline_of=self._read_deadline
+        )
+
+    def drop_parked_read(self, request: CacheRequestHandle) -> bool:
+        """Give up a storage hit still parked for dispatch, so that its turn is admitted
+        and recomputes the span. False, and nothing done, once the read was dispatched."""
+        if self.parked_read_span(request) is None:
+            return False
+        self.revoke_pending_prefetch(request)
+        return True
+
     def _launch_storage_hit(self, operation) -> bool:
         """Allocate the hit-sized bounce and launch the transfer.
         Returns False when staging pressure defers the allocation
@@ -3247,6 +3525,9 @@ class UnifiedRadixCache(BasePrefixCache):
         request = operation.handle
         pages = operation.storage_hit_count // self.page_size
         now = time.perf_counter()
+        if self.read_lags is not None:
+            # start_time is the lookup's submit time until dispatch resets it.
+            self.read_lags.lookup.observe(time.monotonic() - operation.start_time)
         self.read_scheduler.park(
             handle=request, operation=operation, pages=pages, now=now
         )
@@ -3270,6 +3551,8 @@ class UnifiedRadixCache(BasePrefixCache):
         now = time.perf_counter()
         self._release_stale_pins(now)
         if srs.update_write_hold(self.pending_backup_tokens):
+            if self.read_lags is not None:
+                self.read_lags.note_write_hold(held=srs.write_held, now=now)
             logger.info(
                 "HICACHE_EVT srs_write_hold state=%s pending_write_tokens=%d parked=%d "
                 "parked_pages=%d",
@@ -3295,6 +3578,10 @@ class UnifiedRadixCache(BasePrefixCache):
         self._census_dispatching = {decision.read.handle for decision in decisions}
         for decision in decisions:
             operation = decision.read.operation
+            if self.read_lags is not None:
+                operation.dispatched_at = now
+                # What the read thread still holds, before this read joins it.
+                operation.ahead_pages = self.storage_read_backlog_pages()
             # The timeout policy's clock runs from dispatch, not from the lookup.
             operation.start_time = time.monotonic()
             self._launch_storage_hit(operation)
@@ -3372,6 +3659,56 @@ class UnifiedRadixCache(BasePrefixCache):
         for handle in stale:
             self._unpin_prefetch(handle, reason="leak")
 
+    def _agree_stored(self, operations: list, *, synced: bool) -> list[bool]:
+        """Whether each acked storage write covered all its pages on every TP rank: a
+        rank counts its own pages only, and differing marks would diverge the trees."""
+        votes = stored_votes(
+            operations,
+            page_size=self.page_size,
+            writes_nothing=self.cache_controller.backup_skip,
+        )
+        # PP = 1 here (the marks are refused otherwise): _all_reduce is the TP minimum.
+        if not (synced and votes and self.tp_world_size > 1):
+            return votes
+        agreed = torch.tensor(votes, dtype=torch.int)
+        self._all_reduce(agreed, torch.distributed.ReduceOp.MIN)
+        return [bool(vote) for vote in agreed.tolist()]
+
+    def _commit_storage_write(
+        self, entry: _OngoingBackup, *, operation, stored: bool
+    ) -> None:
+        if not stored:
+            logger.info(
+                "HICACHE_EVT h2s_short op=%d node=%d tokens=%d completed=%d",
+                operation.id,
+                entry.node_id,
+                entry.tokens,
+                operation.completed_tokens,
+            )
+        # A split may have cut the node since the submit: each fragment is retired, or
+        # not, as the retire walk decided for it.
+        retired = self.tree_core.finish_storage_write(
+            entry.node_id,
+            op_id=operation.id,
+            stored_at=time.monotonic() if stored else None,
+            retire=self._retire_at_ack,
+        )
+        if not retired:
+            return
+        self._retire_at_ack.difference_update(retired)
+        page_keys = [
+            key
+            for node_id in retired
+            for key in self.tree_core.get_hash_values(node_id)
+        ]
+        self.cache_controller.storage_backend.touch_pages(page_keys, newest_ns=None)
+        logger.info(
+            "HICACHE_EVT l3_retire_ack op=%d node=%d pages=%d",
+            operation.id,
+            entry.node_id,
+            len(page_keys),
+        )
+
     def _drain_storage_control_queues_impl(
         self,
         n_storage_hit: Optional[int],
@@ -3428,6 +3765,7 @@ class UnifiedRadixCache(BasePrefixCache):
                     continue
                 if hit_tokens > 0:
                     self._record_storage_prefetch_hit(request, hit_tokens)
+                self._report_storage_lookup(operation, hit_tokens=hit_tokens)
                 if operation.is_terminated():
                     # Controller-side miss termination (retryable) or an abort
                     # race (abort cleanup discards the marker).
@@ -3503,7 +3841,13 @@ class UnifiedRadixCache(BasePrefixCache):
 
         def _drain_backup():
             drained = 0
-            for operation in _drain_queue(cc.ack_backup_queue, n_backup):
+            operations = _drain_queue(cc.ack_backup_queue, n_backup)
+            verdicts = itertools.repeat(None)
+            if self.retention.track_stored:
+                operations = list(operations)
+                # n_backup is None on the detach path, which no other rank mirrors.
+                verdicts = self._agree_stored(operations, synced=n_backup is not None)
+            for operation, stored in zip(operations, verdicts):
                 drained += 1
                 if buffer_mode:
                     # Storage write acked: free the staging.
@@ -3513,7 +3857,11 @@ class UnifiedRadixCache(BasePrefixCache):
                     if entry is not None:
                         self.dec_host_lock_ref(entry.node_id, entry.lock_params)
                         self.pending_backup_tokens -= entry.tokens
-                logger.info("HICACHE_EVT h2s_done op=%d tokens=%d pending=%d", operation.id, operation.completed_tokens, self.pending_backup_tokens)  # EVAL-PATCH
+                        if stored is not None:
+                            self._commit_storage_write(
+                                entry, operation=operation, stored=stored
+                            )
+                logger.info("HICACHE_EVT h2s_done op=%d tokens=%d pending=%d%s", operation.id, operation.completed_tokens, self.pending_backup_tokens, "" if stored is None else f" stored={int(stored)}")  # EVAL-PATCH
                 if (
                     log_metrics
                     and self.enable_storage_metrics
@@ -3662,7 +4010,18 @@ class UnifiedRadixCache(BasePrefixCache):
             # L3 is empty now: every storage-presence belief is stale, and a
             # retained positive would skip that page's backup forever.
             self.storage_existence_cache.clear()
+            if self.retention.track_stored:
+                self._forget_storage_copies(detached=False)
         return ok
+
+    def _forget_storage_copies(self, *, detached: bool) -> None:
+        """The store was emptied or detached: no node counts as stored or queued, and
+        no page still on its way is retired at an ack that can no longer find it."""
+        self.tree_core.clear_storage_marks()
+        self._retire_at_ack.clear()
+        if detached:
+            # A host copy still in flight is not written on to a detached store.
+            self._storage_skip_nodes.clear()
 
     # ---- HiCache: Async Event Management ----
 

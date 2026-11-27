@@ -66,8 +66,10 @@ TokenCake learn per kind); `stall_finished` when the wait is over, just before t
 vLLM 0.22.0's native CPU offloading allocates the whole CPU tier as one pinned tensor
 (`vllm/v1/kv_offload/cpu/gpu_worker.py`, `torch.zeros(..., pin_memory=True)`). On this host one pinned allocation
 succeeds at 122 GiB and fails at 130 and 149 GiB with "CUDA error: out of memory" (tested 2026-11-21 in TokenCake's
-own environment; the full-size boot failed the same way). The other systems pin in pieces (LMCache, 10 GiB at a
-time) or as SGLang does, and get 160 GB. TokenCake gets 120 GiB (129 GB), `CPU_GIB_MAX` in `start_server.sh`;
+own environment; the full-size boot failed the same way). The cause is torch's pinned allocator, which rounds every
+request up to a power of two (torch 2.11, `ATen/core/CachingHostAllocator.h`, `PowerOf2Ceil`): 130 and 149 GiB ask
+for 256 GiB, more than the host's 196 GiB of RAM, and 122 GiB asks for 128 GiB. The other systems pin in pieces
+(LMCache, 10 GiB at a time) or as SGLang does (`cudaHostRegister` at the pool's size), and get 160 GB. TokenCake gets 120 GiB (129 GB), `CPU_GIB_MAX` in `start_server.sh`;
 changing vLLM's allocator would no longer be the released code.
 
 ## TokenCake's own evaluation, scaled down (2026-11-21, GPU)

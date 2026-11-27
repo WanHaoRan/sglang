@@ -9,7 +9,9 @@ more than the grace (oldest first: the turn is not coming), sessions returning
 beyond the horizon (farthest first), unregistered nodes by plain LRU, the
 sessions returning within the horizon (farthest first), and last the sessions
 whose turn waits in the queue. Priorities compare as tuples, smallest evicted
-first, like every other EvictionStrategy.
+first, like every other EvictionStrategy. Among queued turns the order is LRU, or with
+queued_order "farthest" the turn that arrived last first: under FCFS admission it is
+the one admitted last, so its history has the farthest next use.
 
 ReturnChanceStrategy orders the same registrations by a distribution instead of a
 point (agent_cache/PAPER_PLAN.md, "Formulation", rule 3): a tail registered with a
@@ -58,9 +60,13 @@ POINT_GRACE_S = 5.0
 # A session registered as queued for longer than this ranks as un-hinted again: a turn
 # aborted before it commits leaves the registration behind. Arbitrary; as the pin backstop.
 QUEUED_MAX_AGE_S = 600.0
+# Shortest horizon a holding rate is taken over, seconds. Arbitrary; no copy is dropped
+# and read back faster than about one read.
+HOLDING_MIN_HORIZON_S = 0.5
 
 
 RETURN_SCORES = ("entry", "samples", "lru", "queue")
+QUEUED_ORDERS = ("lru", "farthest")
 
 
 class ReturnForecast(msgspec.Struct, frozen=True):
@@ -82,6 +88,33 @@ class Queued(msgspec.Struct, frozen=True):
 
 
 Registration = Union[None, float, ReturnForecast, Queued]
+
+
+def _check_queued_order(queued_order: str) -> str:
+    if queued_order not in QUEUED_ORDERS:
+        raise ValueError(
+            f"queued_order {queued_order!r} must be one of {QUEUED_ORDERS}"
+        )
+    return queued_order
+
+
+def _queued_score(*, queued_order: str, queued: Queued, node: TreeNode) -> float:
+    """Rank inside the queued tier, smallest evicted first."""
+    if queued_order == "farthest":
+        # Admission is FCFS (the pass-over lets at most MAX_PASSES turns go ahead of a
+        # refused one), so the latest arrival has the longest wait left.
+        return -queued.since
+    return node.last_access_time
+
+
+def queued_holding_rate(queued_order: str, *, queue_wait_s: Optional[float]) -> float:
+    """Per second, what the history of the queued turn eviction takes first is worth: one
+    over its wait left. Under "farthest" that turn is the last arrival, which waits
+    queue_wait_s (None = not known); under "lru" it is the turn least recently touched,
+    nearest admission, so the shortest horizon stands."""
+    if queued_order == "farthest" and queue_wait_s is not None:
+        return 1.0 / max(queue_wait_s, HOLDING_MIN_HORIZON_S)
+    return 1.0 / HOLDING_MIN_HORIZON_S
 
 
 class NextUseRegistry:
@@ -142,6 +175,7 @@ class NextUseStrategy(EvictionStrategy):
         horizon_s: float = 300.0,
         overdue_grace_s: float = 60.0,
         clock: Callable[[], float] = time.perf_counter,
+        queued_order: str = "lru",
     ):
         if horizon_s < 0 or overdue_grace_s < 0:
             raise ValueError(
@@ -151,6 +185,7 @@ class NextUseStrategy(EvictionStrategy):
         self.horizon_s = float(horizon_s)
         # 60 s matches the prefetcher's minimum plan expiry (MIN_EXPIRY_S).
         self.overdue_grace_s = float(overdue_grace_s)
+        self.queued_order = _check_queued_order(queued_order)
         self._clock = clock
         self.registry = NextUseRegistry()
 
@@ -163,13 +198,38 @@ class NextUseStrategy(EvictionStrategy):
         if isinstance(next_use, Queued):
             if self._clock() - next_use.since > QUEUED_MAX_AGE_S:
                 return (TIER_UNKNOWN, node.last_access_time)
-            return (TIER_QUEUED, node.last_access_time)
+            return (
+                TIER_QUEUED,
+                _queued_score(
+                    queued_order=self.queued_order, queued=next_use, node=node
+                ),
+            )
         delta = next_use - self._clock()
         if delta < -self.overdue_grace_s:
             return (TIER_OVERDUE, next_use)
         if delta > self.horizon_s:
             return (TIER_FAR, -next_use)
         return (TIER_SOON, -next_use)
+
+    def holding_rate(
+        self, node: TreeNode, *, queued: Optional[float] = None
+    ) -> Optional[float]:
+        """Per second, for the price of host room: one over the seconds to the registered next
+        use; 0 for an ended or overdue session; None when unregistered. `queued` is the
+        answer for a session whose turn waits in the queue, whose wait the caller knows.
+        """
+        known, next_use = self.registry.lookup(node.id)
+        if not known:
+            return None
+        if isinstance(next_use, Queued):
+            stale = self._clock() - next_use.since > QUEUED_MAX_AGE_S
+            return None if stale else queued
+        if next_use is None:
+            return 0.0
+        left = next_use - self._clock()
+        if left < -self.overdue_grace_s:
+            return 0.0
+        return 1.0 / max(left, HOLDING_MIN_HORIZON_S)
 
 
 class ReturnChanceStrategy(EvictionStrategy):
@@ -189,6 +249,7 @@ class ReturnChanceStrategy(EvictionStrategy):
         horizon_s: float = 30.0,
         score: str = "entry",
         clock: Callable[[], float] = time.perf_counter,
+        queued_order: str = "lru",
     ):
         if horizon_s <= 0:
             raise ValueError(f"horizon_s {horizon_s} must be positive")
@@ -196,22 +257,26 @@ class ReturnChanceStrategy(EvictionStrategy):
             raise ValueError(f"score {score!r} must be one of {RETURN_SCORES}")
         self.horizon_s = float(horizon_s)
         self.score = score
+        self.queued_order = _check_queued_order(queued_order)
         self._clock = clock
         self.registry = NextUseRegistry()
         # Node id -> the registered tail whose session the node belongs to. Bounded
         # like the registry, oldest first.
         self._tail_of: OrderedDict[int, int] = OrderedDict()
 
-    def _session_registration(self, node: TreeNode) -> tuple[bool, Registration]:
+    def _session_registration(
+        self, node: TreeNode, *, adopt: bool = True
+    ) -> tuple[bool, Registration]:
         """The registration of the node's session. The prefetcher registers one tail
         per session; a session's body once that tail is evicted, and a span read back
         under it, are other nodes. A node takes the registration of its only child
         (found when the child was ranked) or of the parent it is the only child of:
-        with one child there is one session on that path."""
+        with one child there is one session on that path. adopt=False only reads: pricing
+        or peeking at a node must not change which session eviction ranks it with."""
         registry = self.registry
         parent = node.parent
         only_child = parent is not None and len(parent.children) == 1
-        if parent is not None and not only_child:
+        if adopt and parent is not None and not only_child:
             # A branch point belongs to no single session, even if it once had one child.
             self._tail_of.pop(parent.id, None)
         tail_id = node.id
@@ -231,8 +296,9 @@ class ReturnChanceStrategy(EvictionStrategy):
             known, forecast = registry.lookup(tail_id)
             if not known:
                 return False, None
-            self.adopt(node.id, tail_id)
-        if only_child and not registry.lookup(parent.id)[0]:
+            if adopt:
+                self.adopt(node.id, tail_id)
+        if adopt and only_child and not registry.lookup(parent.id)[0]:
             self.adopt(parent.id, tail_id)
         return True, forecast
 
@@ -244,7 +310,13 @@ class ReturnChanceStrategy(EvictionStrategy):
             self._tail_of.popitem(last=False)
 
     def get_priority(self, node: TreeNode) -> tuple[int, float, float]:
-        known, forecast = self._session_registration(node)
+        return self._priority(node, adopt=True)
+
+    def peek_priority(self, node: TreeNode) -> tuple[int, float, float]:
+        return self._priority(node, adopt=False)
+
+    def _priority(self, node: TreeNode, *, adopt: bool) -> tuple[int, float, float]:
+        known, forecast = self._session_registration(node, adopt=adopt)
         if not known:
             return (RETURN_TIER_UNKNOWN, node.last_access_time, 0.0)
         if forecast is None:
@@ -253,7 +325,13 @@ class ReturnChanceStrategy(EvictionStrategy):
         if isinstance(forecast, Queued):
             if self._clock() - forecast.since > QUEUED_MAX_AGE_S:
                 return (RETURN_TIER_UNKNOWN, node.last_access_time, 0.0)
-            return (RETURN_TIER_QUEUED, node.last_access_time, 0.0)
+            return (
+                RETURN_TIER_QUEUED,
+                _queued_score(
+                    queued_order=self.queued_order, queued=forecast, node=node
+                ),
+                0.0,
+            )
         if self.score in ("lru", "queue"):
             return (RETURN_TIER_UNKNOWN, node.last_access_time, 0.0)
         idle = self._clock() - forecast.idle_from
@@ -269,6 +347,30 @@ class ReturnChanceStrategy(EvictionStrategy):
         # Among equal chances the session expected back later goes first, so exact
         # hints give farthest-next-use order.
         return (RETURN_TIER_SCORED, chance, idle - dist.median_s)
+
+    def holding_rate(
+        self, node: TreeNode, *, queued: Optional[float] = None
+    ) -> Optional[float]:
+        """Per second, for the price of host room, from the forecast of the node's session
+        whatever the score ranks by; 0 for an ended session or an exact hint long past; None
+        when unregistered. `queued` is the answer for a session whose turn waits in the
+        queue, whose wait the caller knows."""
+        known, forecast = self._session_registration(node, adopt=False)
+        if not known:
+            return None
+        if isinstance(forecast, Queued):
+            stale = self._clock() - forecast.since > QUEUED_MAX_AGE_S
+            return None if stale else queued
+        if forecast is None:
+            return 0.0
+        idle = max(0.0, self._clock() - forecast.idle_from)
+        dist = forecast.dist
+        if dist.is_point:
+            left = dist.median_s - idle
+            if left < -POINT_GRACE_S:
+                return 0.0
+            return 1.0 / max(left, HOLDING_MIN_HORIZON_S)
+        return dist.holding_rate(idle_s=idle, min_horizon_s=HOLDING_MIN_HORIZON_S)
 
     def _sampled_chance(self, forecast: ReturnForecast, idle: float) -> Optional[float]:
         """The chance from the key's own gaps, else from every key's; 0 when enough

@@ -1,0 +1,6 @@
+# <label> <server arm> <hints> <client flags joined by commas, or -> <engine folder in frozen/> [extra server flags ...]
+# Campaign 45: campaign 40's arm (everything at campaign 35's setting) with the price of host room fixed at the
+# current design's 5e-5 per token-second instead of measured: SGLANG_HICACHE_NEXT_TURN_MEASURED_PRICES and
+# SGLANG_HICACHE_NEXT_TURN_HOLD_QUANTILE (which needs it) are off; price learning stays off, so the price is the flag's.
+# Same engine copy as campaign 40. Requests pair with campaign 40's unified_load and campaign 39's ec_full_load.
+unified_load_fixedprice three_tier_wc_oracle_v2_nu_owned dist --hint-no-call engine_unified_20261126 --attention-backend fa3 --max-total-tokens 668096 --host 127.0.0.1 --hicache-storage-next-turn-read-timing expected_cost --hicache-storage-next-turn-memory-price 5e-5 --hicache-storage-next-turn-price-learning off --hicache-storage-next-turn-soft-pins on --radix-eviction-policy return_chance --radix-eviction-policy-config {"horizon_s":30,"queued_order":"farthest"}

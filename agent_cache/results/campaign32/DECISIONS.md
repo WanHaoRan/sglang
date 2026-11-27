@@ -267,7 +267,7 @@ with 0.9 to 1.2 M tokens pending, and 21 to 45 % of what it reads from the SSD i
   same loop at about Triton's request rate.
 - The policies decide when an arm enters the loop. Reading before arrival on a short queue (the old oracle's 120 s
   lead, the just-in-time engine on p50 hints) fills host memory and the SSD and brings the loop 8 to 17 minutes
-  earlier; the four rules on p50 hints do not read early and do as well as exact hints. That is the 6 to 9 s between
+  earlier; the four rules on the gap table do not read early and do as well as exact hints. That is the 6 to 9 s between
   the groups. Inside the loop (5,400 to 6,600 s) the early arms serve slightly more, so a longer run would likely
   shrink the gaps (inferred).
 - The loop is an engine property (writes of pages the store already holds, one write thread, host locks held by

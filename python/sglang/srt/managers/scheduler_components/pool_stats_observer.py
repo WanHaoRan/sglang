@@ -157,6 +157,8 @@ class SchedulerPoolStatsObserver:
     max_total_num_tokens: int
     get_last_batch: Callable
     get_running_batch: Callable
+    # A prefill batch held for its host-to-GPU load owns its slots before it runs.
+    get_held_batch: Callable = dataclasses.field(default=lambda: None)
 
     def streaming_session_count(self) -> int:
         return sum(
@@ -172,7 +174,11 @@ class SchedulerPoolStatsObserver:
         (and thus counted via uncached_size, not session_held).
         """
         idxs = set()
-        for batch in [self.get_last_batch(), self.get_running_batch()]:
+        for batch in [
+            self.get_last_batch(),
+            self.get_running_batch(),
+            self.get_held_batch(),
+        ]:
             if batch is None or batch.is_empty():
                 continue
             for req in batch.reqs:

@@ -1,0 +1,9 @@
+jit_exact: logged passes end at [5272, 5973, 6614, 7226] s, groups [40100, 40400, 40600, 41200]; replay deletes at [5271.2, 5972.1, 6613.7, 7224.9] s, file times up to [767, 1320, 1863, 2491] s
+interval             | history lookups: logged zero/part/full | replay zero/part/full | differ | reads failed logged/replay | requests | recomputed K: recorded / replay / if nothing were deleted | requests losing >= 1,024: recorded / replay
+before pass 1        |     0 /   0 /  963                  |     0 /   0 /  963     |    0   |   1 /   1                 |  12682   |     162.6 /     162.6 /      67.0                      |    8 /    8
+pass 1 to pass 2     |    48 /   4 /  491                  |    48 /   4 /  491     |    0   |   3 /   3                 |   1498   |     638.0 /     638.0 /     174.4                      |   27 /   27
+pass 2 to pass 3     |    50 /  11 /  432                  |    49 /  11 /  433     |    2   |   7 /   7                 |   1421   |     736.2 /     736.2 /      85.6                      |   34 /   34
+pass 3 to pass 4     |    39 /  17 /  339                  |    39 /  17 /  339     |    0   |   1 /   0                 |      0   |       0.0 /       0.0 /       0.0                      |    0 /    0
+pass 4 to the end    |     0 /   0 /    0                  |     0 /   0 /    0     |    0   |   0 /   0                 |      0   |       0.0 /       0.0 /       0.0                      |    0 /    0
+(requests and tokens count requests sent before 6,600 s; lookups and reads count the whole run)
+live pages deleted by each pass (a later request's prompt holds them), of them held by >= 2 sessions: [(40100, 3295, 3295), (40400, 2442, 2241), (40600, 1208, 1164), (41200, 0, 0)]

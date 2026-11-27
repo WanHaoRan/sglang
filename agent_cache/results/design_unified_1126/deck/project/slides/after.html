@@ -1,0 +1,24 @@
+<section id="after" class="foot">
+<div class="head">
+<p class="eyebrow">The four actions · Fetch, part 1</p>
+<h2 class="title">Fetch: land the read at a quantile of admission</h2>
+</div>
+<div class="row-wide">
+<div class="grow">
+<div class="formula">
+<p class="small">The turn is here; its read will land at <i>ℓ</i>; the GPU would take it at <i>D</i>, known only roughly.</p>
+<p class="math-s">cost(<i>ℓ</i>) = <i>c</i> · E[(<i>ℓ</i> − <i>D</i>)⁺] + <i>λL</i> · E[(<i>D</i> − <i>ℓ</i>)⁺]</p>
+<p class="small">Late: the turn stalls, at weight <i>c</i>. Early: <i>L</i> tokens sit pinned in host memory until admission, at price <i>λ</i>.</p>
+<p class="math">P(<i>D</i> ≤ <i>ℓ</i>*) = <i>q</i>,   <i>q</i> = <i>λL</i> / (<i>c</i> + <i>λL</i>)</p>
+<p class="small">The derivative of the cost in <i>ℓ</i> is (<i>c</i> + <i>λL</i>) · (P(<i>D</i> ≤ <i>ℓ</i>) − <i>q</i>): negative before the <i>q</i>-quantile of <i>D</i>, positive after. Release the read one read time before <i>ℓ</i>*.</p>
+</div>
+</div>
+<div class="col-s" style="width:600px">
+<div class="card-s in1"><p class="ink-b">How it moves</p><p class="small">Memory cheap and stalls dear, <i>q</i> near 0: land early. Memory dear and stalls cheap, <i>q</i> near 1: land at the last moment.</p></div>
+<div class="card-s in2"><p class="ink-b">What the engine does</p><p class="small">It starts a queued turn’s read a fixed 2 s early: measured, the 20th percentile of its estimate’s error, within 1 to 4 % of the best cost.</p></div>
+<div class="card-s in3"><p class="ink-b">A guard</p><p class="small">At saturation <i>c</i> and <i>λ</i> both go to 0 and <i>q</i> is noise: it is held between 0.05 and 0.5.</p></div>
+</div>
+</div>
+<p class="footer"><i>ℓ</i>: when the read lands · <i>D</i> = <i>A</i> + <i>W</i>: when the GPU would take the turn · <i>L</i>: tokens the read brings in · <i>c</i>: weight of a second of stall · <i>λ</i>: price of a host token-second · (<i>z</i>)⁺ = max(<i>z</i>, 0)</p>
+<aside>Fetch decides when a copy moves up. Start with the common case: the turn has arrived and is waiting in the queue, and its history has to be read from the SSD. The read will land at some time l. The GPU would take the turn at D, which the engine knows only roughly, from the queue ahead. If the read lands late, the turn stalls, at weight c per second. If it lands early, L tokens sit pinned in host memory until admission, at the price lambda per token-second. This is the newsvendor problem, and its answer is a quantile: land the read where the chance that the GPU is already waiting equals q, with q equal to lambda L over c plus lambda L. The derivation is one line: the derivative of the cost in the landing time is c plus lambda L, times the chance that D is at most l minus q, so the cost falls before the q-quantile and rises after it. The read is released one read time before that point. The rule moves the right way. If memory is cheap and stalls are dear, q is near zero: land early and never make the turn wait. If memory is dear and stalls are cheap, q is near one: land at the last moment and hold nothing. The engine today starts a queued turn’s read a fixed two seconds early. Measured against the error of its own estimate of D, two seconds is the twentieth percentile, and within one to four percent of the best cost, so the constant was a good one; the rule says why, and how it should move with the prices. One guard is needed: at saturation c and lambda both go to zero and their ratio is noise, so q is held between 0.05 and 0.5.</aside>
+</section>

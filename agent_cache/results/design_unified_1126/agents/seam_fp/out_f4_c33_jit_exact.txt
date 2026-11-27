@@ -1,0 +1,14 @@
+== c33_jit_exact: cold prefills at an empty queue: n 452; ttft = 62 ms + 13.2 us/token x n + 0.682 ns/token^2 x n^2 (residual p10 -35 ms, p90 30 ms)
+   cold  1000-8000  tokens: n   39  ttft/token median   26.2 us  [p10   21.6, p90   31.4]
+   cold  8000-16000 tokens: n  233  ttft/token median   25.8 us  [p10   23.8, p90   29.0]
+   cold 16000-32000 tokens: n  165  ttft/token median   29.7 us  [p10   27.4, p90   35.4]
+   cold 32000-70000 tokens: n   15  ttft/token median   38.9 us  [p10   37.8, p90   45.3]
+   model: cold prefill of  8000 tokens = 0.21 s (26.3 us/token; marginal 24.1 us/token)
+   model: cold prefill of 16000 tokens = 0.45 s (27.9 us/token; marginal 35.0 us/token)
+   model: cold prefill of 24000 tokens = 0.77 s (32.1 us/token; marginal 45.9 us/token)
+   model: cold prefill of 32000 tokens = 1.18 s (36.9 us/token; marginal 56.9 us/token)
+   model: cold prefill of 48000 tokens = 2.27 s (47.2 us/token; marginal 78.7 us/token)
+   model: cold prefill of 64000 tokens = 3.70 s (57.8 us/token; marginal 100.5 us/token)
+   window 0-110 min: 6775 requests, 67 with their own SSD read before admission (1.0 %), 64 of them staged before arrival
+   'alone' readers (arrived at an empty queue, read issued at arrival): 0; running requests at arrival median nan
+   readers that arrived behind others: 3; wait median 7.1 s; park->dispatch median 4.7 s; L median 10624

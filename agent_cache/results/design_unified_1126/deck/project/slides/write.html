@@ -1,0 +1,25 @@
+<section id="write" class="foot">
+<div class="head">
+<p class="eyebrow">The four actions · Retain, part 3</p>
+<h2 class="title">A write is retention one tier down</h2>
+</div>
+<div class="row-wide">
+<div class="grow">
+<div class="formula">
+<p class="small">A host page with no SSD copy costs a recompute if it is lost; with one, a read. The write buys the difference for <i>w</i> = <i>κ</i> · <i>L</i> / <i>β</i> of device time.</p>
+<p class="math-s"><i>K</i>₁ = <i>μ</i> · <i>γ</i> · <i>L</i>   against   <i>K</i>₀ + <i>w</i></p>
+<p class="ink-b">A page has two possible lives: hold, write, drop; or hold, drop unwritten.</p>
+<p class="small">Write iff <i>V</i>(<i>K</i>₁) − <i>V</i>(<i>K</i>₀ + <i>w</i>) ≥ <i>w</i> · P(session over), with <i>V</i>(<i>K</i>) the best holding cost of the previous slides at restore cost <i>K</i>.</p>
+</div>
+<div class="card-s"><p class="tag">On this box</p><p class="small">Writing every page at once is right: the SSD is idle enough that <i>w</i> is about 0, and at saturation the only copy of a page is worth 109 times its recompute. 57 to 74 % of written pages are needed later (measured read back: 56 to 67 %).</p></div>
+</div>
+<div class="col-s" style="width:680px">
+<div class="card-s in1"><p class="ink-b">Never for a session that is over</p><p class="small">Its pages cost nothing to lose. 4.7 % of writes.</p></div>
+<div class="card-s in2"><p class="ink-b">Never earlier than needed, unless free</p><p class="small">At a steady device price, later is never worse: the write is due when the copy would be given up.</p></div>
+<div class="card-s in3"><p class="ink-b">A late write costs <i>L</i> · (<i>λ</i> − <i>ν</i>)</p><p class="small">per second, zero at its due time. It goes before a late read of <i>L</i>′ tokens iff (<i>λ</i> − <i>ν</i>) · <i>L</i>′ &gt; <i>c</i>.</p></div>
+<div class="card-s in4"><p class="ink-b">Stored once</p><p class="small">A page the SSD holds is not written again. Without this, rewrites held room and cost 5.8 to 9.5 s.</p></div>
+</div>
+</div>
+<p class="footer"><i>K</i>₀, <i>K</i>₁: cost of restoring by a read, by recompute · <i>μ</i>: price of a GPU-second · <i>γ</i>: GPU seconds per token · <i>κ</i>: price of a device-second · <i>β</i>: device tokens per second · <i>ν</i>: the page’s index once it has an SSD copy · <i>λ</i>: price of a host token-second</p>
+<aside>The same reasoning covers the write to the SSD. A host page with no complete SSD copy is the only copy below the GPU: if it is lost, the session recomputes it, at the price of GPU time, mu times gamma times L. A page that has an SSD copy costs only a read, K zero. A write buys the difference, for w of device time. So a write is a retention decision one tier down, and its optimal policy has a simple shape: a page has two possible lives. Either it is held, written, and then dropped when its index falls to the price; or it is held and dropped unwritten. The page is written if and only if the first life is cheaper, which is one inequality in the holding costs of the previous slides. Four consequences. A session that is over is never written: its pages cost nothing to lose, and that is 4.7 percent of all writes. At a steady device price a write is never better early than late, so it is due at the moment the copy would be given up; but when the device is idle the write is free, and writing at once is optimal. A write that is late costs L times lambda minus the page’s index per second, which is zero at the due time and grows slowly; it goes before a late read exactly when that rate, on the tokens the read needs, exceeds the read’s lateness weight c. And a page is stored once: if the SSD already holds its key it is not written again. Without that rule the engine fell into a loop, where recompute fed rewrites and rewrites held host room, which cost 5.8 to 9.5 seconds. On this box the answer is the engine’s behaviour: write every page at once, because the SSD is idle enough that the write is nearly free, and at saturation the only copy of a page is worth 109 times its recompute. The model predicts that 57 to 74 percent of written pages are needed later; the runs read back 56 to 67 percent.</aside>
+</section>

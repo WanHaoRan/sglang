@@ -104,6 +104,46 @@ class StorageReadScheduler:
     def parked_handles(self) -> list[Hashable]:
         return list(self._parked)
 
+    def parked_reads(self) -> list[ParkedRead]:
+        return list(self._parked.values())
+
+    def pages_due_by(
+        self,
+        deadline: Optional[float],
+        *,
+        deadline_of: Callable[[Hashable], Optional[float]],
+    ) -> int:
+        """Pages of the parked reads that dispatch orders no later than a read with this
+        deadline (None = needed now): the "now" reads, and for a timed read the timed
+        ones due no later."""
+        pages = 0
+        for handle, read in self._parked.items():
+            due = deadline_of(handle)
+            if due is None or (deadline is not None and due <= deadline):
+                pages += read.pages
+        return pages
+
+    def pages_ahead_of(
+        self, handle: Hashable, *, deadline_of: Callable[[Hashable], Optional[float]]
+    ) -> int:
+        """Pages of the parked reads that dispatch orders before this parked one: "now"
+        reads first, then by deadline, park order among equals."""
+
+        def order(deadline: Optional[float]) -> tuple[bool, float]:
+            return (deadline is not None, deadline or 0.0)
+
+        own = order(deadline_of(handle))
+        pages = 0
+        parked_earlier = True
+        for other, read in self._parked.items():
+            if other == handle:
+                parked_earlier = False
+                continue
+            ahead = order(deadline_of(other))
+            if ahead < own or (ahead == own and parked_earlier):
+                pages += read.pages
+        return pages
+
     def dispatch(
         self,
         *,

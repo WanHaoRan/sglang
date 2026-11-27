@@ -1,0 +1,24 @@
+<section id="before" class="foot">
+<div class="head">
+<p class="eyebrow">The four actions · Fetch, part 2</p>
+<h2 class="title">Fetch before arrival: the hint’s shape decides</h2>
+</div>
+<div class="row-wide">
+<div class="grow">
+<div class="formula">
+<p class="small">Start the read <i>s</i> seconds from now if the turn is not back by then. The queue hides <i>W</i> of the read’s <i>r</i> seconds, so <i>x</i> = <i>r</i> − <i>W</i> of it can show.</p>
+<p class="math-s"><i>J</i>(<i>s</i>) = <i>c</i> · <i>x</i> − <i>c</i> · <i>M</i>(<i>s</i>) + (<i>c</i> + <i>λL</i>) · <i>M</i>(<i>s</i> + <i>x</i>)</p>
+<p class="math-s">d<i>J</i> / d<i>s</i> = P(not back by <i>s</i>) · (<i>c</i> + <i>λL</i>) · (<i>F</i>(<i>x</i> | <i>s</i>) − <i>q</i>)</p>
+<p class="small">Waiting a second longer saves rent if the turn is still far off and costs stall if it arrives within <i>x</i>. The sign turns on whether <i>F</i>(<i>x</i> | <i>s</i>) is above <i>q</i>.</p>
+</div>
+<div class="card-s"><p class="tag">Measured</p><p class="small">On this trace the return rate falls beyond 2 s for 94 % of requests, and a timed start adds 0.000 to 0.002 s per returning request. Where gaps are sharp (another trace, gaps stretched ten times), exact hints took 0.15 to 0.22 s of a 0.23 to 0.29 s ceiling.</p></div>
+</div>
+<div class="col-s" style="width:640px">
+<div class="card-s in1"><p class="ink-b">Sharp hint: <i>F</i>(<i>x</i> | <i>s</i>) rises as the session stays idle</p><p class="small">Start the first time <i>F</i>(<i>x</i> | <i>s</i>) ≥ <i>q</i>. Best at every price exactly when <i>F</i>(<i>x</i> | <i>s</i>) never falls.</p></div>
+<div class="card-s in2"><p class="ink-b">Heavy-tailed hint: it falls</p><p class="small">The best start is an end point: now or at arrival. A copy Retain let go is not worth reading back at the same prices; Fetch then only repairs a forced eviction.</p></div>
+<div class="card-hot in3"><p class="ink-b">The queue caps what any hint can buy</p><p class="small">A read before arrival saves at most <i>c</i> · (<i>r</i> − <i>W</i>)⁺ per return: nothing once the queue wait exceeds the read time.</p></div>
+</div>
+</div>
+<p class="footer"><i>M</i>(<i>t</i>) = E[(<i>R</i> − <i>t</i>)⁺], <i>R</i> the time left until the return · <i>F</i>(<i>x</i> | <i>s</i>): chance of return within <i>x</i> of <i>s</i>, given not back by <i>s</i> · <i>q</i> = <i>λL</i> / (<i>c</i> + <i>λL</i>) · the copy is held from landing to admission</p>
+<aside>Now the harder case: the session is still away and its history is on the SSD. Should the read start before the request arrives, and when? Suppose the read starts s seconds from now if the turn is not back by then, and otherwise at its arrival. The queue hides W of the read’s r seconds, so only x, r minus W, can show as stall. The priced cost has a closed form: c times x, minus c times M of s, plus c plus lambda L times M of s plus x, where M of t is the expected time the session is still away beyond t. Its derivative is the chance of not being back by s, times c plus lambda L, times F of x given s minus q. In words: waiting one more second saves rent if the turn is still far off, and costs stall if it arrives within x; the sign turns on whether the chance of return within x has reached q. So the shape of the hint decides. With a sharp hint, the chance of return within x rises as the session stays idle: start the read the first time it reaches q. That threshold is the best rule at every price exactly when this chance never falls. With a heavy-tailed hint it falls: the cost is lowest at an end point, start now or wait for the arrival, and there is a sharper statement, that a copy which Retain let go is never worth reading back at the same prices. On such a hint, Fetch before arrival only repairs a forced eviction, when a price fell or the copy was pushed out. And in every case the queue caps what a hint can buy: a read before arrival saves at most c times the positive part of r minus W per return, nothing once the queue wait exceeds the read time. Measured, on this trace the return rate falls beyond two seconds for 94 percent of requests, and a timed start adds between zero and two thousandths of a second per returning request. On another trace with sharp gaps, exact hints took 0.15 to 0.22 seconds of a ceiling of 0.23 to 0.29.</aside>
+</section>

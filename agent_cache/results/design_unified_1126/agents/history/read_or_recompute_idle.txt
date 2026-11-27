@@ -1,0 +1,20 @@
+read wins on an idle box for prefixes longer than L* tokens (inf: recompute wins at every length)
+ gamma ms/token  read tokens/s  read ms/token  L* at 0.094 s  L* at 0.494 s  L* at 0.904 s
+          0.037         18,900         0.0529            inf            inf            inf
+          0.037         21,400         0.0467            inf            inf            inf
+          0.037         25,700         0.0389            inf            inf            inf
+          0.042         18,900         0.0529            inf            inf            inf
+          0.042         21,400         0.0467            inf            inf            inf
+          0.042         25,700         0.0389         30,426        159,897        292,605
+          0.044         18,900         0.0529            inf            inf            inf
+          0.044         21,400         0.0467            inf            inf            inf
+          0.044         25,700         0.0389         18,469         97,063        177,621
+          0.047         18,900         0.0529            inf            inf            inf
+          0.047         21,400         0.0467        346,828      1,822,690      3,335,448
+          0.047         25,700         0.0389         11,620         61,067        111,750
+
+a 25,000-token history (the mean returning prompt is about 25.5 K tokens), sparse-load lag 0.094 s:
+  gamma 0.037 ms, read 18,900 tokens/s: read 1.42 s, recompute 0.92 s
+  gamma 0.044 ms, read 21,400 tokens/s: read 1.26 s, recompute 1.10 s
+  gamma 0.044 ms, read 25,700 tokens/s: read 1.07 s, recompute 1.10 s
+  gamma 0.047 ms, read 25,700 tokens/s: read 1.07 s, recompute 1.17 s

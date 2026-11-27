@@ -1,0 +1,2272 @@
+diff --color -ruN before/python/sglang/srt/environ.py after/python/sglang/srt/environ.py
+--- a/python/sglang/srt/environ.py	2026-11-26 21:16:19.637760558 +0000
++++ b/python/sglang/srt/environ.py	2026-11-27 01:00:21.452176248 +0000
+@@ -779,8 +779,8 @@
+     # Deadline read order: hold timed storage reads while pending SSD writes hold at least
+     # this many host tokens, resuming at half of it; 0 disables.
+     SGLANG_HICACHE_STORAGE_READ_HOLD_WRITE_TOKENS = EnvInt(0)
+-    # A radix node counts as stored only once its whole storage write is acked (agreed
+-    # across ranks); a child's write first rewrites the ancestors left without a copy.
++    # A radix node counts as stored only once its whole storage write is acked on every
++    # TP rank (PP = 1 only); a child's write first rewrites ancestors left without one.
+     SGLANG_HICACHE_STORAGE_TRACK_STORED = EnvBool(False)
+     # The last turn of a session whose hint says it ended is not written to storage.
+     SGLANG_HICACHE_STORAGE_SKIP_ENDED_WRITES = EnvBool(False)
+@@ -788,7 +788,7 @@
+     # serves, a chain's head newest; 0 disables.
+     SGLANG_HICACHE_NIXL_TOUCH_INTERVAL_S = EnvFloat(0.0)
+     # NIXL file backend: an ended session's own pages get mtime zero, so the L3 cleaner
+-    # deletes them first.
++    # deletes them first; needs the touch interval above, which revives a page reused.
+     SGLANG_HICACHE_NIXL_RETIRE_ENDED_PAGES = EnvBool(False)
+     # Next-turn prefetcher: a read refused host room is retried on its own paced budget
+     # and does not spend the turn's lookup allowance.
+diff --color -ruN before/python/sglang/srt/mem_cache/next_turn_prefetch.py after/python/sglang/srt/mem_cache/next_turn_prefetch.py
+--- a/python/sglang/srt/mem_cache/next_turn_prefetch.py	2026-11-26 22:46:37.324271168 +0000
++++ b/python/sglang/srt/mem_cache/next_turn_prefetch.py	2026-11-27 01:25:19.234912587 +0000
+@@ -256,8 +256,14 @@
+ 
+     # Its first prompt seen, page-aligned; pages up to it may be another session's.
+     first_prompt_tokens: int
+-    # The node each turn committed last: its reply, a leaf unless a prompt repeats it.
+-    leaves: list[int] = []
++    # Last page key of what each turn committed: its reply, a leaf unless a prompt
++    # repeats it. A key, not a node id: a reply read back from the SSD is a new node.
++    leaf_keys: list[str] = []
++
++
++class _ExactHintSession(str):
++    """A session name that an exact (v1) hint recorded for its next rid. Only such a
++    session ends by naming no next turn; a table's (v2) by an entry marked ended."""
+ 
+ 
+ def _event_value(key: Optional[str]) -> str:
+@@ -445,13 +451,7 @@
+         self._forecast_ends_session = not (
+             self._expected_cost or self._scores_return_chance
+         )
+-        # The cache skips writes or retires pages of ended sessions, so only a hint that
+-        # states the end may end one: a session ended by mistake sends its next turn.
+-        self._explicit_ends = explicit_ends or retire_ended
+-        # An ended session's own pages get mtime zero on the SSD.
+-        self._retire_ended = retire_ended
+-        # Per session until its explicit end; the oldest goes past REGISTRY_MAX_ENTRIES.
+-        self._session_extents: dict[str, SessionExtent] = {}
++        self._init_end_handling(explicit_ends=explicit_ends, retire_ended=retire_ended)
+         self._session_tail: dict[str, int] = {}
+         self._rid_session: dict[str, str] = {}
+ 
+@@ -550,19 +550,14 @@
+             self._end_session(rid=req.rid, session=session, now=now, why="abort")
+             return
+         hint = self._resolve_hint(req)
+-        if hint is None and self._explicit_ends:
+-            outlook = self._turn_outlook(req, reply_known=True, named_session=session)
+-            if outlook.end_why is None and outlook.hinted:
+-                # A hint without a usable forecast: the session is live, not ended.
+-                self._note_session_turn(
+-                    outlook.session, req=req, tail_node_id=tail_node_id
+-                )
+-                self._forget_session(
+-                    rid=req.rid, session=outlook.session, why="no_entry"
+-                )
+-                return
+-            if outlook.end_why is not None:
+-                self._on_explicit_end(req.rid, outlook, tail_node_id=tail_node_id)
++        if (
++            hint is None
++            and self._explicit_ends
++            and not self._ends_without_forecast(
++                req=req, named_session=session, tail_node_id=tail_node_id
++            )
++        ):
++            return
+         if hint is None:
+             # The session ended (or the client sends no hints): evict it first.
+             self._register_next_use(
+@@ -590,7 +585,11 @@
+             ),
+             now=now,
+         )
+-        self._rid_session[hint.next_rid] = hint.session
++        self._rid_session[hint.next_rid] = (
++            _ExactHintSession(hint.session)
++            if self._explicit_ends and hint.entry_key is None
++            else hint.session
++        )
+         self._note_session_turn(hint.session, req=req, tail_node_id=tail_node_id)
+         plan = TurnPlan(
+             next_rid=hint.next_rid,
+@@ -676,12 +675,13 @@
+         if hints is None or all(
+             action.action_type != NEXT_TURN_ACTION_TYPE for action in hints.actions
+         ):
+-            # An exact hint ends its session by naming no next turn. So does a client
+-            # that sends no hints: only a turn the previous one named is an end.
++            # An exact hint ends its session by naming no next turn. A client without
++            # hints, and a table's turn that came without its table, state nothing.
++            exact = isinstance(named_session, _ExactHintSession)
+             return TurnOutlook(
+                 session=named_session,
+                 hinted=False,
+-                end_why=None if named_session is None else "no_next",
++                end_why="no_next" if exact else None,
+             )
+         table = read_next_turn_table(hints)
+         if table is None:
+@@ -709,6 +709,39 @@
+         )
+         return outlook.end_why is not None
+ 
++    def _init_end_handling(self, *, explicit_ends: bool, retire_ended: bool) -> None:
++        # The cache skips writes or retires pages of ended sessions, so only a hint that
++        # states the end may end one: a session ended by mistake sends its next turn.
++        self._explicit_ends = explicit_ends or retire_ended
++        # An ended session's own pages get mtime zero on the SSD.
++        self._retire_ended = retire_ended
++        # Per session until its explicit end; the oldest goes past REGISTRY_MAX_ENTRIES.
++        self._session_extents: dict[str, SessionExtent] = {}
++
++    def _ends_without_forecast(
++        self, *, req: Req, named_session: Optional[str], tail_node_id: Optional[int]
++    ) -> bool:
++        """A finished turn with no usable forecast, where an end must be explicit: False
++        when the session is live and its tail forgotten, True to register an end."""
++        outlook = self._turn_outlook(req, reply_known=True, named_session=named_session)
++        if outlook.end_why is not None:
++            self._on_explicit_end(
++                rid=req.rid, outlook=outlook, tail_node_id=tail_node_id
++            )
++            return True
++        if not outlook.hinted and outlook.session is None:
++            # A client without hints: registered as ended, as with the switches off.
++            return True
++        # A hint without a usable forecast, or a known session's turn that came without
++        # one: the session is live, not ended.
++        self._note_session_turn(outlook.session, req=req, tail_node_id=tail_node_id)
++        self._forget_session(
++            rid=req.rid,
++            session=outlook.session,
++            why="no_entry" if outlook.hinted else "no_hint",
++        )
++        return False
++
+     def _note_session_turn(
+         self, session: Optional[str], *, req: Req, tail_node_id: Optional[int]
+     ) -> None:
+@@ -721,10 +754,12 @@
+             self._session_extents[session] = extent
+             while len(self._session_extents) > REGISTRY_MAX_ENTRIES:
+                 del self._session_extents[next(iter(self._session_extents))]
+-        extent.leaves.append(tail_node_id)
++        leaf_key = self._tree_cache.get_last_hash_value(tail_node_id)
++        if leaf_key is not None:
++            extent.leaf_keys.append(leaf_key)
+ 
+     def _on_explicit_end(
+-        self, rid: str, outlook: TurnOutlook, *, tail_node_id: Optional[int]
++        self, *, rid: str, outlook: TurnOutlook, tail_node_id: Optional[int]
+     ) -> None:
+         _log_event(
+             "ntp_end",
+@@ -744,7 +779,7 @@
+         self._tree_cache.retire_storage_chain(
+             tail_node_id,
+             keep_tokens=extent.first_prompt_tokens,
+-            own_leaves=frozenset(extent.leaves),
++            own_leaf_keys=frozenset(extent.leaf_keys),
+         )
+ 
+     def _return_forecast(self, hint: ResolvedHint, *, now: float) -> ReturnForecast:
+diff --color -ruN before/python/sglang/srt/mem_cache/storage/nixl/hicache_nixl.py after/python/sglang/srt/mem_cache/storage/nixl/hicache_nixl.py
+--- a/python/sglang/srt/mem_cache/storage/nixl/hicache_nixl.py	2026-11-26 20:36:45.667898408 +0000
++++ b/python/sglang/srt/mem_cache/storage/nixl/hicache_nixl.py	2026-11-27 00:58:32.274773349 +0000
+@@ -4,9 +4,11 @@
+ import threading
+ import time
+ import uuid
++import weakref
+ from dataclasses import dataclass
+ from typing import Any, List, Optional
+ 
++import msgspec
+ import torch
+ 
+ from sglang.srt.environ import envs
+@@ -40,6 +42,71 @@
+ 
+ # Arbitrary; the touch thread logs one l3_touch line at most this often (seconds).
+ _TOUCH_LOG_INTERVAL_S = 10.0
++# Arbitrary; seconds close() waits for the touch thread to finish its queued jobs.
++_TOUCH_JOIN_TIMEOUT_S = 5.0
++
++
++class _TouchJob(msgspec.Struct, frozen=True):
++    """One HiCacheStorage.touch_pages call, queued for the touch thread."""
++
++    page_keys: list[str]
++    # Wall-clock ns for the first page's mtime; None gives every page mtime zero.
++    newest_ns: Optional[int]
++
++
++# What an idle interval hands the touch thread in place of a job.
++_NO_TOUCH_JOB = _TouchJob(page_keys=[], newest_ns=None)
++
++
++def _run_touch_job(
++    *, backend_ref: "weakref.ref[HiCacheNixl]", job: _TouchJob
++) -> Optional[tuple[int, int]]:
++    """(files stamped, files missing), or None once the backend is gone. The backend is
++    held only for the call, so that an idle touch thread does not keep it alive."""
++    backend = backend_ref()
++    if backend is None:
++        return None
++    return backend._stamp_touch_job(job)
++
++
++def _touch_loop(
++    *,
++    jobs: queue.SimpleQueue,
++    backend_ref: "weakref.ref[HiCacheNixl]",
++    abandoned: threading.Event,
++) -> None:
++    """The hicache-l3-touch thread: does the queued jobs until the stop wake-up (None),
++    a backend dropped without close(), or close() giving up on it."""
++    stamped = missing = 0
++    last_log = time.monotonic()
++    stopping = False
++    while not stopping:
++        try:
++            job = jobs.get(timeout=_TOUCH_LOG_INTERVAL_S)
++        except queue.Empty:
++            # Only the log line below is due: it flushes what was counted since.
++            job = _NO_TOUCH_JOB
++        stopping = job is None or abandoned.is_set()
++        if not stopping and job.page_keys:
++            try:
++                counts = _run_touch_job(backend_ref=backend_ref, job=job)
++            except Exception:
++                # One failing job must not end the thread: the jobs behind it would
++                # queue up unread and every later refresh and retire be lost.
++                logger.warning("NIXL L3 touch failed", exc_info=True)
++                counts = (0, 0)
++            if counts is None:
++                stopping = True
++            else:
++                stamped += counts[0]
++                missing += counts[1]
++        now = time.monotonic()
++        if (stamped or missing) and (
++            stopping or now - last_log >= _TOUCH_LOG_INTERVAL_S
++        ):
++            logger.info("HICACHE_EVT l3_touch files=%d gone=%d", stamped, missing)
++            stamped = missing = 0
++            last_log = now
+ 
+ 
+ def _parse_storage_dirs(raw: Optional[str]) -> List[str]:
+@@ -192,6 +259,9 @@
+         )
+         if self._l3_cleaner is not None:
+             self._l3_cleaner.start()
++        self._init_touch(nixlconfig)
++
++    def _init_touch(self, nixlconfig: NixlBackendConfig) -> None:
+         # Mtime changes for the cleaner's order need this rank's own files.
+         touches = self.file_manager is not None and not self.backup_skip
+         self.touch_interval_s = nixlconfig.get_touch_interval_s() if touches else 0.0
+@@ -207,8 +277,19 @@
+                 self.retire_ended_pages,
+             )
+             self._touch_queue = queue.SimpleQueue()
++            # Set by close() when the thread outlives its join: drop the jobs left.
++            self._touch_abandoned = threading.Event()
++            # A weak reference: a thread holding the backend would keep one that was
++            # dropped without close() alive, with its registered host memory.
+             self._touch_thread = threading.Thread(
+-                target=self._touch_loop, name="hicache-l3-touch", daemon=True
++                target=_touch_loop,
++                kwargs=dict(
++                    jobs=self._touch_queue,
++                    backend_ref=weakref.ref(self),
++                    abandoned=self._touch_abandoned,
++                ),
++                name="hicache-l3-touch",
++                daemon=True,
+             )
+             self._touch_thread.start()
+ 
+@@ -646,8 +727,18 @@
+             self._l3_cleaner.stop()
+             self._l3_cleaner = None
+         if self._touch_thread is not None:
++            # The jobs queued before the stop wake-up are still done.
+             self._touch_queue.put(None)
+-            self._touch_thread.join(timeout=5.0)
++            # __del__ may run on the touch thread itself, which cannot join itself.
++            if self._touch_thread is not threading.current_thread():
++                self._touch_thread.join(timeout=_TOUCH_JOIN_TIMEOUT_S)
++                if self._touch_thread.is_alive():
++                    self._touch_abandoned.set()
++                    logger.warning(
++                        "NIXL L3 touch thread still busy %g s after close(); "
++                        "the jobs left in its queue are dropped",
++                        _TOUCH_JOIN_TIMEOUT_S,
++                    )
+             self._touch_thread = None
+             self._touch_queue = None
+         while self._host_regs:
+@@ -909,7 +1000,9 @@
+ 
+     def touch_pages(self, page_keys: List[str], *, newest_ns: Optional[int]) -> None:
+         if self._touch_queue is not None and page_keys:
+-            self._touch_queue.put((list(page_keys), newest_ns))
++            self._touch_queue.put(
++                _TouchJob(page_keys=list(page_keys), newest_ns=newest_ns)
++            )
+ 
+     def _page_file_paths(self, page_key: str) -> List[str]:
+         # Must name the files _batch_preprocess writes for a page on this rank: K and V
+@@ -921,37 +1014,12 @@
+         )
+         return [self.file_manager.get_file_path(name) for name in names]
+ 
+-    def _touch_loop(self) -> None:
+-        # close() drops the attribute once the stop wake-up is queued.
+-        jobs = self._touch_queue
+-        stamped = missing = 0
+-        last_log = time.monotonic()
+-        stopping = False
+-        while not stopping:
+-            try:
+-                job = jobs.get(timeout=_TOUCH_LOG_INTERVAL_S)
+-            except queue.Empty:
+-                job = ([], None)
+-            stopping = job is None
+-            if not stopping:
+-                page_keys, newest_ns = job
+-                try:
+-                    counts = self.file_manager.stamp_pages(
+-                        [self._page_file_paths(page_key) for page_key in page_keys],
+-                        newest_ns=newest_ns,
+-                    )
+-                    stamped += counts[0]
+-                    missing += counts[1]
+-                except Exception:
+-                    logger.warning("NIXL L3 touch failed", exc_info=True)
+-            now = time.monotonic()
+-            # An idle interval and the stop wake-up flush what was counted since.
+-            if (stamped or missing) and (
+-                stopping or now - last_log >= _TOUCH_LOG_INTERVAL_S
+-            ):
+-                logger.info("HICACHE_EVT l3_touch files=%d gone=%d", stamped, missing)
+-                stamped = missing = 0
+-                last_log = now
++    def _stamp_touch_job(self, job: _TouchJob) -> tuple[int, int]:
++        # Runs on the touch thread: path building and every utime stay off the caller's.
++        return self.file_manager.stamp_pages(
++            [self._page_file_paths(page_key) for page_key in job.page_keys],
++            newest_ns=job.newest_ns,
++        )
+ 
+     def batch_set_v1(
+         self,
+diff --color -ruN before/python/sglang/srt/mem_cache/storage/nixl/nixl_utils.py after/python/sglang/srt/mem_cache/storage/nixl/nixl_utils.py
+--- a/python/sglang/srt/mem_cache/storage/nixl/nixl_utils.py	2026-11-26 19:50:30.780859220 +0000
++++ b/python/sglang/srt/mem_cache/storage/nixl/nixl_utils.py	2026-11-27 01:00:21.451176244 +0000
+@@ -65,9 +65,8 @@
+         return envs.SGLANG_HICACHE_NIXL_SKIP_STORED_WRITES.get()
+ 
+     def get_touch_interval_s(self) -> float:
+-        """Seconds between mtime refreshes of a stored page that memory serves, 0 for
+-        none: the top-level ``touch_interval_s`` key, else
+-        ``SGLANG_HICACHE_NIXL_TOUCH_INTERVAL_S`` (default: 0)."""
++        """Seconds between mtime refreshes of a stored page memory serves, 0 for none:
++        the ``touch_interval_s`` key, else SGLANG_HICACHE_NIXL_TOUCH_INTERVAL_S."""
+         if "touch_interval_s" in self.config:
+             interval = self.config["touch_interval_s"]
+             if isinstance(interval, bool) or not isinstance(interval, (int, float)):
+@@ -79,9 +78,8 @@
+         return float(interval)
+ 
+     def get_retire_ended_pages(self) -> bool:
+-        """Return True if an ended session's own pages get mtime zero, which the L3
+-        cleaner deletes first: the top-level ``retire_ended_pages`` key, else
+-        ``SGLANG_HICACHE_NIXL_RETIRE_ENDED_PAGES`` (default: off)."""
++        """Whether an ended session's own pages get mtime zero: the top-level
++        ``retire_ended_pages`` key, else SGLANG_HICACHE_NIXL_RETIRE_ENDED_PAGES."""
+         if "retire_ended_pages" in self.config:
+             retire = self.config["retire_ended_pages"]
+             if not isinstance(retire, bool):
+@@ -366,15 +364,12 @@
+     def stamp_pages(
+         self, page_files: list[list[str]], *, newest_ns: Optional[int]
+     ) -> tuple[int, int]:
+-        """Set the mtime of every file of each page: newest_ns for the first page and
+-        TOUCH_STEP_NS less for each later one, or zero for all when newest_ns is None.
+-
+-        Returns (files stamped, files missing); nothing is ever created. The L3
+-        cleaner deletes the oldest mtime first and a lookup stops at the first missing
+-        page, so a chain passed head first loses its tail before its head.
+-        """
++        """Set the mtime of each page's files, first page newest; zero for all if
++        newest_ns is None. Returns (files stamped, files missing); creates nothing."""
+         stamped = missing = 0
+         for index, paths in enumerate(page_files):
++            # A chain passed head first loses its tail first: the L3 cleaner deletes the
++            # oldest mtime first and a lookup stops at the first missing page.
+             stamp = 0 if newest_ns is None else newest_ns - index * TOUCH_STEP_NS
+             for path in paths:
+                 try:
+diff --color -ruN before/python/sglang/srt/mem_cache/storage_retention.py after/python/sglang/srt/mem_cache/storage_retention.py
+--- a/python/sglang/srt/mem_cache/storage_retention.py	2026-11-26 22:46:23.277216295 +0000
++++ b/python/sglang/srt/mem_cache/storage_retention.py	2026-11-27 00:56:02.617222597 +0000
+@@ -1,7 +1,7 @@
+ """Retain switches of the three-tier cache: which radix nodes count as stored on the
+ SSD, which host-to-storage writes are skipped, and how the SSD cleaner's order is
+-steered through file modification times
+-(agent_cache/results/design_unified_1126/DESIGN.md, section 4).
++steered through file modification times (the Retain action of the design in
++agent_cache/results/design_unified_1126/).
+ 
+ Every switch is off by default. The cache resolves them at startup and at each runtime
+ attach of a storage backend; a switch that lacks what it needs stays off.
+@@ -37,6 +37,7 @@
+     *,
+     host_cache_mode: bool,
+     python_tree_core: bool,
++    single_pp_rank: bool,
+     next_turn_prefetch: bool,
+     full_kv_only: bool,
+ ) -> tuple[RetentionSwitches, list[str]]:
+@@ -54,6 +55,9 @@
+         requested.track_stored,
+         (host_cache_mode, "--hicache-host-memory-mode cache"),
+         (python_tree_core, "the python tree core"),
++        # A write's verdict is the minimum over TP ranks; the PP sync runs one way and
++        # would hand PP rank 0's verdict to ranks whose own write fell short.
++        (single_pp_rank, "PP = 1"),
+     )
+     marks = (track_stored, "SGLANG_HICACHE_STORAGE_TRACK_STORED")
+     # Its create() admits TP = PP = 1 only, which the two switches below rely on.
+@@ -74,6 +78,9 @@
+         requested.retire_ended_pages,
+         marks,
+         prefetcher,
++        # A retired page read back from storage counts as stored: only the refresh at
++        # its next request gives its files a recent mtime again.
++        (touch, "SGLANG_HICACHE_NIXL_TOUCH_INTERVAL_S above 0"),
+         # A page leaves first only once every one of its files is at mtime zero, and
+         # only the KV files are touched.
+         (full_kv_only, "a FULL-only cache without sidecar pools"),
+diff --color -ruN before/python/sglang/srt/mem_cache/unified_cache/storage_attachment.py after/python/sglang/srt/mem_cache/unified_cache/storage_attachment.py
+--- a/python/sglang/srt/mem_cache/unified_cache/storage_attachment.py	2026-11-26 19:51:48.782211270 +0000
++++ b/python/sglang/srt/mem_cache/unified_cache/storage_attachment.py	2026-11-27 00:58:18.932724018 +0000
+@@ -415,15 +415,13 @@
+             entry = cache.ongoing_backup.pop(ack_id)
+             try:
+                 cache.dec_host_lock_ref(entry.node_id, entry.lock_params)
+-                if cache.retention.track_stored:
+-                    # Nobody will ack the op: a mark left pending would keep the node
+-                    # from ever being written again.
+-                    cache.tree_core.finish_storage_write(
+-                        entry.node_id, ack_id, stored_at=None
+-                    )
+             except Exception:
+                 logger.exception("Failed to release host lock for backup op %s", ack_id)
+         cache.pending_backup_tokens = 0
++        if cache.retention.track_stored:
++            # Nobody acks the dropped writes, and the next store attached may be
++            # another one: a mark kept would leave holes there that no child rewrites.
++            cache._forget_storage_copies(detached=True)
+ 
+         for handle in list(cache._storage_prefetch_hit_remaining_by_reqid):
+             cache.discard_storage_prefetch_accounting(handle)
+diff --color -ruN before/python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py after/python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py
+--- a/python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py	2026-11-26 20:34:44.258486973 +0000
++++ b/python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py	2026-11-27 01:00:21.451176244 +0000
+@@ -2635,16 +2635,21 @@
+                 self._update_duplicate_tracking(node)
+             self.kv_events.record_store(node, medium=StorageMedium.CPU)
+ 
+-    def mark_storage_write(self, node_id: NodeId, op_id: int) -> None:
++    def mark_storage_write(self, node_id: NodeId, *, op_id: int) -> None:
+         """A host->storage write of the node's pages was queued as op_id."""
+         self.node_by_id(node_id).storage_write_op = op_id
+ 
+     def finish_storage_write(
+-        self, node_id: NodeId, op_id: int, *, stored_at: Optional[float]
+-    ) -> None:
+-        """op_id was acked or dropped: clear it from the node and from the fragments a
+-        split left above it. stored_at is the time.monotonic() of an ack that covered
+-        every page, None when the pages are not all stored."""
++        self,
++        node_id: NodeId,
++        *,
++        op_id: int,
++        stored_at: Optional[float],
++        retire: Collection[NodeId] = (),
++    ) -> list[NodeId]:
++        """op_id was acked or dropped: unmark the node and the split fragments above it.
++        stored_at: time.monotonic() of a full ack, else None. Returns those retired."""
++        retired = []
+         node = self._node_arena.get(node_id)
+         while (
+             node is not None
+@@ -2652,26 +2657,39 @@
+             and node.storage_write_op == op_id
+         ):
+             node.storage_write_op = None
+-            node.storage_stored = stored_at is not None
+-            if stored_at is not None:
+-                node.storage_touched_at = stored_at
++            if node.id in retire:
++                # Its session ended while the write was queued: unstored either way.
++                node.storage_stored = False
++                retired.append(node.id)
++            else:
++                node.storage_stored = stored_at is not None
++                if stored_at is not None:
++                    node.storage_touched_at = stored_at
+             node = node.parent
++        return retired
++
++    def ancestor_ids(self, node_id: NodeId) -> list[NodeId]:
++        """The node's ancestors below the root, nearest first."""
++        found = []
++        node = self.node_by_id(node_id).parent
++        while node is not None and node is not self.root_node:
++            found.append(node.id)
++            node = node.parent
++        return found
+ 
+     def unstored_ancestors(self, node_id: NodeId) -> list[NodeId]:
+-        """The run of ancestors right above the node whose host copy is complete and
+-        that have neither a storage copy nor a write queued, root side first."""
++        """Ancestors with a complete host copy and neither a storage copy nor a write
++        queued, root side first, up to the first ancestor without a host copy."""
+         found = []
+         node = self.node_by_id(node_id).parent
+-        while (
+-            node is not None
+-            and node is not self.root_node
+-            and node.backuped
++        while node is not None and node is not self.root_node and node.backuped:
+             # A host copy still in flight is written to storage at its own ack.
+-            and node.write_through_pending_id is None
+-            and not node.storage_stored
+-            and node.storage_write_op is None
+-        ):
+-            found.append(node.id)
++            if (
++                node.write_through_pending_id is None
++                and not node.storage_stored
++                and node.storage_write_op is None
++            ):
++                found.append(node.id)
+             node = node.parent
+         found.reverse()
+         return found
+@@ -2679,9 +2697,8 @@
+     def take_stale_storage_keys(
+         self, node_id: NodeId, *, now: float, min_interval_s: float
+     ) -> list[str]:
+-        """Page keys, head first, of the stored nodes on the node's root path, once the
+-        mtime of any of them is min_interval_s old; stamps them all as refreshed at now.
+-        They go together: a tail refreshed alone would outlive the head it hangs on."""
++        """Head-first page keys of the stored nodes on the root path, all of them once
++        one is min_interval_s stale: a tail refreshed alone would outlive its head."""
+         stored = []
+         node = self.node_by_id(node_id)
+         while node is not None and node is not self.root_node:
+@@ -2697,12 +2714,10 @@
+         return page_keys
+ 
+     def take_retired_storage_pages(
+-        self, tail_node_id: NodeId, *, keep_tokens: int, own_leaves: Collection[NodeId]
++        self, tail_node_id: NodeId, *, keep_tokens: int, own_leaf_keys: Collection[str]
+     ) -> RetiredPages:
+-        """An ended session's own storage pages, walking up from its tail: the nodes
+-        that start at or past keep_tokens, and the leaves in own_leaves hanging off them
+-        (replies its next prompt did not repeat). Stored nodes handed out stop counting
+-        as stored."""
++        """Walking up from an ended session's tail: its nodes from keep_tokens on, and
++        the leaves off them ending in own_leaf_keys; stored ones taken are unmarked."""
+         path = []
+         node = self.node_by_id(tail_node_id)
+         while node is not None and node is not self.root_node:
+@@ -2731,7 +2746,10 @@
+             others = [child for child in node.children.values() if child is not below]
+             # Any other child is a branch another session built on, and so is every
+             # node from here up.
+-            if any(child.children or child.id not in own_leaves for child in others):
++            if any(
++                child.children or child.get_last_hash_value() not in own_leaf_keys
++                for child in others
++            ):
+                 break
+             # They start where the node ends, which is at or past keep_tokens.
+             for child in others:
+@@ -2743,9 +2761,11 @@
+         return RetiredPages(page_keys=page_keys, pending_node_ids=pending)
+ 
+     def clear_storage_marks(self) -> None:
+-        """The store was emptied: no node has a storage copy any more."""
++        """The store was emptied or detached: no node has a storage copy, and a write
++        queued before that gives none (its ack finds no node carrying its id)."""
+         for node in self._node_arena.values():
+             node.storage_stored = False
++            node.storage_write_op = None
+ 
+     def _walk_span(self, key: RadixKey, end: int):
+         """Yield nodes and their matched spans along ``key`` through ``end``."""
+diff --color -ruN before/python/sglang/srt/mem_cache/unified_radix_cache.py after/python/sglang/srt/mem_cache/unified_radix_cache.py
+--- a/python/sglang/srt/mem_cache/unified_radix_cache.py	2026-11-26 21:42:44.959905288 +0000
++++ b/python/sglang/srt/mem_cache/unified_radix_cache.py	2026-11-27 01:03:18.280826512 +0000
+@@ -698,6 +698,7 @@
+             requested,
+             host_cache_mode=self.host_memory_mode == "cache",
+             python_tree_core=isinstance(self.tree_core, UnifiedTreeCore),
++            single_pp_rank=self.pp_size == 1,
+             next_turn_prefetch=get_memory().hicache_storage_next_turn_prefetch != "off",
+             full_kv_only=self.tree_components == (ComponentType.FULL,)
+             and not self.sidecar_pool_specs,
+@@ -722,6 +723,10 @@
+                 raise RuntimeError("HiCache controller is not attached.")
+             self.cache_controller.register_host_pool_entry(entry)
+         self.sidecar_pool_specs.append(spec)
++        if self.retention.retire_ended_pages:
++            # A draft model's pools are registered after init_hicache: retire was
++            # granted to a cache that had no sidecar file then.
++            self._init_storage_retention()
+ 
+     def release_host_resources(self) -> None:
+         if self.linker is not None:
+@@ -760,7 +765,7 @@
+ 
+     def _refresh_served_chain(self, node_id: NodeId) -> None:
+         """The storage cleaner deletes the oldest mtime first: give the stored pages of
+-        a chain that memory serves a recent one, at most once per touch interval."""
++        a chain that memory serves a recent one once any of them is an interval old."""
+         page_keys = self.tree_core.take_stale_storage_keys(
+             node_id,
+             now=time.monotonic(),
+@@ -1525,6 +1530,8 @@
+     def _turn_ends_session(self, req: Req, *, reply_known: bool) -> bool:
+         return (
+             self.retention.skip_ended_writes
++            # Detached, no write comes to spend a skip: its node id would stay for good.
++            and self.enable_storage
+             and self.next_turn_prefetch is not None
+             and self.next_turn_prefetch.ends_session(req, reply_known=reply_known)
+         )
+@@ -2142,13 +2149,21 @@
+                 len(self.tree_core.get_hash_values(node_id)) * self.page_size,
+             )
+             return
+-        if self.retention.track_stored:
+-            # A write that failed or was skipped leaves a hole above the node's pages on
+-            # storage, where a lookup stops: write those ancestors first.
+-            for ancestor_id in self.tree_core.unstored_ancestors(node_id):
+-                self._submit_storage_write(ancestor_id)
++        # A page parked for retire belongs to an ended session: no lookup will come
++        # through the chain above it, which the retire has just zeroed.
++        if self.retention.track_stored and node_id not in self._retire_at_ack:
++            self._heal_storage_chain_above(node_id)
+         self._submit_storage_write(node_id)
+ 
++    def _heal_storage_chain_above(self, node_id: NodeId) -> None:
++        """A lookup stops at the first page missing on storage: before a node's write,
++        queue every ancestor a failed, skipped or retired write left without a copy."""
++        if self._retire_at_ack:
++            # Something is built on these pages after their session's end: keep them.
++            self._retire_at_ack.difference_update(self.tree_core.ancestor_ids(node_id))
++        for ancestor_id in self.tree_core.unstored_ancestors(node_id):
++            self._submit_storage_write(ancestor_id)
++
+     def _submit_storage_write(self, node_id: NodeId) -> None:
+         spec = self.tree_core.build_storage_backup_spec(
+             node_id, self.hicache_storage_pass_prefix_keys
+@@ -2182,7 +2197,7 @@
+         )
+         self.pending_backup_tokens += tokens
+         if self.retention.track_stored:
+-            self.tree_core.mark_storage_write(node_id, operation_id)
++            self.tree_core.mark_storage_write(node_id, op_id=operation_id)
+         logger.info("HICACHE_EVT h2s_submit op=%d node=%d tokens=%d pending=%d", operation_id, node_id, tokens, self.pending_backup_tokens)  # EVAL-PATCH
+ 
+     def retire_storage_chain(
+@@ -2190,15 +2205,14 @@
+         tail_node_id: NodeId,
+         *,
+         keep_tokens: int,
+-        own_leaves: Collection[NodeId],
++        own_leaf_keys: Collection[str],
+     ) -> None:
+-        """Give an ended session's own storage pages mtime zero, so that the cleaner
+-        deletes them first. A page whose write is still on its way is retired at its
+-        ack: the write would make it look new again."""
++        """Give an ended session's own storage pages mtime zero, so the cleaner deletes
++        them first; a page whose write is on its way is retired at its ack instead."""
+         if not (self.retention.retire_ended_pages and self.enable_storage):
+             return
+         retired = self.tree_core.take_retired_storage_pages(
+-            tail_node_id, keep_tokens=keep_tokens, own_leaves=own_leaves
++            tail_node_id, keep_tokens=keep_tokens, own_leaf_keys=own_leaf_keys
+         )
+         # A write that write_backup_storage is going to skip leaves nothing to retire.
+         pending = [
+@@ -3532,21 +3546,22 @@
+             self._unpin_prefetch(handle, reason="leak")
+ 
+     def _agree_stored(self, operations: list, *, synced: bool) -> list[bool]:
+-        """Whether each acked storage write covered all its pages on every rank. A rank
+-        counts its own pages only, and marks that differed would diverge the trees."""
++        """Whether each acked storage write covered all its pages on every TP rank: a
++        rank counts its own pages only, and differing marks would diverge the trees."""
+         votes = stored_votes(
+             operations,
+             page_size=self.page_size,
+             writes_nothing=self.cache_controller.backup_skip,
+         )
+-        if not (synced and votes and (self.tp_world_size > 1 or self.pp_size > 1)):
++        # PP = 1 here (the marks are refused otherwise): _all_reduce is the TP minimum.
++        if not (synced and votes and self.tp_world_size > 1):
+             return votes
+         agreed = torch.tensor(votes, dtype=torch.int)
+         self._all_reduce(agreed, torch.distributed.ReduceOp.MIN)
+         return [bool(vote) for vote in agreed.tolist()]
+ 
+     def _commit_storage_write(
+-        self, entry: _OngoingBackup, operation, *, stored: bool
++        self, entry: _OngoingBackup, *, operation, stored: bool
+     ) -> None:
+         if not stored:
+             logger.info(
+@@ -3556,25 +3571,28 @@
+                 entry.tokens,
+                 operation.completed_tokens,
+             )
+-        retire = (
+-            self.retention.retire_ended_pages and entry.node_id in self._retire_at_ack
+-        )
+-        if retire:
+-            # Its session ended while the write was on its way.
+-            self._retire_at_ack.discard(entry.node_id)
+-            self.cache_controller.storage_backend.touch_pages(
+-                operation.hash_value, newest_ns=None
+-            )
+-            logger.info(
+-                "HICACHE_EVT l3_retire_ack op=%d node=%d pages=%d",
+-                operation.id,
+-                entry.node_id,
+-                len(operation.hash_value),
+-            )
+-        self.tree_core.finish_storage_write(
++        # A split may have cut the node since the submit: each fragment is retired, or
++        # not, as the retire walk decided for it.
++        retired = self.tree_core.finish_storage_write(
+             entry.node_id,
++            op_id=operation.id,
++            stored_at=time.monotonic() if stored else None,
++            retire=self._retire_at_ack,
++        )
++        if not retired:
++            return
++        self._retire_at_ack.difference_update(retired)
++        page_keys = [
++            key
++            for node_id in retired
++            for key in self.tree_core.get_hash_values(node_id)
++        ]
++        self.cache_controller.storage_backend.touch_pages(page_keys, newest_ns=None)
++        logger.info(
++            "HICACHE_EVT l3_retire_ack op=%d node=%d pages=%d",
+             operation.id,
+-            stored_at=time.monotonic() if stored and not retire else None,
++            entry.node_id,
++            len(page_keys),
+         )
+ 
+     def _drain_storage_control_queues_impl(
+@@ -3725,7 +3743,9 @@
+                         self.dec_host_lock_ref(entry.node_id, entry.lock_params)
+                         self.pending_backup_tokens -= entry.tokens
+                         if stored is not None:
+-                            self._commit_storage_write(entry, operation, stored=stored)
++                            self._commit_storage_write(
++                                entry, operation=operation, stored=stored
++                            )
+                 logger.info("HICACHE_EVT h2s_done op=%d tokens=%d pending=%d%s", operation.id, operation.completed_tokens, self.pending_backup_tokens, "" if stored is None else f" stored={int(stored)}")  # EVAL-PATCH
+                 if (
+                     log_metrics
+@@ -3876,9 +3896,18 @@
+             # retained positive would skip that page's backup forever.
+             self.storage_existence_cache.clear()
+             if self.retention.track_stored:
+-                self.tree_core.clear_storage_marks()
++                self._forget_storage_copies(detached=False)
+         return ok
+ 
++    def _forget_storage_copies(self, *, detached: bool) -> None:
++        """The store was emptied or detached: no node counts as stored or queued, and
++        no page still on its way is retired at an ack that can no longer find it."""
++        self.tree_core.clear_storage_marks()
++        self._retire_at_ack.clear()
++        if detached:
++            # A host copy still in flight is not written on to a detached store.
++            self._storage_skip_nodes.clear()
++
+     # ---- HiCache: Async Event Management ----
+ 
+     def _count_ready_acks(self, ack_queue) -> int:
+diff --color -ruN before/test/registered/unit/mem_cache/test_hicache_nixl_cleaner.py after/test/registered/unit/mem_cache/test_hicache_nixl_cleaner.py
+--- a/test/registered/unit/mem_cache/test_hicache_nixl_cleaner.py	2026-11-26 20:34:58.089540551 +0000
++++ b/test/registered/unit/mem_cache/test_hicache_nixl_cleaner.py	2026-11-27 01:00:21.452176248 +0000
+@@ -328,9 +328,8 @@
+         return [all(os.path.exists(path) for path in page) for page in pages]
+ 
+     def test_a_refreshed_chain_loses_its_tail_before_its_head(self):
+-        """Pages are written head first, so the cleaner takes a chain's head first and
+-        a lookup, which stops at the first missing page, then finds none of the rest.
+-        A refresh stamps the head newest: the pass takes the tail and the head stays."""
++        """Written head first, a chain loses its head first, and a lookup stops at the
++        first missing page; refreshed with the head newest, it loses its tail first."""
+         written = [self._write_page(f"page-w{i}", mtime=100.0 + i) for i in range(3)]
+         self._run_single_group_cleanup()
+         self.assertEqual(self._kept(written), [False, True, True])
+@@ -342,9 +341,8 @@
+         self.assertEqual(self._kept(refreshed), [True, True, False])
+ 
+     def test_touching_a_deleted_file_creates_nothing_and_is_counted_gone(self):
+-        """The cleaner may delete a page between the match that serves it from memory
+-        and its touch. A touch that created the file would leave an empty page for the
+-        next lookup to take as stored; it is counted, so that a run shows the race."""
++        """The cleaner may delete a page between its match and its touch: the touch
++        creates nothing (a lookup would take an empty file as stored) and is counted."""
+         gone = [
+             self.file_manager.get_file_path(f"page-gone_model_0_1{suffix}")
+             for suffix in ("_k", "_v")
+@@ -360,10 +358,8 @@
+         )
+ 
+     def test_a_page_is_retired_only_once_every_file_of_it_is_at_zero(self):
+-        """A retired page goes before any page still wanted, however old that one is.
+-        The cleaner ranks a page by the newest of its files, so one file left as it was
+-        (V, another rank's, a sidecar pool's) keeps the page in its old place: retire
+-        needs a cache whose pages have no file the touch does not reach."""
++        """A retired page goes before any page still wanted, however old. The cleaner
++        ranks a page by its newest file: one file left untouched keeps it in place."""
+         wanted = self._write_page("page-wanted", mtime=100.0)
+         ended = self._write_page("page-ended", mtime=200.0)
+         half = self._write_page("page-half", mtime=300.0)
+@@ -375,9 +371,8 @@
+         self.assertEqual(self._kept([wanted, half]), [False, True])
+ 
+     def test_nixl_config_resolves_the_touch_switches(self):
+-        """Both are off by default; a top-level key wins over its env var either way and
+-        is SGLang's own, never forwarded as a NIXL plugin init param. A value of the
+-        wrong type must raise, not switch something on."""
++        """Both are off by default; a top-level key wins over its env var and is never
++        forwarded as a NIXL plugin init param; a value of the wrong type raises."""
+         no_keys = NixlBackendConfig()
+         keys_off = NixlBackendConfig(
+             {"touch_interval_s": 0, "retire_ended_pages": False}
+diff --color -ruN before/test/registered/unit/mem_cache/test_hicache_nixl_storage.py after/test/registered/unit/mem_cache/test_hicache_nixl_storage.py
+--- a/test/registered/unit/mem_cache/test_hicache_nixl_storage.py	2026-11-26 20:10:23.929500415 +0000
++++ b/test/registered/unit/mem_cache/test_hicache_nixl_storage.py	2026-11-27 01:00:21.453176251 +0000
+@@ -4,6 +4,7 @@
+ 
+ register_cuda_ci(est_time=16, stage="base-b", runner_config="1-gpu-small")
+ 
++import gc
+ import os
+ import shutil
+ import socket
+@@ -12,6 +13,7 @@
+ import threading
+ import time
+ import unittest
++import weakref
+ from unittest import mock
+ 
+ import torch
+@@ -881,15 +883,19 @@
+         self.test_dir = tempfile.mkdtemp(prefix="test_nixl_touch_")
+         self.addCleanup(shutil.rmtree, self.test_dir, ignore_errors=True)
+ 
+-    def _backend(self, **switches) -> HiCacheNixl:
++    def _backend(
++        self, *, mla_tp_rank=None, close_at_cleanup=True, **switches
++    ) -> HiCacheNixl:
++        """A backend over the temp directory; mla_tp_rank makes it one TP rank of two of
++        an MLA model, whose pools only rank 0 writes."""
+         storage_config = HiCacheStorageConfig(
+-            tp_rank=0,
+-            tp_size=1,
++            tp_rank=mla_tp_rank or 0,
++            tp_size=1 if mla_tp_rank is None else 2,
+             pp_rank=0,
+             pp_size=1,
+             attn_cp_rank=0,
+             attn_cp_size=1,
+-            is_mla_model=False,
++            is_mla_model=mla_tp_rank is not None,
+             is_page_first_layout=False,
+             model_name="test_model",
+             enable_storage_metrics=False,
+@@ -901,11 +907,14 @@
+             },
+         )
+         # The env var wins over file_path: keep every file under the temp directory.
+-        with envs.SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR.override(self.test_dir):
+-            backend = HiCacheNixl(
+-                storage_config=storage_config, file_path=self.test_dir
+-            )
+-        self.addCleanup(backend.close)
++        # override() leaves it set when the constructor raises; patch.dict restores it.
++        with mock.patch.dict(os.environ):
++            with envs.SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR.override(self.test_dir):
++                backend = HiCacheNixl(
++                    storage_config=storage_config, file_path=self.test_dir
++                )
++        if close_at_cleanup:
++            self.addCleanup(backend.close)
+         return backend
+ 
+     def _write_pages(self, backend: HiCacheNixl, keys: list, *, zero_copy: bool):
+@@ -931,9 +940,8 @@
+         return [t for t in threading.enumerate() if t.name == self.TOUCH_THREAD]
+ 
+     def test_a_touch_reaches_every_file_the_write_path_made_for_a_page(self):
+-        """The cleaner ranks a page by the newest of its files, so a touch that missed
+-        one of them, or named a file the write path never made, moves nothing. The
+-        first page gets the newest stamp, and close() stops the thread."""
++        """The cleaner ranks a page by the newest of its files: a touch must name every
++        file the write path made for it, first page newest; close() ends the thread."""
+         newest_ns = 50 * 10**9
+         for zero_copy, files_per_page in ((True, 2), (False, 1)):
+             with self.subTest(zero_copy=zero_copy):
+@@ -991,6 +999,56 @@
+         self.assertEqual(len(live), 2)
+         self.assertGreater(min(live), 0)
+ 
++    def test_a_rank_that_writes_no_files_takes_neither_switch(self):
++        """An MLA rank other than 0 writes no page file: it runs no touch thread and
++        offers the cache neither switch, or the cache would retire files never made."""
++        backend = self._backend(
++            mla_tp_rank=1, touch_interval_s=300, retire_ended_pages=True
++        )
++        self.assertEqual(
++            (backend.touch_interval_s, backend.retire_ended_pages), (0.0, False)
++        )
++        self.assertEqual(self._touch_threads(), [])
++
++    def test_a_touch_that_fails_does_not_end_the_thread(self):
++        """A touch that raises is logged and the thread goes on: ended, it would leave
++        every later refresh and retire in a queue nobody reads, with no log line."""
++        backend = self._backend(retire_ended_pages=True)
++        self._write_pages(backend, ["first", "second"], zero_copy=True)
++        stamp_pages = backend.file_manager.stamp_pages
++        calls = []
++
++        def failing_once(page_files, *, newest_ns):
++            calls.append(page_files)
++            if len(calls) == 1:
++                raise RuntimeError("the first touch fails")
++            return stamp_pages(page_files, newest_ns=newest_ns)
++
++        backend.file_manager.stamp_pages = failing_once
++        with self.assertLogs(self.LOGGER, level="WARNING") as logs:
++            backend.touch_pages(["first"], newest_ns=None)
++            backend.touch_pages(["second"], newest_ns=None)
++            backend.close()
++        first, second = self._page_mtimes_ns(["first", "second"])
++        self.assertGreater(min(first), 0)
++        self.assertEqual(second, [0, 0])
++        self.assertIn("NIXL L3 touch failed", logs.output[0])
++        self.assertEqual(self._touch_threads(), [])
++
++    def test_a_backend_dropped_without_close_is_collected_with_its_thread(self):
++        """The touch thread holds its backend weakly: held by it, a backend dropped
++        without close() would live on, thread and registered memory, for good."""
++        backend = self._backend(touch_interval_s=300, close_at_cleanup=False)
++        self.assertEqual(len(self._touch_threads()), 1)
++        dropped = weakref.ref(backend)
++        # Should the backend survive, close it so that its thread does not outlive
++        # this test.
++        self.addCleanup(lambda: dropped() is None or dropped().close())
++        del backend
++        gc.collect()
++        self.assertIsNone(dropped())
++        self.assertEqual(self._touch_threads(), [])
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+diff --color -ruN before/test/registered/unit/mem_cache/test_next_turn_prefetch.py after/test/registered/unit/mem_cache/test_next_turn_prefetch.py
+--- a/test/registered/unit/mem_cache/test_next_turn_prefetch.py	2026-11-26 22:14:09.091854091 +0000
++++ b/test/registered/unit/mem_cache/test_next_turn_prefetch.py	2026-11-27 01:00:21.470176314 +0000
+@@ -330,11 +330,8 @@
+     def test_an_explicit_end_skips_the_last_turns_write_and_retires_the_sessions_pages(
+         self,
+     ):
+-        """On the real tree, through the commit hook: the turn whose hint says the
+-        session ended has its inserts flagged so that their host copies are not written
+-        to the SSD, and what the earlier turns stored past the first prompt, the
+-        replies the next prompt did not repeat included, is given mtime zero. The first
+-        prompt, which later sessions reuse, is not."""
++        """End to end on the real tree: the ended turn's inserts are flagged and the
++        earlier turns' pages past the first prompt, dead replies too, are retired."""
+         cache = cpu_unified_cache()
+         cache.enable_storage = True
+         store = mock.Mock(spec=HiCacheStorage)
+@@ -342,7 +339,10 @@
+             storage_backend=store, pp_prefetch_command_group=None
+         )
+         cache.retention = RetentionSwitches(
+-            track_stored=True, skip_ended_writes=True, retire_ended_pages=True
++            track_stored=True,
++            skip_ended_writes=True,
++            touch_interval_s=300.0,
++            retire_ended_pages=True,
+         )
+         ntp = NextTurnPrefetcher(
+             mode="observe",
+@@ -399,8 +399,8 @@
+ 
+         def ack_writes(*node_ids):
+             for node_id in node_ids:
+-                tree.mark_storage_write(node_id, node_id)
+-                tree.finish_storage_write(node_id, node_id, stored_at=0.0)
++                tree.mark_storage_write(node_id, op_id=node_id)
++                tree.finish_storage_write(node_id, op_id=node_id, stored_at=0.0)
+ 
+         first_prompt = list(range(1, 9))
+         reply_0 = turn("s-t0", "s-t1", "tool", first_prompt, [100, 101])
+@@ -422,8 +422,87 @@
+             sorted(retire.args[0]),
+             sorted(key for node_id in own for key in tree.get_hash_values(node_id)),
+         )
++        # The first prompt, which later sessions reuse, keeps its files.
+         self.assertTrue(tree.node_by_id(added_1).parent.storage_stored)
+ 
++    def test_the_prompt_insert_of_an_ending_turn_is_flagged_once_its_end_is_known(self):
++        """The prompt is most of an ended turn and is inserted before the reply exists:
++        flagged when the hint names the end at arrival, never from a reply to come."""
++        cache = cpu_unified_cache()
++        cache.enable_storage = True
++        cache.retention = RetentionSwitches(track_stored=True, skip_ended_writes=True)
++        flagged = []
++        insert = cache.insert
++
++        def recording_insert(params):
++            flagged.append(params.skip_storage_backup)
++            return insert(params)
++
++        cache.insert = recording_insert
++
++        def table(reply, gaps):
++            return {
++                "session": "s",
++                "next_rid": "next",
++                "gaps": gaps,
++                "replay_reply_key": reply,
++            }
++
++        def prompt_flag(reply_key_source, payload, *, tokenizer=None):
++            """The flag of one request's prompt insert, at the end of its prefill."""
++            cache.next_turn_prefetch = NextTurnPrefetcher(
++                mode="observe",
++                tree_cache=cache,
++                page_size=2,
++                reply_key_source=reply_key_source,
++                explicit_ends=True,
++            )
++            prompt = array("q", (100 * len(flagged) + i for i in range(1, 5)))
++            n = len(prompt)
++            cache.req_to_token_pool.req_to_token[0, :n] = (
++                cache.token_to_kv_pool_allocator.alloc(n)
++            )
++            # Nothing matched at admission: the request holds its lock on the root.
++            root = cache.root_node_handle()
++            req = make_req(
++                "a",
++                kv_hints=hints("next", version="2", payload=payload),
++                tokenizer=tokenizer,
++            )
++            req.__dict__.update(
++                session=None,
++                origin_input_ids=prompt,
++                get_fill_ids=lambda: prompt,
++                extra_key=None,
++                cache_salt=None,
++                priority=0,
++                session_id=None,
++                kv_rotation_base=None,
++                last_node=root,
++                lock_receipt=cache.inc_lock_ref(root).to_dec_params(),
++                swa_prefix_lock_released=False,
++                kv=SimpleNamespace(
++                    req_pool_idx=0,
++                    cache_protected_len=0,
++                    swa_evicted_seqlen=0,
++                    swa_dead_lo=lambda page_size: 0,
++                ),
++            )
++            cache.cache_unfinished_req(req)
++            return flagged[-1]
++
++        gaps = [{"key": "tool", "p50": 5.0}, {"key": "_end", "ended": True}]
++        self.assertTrue(prompt_flag("hint", table("_end", gaps)))
++        self.assertFalse(prompt_flag("hint", table("tool", gaps)))
++        # Read off the reply, the end is known only once the reply is: an empty reply
++        # taken for one without a tool call would skip a live session's prompt.
++        no_call = SimpleNamespace(decode=lambda ids: "Just an answer.")
++        ends_without_a_call = table(None, [{"key": NO_CALL_KEY, "ended": True}])
++        self.assertFalse(prompt_flag("reply", ends_without_a_call, tokenizer=no_call))
++        # With the store detached no write comes to spend a skip: none is decided.
++        cache.enable_storage = False
++        self.assertFalse(prompt_flag("hint", table("_end", gaps)))
++
+ 
+ class TestPlanRegistration(PrefetcherTestCase):
+     def test_only_finished_hinted_turns_register_a_plan(self):
+@@ -481,20 +560,47 @@
+                     self.assertEqual(plans, [])
+ 
+     def test_an_exact_hint_session_ends_at_the_turn_with_no_next(self):
+-        """An exact hint ends its session by naming no next turn, and so does every
+-        request of a client that sends no hints. Only a turn the previous one named is
+-        an end: an un-hinted client must keep its writes, and a hint that cannot be
+-        read says nothing."""
+-        self.commit("s-t0", "s-t1", now=0.0)
+-        self.assertTrue(self.ntp.ends_session(make_req("s-t1"), reply_known=False))
++        """An exact hint ends its session by naming no next turn. A request no hint
++        named, a turn a table named and a hint that cannot be read state nothing."""
++        ntp = NextTurnPrefetcher(
++            mode=self.mode,
++            tree_cache=self.cache,
++            page_size=PAGE,
++            reply_key_source="hint",
++            explicit_ends=True,
++        )
++
++        def commit(rid, envelope):
++            ntp.on_turn_committed(
++                req=make_req(rid, kv_hints=envelope),
++                key=key_of(KEY_TOKENS),
++                rotation_tail_declined=False,
++                now=0.0,
++            )
++
++        commit("s-t0", hints("s-t1"))
++        table = {
++            "session": "u",
++            "next_rid": "u-t1",
++            "gaps": [{"key": "tool", "p50": 5.0}],
++            "replay_reply_key": "tool",
++        }
++        commit("u-t0", hints("u-t1", version="2", payload=table))
++        self.assertTrue(ntp.ends_session(make_req("s-t1"), reply_known=False))
+         not_ends = {
+             "never named": make_req("lone"),
++            "named by a table": make_req("u-t1"),
+             "names a next turn": make_req("s-t1", kv_hints=hints("s-t2")),
+             "unreadable": make_req("s-t1", kv_hints=hints("s-t2", gap_s=-1.0)),
+         }
+         for name, req in not_ends.items():
+             with self.subTest(name):
+-                self.assertFalse(self.ntp.ends_session(req, reply_known=True))
++                self.assertFalse(ntp.ends_session(req, reply_known=True))
++        found = self.events(lambda: commit("s-t1", None))
++        self.assertEqual(
++            [fields for kind, fields in found if kind == "ntp_end"],
++            [{"rid": "s-t1", "sess": "s", "explicit": "1", "why": "no_next"}],
++        )
+ 
+ 
+ class TestGapTable(PrefetcherTestCase):
+@@ -598,10 +704,8 @@
+         )
+ 
+     def test_only_an_explicit_end_ends_the_session(self):
+-        """A table with no entry for the reply's key was read as the session's end, and
+-        such a session sent its next turn seconds later. Only an entry marked ended is
+-        an end, also on a turn the previous one named; a reply not generated yet picks
+-        no entry."""
++        """Only an entry marked ended ends a session: one with no entry for its reply
++        sends its next turn seconds later; a reply not generated yet picks no entry."""
+         self.commit("a0", "a", now=0.0)
+ 
+         def ends(ntp, payload, *, reply_known=True, tokenizer=None):
+@@ -1210,10 +1314,8 @@
+         self.assertEqual(self.registry().lookup(9), (True, None))
+ 
+     def test_a_turn_with_no_usable_entry_is_ranked_as_un_hinted_not_as_ended(self):
+-        """Registered as ended, a session with no entry for its reply was first out of
+-        GPU and host memory seconds before its next turn came. Once the cache acts on
+-        ends, only a hint that states the end registers one: no entry, an expired plan
+-        and an aborted turn forget the session's tail, each logged with its reason."""
++        """Once the cache acts on ends, only a hint that states the end registers one:
++        no entry, no hint, an expired plan and an abort forget the tail and say why."""
+         self.ntp = NextTurnPrefetcher(
+             mode=self.mode,
+             tree_cache=self.cache,
+@@ -1280,17 +1382,32 @@
+         self.assertEqual([fields["why"] for fields in aborted], ["abort"])
+         self.assertEqual(registered(17), (False, None))
+ 
+-    def test_only_an_explicit_end_retires_and_only_past_the_sessions_first_prompt(self):
+-        """Later sessions reuse an ended session's first prompt, so the cache is told
+-        where that prompt ends and which leaves are the session's own replies; any
+-        other leaf on the way belongs to someone else. A turn with no usable entry is
+-        still the session's turn. A session that expired is live and keeps its pages,
+-        and one seen for a single turn has no page known to be its own. An exact hint
+-        states the end by naming no next turn."""
++        # A turn the table named that comes without its table states nothing.
++        commit("w-t0", "w-t1", "tool", tail=19, now=400.0, session="w")
++        unhinted = ends_logged(
++            lambda: self.ntp.on_turn_committed(
++                req=make_req("w-t1"),
++                key=key_of(KEY_TOKENS),
++                rotation_tail_declined=False,
++                now=410.0,
++                tail_node_id=21,
++            )
++        )
++        self.assertEqual(
++            unhinted, [{"rid": "w-t1", "sess": "w", "explicit": "0", "why": "no_hint"}]
++        )
++        self.assertEqual(
++            (registered(19), registered(21)), ((False, None), (False, None))
++        )
++
++    def retiring_prefetcher(self):
++        """A prefetcher with the retire on over a cache that records what it is asked to
++        retire, and a commit of one table-hinted turn (session: the rid's stem)."""
+         cache = DeadlineCache()
++        cache.get_last_hash_value = lambda node_id: f"key-{node_id}"
+         cache.retired = []
+-        cache.retire_storage_chain = lambda tail, *, keep_tokens, own_leaves: (
+-            cache.retired.append((tail, keep_tokens, set(own_leaves)))
++        cache.retire_storage_chain = lambda tail, *, keep_tokens, own_leaf_keys: (
++            cache.retired.append((tail, keep_tokens, set(own_leaf_keys)))
+         )
+         ntp = NextTurnPrefetcher(
+             mode=self.mode,
+@@ -1320,21 +1437,50 @@
+             req = make_req(rid, kv_hints=hints(next_rid, version="2", payload=table))
+             commit_req(req, tail=tail, prompt_tokens=prompt_tokens, now=now)
+ 
++        return cache, ntp, commit, commit_req
++
++    def test_only_an_explicit_end_retires_and_only_past_the_sessions_first_prompt(self):
++        """The cache is told where the session's first prompt ends, which later sessions
++        reuse, and the last page key of each turn it committed, usable entry or not."""
++        cache, ntp, commit, commit_req = self.retiring_prefetcher()
+         commit("s-t0", "s-t1", "tool", tail=7, prompt_tokens=3 * PAGE + 10)
+         commit("s-t1", "s-t2", "other", tail=9, prompt_tokens=5 * PAGE)
+         commit("s-t2", "s-t3", "tool", tail=11, prompt_tokens=7 * PAGE)
++        # A session whose plan expires is live: it keeps its pages.
+         commit("u-t0", "u-t1", "tool", tail=31, prompt_tokens=2 * PAGE)
+         ntp.tick(waiting_queue=[], now=self.arrival + 61.0)
+         self.assertEqual(cache.retired, [])
+         commit("s-t3", "-", "_end", tail=13, prompt_tokens=9 * PAGE, now=100.0)
+-        self.assertEqual(cache.retired, [(13, 3 * PAGE, {7, 9, 11})])
++        self.assertEqual(cache.retired, [(13, 3 * PAGE, {"key-7", "key-9", "key-11"})])
++        # A session seen for one turn only has no page known to be its own.
+         commit("one-t0", "-", "_end", tail=21, prompt_tokens=4 * PAGE, now=100.0)
+         self.assertEqual(len(cache.retired), 1)
++        # An exact hint states the end by naming no next turn.
+         exact = {"session": "x", "next_rid": "x-t1", "next_gap_s": 5.0}
+         named = make_req("x-t0", kv_hints=hints("x-t1", payload=exact))
+         commit_req(named, tail=41, prompt_tokens=2 * PAGE, now=200.0)
+         commit_req(make_req("x-t1"), tail=43, prompt_tokens=6 * PAGE, now=210.0)
+-        self.assertEqual(cache.retired[1:], [(43, 2 * PAGE, {41})])
++        self.assertEqual(cache.retired[1:], [(43, 2 * PAGE, {"key-41"})])
++
++    def test_what_is_kept_per_session_for_its_end_is_bounded_oldest_first(self):
++        """A session that never states its end would keep its record for good: past the
++        registry's bound the oldest record goes, and that session's end retires none."""
++        cache, _, commit, _ = self.retiring_prefetcher()
++        with mock.patch(
++            "sglang.srt.mem_cache.next_turn_prefetch.REGISTRY_MAX_ENTRIES", 2
++        ):
++            for index, session in enumerate(("a", "b", "c")):
++                commit(
++                    f"{session}-t0",
++                    f"{session}-t1",
++                    "tool",
++                    tail=50 + index,
++                    prompt_tokens=PAGE,
++                )
++        commit("a-t1", "-", "_end", tail=60, prompt_tokens=2 * PAGE, now=10.0)
++        self.assertEqual(cache.retired, [])
++        commit("c-t1", "-", "_end", tail=61, prompt_tokens=2 * PAGE, now=10.0)
++        self.assertEqual(cache.retired, [(61, PAGE, {"key-52"})])
+ 
+     def test_arrival_registers_the_tail_as_queued_not_as_a_time(self):
+         """Under next_use a plain time is a predicted next use, overdue once the turn
+diff --color -ruN before/test/registered/unit/mem_cache/test_next_use_eviction.py after/test/registered/unit/mem_cache/test_next_use_eviction.py
+--- a/test/registered/unit/mem_cache/test_next_use_eviction.py	2026-11-26 20:35:21.501614364 +0000
++++ b/test/registered/unit/mem_cache/test_next_use_eviction.py	2026-11-27 01:00:21.452176248 +0000
+@@ -1,7 +1,7 @@
+ """Next-use eviction: the tier order, the registry contract, the factory wiring
+ and the eviction order of a CPU tree (agent_cache/ORACLE_V2_PLAN.md 4.5). On the
+-same CPU tree: which nodes count as stored on the SSD
+-(agent_cache/results/design_unified_1126/DESIGN.md, section 4)."""
++same CPU tree: which nodes count as stored on the SSD (the Retain action of the
++design in agent_cache/results/design_unified_1126/)."""
+ 
+ from sglang.test.ci.ci_register import register_cpu_ci
+ 
+@@ -10,6 +10,7 @@
+ import time
+ import unittest
+ from array import array
++from queue import Queue
+ from types import SimpleNamespace
+ from unittest.mock import Mock
+ 
+@@ -46,6 +47,7 @@
+ from sglang.srt.mem_cache.radix_cache import RadixKey
+ from sglang.srt.mem_cache.storage_retention import RetentionSwitches
+ from sglang.srt.mem_cache.unified_cache.components import ComponentType
++from sglang.srt.mem_cache.unified_cache.storage_attachment import StorageAttachment
+ from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
+ from sglang.srt.mem_cache.utils import get_eviction_strategy
+ from sglang.test.test_utils import CustomTestCase
+@@ -524,10 +526,13 @@
+     records the pages of each storage write in submit order."""
+ 
+     backup_skip = False
++    # The ack drain reads these queues as well; it is asked for nothing from them.
++    prefetch_hit_queue = ack_prefetch_queue = host_mem_release_queue = None
+ 
+     def __init__(self):
+         self.writes = []
+         self.refuse_host_copies = False
++        self.ack_backup_queue = Queue()
+         self.mem_pool_host = SimpleNamespace(
+             anchor_entry=SimpleNamespace(
+                 host_pool=SimpleNamespace(shared_allocation_domain=None),
+@@ -558,6 +563,23 @@
+     return cache
+ 
+ 
++def recording_store(cache) -> Mock:
++    """Attach a store that records the mtime changes asked of it."""
++    store = Mock(spec=HiCacheStorage)
++    cache.cache_controller.storage_backend = store
++    return store
++
++
++def zeroed_pages(store) -> list:
++    """The page keys the store was asked to give mtime zero, in the order asked."""
++    return [
++        key
++        for call in store.touch_pages.call_args_list
++        if call.kwargs["newest_ns"] is None
++        for key in call.args[0]
++    ]
++
++
+ def read_back_node(cache, parent_id, tokens) -> int:
+     """A host-only node under parent_id, as a landed storage read inserts it."""
+     return cache.tree_core.insert_host(
+@@ -586,115 +608,172 @@
+ def stored_node(cache, prompt) -> int:
+     """computed_node whose storage write was acked in full."""
+     node_id = computed_node(cache, prompt)
+-    cache.tree_core.mark_storage_write(node_id, node_id)
+-    cache.tree_core.finish_storage_write(node_id, node_id, stored_at=0.0)
++    cache.tree_core.mark_storage_write(node_id, op_id=node_id)
++    cache.tree_core.finish_storage_write(node_id, op_id=node_id, stored_at=0.0)
+     return node_id
+ 
+ 
+-def write_through_turn(cache, prompt, *, ends=False) -> int:
+-    """Insert a prompt as a turn does under write-through: each new node is copied to
+-    host memory inside the insert. Then ack those copies, where storage writes are
+-    queued; returns the last node's id."""
++def ack_host_copies(cache) -> None:
++    """Ack every host copy in flight, which queues the storage write of its node."""
++    for ack_id in list(cache.ongoing_write_through):
++        cache._finish_write_through_ack(ack_id)
++
++
++def write_through_turn(cache, prompt, *, ends=False, acked=True) -> int:
++    """Insert a prompt as a turn does under write-through, where each new node is copied
++    to host memory inside the insert, and ack those copies; returns the last node."""
+     key = RadixKey(array("q", prompt))
+     held = cache.match_prefix(MatchPrefixParams(key=key)).device_indices
+     fresh = cache.token_to_kv_pool_allocator.alloc(len(prompt) - len(held))
+     leaf = cache.insert(
+         InsertParams(key=key, value=torch.cat([held, fresh]), skip_storage_backup=ends)
+     ).last_device_node
+-    for ack_id in list(cache.ongoing_write_through):
+-        cache._finish_write_through_ack(ack_id)
++    if acked:
++        ack_host_copies(cache)
+     return leaf
+ 
+ 
++def ack_storage_writes(cache, *, short=()) -> None:
++    """The write thread acks every queued storage write in submit order, in full unless
++    its op id is in short, and the cache drains the acks as a scheduler pass does."""
++    controller = cache.cache_controller
++    op_ids = sorted(cache.ongoing_backup)
++    for op_id in op_ids:
++        pages = controller.writes[op_id]
++        written = 0 if op_id in short else len(pages) * cache.page_size
++        controller.ack_backup_queue.put(
++            SimpleNamespace(id=op_id, hash_value=pages, completed_tokens=written)
++        )
++    cache._drain_storage_control_queues_impl(
++        n_storage_hit=0,
++        n_ack_prefetch=0,
++        n_backup=len(op_ids),
++        n_release=0,
++        extra_release_counts={},
++        log_metrics=False,
++    )
++
++
+ class TestStoredMarksOnACpuTree(CustomTestCase):
+     def marks(self, cache, node_id):
+         node = cache.tree_core.node_by_id(node_id)
+         return node.storage_write_op, node.storage_stored
+ 
++    def stored(self, cache, *node_ids):
++        return [self.marks(cache, node_id)[1] for node_id in node_ids]
++
+     def test_a_split_while_the_write_is_queued_marks_both_fragments_at_the_ack(self):
+-        """A match that ends inside a node splits it while its storage write is queued,
+-        and the new fragment holds some of the op's pages under a new id. Unmarked at
+-        the ack, it would count as unwritten and be written again under every child."""
++        """A match ending inside a node splits it while its storage write is queued: the
++        ack marks both fragments, or the new one is written again under every child."""
+         cache = stored_marks_cache()
+         tree = cache.tree_core
+         parent = computed_node(cache, [1, 2])
+         child = computed_node(cache, [1, 2, 3, 4, 5, 6])
+-        tree.mark_storage_write(parent, 6)
+-        tree.mark_storage_write(child, 7)
++        tree.mark_storage_write(parent, op_id=6)
++        tree.mark_storage_write(child, op_id=7)
+         cache.match_prefix(MatchPrefixParams(key=RadixKey(array("q", [1, 2, 3, 4]))))
+         fragment = tree.node_by_id(child).parent.id
+         self.assertNotEqual(fragment, parent)
+-        tree.finish_storage_write(child, 7, stored_at=100.0)
++        tree.finish_storage_write(child, op_id=7, stored_at=100.0)
+         self.assertEqual(
+             [self.marks(cache, node_id) for node_id in (child, fragment, parent)],
+             [(None, True), (None, True), (6, False)],
+         )
+ 
+     def test_a_child_write_first_rewrites_an_unstored_ancestor(self):
+-        """A lookup stops at the first page missing on the SSD, so a child written under
+-        an ancestor whose write failed cannot be reached there. Its write queues that
+-        ancestor first, once. Pages read back from the SSD are stored at birth and not
+-        written again, and an ancestor whose host copy is still being filled is left to
+-        its own ack."""
++        """A lookup stops at the first page missing on the SSD: a write first queues,
++        once, every ancestor without a copy there, stored nodes in between or not."""
+         cache = stored_marks_cache()
+         tree, writes = cache.tree_core, cache.cache_controller.writes
+         pages = tree.get_hash_values
++        # Read back from the SSD: stored at birth and never written again.
+         read_back_node(cache, cache.root_node_handle(), [1, 2])
+         failed = computed_node(cache, [1, 2, 3])
++        below = computed_node(cache, [1, 2, 3, 4])
+         cache.write_backup_storage(failed)
+-        self.assertEqual(writes, [pages(failed)])
+-        tree.finish_storage_write(failed, 0, stored_at=None)
++        cache.write_backup_storage(below)
++        self.assertEqual(writes, [pages(failed), pages(below)])
++        # The write thread goes on after a write cut short: the hole is left above a
++        # stored node.
++        ack_storage_writes(cache, short={0})
++        self.assertEqual(self.stored(cache, failed, below), [False, True])
+ 
+-        child = computed_node(cache, [1, 2, 3, 4])
++        child = computed_node(cache, [1, 2, 3, 4, 5])
+         cache.write_backup_storage(child)
+-        self.assertEqual(writes[1:], [pages(failed), pages(child)])
+-        sibling = computed_node(cache, [1, 2, 3, 5])
++        self.assertEqual(writes[2:], [pages(failed), pages(child)])
++        sibling = computed_node(cache, [1, 2, 3, 4, 6])
+         cache.write_backup_storage(sibling)
+-        self.assertEqual(writes[3:], [pages(sibling)])
++        self.assertEqual(writes[4:], [pages(sibling)])
+ 
++        # A host copy still in flight is written at its own ack, not by a child's.
+         copying = computed_node(cache, [7])
+         tree.mark_write_through_pending([copying], ack_id=copying)
+-        below = computed_node(cache, [7, 8])
+-        cache.write_backup_storage(below)
+-        self.assertEqual(writes[4:], [pages(below)])
+-
+-    def test_clearing_the_store_clears_every_mark(self):
+-        """An emptied store holds no page. A mark left set, on a node or on the fragment
+-        a split copied it to, would keep those pages from ever being written again."""
+-        cache = stored_marks_cache()
+-        cache._storage_attachment = SimpleNamespace(clear=lambda: True)
+-        node = read_back_node(cache, cache.root_node_handle(), [1, 2, 3, 4])
+-        cache.match_prefix(MatchPrefixParams(key=RadixKey(array("q", [1, 2]))))
+-        fragment = cache.tree_core.node_by_id(node).parent.id
+-        self.assertEqual(
+-            (self.marks(cache, node), self.marks(cache, fragment)),
+-            ((None, True), (None, True)),
+-        )
+-        self.assertTrue(cache.clear_storage_backend())
+-        self.assertEqual(
+-            (self.marks(cache, node), self.marks(cache, fragment)),
+-            ((None, False), (None, False)),
+-        )
++        deeper = computed_node(cache, [7, 8])
++        cache.write_backup_storage(deeper)
++        self.assertEqual(writes[5:], [pages(deeper)])
++
++    def test_clearing_or_detaching_the_store_clears_every_mark(self):
++        """An emptied or detached store holds no page of this tree: a mark kept, or set
++        by the ack of a write queued before, keeps a page from being written again."""
++        for gone in ("cleared", "detached"):
++            with self.subTest(gone):
++                cache = stored_marks_cache(retire_ended_pages=True)
++                cache._storage_attachment = SimpleNamespace(clear=lambda: True)
++                tree = cache.tree_core
++                node = read_back_node(cache, cache.root_node_handle(), [1, 2, 3, 4])
++                # A split copies the mark to the fragment it makes.
++                cache.match_prefix(MatchPrefixParams(key=RadixKey(array("q", [1, 2]))))
++                fragment = tree.node_by_id(node).parent.id
++                queued = computed_node(cache, [1, 2, 3, 4, 5])
++                cache.write_backup_storage(queued)
++                cache._retire_at_ack.add(queued)
++                copying = computed_node(cache, [9])
++                cache._storage_skip_nodes.add(copying)
++                self.assertEqual(
++                    [
++                        self.marks(cache, node_id)
++                        for node_id in (node, fragment, queued)
++                    ],
++                    [(None, True), (None, True), (0, False)],
++                )
++                if gone == "cleared":
++                    self.assertTrue(cache.clear_storage_backend())
++                    # The write went out before the clear: its ack must find no node.
++                    ack_storage_writes(cache)
++                else:
++                    StorageAttachment(cache)._release_pending_storage_ops()
++                    self.assertEqual(
++                        (cache.ongoing_backup, cache.pending_backup_tokens), ({}, 0)
++                    )
++                self.assertEqual(
++                    [
++                        self.marks(cache, node_id)
++                        for node_id in (node, fragment, queued)
++                    ],
++                    [(None, False)] * 3,
++                )
++                self.assertEqual(cache._retire_at_ack, set())
++                # A cleared store still takes writes, so a skip decided stays decided.
++                self.assertEqual(
++                    cache._storage_skip_nodes, {copying} if gone == "cleared" else set()
++                )
+ 
+     def test_a_stale_tail_takes_its_fresh_head_along_and_a_second_match_takes_nothing(
+         self,
+     ):
+-        """The cleaner deletes the oldest file first and a lookup stops at the first
+-        missing page, so a tail refreshed under a head left alone would outlive it: one
+-        stale node refreshes every stored node of the served chain, head first. A page
+-        just written is as recent as one just touched; stale from birth, it would have
+-        every turn touch its session's whole chain."""
++        """One stale node refreshes every stored node of the served chain, head first: a
++        tail refreshed alone would outlive its head. A page just written is fresh."""
+         cache = stored_marks_cache()
+         tree = cache.tree_core
+         pages = tree.get_hash_values
+         head = computed_node(cache, [1, 2])
+         tail = computed_node(cache, [1, 2, 3])
+         fork = computed_node(cache, [1, 2, 9])
+-        for op, (node_id, acked_at) in enumerate(
++        for op_id, (node_id, acked_at) in enumerate(
+             ((head, 1000.0), (tail, 1250.0), (fork, 1100.0))
+         ):
+-            tree.mark_storage_write(node_id, op)
+-            tree.finish_storage_write(node_id, op, stored_at=acked_at)
++            tree.mark_storage_write(node_id, op_id=op_id)
++            tree.finish_storage_write(node_id, op_id=op_id, stored_at=acked_at)
+ 
+         def stale(node_id, now):
+             return tree.take_stale_storage_keys(node_id, now=now, min_interval_s=300.0)
+@@ -702,47 +781,54 @@
+         self.assertEqual(stale(tail, 1299.0), [])
+         self.assertEqual(stale(tail, 1300.0), pages(head) + pages(tail))
+         self.assertEqual(stale(tail, 1310.0), [])
+-        # The head was refreshed at 1300; the fork under it was written at 1100.
++        # The fork was written at 1100, so the head it hangs on is touched again 150 s
++        # after its last refresh: the interval bounds a chain, not each of its pages.
+         self.assertEqual(stale(fork, 1450.0), pages(head) + pages(fork))
+         self.assertEqual(stale(tail, 1599.0), [])
+         self.assertEqual(stale(tail, 1600.0), pages(head) + pages(tail))
++        # A split copies the stamp: the fragment it makes is not stale at once.
++        cache.match_prefix(MatchPrefixParams(key=RadixKey(array("q", [1]))))
++        self.assertEqual(stale(tail, 1601.0), [])
+ 
+     def test_only_stored_nodes_are_refreshed(self):
+-        """A node whose write is queued or failed has no file to keep recent; pages
+-        read back have files of unknown age and go at the first match."""
++        """A node whose write is queued or failed has no file to keep recent; pages read
++        back have files of unknown age and are refreshed at their first match."""
+         cache = stored_marks_cache()
+         tree = cache.tree_core
+         pages = tree.get_hash_values
+         read_back = read_back_node(cache, cache.root_node_handle(), [1, 2])
+         queued = computed_node(cache, [1, 2, 3])
+-        tree.mark_storage_write(queued, 0)
++        tree.mark_storage_write(queued, op_id=0)
+         failed = computed_node(cache, [1, 2, 3, 4])
+-        tree.mark_storage_write(failed, 1)
+-        tree.finish_storage_write(failed, 1, stored_at=None)
++        tree.mark_storage_write(failed, op_id=1)
++        tree.finish_storage_write(failed, op_id=1, stored_at=None)
+         written = computed_node(cache, [1, 2, 3, 4, 5])
+-        tree.mark_storage_write(written, 2)
+-        tree.finish_storage_write(written, 2, stored_at=50.0)
++        tree.mark_storage_write(written, op_id=2)
++        tree.finish_storage_write(written, op_id=2, stored_at=50.0)
++        # The node written at 50 is fresh at 60 and goes along with the stale one.
+         self.assertEqual(
+             tree.take_stale_storage_keys(written, now=60.0, min_interval_s=300.0),
+             pages(read_back) + pages(written),
+         )
+ 
+     def test_a_probe_without_a_request_refreshes_nothing(self):
+-        """Only a request's match is memory serving a chain. The prefetcher probes the
+-        tree for every plan it stages: counted as serves, its probes would keep the
+-        files of sessions that never return as recent as those of live ones."""
++        """Only a request's match is memory serving a chain: the prefetcher's probes, a
++        detached store and a touch interval of zero move no mtime."""
++        touching = RetentionSwitches(track_stored=True, touch_interval_s=300.0)
+         cache = stored_marks_cache(touch_interval_s=300.0)
+-        store = Mock(spec=HiCacheStorage)
+-        cache.cache_controller.storage_backend = store
++        store = recording_store(cache)
+         node = read_back_node(cache, cache.root_node_handle(), [1, 2])
+         key = RadixKey(array("q", [1, 2]))
+         request = SimpleNamespace(session=None)
+         cache.match_prefix(MatchPrefixParams(key=key))
+         cache.enable_storage = False
+         cache.match_prefix(MatchPrefixParams(key=key, req=request))
++        cache.enable_storage = True
++        cache.retention = RetentionSwitches(track_stored=True)
++        cache.match_prefix(MatchPrefixParams(key=key, req=request))
+         store.touch_pages.assert_not_called()
+ 
+-        cache.enable_storage = True
++        cache.retention = touching
+         before_ns = time.time_ns()
+         for _ in range(2):
+             cache.match_prefix(MatchPrefixParams(key=key, req=request))
+@@ -751,11 +837,8 @@
+         self.assertGreaterEqual(touch.kwargs["newest_ns"], before_ns)
+ 
+     def test_a_turn_after_a_skipped_one_writes_the_skipped_node_first(self):
+-        """The last turn of a session that says it ended is copied to host memory and
+-        not written to the SSD: no write, no host lock, no pending tokens. Should a
+-        turn extend it after all, that turn's pages would sit below a hole, so the
+-        skipped node is written first. A node a refused host copy left above the ended
+-        turn is backed up by it and skipped with it."""
++        """An ended turn is copied to host memory and not written: no write, no host
++        lock, no pending tokens. A turn that extends it after all writes it first."""
+         cache = stored_marks_cache(skip_ended_writes=True)
+         cache.write_through_threshold = 1
+         tree, controller = cache.tree_core, cache.cache_controller
+@@ -771,11 +854,16 @@
+         last_node = tree.node_by_id(last)
+         self.assertTrue(last_node.backuped)
+         self.assertEqual(last_node.component_data[ComponentType.FULL].host_lock_ref, 0)
+-        self.assertEqual(sum("h2s_skip" in line for line in logs.output), 1)
++        skips = [line for line in logs.output if "h2s_skip" in line]
++        self.assertEqual(len(skips), 1)
++        # The skipped node holds two pages of one token each.
++        self.assertIn(f"h2s_skip node={last} tokens=2 reason=ended", skips[0])
+ 
+         resumed = write_through_turn(cache, [1, 2, 3, 4, 5])
+         self.assertEqual(controller.writes[1:], [pages(last), pages(resumed)])
+ 
++        # A node a refused host copy left above the ended turn is backed up by it and
++        # skipped with it.
+         controller.refuse_host_copies = True
+         unbacked = write_through_turn(cache, [7, 8])
+         controller.refuse_host_copies = False
+@@ -796,6 +884,7 @@
+         reply_2 = stored_node(cache, [1, 2, 3, 60])
+         third = computed_node(cache, [1, 2, 3, 4])
+         tail = computed_node(cache, [1, 2, 3, 4, 70])
++        pages = cache.tree_core.get_hash_values
+         return SimpleNamespace(
+             first=first,
+             reply_1=reply_1,
+@@ -803,48 +892,52 @@
+             reply_2=reply_2,
+             third=third,
+             tail=tail,
++            # What the prefetcher keeps of each committed turn: its last page key.
++            leaf_keys={pages(reply_1)[-1], pages(reply_2)[-1]},
+         )
+ 
+     def test_retire_takes_the_replies_no_later_prompt_repeated(self):
+-        """An ended session's own pages are what its turns added past its first prompt:
+-        the later prompts and the replies left hanging beside them. Their files get
+-        mtime zero and they stop counting as stored, so that no refresh brings them
+-        back. A page whose write is queued, or whose host copy is still in flight, is
+-        left to the ack of its write, unless that write is one the ended turn skips."""
++        """An ended session's own pages are its later prompts and the replies left by
++        them: stored ones get mtime zero now, the others at the ack of their write."""
+         for last_turn_skipped in (False, True):
+             with self.subTest(last_turn_skipped=last_turn_skipped):
+                 cache = stored_marks_cache(retire_ended_pages=True)
+-                store = Mock(spec=HiCacheStorage)
+-                cache.cache_controller.storage_backend = store
++                store = recording_store(cache)
+                 tree = cache.tree_core
+                 pages = tree.get_hash_values
+                 made = self.session_tree(cache)
+-                tree.mark_storage_write(made.third, 90)
++                tree.mark_storage_write(made.third, op_id=90)
+                 tree.mark_write_through_pending([made.tail], ack_id=made.tail)
+                 at_ack = {made.third, made.tail}
+                 if last_turn_skipped:
++                    # A write the ended turn skips leaves nothing to retire at an ack.
+                     cache._storage_skip_nodes.add(made.tail)
+                     at_ack.remove(made.tail)
+-                with self.assertLogs(CACHE_LOGGER, level="INFO") as logs:
++
++                def retire():
+                     cache.retire_storage_chain(
+-                        made.tail,
+-                        keep_tokens=2,
+-                        own_leaves={made.reply_1, made.reply_2},
++                        made.tail, keep_tokens=2, own_leaf_keys=made.leaf_keys
+                     )
+-                (touch,) = store.touch_pages.call_args_list
+-                self.assertEqual(touch.kwargs, {"newest_ns": None})
++
++                # A detached store has no file to retire: the marks stay as they are.
++                cache.enable_storage = False
++                retire()
++                store.touch_pages.assert_not_called()
++                cache.enable_storage = True
++                with self.assertLogs(CACHE_LOGGER, level="INFO") as logs:
++                    retire()
+                 own_stored = (made.reply_2, made.second, made.reply_1)
+                 self.assertEqual(
+-                    sorted(touch.args[0]),
++                    sorted(zeroed_pages(store)),
+                     sorted(key for node_id in own_stored for key in pages(node_id)),
+                 )
+                 self.assertEqual(cache._retire_at_ack, at_ack)
+-                stored = [
++                still_stored = [
+                     name
+                     for name, node_id in vars(made).items()
+-                    if self.marks(cache, node_id)[1]
++                    if name != "leaf_keys" and self.stored(cache, node_id)[0]
+                 ]
+-                self.assertEqual(stored, ["first"])
++                self.assertEqual(still_stored, ["first"])
+                 self.assertIn(
+                     f"l3_retire node={made.tail} pages=3 at_ack={len(at_ack)} "
+                     "keep_tokens=2",
+@@ -852,10 +945,8 @@
+                 )
+ 
+     def test_retire_keeps_the_first_prompt_and_stops_at_another_sessions_branch(self):
+-        """Later sessions reuse an ended session's first prompt, and now and then a
+-        later turn of it: a leaf the session did not make, or a reply something was
+-        built on, marks a branch another session needs. Nothing from that node up is
+-        retired."""
++        """Later sessions reuse an ended session's first prompt, at times a later turn:
++        from a leaf it did not make, or a reply built on, upward nothing is retired."""
+         for name, fork in (
+             ("another session's leaf", [1, 2, 3, 9]),
+             ("a reply built on", [1, 2, 3, 60, 61]),
+@@ -864,18 +955,144 @@
+                 cache = stored_marks_cache(retire_ended_pages=True)
+                 tree = cache.tree_core
+                 made = self.session_tree(cache)
+-                tree.mark_storage_write(made.third, 90)
+-                tree.finish_storage_write(made.third, 90, stored_at=0.0)
++                tree.mark_storage_write(made.third, op_id=90)
++                tree.finish_storage_write(made.third, op_id=90, stored_at=0.0)
+                 stored_node(cache, fork)
+                 retired = tree.take_retired_storage_pages(
+-                    made.tail, keep_tokens=2, own_leaves={made.reply_1, made.reply_2}
++                    made.tail, keep_tokens=2, own_leaf_keys=made.leaf_keys
+                 )
+                 self.assertEqual(
+                     (retired.page_keys, retired.pending_node_ids),
+                     (tree.get_hash_values(made.third), []),
+                 )
+                 kept = (made.first, made.reply_1, made.second, made.reply_2)
+-                self.assertTrue(all(self.marks(cache, node_id)[1] for node_id in kept))
++                self.assertEqual(self.stored(cache, *kept), [True] * 4)
++
++    def test_a_reply_read_back_as_a_new_node_is_still_the_sessions_own(self):
++        """A reply that left memory comes back from the SSD under a new node id: it is
++        known by its last page key, or the walk stops under it as at another's leaf."""
++        cache = stored_marks_cache(retire_ended_pages=True)
++        tree = cache.tree_core
++        pages = tree.get_hash_values
++        first = stored_node(cache, [1, 2])
++        # One read brings the second turn back whole (prompt page 3, reply page 60); the
++        # third prompt's match splits it, and the reply half is a leaf again.
++        reply = read_back_node(cache, first, [3, 60])
++        third = stored_node(cache, [1, 2, 3, 4])
++        tail = computed_node(cache, [1, 2, 3, 4, 70])
++        prompt = tree.node_by_id(reply).parent.id
++        self.assertEqual((pages(prompt), pages(reply)), ([f"{3:064x}"], [f"{60:064x}"]))
++        retired = tree.take_retired_storage_pages(
++            tail, keep_tokens=2, own_leaf_keys={f"{60:064x}"}
++        )
++        self.assertEqual(
++            sorted(retired.page_keys),
++            sorted(pages(third) + pages(reply) + pages(prompt)),
++        )
++
++    def test_the_last_replys_write_does_not_bring_a_retired_chain_back(self):
++        """The last reply's host copy is in flight when its session is retired: the
++        reply's write is retired at its ack, or skipped, and heals nothing above it."""
++        for skipped in (False, True):
++            with self.subTest(skip_ended_writes=skipped):
++                cache = stored_marks_cache(
++                    retire_ended_pages=True, skip_ended_writes=skipped
++                )
++                cache.write_through_threshold = 1
++                store = recording_store(cache)
++                writes = cache.cache_controller.writes
++                pages = cache.tree_core.get_hash_values
++                write_through_turn(cache, [1, 2])
++                second = write_through_turn(cache, [1, 2, 3])
++                ack_storage_writes(cache)
++                tail = write_through_turn(
++                    cache, [1, 2, 3, 4, 5], ends=skipped, acked=False
++                )
++                with self.assertLogs(CACHE_LOGGER, level="INFO") as logs:
++                    cache.retire_storage_chain(
++                        tail, keep_tokens=2, own_leaf_keys=frozenset()
++                    )
++                # at_ack counts pages: the tail holds two.
++                self.assertIn(
++                    f"l3_retire node={tail} pages=1 at_ack={0 if skipped else 2} "
++                    "keep_tokens=2",
++                    logs.output[-1],
++                )
++                written_before = len(writes)
++                ack_host_copies(cache)
++                self.assertEqual(
++                    writes[written_before:], [] if skipped else [pages(tail)]
++                )
++                ack_storage_writes(cache)
++                self.assertEqual(self.stored(cache, second, tail), [False, False])
++                self.assertEqual(
++                    zeroed_pages(store),
++                    pages(second) + ([] if skipped else pages(tail)),
++                )
++                self.assertEqual(
++                    (cache._retire_at_ack, cache._storage_skip_nodes), (set(), set())
++                )
++
++    def test_a_node_retired_while_its_write_is_queued_is_retired_at_the_ack(self):
++        """A write would reset a zeroed mtime, so a queued page is zeroed at its ack and
++        left unstored: the fragments the retire took, not what a split gave others."""
++        for built_on in (False, True):
++            with self.subTest(another_session_built_on_the_upper_fragment=built_on):
++                cache = stored_marks_cache(retire_ended_pages=True)
++                store = recording_store(cache)
++                tree = cache.tree_core
++                pages = tree.get_hash_values
++                stored_node(cache, [1, 2])
++                lower = computed_node(cache, [1, 2, 3, 4, 5, 6])
++                cache.write_backup_storage(lower)
++                # The node is split in two while its write is queued.
++                if built_on:
++                    computed_node(cache, [1, 2, 3, 4, 9])
++                else:
++                    middle = RadixKey(array("q", [1, 2, 3, 4]))
++                    cache.match_prefix(MatchPrefixParams(key=middle))
++                upper = tree.node_by_id(lower).parent.id
++                cache.retire_storage_chain(
++                    lower, keep_tokens=2, own_leaf_keys=frozenset()
++                )
++                self.assertEqual(
++                    cache._retire_at_ack, {lower} if built_on else {lower, upper}
++                )
++                store.touch_pages.assert_not_called()
++                with self.assertLogs(CACHE_LOGGER, level="INFO") as logs:
++                    ack_storage_writes(cache)
++                taken = pages(lower) if built_on else pages(lower) + pages(upper)
++                self.assertEqual(zeroed_pages(store), taken)
++                self.assertEqual(self.stored(cache, upper, lower), [built_on, False])
++                self.assertEqual(cache._retire_at_ack, set())
++                self.assertIn(
++                    f"l3_retire_ack op=0 node={lower} pages={len(taken)}",
++                    "\n".join(logs.output),
++                )
++
++    def test_a_write_below_a_retired_chain_brings_it_back(self):
++        """A session that sends a turn after its end, or a fork, builds on retired
++        pages: its write rewrites those zeroed and takes those queued off the retire."""
++        cache = stored_marks_cache(retire_ended_pages=True)
++        store = recording_store(cache)
++        writes = cache.cache_controller.writes
++        pages = cache.tree_core.get_hash_values
++        stored_node(cache, [1, 2])
++        middle = stored_node(cache, [1, 2, 3])
++        last = computed_node(cache, [1, 2, 3, 4])
++        cache.write_backup_storage(last)
++        cache.retire_storage_chain(last, keep_tokens=2, own_leaf_keys=frozenset())
++        self.assertEqual(
++            (zeroed_pages(store), cache._retire_at_ack), (pages(middle), {last})
++        )
++
++        resumed = computed_node(cache, [1, 2, 3, 4, 5])
++        cache.write_backup_storage(resumed)
++        self.assertEqual(writes[1:], [pages(middle), pages(resumed)])
++        self.assertEqual(cache._retire_at_ack, set())
++        ack_storage_writes(cache)
++        self.assertEqual(self.stored(cache, middle, last, resumed), [True] * 3)
++        self.assertEqual(zeroed_pages(store), pages(middle))
+ 
+ 
+ if __name__ == "__main__":
+diff --color -ruN before/test/registered/unit/mem_cache/test_storage_read_dispatch.py after/test/registered/unit/mem_cache/test_storage_read_dispatch.py
+--- a/test/registered/unit/mem_cache/test_storage_read_dispatch.py	2026-11-26 20:34:58.089540551 +0000
++++ b/test/registered/unit/mem_cache/test_storage_read_dispatch.py	2026-11-27 01:00:21.452176248 +0000
+@@ -12,7 +12,7 @@
+ import unittest
+ from array import array
+ from collections import defaultdict
+-from contextlib import nullcontext
++from contextlib import ExitStack, nullcontext
+ from queue import Queue
+ from types import MethodType, SimpleNamespace
+ from unittest.mock import Mock
+@@ -581,11 +581,12 @@
+         self.queued = {}
+         self.finished = []
+ 
+-    def mark_storage_write(self, node_id, op_id):
++    def mark_storage_write(self, node_id, *, op_id):
+         self.queued[node_id] = op_id
+ 
+-    def finish_storage_write(self, node_id, op_id, *, stored_at):
++    def finish_storage_write(self, node_id, *, op_id, stored_at, retire):
+         self.finished.append((node_id, op_id, stored_at is not None))
++        return []
+ 
+     def unstored_ancestors(self, node_id):
+         return []
+@@ -639,10 +640,8 @@
+         self.assertEqual(dict(cache.tree_core.locks), {1: 0, 2: 0, 3: 0})
+ 
+     def test_a_write_acked_short_unlocks_its_pages_and_leaves_them_unstored(self):
+-        """A write cut short was acked like a full one, so its host copy was evicted as
+-        if the SSD held the pages. Any ack still returns the lock and the pending tokens
+-        (a store that fails every write must not pin host memory); only one that covers
+-        every page marks the node stored."""
++        """Any ack returns the lock and the pending tokens (a store that fails every
++        write must not pin host memory); only one covering every page marks the node."""
+         cache = stored_tracking_cache({1: 4, 2: 6})
+         with self.assertLogs(LOGGER, level="INFO") as logs:
+             for node_id in (1, 2):
+@@ -674,10 +673,8 @@
+         self.assertEqual(event_lines(logs, "h2s_short"), [])
+ 
+     def test_a_write_short_on_any_rank_is_unstored_on_every_rank(self):
+-        """completed_tokens is a rank's own count. Ranks whose marks differed would
+-        rewrite different ancestors and then drain different acks, so the verdict is the
+-        minimum over ranks. A rank that writes nothing for a replicated pool votes yes,
+-        and the detach path, which no other rank mirrors, asks no one."""
++        """completed_tokens is a rank's own count: the verdict is the minimum over TP
++        ranks. A rank that writes nothing votes yes; the detach path asks no other."""
+         cache = stored_tracking_cache({1: 4, 2: 4})
+         cache.tp_world_size = 2
+         reduced_with = []
+@@ -711,44 +708,9 @@
+         self.assertTrue(cache.tree_core.finished[-1][2])
+         cache._all_reduce.assert_called_once()
+ 
+-    def test_a_write_dropped_at_detach_is_neither_stored_nor_left_queued(self):
+-        """Detach and exit drop the writes a stopped thread never acks. A node left with
+-        the dropped op's id would count as queued for good: no child would rewrite it,
+-        and its pages would be a hole on the SSD after a re-attach."""
+-        cache = stored_tracking_cache({1: 4})
+-        cache.write_backup_storage(1)
+-        StorageAttachment(cache)._release_pending_storage_ops()
+-        self.assertEqual(
+-            cache.tree_core.finished, [(1, cache.tree_core.queued[1], False)]
+-        )
+-
+-    def test_a_node_retired_while_its_write_is_queued_is_retired_at_the_ack(self):
+-        """A session may end while its pages are still being written; zeroed at once,
+-        their mtime would be reset by the write and they would outlive every older
+-        page. They are zeroed at the ack instead and do not count as stored, so that a
+-        refresh does not bring them back."""
+-        cache = stored_tracking_cache({1: 4, 2: 4}, retire_ended_pages=True)
+-        store = cache.cache_controller.storage_backend
+-        cache._retire_at_ack = {1}
+-        for node_id in (1, 2):
+-            cache.write_backup_storage(node_id)
+-        finish_writes(cache, 4 * PAGE, 4 * PAGE)
+-        with self.assertLogs(LOGGER, level="INFO") as logs:
+-            drain(cache, 0, write_acks=2)
+-        store.touch_pages.assert_called_once_with(
+-            [f"n1-{page}" for page in range(4)], newest_ns=None
+-        )
+-        self.assertEqual(
+-            [stored for *_, stored in cache.tree_core.finished], [False, True]
+-        )
+-        self.assertEqual(cache._retire_at_ack, set())
+-        self.assertEqual(len(event_lines(logs, "l3_retire_ack")), 1)
+-
+     def test_a_split_of_a_skipped_node_skips_both_fragments(self):
+-        """A node may be split while its host copy is in flight, and each fragment then
+-        gets a storage write of its own under a new id. What was decided for the node
+-        (no write, or retire at the ack) must follow both, or half of an ended turn is
+-        written, or written and never retired."""
++        """A node split while its host copy is in flight gets a write per fragment: the
++        skip or the retire decided for it follows both, or half an ended turn stays."""
+         cache = stored_tracking_cache(
+             {}, skip_ended_writes=True, retire_ended_pages=True
+         )
+@@ -794,34 +756,64 @@
+ 
+ 
+ class TestRetentionSwitches(CustomTestCase):
+-    def test_a_switch_missing_what_it_needs_stays_off_and_says_so(self):
+-        """Each switch acts through something else: the stored marks, the prefetcher's
+-        end signal, every file of a page. Granted without it, a skipped write would
+-        leave a hole no child rewrites, and a retire would zero half a page's files."""
+-        wanted = RetentionSwitches(
+-            track_stored=True,
+-            skip_ended_writes=True,
+-            touch_interval_s=300.0,
+-            retire_ended_pages=True,
++    ALL_ON = RetentionSwitches(
++        track_stored=True,
++        skip_ended_writes=True,
++        touch_interval_s=300.0,
++        retire_ended_pages=True,
++    )
++
++    def switch_cache(self, *, prefetch="on") -> UnifiedRadixCache:
++        """A real CPU cache meeting every condition, attached to a store that offers
++        the touch interval and the retire."""
++        from test_session_unified_radix_cache import make_params
++
++        reset_context()
++        self.addCleanup(reset_context)
++        publish(
++            ServerArgs(model_path="dummy", hicache_storage_next_turn_prefetch=prefetch),
++            role="scheduler",
+         )
++        cache = UnifiedRadixCache(make_params(enable_session=False, page_size=2))
++        store = Mock(
++            spec=HiCacheStorage, touch_interval_s=300.0, retire_ended_pages=True
++        )
++        cache.cache_controller = SimpleNamespace(storage_backend=store)
++        return cache
++
++    def pin_env_switches(self, *, track_stored: bool, skip_ended_writes: bool) -> None:
++        # Closed as a cleanup: override() skips its restore when the test body raises.
++        stack = ExitStack()
++        self.addCleanup(stack.close)
++        stack.enter_context(
++            envs.SGLANG_HICACHE_STORAGE_TRACK_STORED.override(track_stored)
++        )
++        stack.enter_context(
++            envs.SGLANG_HICACHE_STORAGE_SKIP_ENDED_WRITES.override(skip_ended_writes)
++        )
++
++    def test_a_switch_missing_what_it_needs_stays_off_and_says_so(self):
++        """Each switch acts through something else: granted without it, a skipped write
++        leaves a hole no child rewrites and a retire zeroes half a page's files."""
++        wanted = self.ALL_ON
+         met = dict(
+             host_cache_mode=True,
+             python_tree_core=True,
++            single_pp_rank=True,
+             next_turn_prefetch=True,
+             full_kv_only=True,
+         )
+         self.assertEqual(resolve_retention_switches(wanted, **met), (wanted, []))
+         marks_and_touch = RetentionSwitches(track_stored=True, touch_interval_s=300.0)
++        no_retire = RetentionSwitches(
++            track_stored=True, skip_ended_writes=True, touch_interval_s=300.0
++        )
+         cases = {
+             "host_cache_mode": (RetentionSwitches(), 4),
+             "python_tree_core": (RetentionSwitches(), 4),
++            "single_pp_rank": (RetentionSwitches(), 4),
+             "next_turn_prefetch": (marks_and_touch, 2),
+-            "full_kv_only": (
+-                RetentionSwitches(
+-                    track_stored=True, skip_ended_writes=True, touch_interval_s=300.0
+-                ),
+-                1,
+-            ),
++            "full_kv_only": (no_retire, 1),
+         }
+         for unmet, (granted, refusals) in cases.items():
+             with self.subTest(unmet=unmet):
+@@ -829,6 +821,15 @@
+                     wanted, **{**met, unmet: False}
+                 )
+                 self.assertEqual((resolved, len(refused)), (granted, refusals))
++        # A retired page read back from the SSD is refreshed, or it stays first to go.
++        no_touch = RetentionSwitches(
++            track_stored=True, skip_ended_writes=True, retire_ended_pages=True
++        )
++        resolved, refused = resolve_retention_switches(no_touch, **met)
++        self.assertEqual(
++            (resolved, len(refused)),
++            (RetentionSwitches(track_stored=True, skip_ended_writes=True), 1),
++        )
+         # Without the marks nothing else may act; switches not asked for say nothing.
+         no_marks = RetentionSwitches(skip_ended_writes=True, touch_interval_s=300.0)
+         resolved, refused = resolve_retention_switches(no_marks, **met)
+@@ -842,39 +843,103 @@
+ 
+     def test_the_cache_reads_two_switches_from_the_envs_and_two_from_its_store(self):
+         """The marks and the write skip are environment switches; the touch interval and
+-        the retire come from the attached store, which alone knows whether a cleaner
+-        orders its files (a test double claims nothing). A cache that failed to read
+-        either source would leave the switches off on a server while every test that
+-        sets them by hand passes."""
+-        from test_session_unified_radix_cache import make_params
++        the retire come from the attached store, and a test double claims neither."""
++        cache = self.switch_cache()
++        store = cache.cache_controller.storage_backend
++        self.pin_env_switches(track_stored=False, skip_ended_writes=False)
++        # Nothing asked for: every switch off, and no line in the server log.
++        cache.cache_controller.storage_backend = None
++        with self.assertNoLogs(LOGGER, level="INFO"):
++            cache._init_storage_retention()
++        self.assertEqual(cache.retention, RetentionSwitches())
+ 
+-        reset_context()
+-        self.addCleanup(reset_context)
+-        publish(
+-            ServerArgs(model_path="dummy", hicache_storage_next_turn_prefetch="on"),
+-            role="scheduler",
++        cache.cache_controller.storage_backend = store
++        self.pin_env_switches(track_stored=True, skip_ended_writes=True)
++        with self.assertLogs(LOGGER, level="INFO") as logs:
++            cache._init_storage_retention()
++        self.assertEqual(cache.retention, self.ALL_ON)
++        self.assertIn(
++            "HiCache retention: track_stored=1 skip_ended_writes=1 "
++            "touch_interval_s=300 retire_ended_pages=1",
++            logs.output[-1],
+         )
+-        cache = UnifiedRadixCache(make_params(enable_session=False, page_size=2))
+-        store = Mock(
+-            spec=HiCacheStorage, touch_interval_s=300.0, retire_ended_pages=True
++        cache.cache_controller.storage_backend = Mock()
++        cache._init_storage_retention()
++        self.assertEqual(
++            cache.retention,
++            RetentionSwitches(track_stored=True, skip_ended_writes=True),
+         )
+-        cache.cache_controller = SimpleNamespace(storage_backend=store)
++
++    def test_the_cache_passes_the_resolver_what_the_server_really_has(self):
++        """Every condition is read off the server: one passed as met when it is not
++        grants the write skip without a prefetcher, or a retire that misses files."""
++        self.pin_env_switches(track_stored=True, skip_ended_writes=True)
++        marks_and_touch = RetentionSwitches(track_stored=True, touch_interval_s=300.0)
++        unmet = {
++            "the prefetcher": ("off", {}, marks_and_touch),
++            "host memory as a cache": (
++                "on",
++                {"host_memory_mode": "buffer_only"},
++                RetentionSwitches(),
++            ),
++            "the python tree core": (
++                "on",
++                {"tree_core": SimpleNamespace()},
++                RetentionSwitches(),
++            ),
++            "PP = 1": ("on", {"pp_size": 2}, RetentionSwitches()),
++        }
++        for name, (prefetch, changed, granted) in unmet.items():
++            with self.subTest(unmet=name):
++                cache = self.switch_cache(prefetch=prefetch)
++                vars(cache).update(changed)
++                with self.assertLogs(LOGGER, level="WARNING") as logs:
++                    cache._init_storage_retention()
++                self.assertEqual(cache.retention, granted)
++                self.assertTrue(
++                    all("stays off: it needs" in line for line in logs.output)
++                )
++
++        # A draft model's sidecar pools are registered after the cache is built: each of
++        # its pages then has a file the touch does not name.
++        cache = self.switch_cache()
+         cache._init_storage_retention()
+-        self.assertEqual(cache.retention, RetentionSwitches())
+-        with envs.SGLANG_HICACHE_STORAGE_TRACK_STORED.override(True):
+-            cache._init_storage_retention()
+-            self.assertEqual(
+-                cache.retention,
+-                RetentionSwitches(
+-                    track_stored=True, touch_interval_s=300.0, retire_ended_pages=True
+-                ),
++        self.assertEqual(cache.retention, self.ALL_ON)
++        with self.assertLogs(LOGGER, level="WARNING") as logs:
++            cache.register_sidecar_pool(SimpleNamespace(name="draft"))
++        self.assertEqual(
++            cache.retention,
++            RetentionSwitches(
++                track_stored=True, skip_ended_writes=True, touch_interval_s=300.0
++            ),
++        )
++        self.assertIn(
++            "SGLANG_HICACHE_NIXL_RETIRE_ENDED_PAGES stays off", logs.output[0]
++        )
++
++    def test_a_runtime_attach_resolves_the_switches_for_the_store_attached(self):
++        """A store attached at runtime states its own touch and retire support: switches
++        kept from before would refresh files its cleaner does not order, or stay off."""
++        cache = self.switch_cache()
++        self.pin_env_switches(track_stored=True, skip_ended_writes=False)
++        controller = SimpleNamespace(
++            storage_backend=None, mem_pool_host=SimpleNamespace(entries=[])
++        )
++
++        def attach_storage_backend(**kwargs):
++            controller.storage_backend = Mock(
++                spec=HiCacheStorage, touch_interval_s=300.0, retire_ended_pages=False
+             )
+-            cache.cache_controller.storage_backend = Mock()
+-            with envs.SGLANG_HICACHE_STORAGE_SKIP_ENDED_WRITES.override(True):
+-                cache._init_storage_retention()
++
++        controller.attach_storage_backend = attach_storage_backend
++        cache.cache_controller = controller
++        cache._init_storage_retention()
++        self.assertEqual(cache.retention, RetentionSwitches(track_stored=True))
++        attached, _ = StorageAttachment(cache).attach(storage_backend="nixl")
++        self.assertTrue(attached)
+         self.assertEqual(
+             cache.retention,
+-            RetentionSwitches(track_stored=True, skip_ended_writes=True),
++            RetentionSwitches(track_stored=True, touch_interval_s=300.0),
+         )
+ 
+ 

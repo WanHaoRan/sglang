@@ -31,6 +31,24 @@ _NVFP4_PREFILL_DEQUANT_DTYPE = {
 }
 
 
+def _check_queued_order(
+    *, policy: str, config: dict[str, Any], schedule_policy: str
+) -> None:
+    queued_order = config.get("queued_order", "lru")
+    if queued_order not in ("lru", "farthest"):
+        raise ValueError(
+            f"--radix-eviction-policy {policy} takes 'queued_order' lru or farthest "
+            f"in --radix-eviction-policy-config, got {queued_order!r}."
+        )
+    if queued_order == "farthest" and schedule_policy != "fcfs":
+        logger.warning(
+            "queued_order farthest evicts the history of the latest queued arrival "
+            "first, which is the turn admitted last only under --schedule-policy fcfs "
+            "(got %s).",
+            schedule_policy,
+        )
+
+
 def handle_nvfp4_prefill_kv_dequant_dtype(server_args: Any) -> None:
     """Resolve the public prefill dequantization dtype to attention backends."""
 
@@ -405,6 +423,9 @@ def handle_cache_compatibility(server_args: Any) -> None:
                     f"--radix-eviction-policy next_use needs a non-negative {key!r} "
                     f"in --radix-eviction-policy-config, got {value!r}."
                 )
+        _check_queued_order(
+            policy="next_use", config=config, schedule_policy=cfg.schedule_policy
+        )
 
     if cfg.radix_eviction_policy == "return_chance":
         if cfg.hicache_storage_next_turn_prefetch == "off":
@@ -414,12 +435,15 @@ def handle_cache_compatibility(server_args: Any) -> None:
                 "--hicache-storage-next-turn-prefetch observe|on provides."
             )
         config = cfg.radix_eviction_policy_config or {}
-        unknown = sorted(set(config) - {"horizon_s", "score"})
+        unknown = sorted(set(config) - {"horizon_s", "score", "queued_order"})
         if unknown:
             raise ValueError(
-                "--radix-eviction-policy return_chance takes 'horizon_s' and 'score' "
-                f"in --radix-eviction-policy-config, got {unknown}."
+                "--radix-eviction-policy return_chance takes 'horizon_s', 'score' and "
+                f"'queued_order' in --radix-eviction-policy-config, got {unknown}."
             )
+        _check_queued_order(
+            policy="return_chance", config=config, schedule_policy=cfg.schedule_policy
+        )
         horizon = config.get("horizon_s", 30.0)
         if not isinstance(horizon, (int, float)) or horizon <= 0:
             raise ValueError(

@@ -1,0 +1,25 @@
+<section id="stands" class="foot">
+<div class="head">
+<p class="eyebrow">The setting · what is already measured</p>
+<h2 class="title">Tiering with hints already beats six other systems</h2>
+</div>
+<div class="row-wide">
+<div class="grow" style="gap:10px">
+<p class="tag">Extra wait for the first token against the current design, same requests</p>
+<div class="row" style="align-items:center"><p class="ink" style="width:330px">vLLM + LMCache</p><div style="width:183px;height:30px;background:#2A62A8;border-radius:4px"></div><p class="ink-b">+25.2 s</p></div>
+<div class="row" style="align-items:center"><p class="ink" style="width:330px">SGLang + HiCache</p><div style="width:194px;height:30px;background:#2A62A8;border-radius:4px"></div><p class="ink-b">+26.7 s</p></div>
+<div class="row" style="align-items:center"><p class="ink" style="width:330px">Continuum + LMCache</p><div style="width:240px;height:30px;background:#2A62A8;border-radius:4px"></div><p class="ink-b">+33.0 s or more</p></div>
+<div class="row" style="align-items:center"><p class="ink" style="width:330px">TokenCake</p><div style="width:399px;height:30px;background:#2A62A8;border-radius:4px"></div><p class="ink-b">+54.8 s</p></div>
+<div class="row" style="align-items:center"><p class="ink" style="width:330px">Continuum</p><div style="width:467px;height:30px;background:#9AA1AD;border-radius:4px"></div><p class="ink-b">+64.2 s or more</p></div>
+<div class="row" style="align-items:center"><p class="ink" style="width:330px">SGLang, GPU only</p><div style="width:477px;height:30px;background:#9AA1AD;border-radius:4px"></div><p class="ink-b">+65.6 s</p></div>
+<div class="row" style="align-items:center"><p class="ink" style="width:330px">vLLM, GPU only</p><div style="width:478px;height:30px;background:#9AA1AD;border-radius:4px"></div><p class="ink-b">+65.7 s</p></div>
+<p class="note">Blue: keeps history in host memory too. Grey: GPU memory only.</p>
+</div>
+<div class="col-s" style="width:500px">
+<div class="card-s"><p class="tag">Our own designs, same setting</p><p class="ink">Exact hints, four rules: <b>10.66 s</b></p><p class="ink">Just-in-time reads, exact hints: <b>10.92 s</b></p><p class="ink">Four rules on the gap table (<b>current</b>): <b>10.96 s</b></p><p class="ink">Just-in-time reads on the median: <b>11.47 s</b></p><p class="ink">Stock HiCache: <b>31.88 s</b></p></div>
+<div class="card-hot"><p class="ink-b">Within 1 s of each other</p><p class="small">Once the GPU is saturated our designs tie. The model has to say why, and where a gain is still to be had.</p></div>
+</div>
+</div>
+<p class="footer">128 users, 160 GB host pool, 2 h, FlashAttention 3; mean TTFT of requests sent in the first 110 minutes. Left: campaign 30, paired with the current design. Right: campaign 34.</p>
+<aside>Before the design, where things stand. On this workload, with 128 users for two hours, the current design was compared with six other systems on the same requests. Each of them makes a request wait 25 to 66 seconds longer for its first token, on average, than the current design does. The three that keep history only in GPU memory wait about 65 seconds longer; the ones that also use host memory, 25 to 55. So tiering the prefix cache with hints is already worth a great deal. But look at our own designs on the right, in the same setting. With exact knowledge of every gap, the best one reaches 10.66 seconds. The current design, which uses the realistic hint table, is at 10.96. Just-in-time reads are at 10.92 with exact hints and 11.47 on the median. Only stock HiCache, at 31.88, is far away. Once the GPU is saturated, the designs that protect queued turns sit within one second of each other, whatever they do with the hint. A model of this system has to explain that tie, and then say where a gain is still to be had: in which regimes, and from which decisions. That is what the rest of the deck does.</aside>
+</section>

@@ -361,6 +361,9 @@ class Envs:
     SGLANG_LOG_SCHEDULER_STATUS_INTERVAL = EnvFloat(60.0)
     # Seconds between HICACHE_EVT host_census lines (what holds host memory); 0 disables.
     SGLANG_LOG_HICACHE_HOST_CENSUS_INTERVAL = EnvFloat(0.0)
+    # Seconds between HICACHE_EVT prices lines (c, mu, kappa, lambda and what each is measured
+    # from, by the next-turn prefetcher); 0 disables. Logging only: no decision reads it.
+    SGLANG_LOG_HICACHE_PRICES_INTERVAL = EnvFloat(0.0)
     SGLANG_ENABLE_RANK_CONSENSUS_CHECKER = EnvBool(False)
 
     # ===================================================================
@@ -609,6 +612,13 @@ class Envs:
     # tokens, so a prefill batch runs exactly chunked_prefill_size and the dense
     # GEMMs get an aligned M. gfx95 only; see PrefillAdder.exact_chunk_fill.
     SGLANG_EXACT_CHUNK_FILL = EnvBool(True)
+    # A prefill batch that loads its prefix from host memory is held while the running
+    # requests decode, for up to this many decode steps after the holding pass, until its
+    # copy has landed; 0 disables.
+    SGLANG_HICACHE_PREFILL_LOAD_HOLD_STEPS = EnvInt(0)
+    # Behind a waiting request refused for GPU room, admission tries up to this many
+    # later requests that may fit what is free; 0 stops at the refused request.
+    SGLANG_PREFILL_PASS_OVER_LOOKAHEAD = EnvInt(0)
 
     # ===================================================================
     # Scheduler polling, timeouts, and output
@@ -779,9 +789,41 @@ class Envs:
     # Deadline read order: hold timed storage reads while pending SSD writes hold at least
     # this many host tokens, resuming at half of it; 0 disables.
     SGLANG_HICACHE_STORAGE_READ_HOLD_WRITE_TOKENS = EnvInt(0)
+    # A radix node counts as stored only once its whole storage write is acked on every
+    # TP rank (PP = 1 only); a child's write first rewrites ancestors left without one.
+    SGLANG_HICACHE_STORAGE_TRACK_STORED = EnvBool(False)
+    # The last turn of a session whose hint says it ended is not written to storage.
+    SGLANG_HICACHE_STORAGE_SKIP_ENDED_WRITES = EnvBool(False)
+    # NIXL file backend: seconds between mtime refreshes of a stored page that memory
+    # serves, a chain's head newest; 0 disables.
+    SGLANG_HICACHE_NIXL_TOUCH_INTERVAL_S = EnvFloat(0.0)
+    # NIXL file backend: an ended session's own pages get mtime zero, so the L3 cleaner
+    # deletes them first; needs the touch interval above, which revives a page reused.
+    SGLANG_HICACHE_NIXL_RETIRE_ENDED_PAGES = EnvBool(False)
     # Next-turn prefetcher: a read refused host room is retried on its own paced budget
     # and does not spend the turn's lookup allowance.
     SGLANG_HICACHE_NEXT_TURN_ROOM_RETRY = EnvBool(False)
+    # Next-turn prefetcher: priced decisions take the measured GPU, room and prefill prices, not
+    # the memory-price flag. Needs price learning off; next_use or return_chance to price room.
+    SGLANG_HICACHE_NEXT_TURN_MEASURED_PRICES = EnvBool(False)
+    # Next-turn prefetcher, arrival gate: a lookup that finds nothing in storage spends none of
+    # the turn's lookups, and the turn's key is cut to what its prompt repeats of it.
+    SGLANG_HICACHE_NEXT_TURN_FREE_EMPTY_LOOKUPS = EnvBool(False)
+    # Next-turn prefetcher, read timing expected_cost: a second a turn waits on its read is
+    # weighed by the share of admissions that left no ready turn waiting.
+    SGLANG_HICACHE_NEXT_TURN_LATENESS_WEIGHT = EnvBool(False)
+    # Next-turn prefetcher, deadline read order: read-time estimates count the parked reads due
+    # no later, the write hold and measured lags. Needs LATENESS_WEIGHT under expected_cost.
+    SGLANG_HICACHE_NEXT_TURN_READ_LINE = EnvBool(False)
+    # Next-turn prefetcher, arrival hold: a held read starts by a quantile of the measured
+    # admission error instead of a fixed margin. Needs MEASURED_PRICES.
+    SGLANG_HICACHE_NEXT_TURN_HOLD_QUANTILE = EnvBool(False)
+    # Next-turn prefetcher, arrival gate: a turn arriving alone recomputes its missing history
+    # when cheaper than reading it. Needs MEASURED_PRICES, READ_LINE, NIXL_SKIP_STORED_WRITES.
+    SGLANG_HICACHE_NEXT_TURN_RECOMPUTE_BY_PRICE = EnvBool(False)
+    # Next-turn prefetcher, arrival gate: while every queued turn waits on its own read, the
+    # first one whose read is still parked recomputes instead if that is sooner. Same needs.
+    SGLANG_HICACHE_NEXT_TURN_RECOMPUTE_WHEN_STARVED = EnvBool(False)
     SGLANG_HUGEPAGE_SIZE = EnvStr("")
 
     # ===================================================================

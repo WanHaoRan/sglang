@@ -1,0 +1,58 @@
+Pseudo-diff F2 (seam_fp, nothing applied): c in the expected-cost start. Switch
+SGLANG_HICACHE_NEXT_TURN_LATENESS_WEIGHT (EnvBool False); read_timing expected_cost only; needs PR1's board.
+
+--- python/sglang/srt/mem_cache/next_turn_policy.py
+@@ -165,7 +165,8 @@ def read_start
+     read_s: float,
+     wait_s: float,
+     rent_per_s: float,
++    stall_weight: float = 1.0,
+ ) -> Optional[float]:
+@@ -177,3 +178,4 @@  (docstring)
+     A read started at s lands at s + read_s and the turn is due at its arrival plus
+-    wait_s. Each second the turn waits on the read costs 1, each second the read waits
++    wait_s. Each second the turn waits on the read costs stall_weight (1 with an idle GPU, 0 once ready
++    turns always wait, since admission then takes one of them instead), each second the read waits
+     for the turn costs rent_per_s, and a turn that arrives before s starts its own read.
+@@ -188 +190 @@
+-    best_cost, best_start = stall_at_arrival, None
++    best_cost, best_start = stall_weight * stall_at_arrival, None
+@@ -198 +200 @@
+-        cost = (stall + rent_per_s * pinned) / count
++        cost = (stall_weight * stall + rent_per_s * pinned) / count
+
+--- python/sglang/srt/mem_cache/next_turn_prefetch.py
+@@ __init__
++        self._lateness_weight = (
++            self._expected_cost and self._prices is not None
++            and envs.SGLANG_HICACHE_NEXT_TURN_LATENESS_WEIGHT.get()
++        )
+@@ -1161,10 +1161,13 @@ def _check_pending_expected_cost
+         read_s = self._read_seconds(plan.missing_tokens, backlog_pages)
++        stall_weight = self._prices.c(now) if self._lateness_weight else 1.0
+         start_in = read_start(
+             remaining=remaining,
+             read_s=read_s,
+             wait_s=wait,
+-            rent_per_s=self._price.price * plan.room_tokens,
++            rent_per_s=self._memory_price(now) * plan.room_tokens,
++            stall_weight=stall_weight,
+         )
+         self._log_start_decision(
+-            plan, start_in=start_in, read_s=read_s, wait_s=wait, now=now
++            plan, start_in=start_in, read_s=read_s, wait_s=wait, stall_weight=stall_weight, now=now
+         )
+@@ _log_start_decision (1260-1287): one field at the END of ec_start
+             price=f"{self._price.price:.3g}",
++            c=f"{stall_weight:.2f}",
+
+Guards
+- stall_weight 0 with rent 0 (room free by the frontier) makes every start cost 0 and read_start returns None
+  (nothing beats best_cost = 0): arrival. Wanted: with lateness free no early read pays.
+- stall_weight > 0 with rent 0 starts every read at once when r > W. The frontier's price follows evictions with a
+  30 s half-life while a staged pin lasts until its turn arrives, so a burst of stagings can overshoot the room
+  before lam answers. Bound it with what exists (pin budget 0.3 x pool, NTP_MAX_STAGINGS, NTP_MAX_PARKED) and take
+  max(frontier price, the price of the next victim) when deciding a staging: ReturnChanceStrategy.holding_rate of
+  the lowest-priority evictable host leaf, 29 to 639 leaves in campaign 34's census, so one heap pass per staging.
+- The GPU-bound filter of _queue_ahead (W = whole queue while a ready turn has waited 0.5 s, else 0) stays: it hides
+  the read behind the queue; c weighs what is left. With c from the board the filter and the weight move together.

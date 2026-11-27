@@ -1,0 +1,23 @@
+<section id="prices" class="foot" style="gap:28px">
+<div class="head">
+<p class="eyebrow">The model · three prices</p>
+<h2 class="title">Three prices, one small problem per session</h2>
+</div>
+<div class="formula">
+<p class="math-s"><i>J</i> = <i>c</i> · <i>S</i> + <i>μ</i> · <i>γ</i> · <i>U</i> + <i>λ</i> · (host token-seconds) + <i>κ</i> · (device seconds)</p>
+<p class="small">Hold each capacity (GPU time, host tokens, SSD time) on average and charge its use at a price: the cost splits into one term <i>J</i> per session.</p>
+</div>
+<table class="t">
+<tr><th style="width:8%">Price</th><th style="width:26%">One unit is</th><th style="width:40%">Read off</th><th style="width:26%">Measured, light → saturated</th></tr>
+<tr><td><i>μ</i></td><td>a second of GPU work</td><td>users not running once the GPU never idles</td><td>1.0–1.3 → 109</td></tr>
+<tr><td><i>c</i></td><td>a second of one turn’s stall</td><td>admissions that leave no ready turn waiting</td><td>0.94–0.98 → 0.06 → 0.00</td></tr>
+<tr><td><i>λ</i></td><td>a host token held for a second</td><td>index of the last holder kept; 0 with room</td><td>2 × 10⁻⁷ → about 0</td></tr>
+<tr><td><i>κ</i></td><td>a second of SSD time</td><td>the transfers waiting behind it</td><td>about 0 throughout</td></tr>
+</table>
+<div class="row">
+<div class="card-hot in1" style="flex:1"><p class="ink-b">Only <i>μ</i> is large where the queues are long.</p><p class="small">At saturation a cache policy moves the mean only by adding or saving GPU work.</p></div>
+<div class="card-s in2" style="flex:1"><p class="ink-b">Prices are read off the queues, not tuned.</p><p class="small">The fixed <i>λ</i> of 5 × 10⁻⁵ is hundreds of times the measured one; on the GPU the two tie.</p></div>
+</div>
+<p class="footer"><i>S</i>: stall · <i>U</i>: tokens of lost history · <i>γ</i>: GPU seconds per token. Prices in seconds of TTFT summed over turns. Campaign 34: light load is minutes 8–28, saturated from minute 70.</p>
+<aside>The joint problem is hard because all sessions are coupled through three capacities: GPU time, host tokens and SSD time. The standard move is to relax each capacity so that it holds on average, and to charge its use at a price, the multiplier of that constraint. The cost then splits into one term per session, J: the stall weighted by c, the lost history at the price of GPU time, the host token-seconds at lambda, and the device seconds at kappa. Each session minimizes its own J, which is a small problem with a closed-form answer, and that is what the four actions are. With an open stream of sessions, the sum of the sessions’ minima, less the priced capacities, is a floor under every policy that has the same hints. In the saturated closed loop that bound does not hold, and the floor comes from the identity of the previous slides instead. The prices are not tuning knobs. Each one is read off a queue. Mu, the price of a second of GPU work, comes from the GPU queue: it is the number of users not currently running once the GPU is never idle, 109 in the runs, and between 1 and 1.3 at light load. The weight c of a second of stall is the share of admissions that leave no ready turn waiting: 0.94 to 0.98 at light load, 0.06 once the GPU saturates, and zero later. Lambda, the price of holding a host token for a second, is the index of the last holder that is kept: zero while room is free, about two times ten to the minus seven at light load, and about zero at saturation, because the restore cost it is built from vanishes with c. Kappa, the price of SSD time, stayed about zero throughout. Two readings. Only mu is large where the queues are long, so at saturation a cache policy moves the mean only by adding or saving GPU work. And measured prices matter: the engine’s fixed lambda of five times ten to the minus five was 240 to 640 times the measured value, which is why its early-read rule almost never acted. Measured on the GPU, two hours each on the same users: the whole design with the measured lambda and with the fixed 5 times 10 to the minus 5 give the same mean time to first token, within 0.04 seconds. The measured lambda is too low at saturation, because it prices a displaced history by the stall of reading it back and leaves out the recompute a displacement sometimes causes; so it stages reads earlier and wastes SSD bandwidth, but at saturation host room is not what binds, and the mean does not move.</aside>
+</section>

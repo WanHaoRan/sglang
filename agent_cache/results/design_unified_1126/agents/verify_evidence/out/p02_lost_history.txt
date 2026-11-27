@@ -1,0 +1,35 @@
+=== c34 ec_full: requests sent before 6,600 s 15562; mean TTFT 10.96 s; passes (end time, groups, took s): [(5275, 40400, 11.6), (5977, 39850, 12.1), (6589, 39650, 11.8), (7200, 42200, 10.8)]
+  new text (prompt - ideal) 23.32 M (first requests of sessions 6.79 M); lost history 1.670 M tokens = 71.8 GPU-s at 0.043 ms
+  lost < 256 tokens a request (page rounding): 380 K over 11579 requests; lost >= 256: 1.291 M over 73 requests
+  first pass starts at 5263 s. before it: 7 requests lost >= 256 tokens (4 K); 1 lost >= 1,024
+  from the first pass to 6,600 s: 2881 requests; lost >= 256: 66 requests, 1.287 M; lost >= 1,024: 58 requests, 1.283 M; of them first requests of a session: 23 requests, 143 K
+  the 1337 s before the pass: 3280 requests, lost >= 256: 1 requests, 0 K  -> excess after the pass about 1.286 M
+  minutes 90-110: 2589 requests, mean TTFT 27.97 s, lost >= 256: 0.934 M = 40.2 GPU-s;  by N g with N=128: 1.99 s; with N-B=108.3: 1.68 s per request
+  minutes 90-110: TTFT of the 45 requests that lost >= 1,024 tokens: mean 30.5 s  (all 28.0 s)
+=== c34 jit_exact: requests sent before 6,600 s 15601; mean TTFT 10.92 s; passes (end time, groups, took s): [(5272, 40100, 10.6), (5973, 40400, 10.6), (6614, 40600, 11.4), (7226, 41200, 10.9)]
+  new text (prompt - ideal) 23.34 M (first requests of sessions 6.79 M); lost history 1.913 M tokens = 82.3 GPU-s at 0.043 ms
+  lost < 256 tokens a request (page rounding): 380 K over 11598 requests; lost >= 256: 1.533 M over 84 requests
+  first pass starts at 5261 s. before it: 10 requests lost >= 256 tokens (11 K); 3 lost >= 1,024
+  from the first pass to 6,600 s: 2935 requests; lost >= 256: 74 requests, 1.522 M; lost >= 1,024: 66 requests, 1.519 M; of them first requests of a session: 21 requests, 129 K
+  the 1337 s before the pass: 3266 requests, lost >= 256: 3 requests, 5 K  -> excess after the pass about 1.517 M
+  minutes 90-110: 2668 requests, mean TTFT 27.03 s, lost >= 256: 0.991 M = 42.6 GPU-s;  by N g with N=128: 2.05 s; with N-B=108.3: 1.73 s per request
+  minutes 90-110: TTFT of the 48 requests that lost >= 1,024 tokens: mean 27.7 s  (all 27.0 s)
+=== c34 ec_exact: requests sent before 6,600 s 15643; mean TTFT 10.66 s; passes (end time, groups, took s): [(5252, 41300, 10.0), (5952, 39400, 10.3), (6593, 40800, 10.6), (7204, 42200, 10.5)]
+  new text (prompt - ideal) 23.36 M (first requests of sessions 6.78 M); lost history 1.485 M tokens = 63.8 GPU-s at 0.043 ms
+  lost < 256 tokens a request (page rounding): 382 K over 11647 requests; lost >= 256: 1.103 M over 68 requests
+  first pass starts at 5242 s. before it: 10 requests lost >= 256 tokens (25 K); 3 lost >= 1,024
+  from the first pass to 6,600 s: 2955 requests; lost >= 256: 58 requests, 1.077 M; lost >= 1,024: 52 requests, 1.074 M; of them first requests of a session: 22 requests, 138 K
+  the 1337 s before the pass: 3300 requests, lost >= 256: 3 requests, 12 K  -> excess after the pass about 1.065 M
+  minutes 90-110: 2625 requests, mean TTFT 27.44 s, lost >= 256: 0.722 M = 31.0 GPU-s;  by N g with N=128: 1.51 s; with N-B=108.3: 1.28 s per request
+  minutes 90-110: TTFT of the 39 requests that lost >= 1,024 tokens: mean 23.3 s  (all 27.4 s)
+=== c34 jit_p50: requests sent before 6,600 s 15608; mean TTFT 11.47 s; passes (end time, groups, took s): [(5301, 39900, 12.0), (6032, 40200, 11.0), (6644, 40150, 11.9)]
+  new text (prompt - ideal) 23.17 M (first requests of sessions 6.76 M); lost history 2.025 M tokens = 87.1 GPU-s at 0.043 ms
+  lost < 256 tokens a request (page rounding): 381 K over 11603 requests; lost >= 256: 1.644 M over 90 requests
+  first pass starts at 5289 s. before it: 23 requests lost >= 256 tokens (395 K); 14 lost >= 1,024
+  from the first pass to 6,600 s: 2826 requests; lost >= 256: 67 requests, 1.249 M; lost >= 1,024: 57 requests, 1.244 M; of them first requests of a session: 22 requests, 135 K
+  the 1337 s before the pass: 3349 requests, lost >= 256: 13 requests, 234 K  -> excess after the pass about 1.015 M
+  minutes 90-110: 2595 requests, mean TTFT 28.20 s, lost >= 256: 1.002 M = 43.1 GPU-s;  by N g with N=128: 2.12 s; with N-B=108.3: 1.80 s per request
+  minutes 90-110: TTFT of the 48 requests that lost >= 1,024 tokens: mean 29.3 s  (all 28.2 s)
+=== c34 hicache: requests sent before 6,600 s 9967; mean TTFT 31.88 s; passes (end time, groups, took s): []
+  new text (prompt - ideal) 16.15 M (first requests of sessions 5.11 M); lost history 66.098 M tokens = 2842.2 GPU-s at 0.043 ms
+  lost < 256 tokens a request (page rounding): 173 K over 5285 requests; lost >= 256: 65.925 M over 2769 requests

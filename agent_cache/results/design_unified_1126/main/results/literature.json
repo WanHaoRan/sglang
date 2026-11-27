@@ -1,0 +1,349 @@
+{
+ "summary": "Literature check of DESIGN.md (\"Four actions, three prices\"), done on CPU and through the web tools only; nothing about the project was sent. 99 sources have bibliographic data confirmed against a page opened today (Crossref record, publisher or arXiv page, or the bibliography of Lenstra and Shmoys, arXiv:2001.06005); texts were read in full for 14 of them. Everything is in /home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/ (NOTES.md first).\n\nUSES THAT HOLD AS WRITTEN. The newsvendor quantile of 3.2 (quadrature: P(D <= l*) = lambda L/(c + lambda L) to four digits). The derivative of J_F and the rising/falling-hazard split of 3.3 (finite differences agree to 2e-4), with one fix: when the session may have ended, the left side of the read-now test is c E[min(R, x); R finite] and the holding term must be capped. Cao et al.'s \"do no harm\". Shahrad's 5th and 99th percentile windows. Dehghan's dual price. Ferragut's hazard timers. Panigrahy's hazard bound. Weak duality with mu and c given. The closed-loop identity, which is the response time law R = N/X - Z (Lazowska et al. 1984, ch. 3) and should be cited by that name.\n\nUSES THAT NEED REWORDING, most important first.\n1. Device order (3.4, 5.2, 7 item 4). Jackson and Horn are about the maximum lateness, and Horn needs free preemption. With switches only at page-group boundaries earliest-due-date is within one page-group time g of the best maximum lateness (short proof in NOTES 1.1; 9,000 random instances, largest excess 1.00 g). Without preemption it fails: A (released 0, size 4, due 10), B (released 1, size 1, due 2.5). The paper's cost is the sum of c x stall, a weighted tardiness: earliest-due-date is optimal for it only when no read need be late, Smith's ratio rule only when every waiting transfer is already late, and in between the problem is strongly NP-hard. The draft's switch (ratio rule at the first infeasible due date) cost 6.9 weighted seconds over an optimum of 2.9 when few transfers must be late (earliest-due-date 0.9; a slack-discounted ratio, Vepsalainen and Morton 1987, 0.5 and within 18 % of the optimum in all five regimes of a 7-job toy with all orders tried).\n2. \"nu is the Gittins index\" (4.1, 7 item 2). The formula is exactly the Gittins index of a job of unknown size (Scully and Harchol-Balter 2021; Aalto et al. 2009), and \"keep while nu >= lambda\" is the optimum of the stopping problem: a dynamic program agrees at every age for six gap laws. But it assumes a dropped prefix is not read back before its turn. For a sharp key (gap Normal(20 s, 2 s), 25.5 K tokens, lambda L = 0.05) keep costs 1.00 s, drop 2.20 s, drop and timed re-read 0.31 s, and the index says keep. \"Evict in increasing nu\" is a ranking heuristic, not part of the single-session optimum. \"Indexable\" is Whittle's term; under his free-switching relaxation the index is the hazard (K/L) h(a) for every law, equal to nu only for falling hazards.\n3. Many sessions (7 item 10). Weber-Weiss and Verloop need one constraint, finitely many types and a global attractor; Brown-Smith give a square-root-of-N gap for the optimal Lagrangian index policy and linear growth for the Whittle index or for random tie-breaking; Brown-Zhang 2022 show standard relaxation policies can fail when subsystems share a random signal. Three resources, unequal sizes and a shared GPU queue are outside all of them. \"Optimal for the relaxed problem\" is also the wrong way round.\n4. mu in an open queue is (1 + Q)/(1 - rho), not 1 + Q (M/M/1 simulation: 28.4 turns delayed at rho = 0.8, Q = 5). The draft's 1 + Q is what Haviv and Ritov call the tangible externality.\n5. Price (1.6 against 6). Section 1.6's multiplier is one number for the horizon; section 6's is a spot price that is zero while room is free, so early reads look free until the cliff. Weitzman's result favours a quantity limit there; the 23 November review had it and the draft dropped it. \"Within one holder\" in 5.1 is additive: greedy cost over the integer optimum was 1.13 on average and up to 2.36.\n6. Belady needs equal sizes and equal miss costs (unequal sizes: strongly NP-complete, Chrobak et al. 2012). Panigrahy's bound holds under the hard capacity, so for one falling-hazard law and equal sizes LRU is optimal among non-anticipative policies in their model (my reading of their Lemma 1): a stronger statement for Retain than the relaxed one.\n\nPOSITIONING. TripleKV (arXiv 2611.25112, 18 November 2026) already times SSD-to-host reads at tool-end estimate plus queue delay minus read time minus a margin, on the same model family, and removes the host mirror: it must be cited and compared. CachedAttention already fetches and evicts by queue position. Continuum's time-to-live charges memory for the whole TTL (K x density = lambda L) where the draft charges until return (K x hazard = lambda L): 2 to 35 times shorter TTLs and 5 % to 280 % more priced cost on a lognormal gap. SARIA does selective SSD writes and read/write pacing on TraceLab sessions.\n\nNOT CONFIRMED. One DOI in circulation is wrong: the short Panigrahy paper is 10.1145/3453953.3453985. Full texts not opened (statements from abstracts, a secondary text or memory, marked in NOTES section 5): Jackson 1955, Cox and Smith 1961, Belady 1966, Mattson 1970, Dantzig 1957, Gittins 1979, Whittle 1980 and 1988, Aalto et al. 2009, van Mieghem 1995, Park et al. 2006, Jiang and Kleinrock 1998. The 2026 arXiv papers were read as abstracts plus tool summaries of their HTML.",
+ "sources": [
+  {
+   "key": "jackson1955scheduling",
+   "statement": "With every job available from the start, sequencing by nondecreasing due date minimizes the maximum lateness, and meets every due date if any order does. (Research Report 43, Management Science Research Project, UCLA, 1955; stated as Theorem 3.1 and Corollary 3.2 in Lenstra and Shmoys.)",
+   "url": "https://arxiv.org/abs/2001.06005",
+   "draft_use": "Needs rewording (3.4, 7 item 4): the criterion is maximum lateness, not the sum of c x stall. Say: if every due date can be met, earliest-due-date order meets them all and the stall term is zero; otherwise it is not optimal for the stall sum (sizes 10,1,1,1 due 10,10.5,10.6,10.7: 4.2 s against 3.0 s)."
+  },
+  {
+   "key": "horn1974simple",
+   "statement": "With release times and penalty-free interruption, the preemptive earliest-due-date rule minimizes maximum lateness on one machine; a flow formulation handles several machines. Naval Res. Logist. Quart. 21(1):177-185.",
+   "url": "https://api.crossref.org/works/10.1002/nav.3800210113",
+   "draft_use": "Needs rewording (3.4): it does not hold 'with preemption at page-group boundaries'. Correct form: within one page-group transfer time g of the best maximum lateness; exact only with free preemption. Without preemption it fails (A: released 0, size 4, due 10; B: released 1, size 1, due 2.5) and the problem is strongly NP-hard. A stopped read also keeps host pages pinned, so interruption is not free."
+  },
+  {
+   "key": "smith1956various",
+   "statement": "Sequencing by nonincreasing weight over size minimizes the sum of weighted completion times on one machine. Naval Res. Logist. Quart. 3(1-2):59-66.",
+   "url": "https://api.crossref.org/works/10.1002/nav.3800030106",
+   "draft_use": "Needs rewording (0, 3.4, 5.2): optimal for the stall sum only when every waiting transfer is already past due (tardiness then equals completion time minus a constant). It is a device rule, not a special case of the priced session. As a fallback at the first infeasible due date it cost 6.9 weighted s over an optimum of 2.9 in the toy check."
+  },
+  {
+   "key": "cox1961queues",
+   "statement": "With linear waiting costs, give priority to the class with the largest cost rate times service rate (the c-mu rule); Buyukkoc, Varaiya and Walrand 1985 prove it for arbitrary arrivals with geometric services and preemption.",
+   "url": "https://www.rand.org/pubs/papers/P4525.html",
+   "draft_use": "Not cited by name; 'largest cost per device-second first' is this rule. The draft's letters c and mu mean other things than in 'the c-mu rule': say so once or rename. Book not opened; attribution through Kakalik and Little (RAND P-4525)."
+  },
+  {
+   "key": "vanmieghem1995dynamic",
+   "statement": "For nondecreasing convex delay costs, serving the oldest job of the class with the largest marginal delay cost times service rate is asymptotically optimal in heavy traffic. Ann. Appl. Probab. 5(3):809-833.",
+   "url": "https://api.crossref.org/works/10.1214/aoap/1177004706",
+   "draft_use": "Not used. It is the queueing form of the overload rule of 5.2 and a better basis than the hard switch. Conditions: heavy traffic and convex costs; whether the kink of a stall cost is admitted was not checked. Read as abstract only."
+  },
+  {
+   "key": "vanmieghem2003duedate",
+   "statement": "Due-date scheduling in a multiclass queue is turned into a sequence of convex delay costs; two dynamic priority rules (generalized longest queue, generalized largest delay) are asymptotically optimal in heavy traffic. Oper. Res. 51(1):113-122.",
+   "url": "https://api.crossref.org/works/10.1287/opre.51.1.113.12793",
+   "draft_use": "Not used. The closest theorem to 'reads with due dates on a busy device'; cite next to Jackson and Horn."
+  },
+  {
+   "key": "lenstra1977complexity",
+   "statement": "Complexity classification of machine scheduling problems; with Lawler 1977 the usual source for the strong NP-hardness of the sum of weighted tardiness on one machine and of maximum lateness with release times and no preemption. Ann. Discrete Math. 1:343-362.",
+   "url": "https://api.crossref.org/works/10.1016/S0167-5060(08)70743-X",
+   "draft_use": "Not cited. It limits item 4 of section 7: once some reads must be late no simple order is optimal for the stall sum. The attribution is from memory; the facts are stated in Lenstra and Shmoys, chapters 3 and 8."
+  },
+  {
+   "key": "lawler1977pseudopolynomial",
+   "statement": "A pseudopolynomial algorithm for the total tardiness of jobs on one machine. Ann. Discrete Math. 1:331-342.",
+   "url": "https://api.crossref.org/works/10.1016/S0167-5060(08)70742-8",
+   "draft_use": "Not cited; same point as the previous entry."
+  },
+  {
+   "key": "du1990minimizing",
+   "statement": "Minimizing total tardiness on one machine is NP-hard in the ordinary sense. Math. Oper. Res. 15(3):483-495.",
+   "url": "https://api.crossref.org/works/10.1287/moor.15.3.483",
+   "draft_use": "Not cited; same point."
+  },
+  {
+   "key": "lenstra2020elements",
+   "statement": "Textbook draft with the exact statements used here: Jackson's rule (Thm 3.1, Cor 3.2), preemptive earliest-due-date with release times (Thm 3.5, attributed to Horn 1974), strong NP-hardness without preemption, Smith's ratio rule (Thm 4.1), hardness of tardiness sums.",
+   "url": "https://arxiv.org/pdf/2001.06005",
+   "draft_use": "More apt as the citable source for all of 3.4; it also carries the bibliographic entry of Jackson's report."
+  },
+  {
+   "key": "vepsalainen1987priority",
+   "statement": "Dispatching rules for weighted tardiness, including the apparent tardiness cost rule: weight over size, discounted by the job's remaining slack. Management Sci. 33(8):1035-1047.",
+   "url": "https://api.crossref.org/works/10.1287/mnsc.33.8.1035",
+   "draft_use": "Not used. Suggested single index for 5.2 in place of the switch: within 18 % of the optimum in all five regimes of the toy check, where the switch was up to 3.4 times the optimum."
+  },
+  {
+   "key": "kleinrock1965conservation",
+   "statement": "For Poisson arrivals, the sum over classes of load times mean wait is the same for every work-conserving non-preemptive discipline. Naval Res. Logist. Quart. 12(2):181-192.",
+   "url": "https://api.crossref.org/works/10.1002/nav.3800120206",
+   "draft_use": "Not used. It is the exact form of 'the sum does not change' in 1.5 (c); the plain sum of waits is conserved only if turns need equal GPU work."
+  },
+  {
+   "key": "gittins1979bandit",
+   "statement": "A bandit process has an index (the best ratio of expected reward to expected time over stopping times), and playing the arm of largest index is optimal. J. R. Statist. Soc. B 41(2):148-177.",
+   "url": "https://api.crossref.org/works/10.1111/j.2517-6161.1979.tb01068.x",
+   "draft_use": "Needs rewording (4.1, 7 item 2): nu is the Gittins index of the stopping problem in which a dropped prefix is not read back before its turn. For sharp keys a timed re-read beats both plans the index compares (0.31 s against 1.00 s and 2.20 s). Ranking sessions by nu is a heuristic: the theorem needs one arm at a time and arms that stand still when not played."
+  },
+  {
+   "key": "whittle1980multiarmed",
+   "statement": "With an option to retire for a reward M, the index is the M of indifference; the paper proves the index rule by dynamic programming. J. R. Statist. Soc. B 42(2):143-149.",
+   "url": "https://api.crossref.org/works/10.1111/j.2517-6161.1980.tb01111.x",
+   "draft_use": "Correct support for 'keep while nu >= lambda' when the cost of dropping is a constant K. With timed re-reads the cost of dropping depends on the idle age and this form no longer applies as is."
+  },
+  {
+   "key": "scully2021gittins",
+   "statement": "Defines the Gittins index of a job as the largest rate of holding-cost decrease per unit of service, and the single-job 'Gittins game' whose optimal give-up sets are monotone in the penalty; for unknown sizes the index is sup over y of P(S <= y | S > x) / E[min(S, y) - x | S > x].",
+   "url": "https://www.cs.cmu.edu/~harchol/Papers/WIOPT21.pdf",
+   "draft_use": "More apt than Gittins 1979 for the formula of 4.1: it is the draft's nu with the gap as the size and idle age as service received, and its Lemma VI.6 is 'keep while nu >= lambda'."
+  },
+  {
+   "key": "aalto2009gittins",
+   "statement": "Properties of the Gittins index in the M/G/1 queue; for a falling hazard the index is the hazard, for a rising hazard the inverse of the mean remaining size. Queueing Systems 63:437-458.",
+   "url": "https://research.aalto.fi/en/publications/on-the-gittins-index-in-the-mg1-queue/",
+   "draft_use": "Not used; supports the two special cases of 4.1. Only the record page was opened: the two hazard results are from memory and confirmed numerically (index equals hazard, or 1/mean remaining gap, to 3 digits)."
+  },
+  {
+   "key": "scully2020gittins",
+   "statement": "With k servers the Gittins order is within an additive term of the one-server optimum and optimal in heavy traffic; it is not known to be optimal. Proc. ACM Meas. Anal. Comput. Syst. 4(3).",
+   "url": "https://api.crossref.org/works/10.1145/3428328",
+   "draft_use": "Not used. Analogy for keeping many prefixes at once: the index order loses its optimality proof as soon as more than one arm is served."
+  },
+  {
+   "key": "whittle1988restless",
+   "statement": "Relaxes 'exactly m of n projects active' to an average; the Lagrange multiplier defines an index 'which reduces to the Gittins index when projects not being operated are static'; conjectures near-optimality of the index policy for m and n large in constant ratio. J. Appl. Probab. 25A:287-298.",
+   "url": "https://api.crossref.org/works/10.2307/3214163",
+   "draft_use": "Correct as the relaxation move of 1.6. 'Indexable' in 4.1 needs rewording: under Whittle's free switching the index of the holding problem is the hazard (K/L) h(a) for every gap law, equal to nu only for falling hazards."
+  },
+  {
+   "key": "weber1990index",
+   "statement": "The conjecture holds 'if the differential equation describing the fluid approximation to the index policy has a globally stable equilibrium point'; a counterexample shows it can fail; the 1991 addendum proves the condition for three states. J. Appl. Probab. 27(3):637-648.",
+   "url": "https://api.crossref.org/works/10.2307/3214547",
+   "draft_use": "Needs rewording (7 item 10): state the conditions (identical arms, one constraint, long-run average, global attractor). The draft's three resources, unequal sizes and shared queue are not covered."
+  },
+  {
+   "key": "verloop2016asymptotically",
+   "statement": "Priority policies are asymptotically optimal for multi-class restless bandits with arrivals and several actions 'under a global attractor property and a technical condition'; indexability is not required. Ann. Appl. Probab. 26(4):1947-1995.",
+   "url": "https://arxiv.org/abs/1609.00563",
+   "draft_use": "Needs rewording (7 item 10): same as Weber and Weiss; one activation constraint, not three priced resources."
+  },
+  {
+   "key": "brown2020index",
+   "statement": "Finite-horizon selection of N of S items: the optimal Lagrangian index policy is within order square root of N of the Lagrangian bound, 'whereas the gaps for Whittle index policy grow linearly with N', and random tie-breaking can also give linear growth. Management Sci. 66(7):3029-3050.",
+   "url": "https://jimsmith.host.dartmouth.edu/wp-content/uploads/2022/04/Dynamic-Selection-Problems.pdf",
+   "draft_use": "Needs rewording (7 item 10): the most apt result for a 2-hour run, but for one cardinality constraint, with time-varying multipliers and careful tie-breaking. Its Proposition 1 is the weak duality of item 7."
+  },
+  {
+   "key": "zayascaban2019asymptotically",
+   "statement": "A randomized heuristic built from the linear-programming relaxation is asymptotically optimal for finite-horizon restless bandits with several actions, without indexability or a global attractor. Adv. Appl. Probab. 51(3):745-772.",
+   "url": "https://api.crossref.org/works/10.1017/apr.2019.29",
+   "draft_use": "Not used. A finite-horizon alternative if item 10 is to be proved for one constraint."
+  },
+  {
+   "key": "hodge2015asymptotic",
+   "statement": "Extends Weber and Weiss to bandits with several activation levels under one resource constraint, under assumptions on a deterministic differential equation that always hold for three states. Adv. Appl. Probab. 47(3):652-667.",
+   "url": "https://api.crossref.org/works/10.1239/aap/1444308876",
+   "draft_use": "Not used. Closest asymptotic result to prefixes that take different amounts of one resource."
+  },
+  {
+   "key": "graczova2014generalized",
+   "statement": "Restless bandits under a knapsack constraint with items of different sizes: an index policy is optimal for the relaxation in which capacity is used on average; a heuristic that solves a knapsack with the index as price beats the plain index order. Oper. Res. 62(3):696-711.",
+   "url": "https://api.crossref.org/works/10.1287/opre.2014.1272",
+   "draft_use": "Not used. Direct precedent for 5.1 (knapsack over holders with the index as price) and for unequal prefix lengths."
+  },
+  {
+   "key": "adelman2008relaxations",
+   "statement": "Compares the Lagrangian relaxation and the linear-programming relaxation of dynamic programs that are coupled only through constraints on actions, and their bounds. Oper. Res. 56(3):712-727.",
+   "url": "https://api.crossref.org/works/10.1287/opre.1070.0445",
+   "draft_use": "Correct as the source for the weak-duality bound of 7 item 7, in the open model where mu and c are given."
+  },
+  {
+   "key": "brown2022dynamic",
+   "statement": "When subsystems share resources and random signals, 'competing state-of-the-art approaches used in the literature on weakly coupled dynamic programs in general fail to provide asymptotic optimality'; a dynamic fluid policy restores it. Oper. Res. 70(5):3015-3033.",
+   "url": "https://api.crossref.org/works/10.1287/opre.2021.2181",
+   "draft_use": "Not used. The GPU queue is a signal shared by every session, so constant prices have no asymptotic guarantee here: a second limit on item 10."
+  },
+  {
+   "key": "brown2023strength",
+   "statement": "The Lagrangian bound and the tighter linear-programming bound for weakly coupled dynamic programs are 'very close and often identical' under broad conditions. Oper. Res. 71(6):2374-2389.",
+   "url": "https://api.crossref.org/works/10.1287/opre.2022.2287",
+   "draft_use": "Not used. Supports using the simpler Lagrangian bound in item 7."
+  },
+  {
+   "key": "papadimitriou1999complexity",
+   "statement": "The restless bandit problem is complete for polynomial space; optimal control of multiclass queueing networks is complete for exponential time. Math. Oper. Res. 24(2):293-305.",
+   "url": "https://api.crossref.org/works/10.1287/moor.24.2.293",
+   "draft_use": "Needs rewording (deck 1; commented line in design.tex): 'our problem generalizes restless bandits' needs one line showing a restless bandit is an instance of ours; otherwise write 'belongs to a class for which optimal control is PSPACE-hard'."
+  },
+  {
+   "key": "everett1963generalized",
+   "statement": "Lagrange multipliers for allocating limited resources among independent activities; any solution found by them is a true solution of the constrained problem. Oper. Res. 11(3):399-417.",
+   "url": "https://api.crossref.org/works/10.1287/opre.11.3.399",
+   "draft_use": "Correct (commented citation in design.tex for the separation by price)."
+  },
+  {
+   "key": "arrow1951optimal",
+   "statement": "The newsvendor critical fractile: the optimal stock is the quantile underage cost over underage plus overage cost of demand (traced to Edgeworth 1888). Econometrica 19(3):250.",
+   "url": "https://en.wikipedia.org/wiki/Newsvendor_model",
+   "draft_use": "Correct (0, 3.2): with stall as overage and held memory as underage, P(D <= l*) = lambda L/(c + lambda L); confirmed by quadrature."
+  },
+  {
+   "key": "yano1987setting",
+   "statement": "Optimal planned lead times balance holding cost against tardiness cost when processing times are random and a due date is given. Management Sci. 33(1):95-106.",
+   "url": "https://api.crossref.org/works/10.1287/mnsc.33.1.95",
+   "draft_use": "Not used. Closer than the newsvendor to 'when to release a read against a due date'; cite with Baker and Scudder 1990 for 3.2."
+  },
+  {
+   "key": "dantzig1957discrete",
+   "statement": "Linear-programming methods for discrete problems; the divisible knapsack is solved by filling in order of value per unit of size. Oper. Res. 5(2):266-288.",
+   "url": "https://api.crossref.org/works/10.1287/opre.5.2.266",
+   "draft_use": "Correct for the divisible problem (5.1, 7 item 5). 'Within one holder' is additive: need 10 K tokens, B holds 9 K at cost 9.0, A holds 10 K at 10.1; greedy pays 19.1, the optimum 10.1. Ratio rule content from memory; checked on 3,000 instances."
+  },
+  {
+   "key": "belady1966study",
+   "statement": "Evicting the page whose next use is farthest in the future gives the fewest page faults, for pages of equal size fetched on demand. IBM Syst. J. 5(2):78-101.",
+   "url": "https://api.crossref.org/works/10.1147/sj.52.0078",
+   "draft_use": "Needs rewording (0, 4.1): 'equal K/L' is not enough for optimality; it needs equal L and equal K. With unequal sizes offline caching is strongly NP-complete. Cleaner: under the time-averaged relaxation K/(L R0) is the divisible-knapsack ratio. Text not opened."
+  },
+  {
+   "key": "chrobak2012caching",
+   "statement": "Caching with pages of several sizes is strongly NP-complete in all four standard variants (fault or bit cost, forced or optional). Algorithmica 63(4):781-794.",
+   "url": "https://api.crossref.org/works/10.1007/s00453-011-9502-9",
+   "draft_use": "Not used. Backs deck 1's remark that exact hints with unequal sizes are still hard, and bounds the Belady claim."
+  },
+  {
+   "key": "cao1995study",
+   "statement": "Four rules for prefetching and caching on one disk with a known reference string; rule 3: 'Never discard block A to prefetch block B when A will be referenced before B.' SIGMETRICS 1995, pp. 188-197.",
+   "url": "https://homes.cs.washington.edu/~karlin/papers/sigmetrics.pdf",
+   "draft_use": "Correct (design.tex Preempt; 5.1). The rules are for equal blocks, one disk and exact knowledge; the draft's order by expected cost per token is their version under uncertainty."
+  },
+  {
+   "key": "kimbrel1996trace",
+   "statement": "'A block prefetched too early reduces the effectiveness of the cache, while a block cached too long reduces the effectiveness of prefetching'; aggressive prefetching helps when stalls limit performance, conservative prefetching otherwise. OSDI 1996, pp. 19-34.",
+   "url": "https://www.pdl.cmu.edu/PDL-FTP/TIP/OSDI96.abstract.shtml",
+   "draft_use": "Not used. Classical source for the word 'stall' and for the two regimes of section 8; cite in related work."
+  },
+  {
+   "key": "patterson1995informed",
+   "statement": "Applications disclose their future accesses as hints, and a cost-benefit analysis in one unit allocates buffers among prefetching, hinted caching and LRU caching. SOSP 1995, pp. 79-95.",
+   "url": "https://pdl.cmu.edu/PDL-FTP/TIP/SOSP15_abstract.shtml",
+   "draft_use": "Not used. The classical 'hint plus one currency' design; the draft differs by hints that are distributions of a return time."
+  },
+  {
+   "key": "panigrahy2021new",
+   "statement": "Keeping at every instant the objects with the largest hazard (or hazard over size) yields at least as many expected hits as any non-anticipative policy, for conditionally independent request processes; the authors 'call it a rule, not a policy'. Perf. Eval. Rev. 48(3):138-143; TOMPECS 7(2-4).",
+   "url": "https://arxiv.org/abs/2106.06457",
+   "draft_use": "Correct for the rate form of Retain. The bound holds under the hard capacity, so for one falling-hazard law and equal sizes it proves LRU optimal (my reading of their Lemma 1). The rule allows free re-entry, so in general it is a bound, not a policy. Correct DOI ends in 3453985."
+  },
+  {
+   "key": "ferragut2016optimizing",
+   "statement": "Timer caches under a mean-occupancy constraint: with rising hazards the optimum is to keep the most popular items forever; with falling hazards the timers equalize the hazards at one multiplier. SIGMETRICS 2016, pp. 101-112.",
+   "url": "https://grupo-mate.github.io/assets/pdf/sigmetrics16.pdf",
+   "draft_use": "Correct, and it covers both special cases of 4.1 (rising hazard: all or nothing; falling hazard: keep while the hazard exceeds the price). Cite it there."
+  },
+  {
+   "key": "dehghan2019utility",
+   "statement": "Maximizes the sum of utilities of hit probabilities under a capacity constraint with one Lagrange multiplier, relates LRU's characteristic time to that multiplier, and gives an online dual algorithm. IEEE/ACM Trans. Netw. 27(3):1013-1027.",
+   "url": "https://arxiv.org/abs/1601.06838",
+   "draft_use": "Correct as the dual-price precedent. Its multiplier is one number for the average constraint; the draft's section 6 uses a spot price that is zero while room is free, a different object from the one in 1.6."
+  },
+  {
+   "key": "che2002hierarchical",
+   "statement": "An LRU cache behaves like a timer cache with one characteristic time t_C: hit probability of item n is about 1 - exp(-q(n) t_C), with t_C the root of the occupancy equation. IEEE JSAC 20(7):1305-1314.",
+   "url": "https://arxiv.org/abs/1202.3974",
+   "draft_use": "Not used in the draft text. Supports reading lambda off the eviction frontier when many prefixes share the room; with about 38 prefixes in the room the frontier is noisy and should be smoothed. Statement read in Fricker et al. 2012."
+  },
+  {
+   "key": "shahrad2020serverless",
+   "statement": "Per application, the pre-warm window is the 5th percentile of idle times and the keep-alive window the 99th; when the head rounds to 0 the application is not unloaded; a fixed keep-alive is used when the histogram is not representative. USENIX ATC 2020, pp. 205-218.",
+   "url": "https://www.usenix.org/conference/atc20/presentation/shahrad",
+   "draft_use": "Correct. It also shows the draft's split of 3.3: concentrated idle times get a timed pre-warm, spread ones get retention only."
+  },
+  {
+   "key": "jiang1998adaptive",
+   "statement": "Prefetch the files whose access probability exceeds a threshold computed from system load, capacity and cost. IEEE JSAC 16(3):358-368.",
+   "url": "https://api.crossref.org/works/10.1109/49.669044",
+   "draft_use": "Not used. Precedent for 'start when F >= q' with q set by load. Statement from index records; text not opened."
+  },
+  {
+   "key": "park2006cflru",
+   "statement": "Clean-first LRU: within a clean-first region of the list, evict a clean page before any dirty page, to save flash writes. CASES 2006, pp. 234-241.",
+   "url": "https://arxiv.org/pdf/2307.11866",
+   "draft_use": "Correct as precedent for 'never dirty pages' (5.1) and R5. The motive there is write cost, here restore cost; the original keeps a window because clean-first lowers the hit ratio. Paper text not opened; description from a survey."
+  },
+  {
+   "key": "linuxvmsysctl",
+   "statement": "At one dirty threshold 'the background kernel flusher threads will start writing out dirty data'; at a higher one 'a process which is generating disk writes will itself start writing out dirty data'; data older than an expiry is eligible for writeout.",
+   "url": "https://docs.kernel.org/admin-guide/sysctl/vm.html",
+   "draft_use": "Correct as precedent for the 50 K / 25 K rule and for delay instead of refusal (5.1, 5.2)."
+  },
+  {
+   "key": "linuxdeadline",
+   "statement": "Each request gets an expiry (current time plus read_expire or write_expire); 'writes_starved controls how many times we give preference to reads over writes'.",
+   "url": "https://docs.kernel.org/block/deadline-iosched.html",
+   "draft_use": "Not used. The closest existing mechanism to 'due dates over reads and writes' in 5.2."
+  },
+  {
+   "key": "little1961proof",
+   "statement": "In a stationary queue the mean number in system equals the arrival rate times the mean time in system. Oper. Res. 9(3):383-387.",
+   "url": "https://api.crossref.org/works/10.1287/opre.9.3.383",
+   "draft_use": "Correct (critique.md, 1.5). The identity the draft uses is its corollary, the response time law."
+  },
+  {
+   "key": "lazowska1984quantitative",
+   "statement": "Little's law on the whole system gives N = X (R + Z), hence the response time law R = N/X - Z; the utilization law is U = X S.",
+   "url": "https://homes.cs.washington.edu/~lazowska/qsp/Images/Chap_03.pdf",
+   "draft_use": "Correct (1.5, 7 item 8): 'mean TTFT = N g - Z - decode' is this law with X = 1/g when the GPU is never idle. Cite it by name, with Denning and Buzen 1978."
+  },
+  {
+   "key": "haviv1998externalities",
+   "statement": "Externalities are the costs a user of a queue imposes on others; tangible externalities are those imposed on others while being served. Management Sci. 44(6):850-858.",
+   "url": "https://api.crossref.org/works/10.1287/mnsc.44.6.850",
+   "draft_use": "Needs rewording (1.5, mu): '1 + Q' is the tangible part. In an open first-come-first-served queue one more unit of work delays (Q + rho)/(1 - rho) turns, so mu = (1 + Q)/(1 - rho). Simulation: 28.4 delayed at rho 0.8, Q 5."
+  },
+  {
+   "key": "low1999optimization",
+   "statement": "'Sources select transmission rates that maximize their own benefits, utility minus bandwidth cost, and network links adjust bandwidth prices to coordinate the sources' decisions' (dual gradient projection). IEEE/ACM Trans. Netw. 7(6):861-874.",
+   "url": "https://authors.library.caltech.edu/8579",
+   "draft_use": "Correct for prices moved by excess demand (with Kelly et al. 1998). 'The length of each queue is a price' fits mu and kappa; host memory has no queue, so reword the slogan."
+  },
+  {
+   "key": "weitzman1974prices",
+   "statement": "The advantage of prices over quantities is sigma^2 B''/(2 C''^2) + sigma^2/(2 C''); its sign is that of C'' + B'', and 'if benefits are almost kinked at the optimum level of output ... the quantity mode scores a lot of points'. Rev. Econ. Stud. 41(4):477-491.",
+   "url": "https://www.ens.psl.eu/sites/default/files/eco-cnel2019-1-article_v2.pdf",
+   "draft_use": "Used correctly in design_economics.md (cap speculative holds by slack) and missing from the draft, which prices everything. Host memory's cost is kinked at capacity and the spot price is zero below it: keep a quantity limit for speculative holds."
+  }
+ ],
+ "related_systems": [
+  "TripleKV (arXiv 2611.25112, 18 Nov 2026; https://arxiv.org/abs/2611.25112): three tiers; prefetches SSD to host memory at tool-end estimate plus live queue delay minus read time minus a fixed margin, protects prefetched blocks by class, keeps no host copy of GPU-resident blocks; Qwen3-30B-A3B. Difference: a per-tool median and a constant margin instead of a distribution and a priced quantile, no test of whether a timed read pays for heavy-tailed gaps, first-in-first-out I/O queues instead of due dates, no optimality statement. Closest work; must be cited and compared.",
+  "CachedAttention (USENIX ATC 2024; https://www.usenix.org/conference/atc24/presentation/gao-bin-cost): hierarchical KV cache for conversations; fetches from disk for jobs in a look-ahead window of the queue and evicts the job at the queue's tail first. Difference: it has the after-arrival half of Fetch and the 'queued turn farthest from admission' case of Retain, sized by capacity and without any hint about the gap.",
+  "Continuum (arXiv 2511.02230; ICLR 2026 workshop poster; https://arxiv.org/abs/2511.02230): pins a tool-calling request's KV in GPU memory for a time-to-live chosen from the tool's past durations, with program-level first-come-first-served. Difference: Retain on the GPU tier only, with memory charged for the whole TTL (K x density = price) where the draft charges until return (K x hazard = price); no Fetch, no write path.",
+  "SARIA (arXiv 2610.31169, 22 Oct 2026; https://arxiv.org/abs/2610.31169): writes a KV block to SSD only when eviction and reuse counts show reuse beyond its stay in memory, promotes SSD hits to memory, and paces memory reads while SSD transfers run; TraceLab and WEKA sessions. Difference: closest precedent for 'the write is retention one tier down' and for read/write pacing, by thresholds instead of due dates; no tool-call hints and no read before arrival.",
+  "InferCept (ICML 2024, PMLR 235:81-95; https://proceedings.mlr.press/v235/abhyankar24a.html): for a request paused by a tool call, chooses to preserve, discard or swap its KV by least memory-time waste, estimating the pause from the time already elapsed. Difference: GPU and host memory only, swap-in decided when the call returns, no price shared across resources.",
+  "TokenCake (arXiv 2510.18586; accepted at EuroSys '27 per arXiv; https://arxiv.org/abs/2510.18586): offloads an agent's KV to host memory during a function call and uploads it back near the predicted end; reserves GPU memory for critical agents. Difference: a point estimate (developer hint blended with a moving average), two tiers, no cost model.",
+  "MORI (arXiv 2606.00866; https://arxiv.org/abs/2606.00866): ranks programs by idleness (share of recent time spent in tool calls) and enforces admission at the GPU and host tiers. Difference: a Retain order without duration hints; no SSD tier and no Fetch.",
+  "KVFlow (arXiv 2507.07400; https://arxiv.org/abs/2507.07400): evicts by steps-to-execution in an agent step graph and prefetches host to GPU for agents scheduled next. Difference: workflow structure instead of time; two tiers.",
+  "LMCache (arXiv 2510.09665; https://arxiv.org/abs/2510.09665): a KV cache layer that moves KV across GPU, host memory, storage and network for vLLM and SGLang, with a control API. Difference: mechanism and interface; the policy is left to the user.",
+  "Mooncake (FAST 2025, pp. 155-170; https://www.usenix.org/conference/fast25/presentation/qin): KVCache-centric disaggregated serving with a global cache over the cluster's DRAM and SSD and a cache-aware scheduler. Difference: cluster-level placement and routing, not per-session timing.",
+  "Pensieve (EuroSys 2025, pp. 144-158; https://arxiv.org/abs/2312.05516): keeps conversation state across requests in a GPU and host cache. Difference: two tiers, recency-based, no hints.",
+  "Strata (arXiv 2508.18572; https://arxiv.org/abs/2508.18572) and SGLang HiCache (blog, 10 Sep 2025; https://lmsys.org/blog/2025-09-10-sglang-hicache): GPU-assisted I/O and cache-aware scheduling on SGLang; write-through, selective and write-back policies; best-effort, wait-complete and timeout prefetch. Difference: the engine mechanisms the actions drive; no hint-driven policy.",
+  "HCache (EuroSys 2025 per arXiv; https://arxiv.org/abs/2410.05004): restores LLM state from saved intermediate activations, mixing compute and I/O. Difference: a third restore path next to read and recompute; orthogonal to the four actions.",
+  "Autellix (arXiv 2502.13965; https://arxiv.org/abs/2502.13965): schedules LLM calls by their program's completed calls. Difference: GPU order only; no cache tiering.",
+  "SYMPHONY (arXiv 2412.16434; https://arxiv.org/abs/2412.16434): uses multi-turn hints to migrate KV caches off the critical serving path across a cluster. Difference: load balancing across servers, not timing within one.",
+  "EfficientAgent (arXiv 2609.33762; https://arxiv.org/abs/2609.33762): sizes the host tier by the reuse working set of the agent pool and stops writing refills that are evicted before being read. Difference: capacity planning and a write filter; no timing and no hints.",
+  "MORTIS (arXiv 2611.08638; https://arxiv.org/abs/2611.08638) and PBKV (arXiv 2605.06472; https://arxiv.org/abs/2605.06472): predict reuse from program structure or past workflows to guide retention, eviction and prefetch. Difference: they predict what will be reused, the draft prices when.",
+  "Ask the Tool, Don't Guess (arXiv 2609.18849; https://arxiv.org/abs/2609.18849): tools report their progress while running, which is far more accurate than any estimate fixed before the call. Difference: a better hint source; it would update the draft's conditional law of the gap rather than replace the actions.",
+  "vLLM RFC 68079 (open issue, 17 Nov 2026; https://github.com/vllm-project/vllm/issues/68079): a host-tier eviction policy fed by per-request advice (expected return, expiry, done). Difference: an interface proposal for the same kind of hint, advisory only, one tier.",
+  "Further, less close: KVCache in the wild (USENIX ATC 2025; https://arxiv.org/abs/2506.02634; eviction from per-category reuse patterns), CacheGen (SIGCOMM 2024; KV compression and streaming), hot-cold HBM and flash tiering (IEEE CAL 2026; https://arxiv.org/abs/2609.25782), PACE (arXiv 2611.10240; token-level eviction inside one context, not tiering)."
+ ],
+ "artifacts": [
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/NOTES.md",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/references.bib",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/verify_log.txt",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/quotes.txt",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/checks/sched_checks.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/checks/sched_checks.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/checks/sched_checks_wtard.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/checks/sched_checks_wtard.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/checks/index_checks.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/checks/index_checks.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/checks/misc_checks.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/checks/misc_checks.out",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/tools/pdf_text.py",
+  "/home/wanhr/sglang/agent_cache/results/design_unified_1126/agents/literature/tools/decode_slashcodes.py"
+ ]
+}

@@ -1,0 +1,165 @@
+{
+ "findings": [
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_meter.py",
+   "line": 177,
+   "severity": "bug",
+   "what": "The prices log is not log-only under return_chance eviction: it changes which host leaf eviction takes. PriceMeter.on_host_evicted asks ReturnChanceStrategy.holding_rate for each victim just before it goes, and that method (next_use_eviction.py:329) resolves the session with _session_registration, which adopts nodes into sessions as it ranks them. The same holds for every switch that turns the measuring on (MEASURED_PRICES, LATENESS_WEIGHT, READ_LINE), in mode observe too; under MEASURED_PRICES next_victim_price and next_host_victim rank leaves every 0.5 s with the same side effect. environ.py:365 says 'Logging only: no decision reads it' and the report says the log changes no decision; its side-by-side replay runs on fake caches that never call the observer from the eviction loop.",
+   "scenario": "I ran the copy's own FullComponent.drive_host_eviction with a real ReturnChanceStrategy, once with no observer and once with the observer a prefetcher installs in mode observe with only SGLANG_LOG_HICACHE_PRICES_INTERVAL set. Tree: root -> P -> {A, B} and root -> U; A and B are the tails of ended sessions, P and U are unregistered, U was used before P; 12 host tokens asked, 4 a node. Switches off: A, B, U. Log on: A, B, P. With the observer B is ranked again when it is popped, after A went, so it is P's only child and P is adopted into B's session; without it B is ranked only when the heap is built, while P has two children. Second case (B likely back, the first pass frees A and B, then an un-hinted V joins): off evicts P next, log on evicts V. Campaign 34's ec_full and ec_exact run return_chance, so a log-only repeat of either is not a like-for-like run. Reproduce with /home/wanhr/sglang/agent_cache/results/design_unified_1126/impl/A/review_style_tests/zz_review_style_logonly_eviction.py (output in logonly_run2.out beside it).",
+   "fix": "Give ReturnChanceStrategy a read-only way to resolve a node's registration (the lookups of _session_registration without adopt and without dropping the parent's entry) and use it in holding_rate; rank without adopting in next_host_victim too. Add both cases to test_next_use_eviction.py: the eviction order is the same with and without an observer that calls holding_rate."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 1824,
+   "severity": "test_gap",
+   "what": "FREE_EMPTY_LOOKUPS: five behaviours have no test. Each one-line regression below, applied in memory, passes all five changed test files. The first is a guard against an exception on the scheduler thread.",
+   "scenario": "(1) Dropping `and matched_tokens < len(key)` in _history_tokens: the first gate call of a turn whose match is longer than its plan's key then raises IndexError in RadixKey.match_at. No test calls the prompt gate with such a match; with the guard it answers covered (checked with matched = KEY_TOKENS + 500). (2) `found = hit_tokens > 0` at 1852: a hit under the 256-token threshold, which the cache revokes, stays charged. (3) Dropping `plan.refetch_capped = False` at 1865: a refunded turn stays capped. (4) Dropping `plan.lookup_charged = False` at 1696, or marking a room retry as a charged refetch at 863: a free room retry's empty answer then gives back a lookup charged before it, or a refetch that was never counted. (5) Deleting the ntp_lookup log call at 1867: no test reads the new line.",
+   "fix": "Add to TestFreeEmptyLookups: a prompt-gate call with a match past the key; an answer with hit = 128; a turn capped after two re-evictions whose last lookup answers empty; one case with SGLANG_HICACHE_NEXT_TURN_ROOM_RETRY also on; an assertion on the fields of the ntp_lookup line."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 1439,
+   "severity": "test_gap",
+   "what": "The measuring (the prices log, or any switch that turns it on): five behaviours have no test; each regression below passes all five test files. The first is a guard against an exception on the scheduler thread.",
+   "scenario": "(1) `if plan is None:` in place of `if plan is None or self._return_chance is None:`: under next_use eviction a landing for a planned turn whose session tail is registered then calls adopt on None (AttributeError). The guard works (checked on MeasuredCache with tail_node_id=5), but no test has the measuring on, a session tail and a landing together. (2) Dropping `plan is not None or handle.rid in self._queued` at 1435: landing times are kept for every request and never removed. (3) `if False:` at 770: queued turns with no plan get no predicted wait, so their admissions never reach the error bins the hold reads. (4) `if not reader or landed_after is None:` at next_turn_meter.py:236: a reader whose landing was not seen feeds the error of the GPU turn. (5) `return 1` for an aborted request at 895: aborts count as admissions in c.",
+   "fix": "Add to TestMeasuredPrices: a landing under NextUseStrategy with a registered tail; a landing for an unknown rid leaves _landed_at empty; an unplanned queued turn's admission lands in the error bins; a reader with no landing feeds neither side; an aborted turn leaves c where it was."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 853,
+   "severity": "test_gap",
+   "what": "MEASURED_PRICES: the room price measured at the eviction frontier never reaches a staging in any test, and the next victim's price is tested on its first pricing only and under next_use eviction only.",
+   "scenario": "These pass all five test files: `return self._meter.next_victim_price(self._load, now)` in _staging_price (the frontier's price dropped); pricing the victim once and never again (next_turn_meter.py:186); `return queued` for a registration queued longer than QUEUED_MAX_AGE_S (next_use_eviction.py:209 and 334); dropping the ceiling on the victim's price (next_turn_meter.py:200). In TestMeasuredRoomPrice no eviction is ever observed, so the frontier's price is 0 throughout; each subtest builds a new prefetcher and ticks once; and MeasuredCache evicts by next_use while the expected-cost arms run return_chance.",
+   "fix": "In TestMeasuredRoomPrice: observe an eviction and assert ec_start's price is the frontier's when that is above the victim's; change the victim and assert the price follows only after VICTIM_PRICE_INTERVAL_S; run one case with a ReturnChanceStrategy on the cache. In test_next_use_eviction.py add a stale queued registration with queued= given."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/test/registered/unit/mem_cache/test_next_turn_prefetch.py",
+   "line": 2658,
+   "severity": "test_gap",
+   "what": "test_the_harm_of_a_refused_read_is_its_recompute_at_the_fitted_cost_times_mu cannot tell the fitted prefill cost from the constant it replaces (amendment A5 in the harm charge).",
+   "scenario": "No prefill is observed in the test, so the fit is at its seed, which is RECOMPUTE_S_PER_TOKEN: replacing `self._meter.prefill_cost.seconds(...)` by `lost_tokens * RECOMPUTE_S_PER_TOKEN` at next_turn_prefetch.py:1597 passes all five test files. The other half is pinned: pricing the harm at the queue count instead of mu fails this test. The fit's forgetting is also untested: `fade = 1.0` in PrefillCostModel.observe passes.",
+   "fix": "Install a PrefillCostModel with other coefficients before the refusal (as RecomputeTestCase does) and assert harm_ms from it. Add a pure case in which 400 fast prefills follow 400 slow ones and the fit moves."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_meter.py",
+   "line": 292,
+   "severity": "test_gap",
+   "what": "The prices line (amendments A1 and A4): only rid, plans, queued, waiting, ready, late and parked are asserted by name. The report says the test is red when a field is missing or moved; it is not.",
+   "scenario": "These pass all five test files: deleting `mu=` (269) or `kappa=` (274); deleting `**self._read_path_fields()` (292), which removes lookup_ms, lag_ms, whold_ms and the four hold counters A4 asks for; reporting the hold counters as running totals instead of per-line deltas (317). No test builds a prefetcher with the log on and no read scheduler. I ran that branch (a fifo fake and the real CPU cache, modes observe and on): it logs 'na' for the read-path fields without error.",
+   "fix": "Assert the line's full ordered field list once, as ADMIT_FIELDS does for ntp_admit; log two lines with dispatch holds between them and assert the deltas; add one fifo case."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 1771,
+   "severity": "test_gap",
+   "what": "RECOMPUTE_WHEN_STARVED (amendment A3): five parts of the rule have no test.",
+   "scenario": "These pass all five test files: counting ready turns with the 0.5 s debounce (`self._prices.ready_waiting > 0` in place of `self._meter.ready_since`), which A3 rules out in words; not resetting _starved_since when a ready turn appears; acting before the lags are measured (dropping `or not self._line_measured` at 1776); dropping the write hold from a timed read's landing (1790-1791); dropping `if plan.recompute: return False` in _check_queued (1005), after which the queue check asks for the prefetch of a turn that gave its read up every 0.5 s.",
+   "fix": "Add to TestRecomputeWhenStarved: a turn that became ready 0.2 s ago keeps every read; starved, ready, starved again needs another 0.5 s; unmeasured lags keep the read; a write hold turns a kept read into a dropped one; after the drop tick() returns no refetch for the turn while its history is missing."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 1981,
+   "severity": "test_gap",
+   "what": "READ_LINE: the write-hold allowance (the plan's part 3) is tested as a pure method only, not where the prefetcher adds it; the pages ntp_due logs are not asserted; under expected-cost staging only a read needed now is ever in the line.",
+   "scenario": "These pass all five test files: deleting `seconds += cache.read_lags.write_hold_left_s(now)` in _line_seconds, adding it for reads needed now as well (`if True:`), or doubling it; computing the queue check's load without the line (1028-1034); logging the launched pages in ntp_due for a just-in-time start (1266), although the plan says backlog_pages becomes the line's pages; `deadline=None` in _staged_start (1404), so a staging counts only the reads needed now.",
+   "fix": "In TestReadLine: with a write hold on (note_write_hold), a timed start moves earlier by what is left of it and a read needed now does not; assert backlog_pages of ntp_due for a queued and a pending turn. In TestReadLineByExpectedCost park a timed read due earlier instead of one needed now."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 834,
+   "severity": "test_gap",
+   "what": "Amendments A1 and A2: the arrivals term of mu_for and the line in the gate's read time are tested on hand-built inputs only, not as the prefetcher feeds them.",
+   "scenario": "These pass all five test files: `arrival_rate=0.0` in _follow_prices, so mu_for never counts the turns that arrive during a recompute (the point of the study's finding 3c); a read time for the recompute quote without the pages ahead (`self._line_load.seconds(own_pages=..., backlog_pages=0)` at 1755). In RecomputeTestCase nothing was admitted in the last minute and nothing is launched or parked when the gate is asked.",
+   "fix": "In TestRecomputeByPrice: admit 30 turns in the last minute, then assert mu in ntp_gate is above 1 and a 24K-token history reads; park a 2,000-page read needed now and assert a history that read before is recomputed."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/test/registered/unit/mem_cache/test_next_turn_prefetch.py",
+   "line": 1726,
+   "severity": "test_gap",
+   "what": "The planner's test list asks for TestGateOnTheRealCache with the three-argument gate. It was not written and is not listed among the deviations. Every test of the prompt gate, the lookup report and the meter runs on a fake or on a cache built with __new__.",
+   "scenario": "The one test in that class exists because fixtures hid what the real cache holds (its docstring: 'which fixtures with a defaultdict hide'). I ran the missing cases as throwaway tests and they pass: the real prefetch_from_storage handing the prompt to a real prefetcher's gate (covered, chain 7 of an 8-token key); a prefetcher with the prices log on the real CPU cache ticking and logging a line in modes observe and on; next_host_victim, storage_read_line_pages, parked_read_span and drop_parked_read on a real cache with nothing parked.",
+   "fix": "Add them to TestGateOnTheRealCache; the bodies are in /home/wanhr/sglang/agent_cache/results/design_unified_1126/impl/A/review_style_tests/zz_review_style_behaviours.py."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/test/registered/unit/mem_cache/test_next_turn_prefetch.py",
+   "line": 9,
+   "severity": "style",
+   "what": "`import re` was added and is never used.",
+   "scenario": ".pre-commit-config.yaml runs `ruff --select=F401,F821,UP037` over test/ and lint.yml runs pre-commit: this is F401. Found with an AST scan (ruff is not installed on the host); the same scan shows no other new unused import and no undefined name in the changed files.",
+   "fix": "Delete the line."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_switches.py",
+   "line": 4,
+   "severity": "style",
+   "what": "The module docstring says a switch with nothing to act on is off, 'as every one is in mode observe', and the report repeats it. LATENESS_WEIGHT and READ_LINE are not gated on the mode (lines 52-55), and no test pins what they do in observe. Separately, MEASURED_PRICES is tested against price learning 'harm' only.",
+   "scenario": "Mode observe, read timing expected_cost, both switches set, on MeasuredCache: _lateness_weight and _read_line are True, the meter is built, the eviction observer and the landing hook are bound and the cache's lag measuring is installed. The decisions observe logs (ec_start, ntp_due) then take c and the line, while under MEASURED_PRICES they keep the knob's price. comment-style.md: 'A stale comment is worse than no comment.' And `price_learning == \"harm\"` in place of `!= \"off\"` at line 86 passes all five test files.",
+   "fix": "Decide which is meant: gate both switches on `acting`, or correct the sentence and the report. Either way add an observe subtest for the two switches, and add 'on' to the price-learning case."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/unified_radix_cache.py",
+   "line": 197,
+   "severity": "style",
+   "what": "prefetch_gate_prompt_fn, prefetch_lookup_fn and read_lags are class attributes. The seven sibling hooks are instance attributes set in __init__ (lines 325-347).",
+   "scenario": "no-getattr-defensive.md: 'Always set the field (to None if needed) ... obj.field = None   # in __init__ / construction'. The reason given is that cache_mode_fixture builds the cache with __new__; that fixture sets every other hook itself (test_storage_read_dispatch.py:133-157), and campaign 34's prefetch_refused_fn was added that way.",
+   "fix": "Set the three in __init__ beside the others and add three lines to the fixture."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prices.py",
+   "line": 3,
+   "severity": "style",
+   "what": "Seven docstrings cite agent_cache/results/design_unified_1126/DESIGN.md by section number (next_turn_prices.py:3, 75, 170, 321; next_turn_meter.py:1; next_turn_switches.py:2; next_turn_prefetch.py:38). The numbers are already stale.",
+   "scenario": "DESIGN_v2.md in the same folder (written 21:22 UTC on 2026-11-26) has those topics under other numbers: prices 6 -> 7, the landing quantile 3.2 -> 4.1, the restore cost 2 -> 4.4, and its section 9 is 'What is proved'. The folder is not tracked by git. comment-style.md: 'A stale comment is worse than no comment.'",
+   "fix": "Cite the document by title without section numbers, or point at a tracked file once the design has one."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 1766,
+   "severity": "style",
+   "what": "Ten new private helpers carry docstrings of three or four lines (_relieve_starved_gpu, _recompute_quote, _hold_margin, _line_seconds, _history_tokens, _staged_start, _staging_price, _queued_baseline, and the meter's _price_fields and _read_path_fields), and 54 of the 76 new tests do.",
+   "scenario": "comment-style.md: 'One or two lines.', and for documentation blocks 'No: internal helpers, overrides, private methods'; for a regression test, 'the live constraint, not the incident'. The file's older helpers and tests do the same, so the new code follows the file and not the rule.",
+   "fix": "Cut each to the one or two lines a reader cannot get from the code, and move the campaign stories of the test docstrings to the PR text."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prices.py",
+   "line": 150,
+   "severity": "style",
+   "what": "New functions take two or three positional arguments: PriceBoard.mu_for(job_s, now), quantile_of(ascending, q), PriceMeter.restore_s_per_token(load, now) and next_victim_price(load, now), _history_tokens(plan, matched_tokens, new_input_tokens), _observe_read_landing(operation, completed_tokens).",
+   "scenario": "general-code-style.md: 'Call functions of 2+ args by keyword, and design APIs to be called that way.' mu_for takes two floats: `board.mu_for(now, recompute_s)` would run and price a job that lasts `now` seconds.",
+   "fix": "Make the second and later parameters keyword-only, as the file does elsewhere (`def _check_queued(self, plan, *, req, ...)`)."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 1,
+   "severity": "style",
+   "what": "next_turn_prefetch.py grew from 1,643 to 2,135 lines, and copy B adds about 240 more to the same file. In unified_radix_cache.py, prefetch_from_storage (175 lines) and _drain_storage_control_queues_impl (195 lines) grew by 9 and 8 lines inline. No new function is over 100 lines.",
+   "scenario": "general-code-style.md: 'Keep each file under ~2k LOC' and 'Keep each function under ~100 LOC; split larger ones into named helpers.' The engineer lists the file size under not done.",
+   "fix": "After the merge, move the gate's switched helpers (_history_tokens, on_lookup_result, _recompute_quote, _relieve_starved_gpu) or the hint payload parsing to their own module. Put the cache's gate call and lookup report in two small methods, as _observe_read_landing already is."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 1937,
+   "severity": "nit",
+   "what": "Three docstrings no longer say what the code does. _refresh_load_model still reads 'Replace the load model's per-page seeds with the read thread's EWMA' and now also builds _line_load from the measured lags and sets _line_measured. on_read_landed (1431) describes the return_chance adoption only and now first stamps the landing time under every policy. next_turn_meter.py:6 says 'The meter reads the cache and decides nothing' while its __init__ (104-106) writes two hooks into the cache.",
+   "scenario": "comment-style.md: 'You change the line, you own its comment. Update it or delete it'. general-code-style.md on a large object handed to a callee: 'keep it read-only'.",
+   "fix": "Update the two docstrings; bind the eviction observer and read_lags in _init_switched_changes, where the landing hook is already bound, or say in the meter's docstring that it installs them."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/test/registered/unit/mem_cache/test_next_turn_prefetch.py",
+   "line": 2720,
+   "severity": "nit",
+   "what": "Two test comments call the behaviour without the switch 'today' ('The start today: ...' at 2720, 'The start is then today's' at 2749).",
+   "scenario": "comment-style.md: 'Comments describe the current state'. Once the change is in, 'today' no longer names the path without the switch.",
+   "fix": "Write 'without the switch'."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_A/python/sglang/srt/environ.py",
+   "line": 790,
+   "severity": "nit",
+   "what": "The seven SGLANG_HICACHE_NEXT_TURN_* switches carry no verb token. They follow the plan's 00_environ.diff and the neighbouring SGLANG_HICACHE_NEXT_TURN_ROOM_RETRY; everything else about them follows the skill (typed EnvBool(False) / EnvFloat(0.0), right sections, read once with .get() in Switches.read, tests through an ExitStack closed in addCleanup).",
+   "scenario": "env-var-conventions Rule 4: 'The second token signals intent. Pick the right verb up front -- renames require an alias entry (Rule 5).' Once queue files name these switches a rename costs an alias each.",
+   "fix": "Keep the names if the section's convention is the one that counts; otherwise rename now (for example SGLANG_ENABLE_HICACHE_NEXT_TURN_*), before a campaign uses them."
+  }
+ ],
+ "verdict": "**Switches off: safe by this lens.** The three frozen classes are byte-identical to the base copy and no switch is read at import. The five changed test files and the four untouched ones pass with the reported counts (re-run), and every pre-existing test is unmodified. Nothing I probed changes with the switches off.\n\n**Switches on: not yet.**\n- **The prices log changes decisions.** Under return_chance eviction, the policy of ec_full and ec_exact, it changes which host leaf is evicted, and so does every switch that turns the measuring on. Until `holding_rate` stops adopting nodes, a log-only run is not a like-for-like repeat of its arm.\n- **Much switched behaviour is unpinned.** 36 one-line regressions I applied in memory pass all five test files; 14 others were caught, three of them the engineer's own, used as controls. Two of the 36 remove guards against an exception on the scheduler thread.\n- **Nothing has run on a real tree or a GPU.**\n\n**What speaks for it.** 388 random 500-event scenarios with the switches on in valid combinations raised nothing on the fake cache; the starved rule fired 11 times and the gate answered recompute 12 times. The one exception the fuzz produced needs a landing before the first tick, which the Scheduler's loop cannot produce. The untested branches I ran also hold: fifo read order with the log, the log and the prompt gate on the real CPU cache, and a landing under next_use.\n\n**Two notes.**\n- Campaign 34's ec arms pass `--hicache-storage-next-turn-price-learning harm`, which MEASURED_PRICES refuses at startup by design, so those queue lines need `off`.\n- Early on I ran one command outside the test recipe inside the container: `which` for lint tools and a Python import check. It used no GPU and touched nothing under /mnt/ssd.\n\nMy throwaway tests and their outputs are in /home/wanhr/sglang/agent_cache/results/design_unified_1126/impl/A/review_style_tests/. The copies I placed in the copy's test folder are deleted, and nothing else in the copy or the real tree was touched."
+}

@@ -133,6 +133,10 @@ class PrefetchOperation(StorageOperation):
         self._terminated_flag = False
         self.storage_hit_count = 0
         self.start_time = time.monotonic()
+        # Deadline read order, while the read path's lags are measured: when the read was
+        # dispatched (perf_counter) and the pages the read thread held ahead of it.
+        self.dispatched_at: Optional[float] = None
+        self.ahead_pages = 0
         # Take the whole span as present instead of querying for it; the read
         # itself is fail-soft, so a wrong guess shortens the fetch.
         self.assume_stored = assume_stored

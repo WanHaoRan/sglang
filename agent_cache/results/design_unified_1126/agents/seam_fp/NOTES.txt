@@ -1,0 +1,25 @@
+seam_fp: Fetch (F1-F5) and Price (PR1) of DESIGN.md section 9 mapped onto the engine. 2026-11-26, CPU only.
+Nothing in the repository was edited by this agent. Line numbers are git HEAD b7074d9cae.
+The working tree changed while this ran, not by this agent (mtimes 18:23Z): next_turn_policy.py (read_start gained
+stall_weight, the pure half of F2), next_use_eviction.py (queued_order) and test_next_use_eviction.py.
+
+Layout
+  pseudo_diffs/00_environ.diff .. 06_F5_free_empty_lookups.diff   the plan per change, as pseudo-diffs
+  proto/next_turn_prices.py, proto/test_next_turn_prices.py       pure estimators and 23 CPU tests (venv python)
+  runs.tsv, extract.sh, evt/<label>.evt.gz                         filtered copies of 15 server logs
+  lib.py                                                          loader (events by request, client records)
+  f1_admission_error.py      out_f1_<label>_<lo>_<hi>.txt         admission error at arrival and at the hold's release
+  f23_ec_decisions.py        out_f23_<label>.txt                  read_start replayed with the line (F3) and c (F2)
+  f3_read_path.py            out_f3_read_path.txt                 the read path's pieces against the load model's seeds
+  f4_read_vs_recompute.py    out_f4_<label>.txt                   cold-prefill fit; alone readers: TTFT vs recompute
+  f5_empty_lookups.py        out_f5_<label>.txt                   empty lookups, the cap, history computed again
+  f5_tail_check.py           out_f5_tail_check.txt                empty arrival lookups ask for the previous reply
+  pr1_prices_offline.py      out_pr1_<label>.txt                  c, mu, kappa per 10 minutes, rebuilt from records
+  pr1_c_variants.py          out_pr1_c_variants.txt               c under three definitions; smoothed c
+  c_series.py                c_series_<label>.json                per-minute c for the replays
+  pr1_lambda_frontier.py     out_pr1_lambda_<label>.txt           eviction frontier's idle age by window
+  pr1_index_table.py         out_pr1_index_table.txt              holding index on the engine's GapDistribution
+  pr1_prefill_model_replay.py out_pr1_prefill_model.txt           the prototype prefill fit fed with recorded runs
+Rerun: nice -n 10 zsh extract.sh; then each script as its docstring says. Scripts that import the engine's
+next_turn_policy.py or the prototype need /home/wanhr/sglang/agent_cache/baselines/continuum/.venv/bin/python -I -B
+(msgspec); the others run on python3 -I -B.

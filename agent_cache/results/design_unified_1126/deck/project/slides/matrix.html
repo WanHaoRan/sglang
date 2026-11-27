@@ -1,0 +1,20 @@
+<section id="matrix" class="foot">
+<div class="head">
+<p class="eyebrow">The four actions · overview</p>
+<h2 class="title">Four actions decide every movement, on every tier</h2>
+</div>
+<table class="t">
+<tr><th style="width:16%">Action</th><th style="width:22%">GPU</th><th style="width:32%">Host memory</th><th style="width:30%">SSD</th></tr>
+<tr><td><b>Fetch</b>: when a copy moves up</td><td>start the copy from host before the pass that needs it</td><td>land the read at a quantile of <i>T</i>; early only on a sharp hint</td><td>serve reads by due time; read or recompute, by price</td></tr>
+<tr><td><b>Retain</b>: which copies stay</td><td>evict by the same index</td><td>keep while the index <i>ν</i> is above the price <i>λ</i></td><td>writes keep a copy one tier down; the cleaner evicts by index</td></tr>
+<tr><td><b>Preempt</b>: who gives way now</td><td>pass over a turn whose read or copy has not landed</td><td>lowest index first; the queue’s head never</td><td>a late write before a late read when its room is worth more</td></tr>
+<tr><td><b>Price</b>: what a unit costs</td><td><i>μ</i> per GPU-second, and the stall weight <i>c</i></td><td><i>λ</i> per token-second: the index of the marginal holder</td><td><i>κ</i> per device-second: the transfers waiting behind</td></tr>
+</table>
+<div class="row">
+<div class="card-s in1" style="flex:1"><p class="ink-b">One clock</p><p class="small">Every transfer has a due time derived from <i>T</i> = <i>A</i> + <i>W</i>.</p></div>
+<div class="card-s in2" style="flex:1"><p class="ink-b">Three prices</p><p class="small">Each resource’s queue sets what one more unit costs, in seconds of TTFT.</p></div>
+<div class="card-s in3" style="flex:1"><p class="ink-b">One comparison per action</p><p class="small">Given the prices, each session’s best move is a short formula, and provably the best one.</p></div>
+</div>
+<p class="footer">The paper’s four actions covered reads and host eviction at a fixed queue. Here they also cover the queue wait, the hint’s shape, the write and the SSD’s own eviction.</p>
+<aside>Here is the whole design on one slide; the following slides take it action by action. Four actions decide every movement of KV, on every tier. Fetch decides when a copy moves up: when a read from the SSD starts and in which order the device serves reads, and whether a missing history is read or recomputed. Retain decides which copies each tier keeps: which sessions stay in GPU and host memory, when a page is written to the SSD, which is keeping a copy one tier down, and what the SSD’s cleaner deletes. Preempt decides who gives way when a resource is full right now: which holder of host memory yields to an arriving read, whether a write or a read goes first on the device, and on the GPU, that a turn whose read has not landed is passed over. Price says what one more unit of each resource costs, in seconds of TTFT: mu for a GPU-second, lambda for a host token-second, kappa for a device-second, and the weight c of a second of stall. Three ideas hold it together. One clock: every transfer has a due time derived from T, the arrival plus the queue wait. Three prices: the queue at each resource sets what one more unit costs. And one comparison per action: given the prices, each session’s best move is a short formula, and it is provably the best move in the priced problem. The paper’s four actions covered reads and host eviction with the queue taken as fixed. Here the same four also cover the queue wait, the shape of the hint, the write, and the SSD’s own eviction.</aside>
+</section>

@@ -1,0 +1,77 @@
+{
+ "findings": [
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/unified_radix_cache.py",
+   "line": 2148,
+   "severity": "bug",
+   "what": "The heal undoes the retire. write_backup_storage runs the heal for a node that is itself parked in _retire_at_ack. The unstored ancestors it finds are the ones retire_storage_chain zeroed a moment earlier, so they are written again, get a fresh mtime and count as stored again.",
+   "scenario": "RETIRE_ENDED_PAGES on, SKIP_ENDED_WRITES off (the resolver grants this). cache_finished_req inserts the last reply, whose host copy is still in flight, then on_turn_committed retires: the stored path nodes are zeroed and the reply is parked for its ack. The next writing_check acks the host copy, write_backup_storage(reply) calls unstored_ancestors, which returns every retired path node up to the first prompt, and all are resubmitted and acked stored=1. Only the reply and the off-path reply leaves stay retired. This happens at every explicit end (566 sessions in campaign 34's ec_full); l3_retire still logs pages=N as if it had worked. Probe test_f1 in /home/wanhr/sglang/agent_cache/results/design_unified_1126/impl/B/review_correctness/rc_retire_heal.py: the writes queued after the retire are [pages(second), pages(tail)] and the retired node is stored again. Control test_f1b (skip on, end known at the insert, as in the planned first arm) passes: the skip returns before the heal. The same path is open with reply-key source \"reply\" when the last prompt's host copy is still in flight at commit.",
+   "fix": "Do not heal for a write whose node is parked for retire (node_id in self._retire_at_ack). Or do not write it at all: at retire, put a node whose host copy is still in flight into _storage_skip_nodes and let the skip branch depend on membership only. Add a test that inserts the last turn, retires, then acks the host copy. Until fixed, have the resolver refuse retire without skip."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/unified_radix_cache.py",
+   "line": 3566,
+   "severity": "bug",
+   "what": "Retire at the ack is decided per node id but applied to the whole operation. _commit_storage_write zeroes operation.hash_value, the page list from submit time before any split, and finish_storage_write(stored_at=None) unmarks every fragment that carries the op id. Only entry.node_id is discarded from _retire_at_ack.",
+   "scenario": "(a) Probe test_f5: a node's write is queued, another session's match splits it and builds on the upper fragment, then the owner ends. The walk stops at that branch and parks only the lower fragment, yet the ack zeroes all four pages and marks the upper fragment unstored. The other session's pages are stored below it and nothing rewrites it (next finding), so the cleaner takes it first and a live session loses its SSD chain. This breaks 'never a branch another session built on'. (b) Probe test_f2: the session's own next prompt splits a reply while its write is queued, then the session ends before the ack. This is rare in campaign 34 (a write waited 6.9 s at most) and common under a backlog like campaign 32's (36-38 s at the median). Both fragments are parked, the ack discards only the lower id, and the upper id stays parked for good ({25} in the probe). When a later session builds on that fragment, the heal's rewrite is zeroed again at its ack and left unstored.",
+   "fix": "Park by operation: op id -> the node ids the walk took. At the ack, walk the fragments that carry the op id; zero get_hash_values() of the parked ones only and leave them unstored, give the others the normal verdict, and drop every parked id of that op. Add both cases to test_a_node_retired_while_its_write_is_queued_is_retired_at_the_ack, which today uses a stub tree with no split."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py",
+   "line": 2671,
+   "severity": "bug",
+   "what": "unstored_ancestors returns only the contiguous unstored run right above the written node and stops at the first stored ancestor. An unstored node above a stored one is never rewritten. A lookup stops at that hole, so everything below is unreachable on the SSD while marked stored.",
+   "scenario": "Three ways to get there, each with a probe. (a) test_g2 in rc_marks_and_ends.py: two writes queued back to back, the first acked short and the second in full (the write thread goes on after a failed batch). Every later write hangs under the stored node and the failed node is never queued again. This is the failure R3's heal exists for. (b) test_f3 in rc_retire_heal.py: a session sends a turn after an explicit end (or another session forks) while a retired-at-ack write is still queued. Its first write stops at the queued node, that node is zeroed at its ack, and later turns hang under a stored node; the chain ends [unstored, unstored, stored, stored]. So a session that resumes is healed only if its first write comes after those acks. (c) test_g3: the evicted tail of a retired chain is read back under retired nodes still in memory. The read-back node is stored at birth and its children's writes never rewrite the zeroed nodes above it.",
+   "fix": "Walk the whole root path: collect every ancestor with a complete host copy and no storage copy, no queued op and no host copy in flight, root side first, and stop only at a node without a host copy. The cost is O(path nodes) per write, the same order as take_stale_storage_keys per request match. Do it together with the first finding's fix, or the last reply's write would rewrite even more."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/storage_retention.py",
+   "line": 72,
+   "severity": "bug",
+   "what": "Retire is granted without the refresh. Pages read back from the SSD are stored at birth (unified_tree_core.py:2266), so no heal ever rewrites them. Only the refresh, through the -inf stamp, gives a retired file a recent mtime again.",
+   "scenario": "RETIRE_ENDED_PAGES on, TOUCH_INTERVAL_S 0. A fork (later sessions took 0.022 M tokens from ended sessions' later turns in campaign 34) or a session that returns needs retired pages that have left host memory. The files are still on the SSD at mtime zero and are read back as stored; the request's match refreshes nothing and the child's write heals nothing. The live session's pages stay first in the cleaner's order. Probe test_f4: the pages are neither rewritten nor refreshed. With the touch interval on, the next request match refreshes them, so the planned first arm is covered.",
+   "fix": "In resolve_retention_switches, make retire need a touch interval above zero. Or, under retire, queue one refresh for a read-back node at its first request match whatever the interval."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/next_turn_prefetch.py",
+   "line": 684,
+   "severity": "bug",
+   "what": "Any turn that a previous turn named and that carries no next-turn action counts as an explicit end (\"no_next\"). _rid_session does not record whether an exact hint (v1) or a table (v2) named it. For a table session a missing action states nothing: it is the same kind of false end X1 removes for a missing entry.",
+   "scenario": "Probe test_h1 in rc_marks_and_ends.py: two table turns, then turn s-t2 arrives with no hints. ends_session is True at the insert, so its writes would be skipped, and the commit calls retire_storage_chain(11, keep_tokens=128, own_leaves={7, 9}) on a live session. The replay client never sends this shape: --hints dist puts a table on every turn and --hints oracle omits the hint only on a user's last turn. So no campaign arm is affected; a real client that drops a table for one turn is.",
+   "fix": "Remember which protocol named the rid (for example a set filled only when a v1 hint resolved) and return \"no_next\" only for those. Add the table-named case to test_an_exact_hint_session_ends_at_the_turn_with_no_next."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py",
+   "line": 2745,
+   "severity": "bug",
+   "what": "clear_storage_marks resets storage_stored but leaves storage_write_op on the nodes. A write that finished before the clear and is acked after it marks its node stored with no file behind the mark. The node is then never rewritten by the heal.",
+   "scenario": "Probe test_g1: write queued, clear_storage_backend(), then a full ack leaves the node stored. The clear endpoint has no idle guard (managers/scheduler.py:4918 calls it directly, unlike detach), so writes can be in flight. The window is one write latency.",
+   "fix": "Also reset storage_write_op in clear_storage_marks, so acks of writes from before the clear match no node and a later child write queues them again. Empty _retire_at_ack there too."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/test/registered/unit/mem_cache/test_next_use_eviction.py",
+   "line": 808,
+   "severity": "test_gap",
+   "what": "The retire tests build their state by hand (stored_node, mark_storage_write, mark_write_through_pending) and stop at the retire call. No test acks the host copy or the write afterwards, splits a node between a write's submit and its retire, or has a turn arrive after the end. That is why the first three findings survive all 64 mutations.",
+   "scenario": "My nine probes fail on the copy and the one control passes: rc_retire_heal.py (f1-f5, f1b) and rc_marks_and_ends.py (g1-g3, h1) in /home/wanhr/sglang/agent_cache/results/design_unified_1126/impl/B/review_correctness/, outputs beside them. They reuse the copy's own fixtures (stored_marks_cache, computed_node, read_back_node) and ack in the order writing_check and _drain_backup would.",
+   "fix": "Add, on the real CPU tree: last turn inserted, retire, then host-copy ack and write ack (skip off and on); a split between submit and retire, with and without another session's branch; a turn after the end while a retired write is queued; a short ack followed by a full one."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/unified_cache/storage_attachment.py",
+   "line": 142,
+   "severity": "nit",
+   "what": "A detach keeps every storage_stored mark and both parked sets, and the attach that follows only re-resolves the switches. A different store inherits marks that are false for it.",
+   "scenario": "Detach, then attach a store on another directory. The in-memory chains still say stored, so the first child write heals nothing and the new store holds that child below a hole. This is no worse than before the change, but the heal the plan adds for an emptied store does not run here. The plan asks only for the dropped ops to be unmarked, which is done.",
+   "fix": "Clear the marks, _storage_skip_nodes and _retire_at_ack at detach, or at an attach of a different store."
+  },
+  {
+   "file": "/home/wanhr/sglang/agent_cache/frozen/impl_unified_B/python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py",
+   "line": 2691,
+   "severity": "nit",
+   "what": "The refresh rate limit is per event, not per node: one stale stored node re-stamps and re-touches every stored node on the path, fresh ones included. The report's 'a page is touched at most once per interval' does not hold. Head newest, touched first, and a stale tail taking its head along are all right.",
+   "scenario": "The copy's own tests pin it: with a 300 s interval the head refreshed at 1300 is touched again at 1450 through a fork, and a node written at 50 is touched at 60 because a read-back node (stamp -inf) is on its path. In the host-saturated half hour where the cleaner runs, most returning turns carry a read-back node, so their whole in-memory chain is touched every turn. That is the 12.8 M-call bound the deviation set out to avoid. It is cost only (cold inodes unmeasured), not an ordering error.",
+   "fix": "State the real bound in the report and read l3_touch files= in the first arm. To cut it, touch from the head down to the deepest stale node only (the plan's rule), or stamp read-back pages just below their head's last stamp without re-touching the ancestors."
+  }
+ ],
+ "verdict": "**Switches off: safe.** I found no default-off break.\n- Every new branch is gated on the resolved switches.\n- The ack loop still consumes the queue lazily and the `h2s_done` line is unchanged.\n- No thread is started and no file is touched.\n- I re-ran eight of the named test files on CPU and got the reported counts: 30, 83, 36, 18, 24 + 1 skipped, 7, 9, 14.\n\n**All four switches on, as in the planned first arm: safe to run for two hours.** That arm is TP = 1, FULL-only, with end hints from the replay table (`hint` source) or exact hints.\n- I found no exception path on the scheduler thread.\n- Nothing can serve wrong KV: mtime changes and skipped writes never alter page contents, and a touch never creates a file.\n- With truthful end hints, a live session's pages are zeroed or left unwritten only in rare fork and timing corners (the at-ack retire and heal-stops-at-stored findings). The cost there is a recompute.\n- The first finding does not occur in this arm: the control probe passes because the skip returns before the heal.\n\n**Do not run retire in other combinations yet.**\n- Retire without `SKIP_ENDED_WRITES`: the last reply's write rewrites the chain that was just retired at every explicit end, while `l3_retire` logs success. The result would be misleading.\n- Retire without the touch interval: retired pages that are read back stay at mtime zero.\n- Fix the first three findings before the merge.\n\n**What the lens asked, in short**\n- **Stored mark:** correct through create, split, read-back, eviction, short ack and detach. The exceptions are the clear race and the at-ack retire after a split.\n- **Explicit end:** a table entry marked ended, or an exact-hint turn that was named and names no next, ends a session. No usable entry, an unreadable action, an expired plan and an abort do not; the tail is forgotten and the session's extent survives, so a session that returns is retired in full at its real end. One false-end shape remains: a table-named turn with no action.\n- **Retire:** never takes a first prompt. It can take another session's branch only at the ack after a split.\n- **Refresh:** head newest and touched first. Pages written since the last refresh are newer than their head for at most one interval, which is the documented deviation and acceptable.\n- **Skip:** assume_stored stays fail-soft; a read completes its leading run.\n\n**Limits.** Everything here is CPU only. My probes simulate acks with the copy's own fixtures in the engine's order. The TP > 1 reduce was not exercised.\n\nThe real tree moved again during the review: someone else changed `nixl_cleaner.py` and its test at 22:51 UTC. Copy B's cleaner is the unchanged base, as required, and copy B itself did not change while I reviewed. My throwaway test copies are deleted from the copy."
+}

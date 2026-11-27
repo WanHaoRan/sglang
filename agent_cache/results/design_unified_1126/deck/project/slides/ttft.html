@@ -1,0 +1,18 @@
+<section id="ttft" class="foot">
+<div class="head">
+<p class="eyebrow">The setting · the metric</p>
+<h2 class="title">What a returning request waits for before its first token</h2>
+</div>
+<div class="formula">
+<p class="math">TTFT = <i>W</i> + <i>S</i> + <i>γ</i> · (<i>Δ</i> + <i>U</i>)</p>
+<p class="small">TTFT: time to first token, from the request’s arrival to the first token of the reply. The cache policy cannot change <i>Δ</i>. It sets <i>S</i> and <i>U</i>, and through them <i>W</i>: recompute is GPU time that every turn behind also waits for, while a stall delays only its own turn.</p>
+</div>
+<div class="row">
+<div class="card in1"><p class="math-s"><i>W</i> · queue wait</p><p class="small">The time until the GPU would take the turn if its KV were in memory. About 0 at light load; 10 to 25 s once the GPU is saturated.</p></div>
+<div class="card in2"><p class="math-s"><i>S</i> · stall</p><p class="small">Extra wait for the turn’s own SSD read: the read lands after the GPU could have taken the turn.</p></div>
+<div class="card in3"><p class="math-s"><i>γ</i> · <i>Δ</i> · new tokens</p><p class="small">Prefill of the <i>Δ</i> tokens no cache can hold. <i>γ</i> is the GPU time per token, about 0.04 ms: 45 ms for 1.1K tokens.</p></div>
+<div class="card in4"><p class="math-s"><i>γ</i> · <i>U</i> · lost history</p><p class="small"><i>U</i> tokens of history that were in no tier, or not read back in time, and are computed again: about 1 s for 25K tokens.</p></div>
+</div>
+<p class="footer"><i>W</i>, <i>S</i>: seconds · <i>Δ</i>, <i>U</i>: tokens · <i>γ</i>: seconds of GPU prefill per token (0.031 to 0.044 ms on FlashAttention 3, idle to loaded)</p>
+<aside>The metric is the time to first token, TTFT: from the arrival of a request to the first token of its reply. For a returning request it has three parts. W is the queue wait: how long until the GPU would take the turn if its KV were already in memory. It is about zero at light load and 10 to 25 seconds once the GPU is saturated. S is the stall: any extra wait because the turn’s own read from the SSD has not landed when the GPU could take it. The last part is prefill, at gamma seconds of GPU time per token, about 0.04 milliseconds: the delta new tokens that no cache can hold, and U tokens of history that were lost, in no tier or not read back in time, and are computed again. A cache policy cannot change the new tokens. It decides the stall and the lost history directly. And it changes the queue wait indirectly, because the terms are coupled through the queue: a second of recompute is a second of GPU time that every turn behind also waits for, while a second of stall delays only its own turn, and if other turns are ready the GPU serves them in the meantime. That asymmetry is the core of the model in the next section.</aside>
+</section>

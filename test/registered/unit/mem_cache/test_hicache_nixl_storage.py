@@ -4,22 +4,28 @@ from sglang.test.ci.ci_register import register_cuda_ci
 
 register_cuda_ci(est_time=16, stage="base-b", runner_config="1-gpu-small")
 
+import gc
 import os
 import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
+import weakref
+from unittest import mock
 
 import torch
 
+from sglang.srt.environ import envs
 from sglang.srt.mem_cache.hicache_storage import (
     HiCacheStorageConfig,
     PoolName,
     PoolTransfer,
 )
 from sglang.srt.mem_cache.storage.nixl.hicache_nixl import HiCacheNixl
+from sglang.srt.mem_cache.storage.nixl.nixl_utils import TOUCH_STEP_NS
 from sglang.test.test_utils import CustomTestCase
 
 # Stress tests are opt-in: CI never sets this; set locally to exercise them.
@@ -865,6 +871,201 @@ class TestNixlFileLayout(CustomTestCase):
         fm.clear()
 
         self.assertFalse(os.path.exists(file_path))
+
+
+class TestNixlTouch(CustomTestCase):
+    """Mtime changes that steer the L3 cleaner, on files the backend itself wrote."""
+
+    LOGGER = "sglang.srt.mem_cache.storage.nixl.hicache_nixl"
+    TOUCH_THREAD = "hicache-l3-touch"
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp(prefix="test_nixl_touch_")
+        self.addCleanup(shutil.rmtree, self.test_dir, ignore_errors=True)
+
+    def _backend(
+        self, *, mla_tp_rank=None, close_at_cleanup=True, **switches
+    ) -> HiCacheNixl:
+        """A backend over the temp directory; mla_tp_rank makes it one TP rank of two of
+        an MLA model, whose pools only rank 0 writes."""
+        storage_config = HiCacheStorageConfig(
+            tp_rank=mla_tp_rank or 0,
+            tp_size=1 if mla_tp_rank is None else 2,
+            pp_rank=0,
+            pp_size=1,
+            attn_cp_rank=0,
+            attn_cp_size=1,
+            is_mla_model=mla_tp_rank is not None,
+            is_page_first_layout=False,
+            model_name="test_model",
+            enable_storage_metrics=False,
+            extra_config={
+                "plugin": {"posix": {"active": True}},
+                "use_direct_io": False,
+                "l3_cleaner_enabled": False,
+                **switches,
+            },
+        )
+        # The env var wins over file_path: keep every file under the temp directory.
+        # override() leaves it set when the constructor raises; patch.dict restores it.
+        with mock.patch.dict(os.environ):
+            with envs.SGLANG_HICACHE_NIXL_BACKEND_STORAGE_DIR.override(self.test_dir):
+                backend = HiCacheNixl(
+                    storage_config=storage_config, file_path=self.test_dir
+                )
+        if close_at_cleanup:
+            self.addCleanup(backend.close)
+        return backend
+
+    def _write_pages(self, backend: HiCacheNixl, keys: list, *, zero_copy: bool):
+        host = MockMemPoolHost(zero_copy)
+        backend.register_mem_pool_host(host)
+        backend.is_zero_copy = zero_copy
+        indices = torch.arange(len(keys) * host.page_size, dtype=torch.int64)
+        self.assertTrue(all(backend.batch_set_v1(keys, indices)))
+
+    def _page_mtimes_ns(self, keys: list) -> list:
+        """The mtimes of each page's files, as the write path named them."""
+        stamps = {
+            name: os.stat(os.path.join(folder, name)).st_mtime_ns
+            for folder, _, names in os.walk(self.test_dir)
+            for name in names
+        }
+        return [
+            sorted(ns for name, ns in stamps.items() if name.startswith(f"{key}_"))
+            for key in keys
+        ]
+
+    def _touch_threads(self) -> list:
+        return [t for t in threading.enumerate() if t.name == self.TOUCH_THREAD]
+
+    def test_the_cleaner_rechecks_a_page_whenever_the_store_refreshes_mtimes(self):
+        """The stored-write skip, the touch and the retire each move a page's mtime
+        forward after the cleaner may have scanned it; with any of them on, the cleaner
+        must keep a page refreshed since its scan instead of deleting it."""
+        for switches, keep in (
+            ({}, False),
+            ({"skip_stored_writes": True}, True),
+            ({"touch_interval_s": 300}, True),
+            ({"touch_interval_s": 300, "retire_ended_pages": True}, True),
+        ):
+            with self.subTest(**switches):
+                # The skip's env var may be set in the container: name it every time.
+                backend = self._backend(
+                    l3_cleaner_enabled=True, **{"skip_stored_writes": False, **switches}
+                )
+                self.assertIs(backend._l3_cleaner.keep_touched, keep)
+                backend.close()
+
+    def test_a_touch_reaches_every_file_the_write_path_made_for_a_page(self):
+        """The cleaner ranks a page by the newest of its files: a touch must name every
+        file the write path made for it, first page newest; close() ends the thread."""
+        newest_ns = 50 * 10**9
+        for zero_copy, files_per_page in ((True, 2), (False, 1)):
+            with self.subTest(zero_copy=zero_copy):
+                backend = self._backend(touch_interval_s=300)
+                self.assertEqual(len(self._touch_threads()), 1)
+                keys = [f"chain{int(zero_copy)}-{i}" for i in range(3)]
+                self._write_pages(backend, keys, zero_copy=zero_copy)
+                with self.assertLogs(self.LOGGER, level="INFO") as logs:
+                    backend.touch_pages(
+                        keys[:2] + ["never-written"], newest_ns=newest_ns
+                    )
+                    backend.close()
+                self.assertEqual(self._touch_threads(), [])
+                head, second, untouched = self._page_mtimes_ns(keys)
+                self.assertEqual(
+                    (head, second),
+                    (
+                        [newest_ns] * files_per_page,
+                        [newest_ns - TOUCH_STEP_NS] * files_per_page,
+                    ),
+                )
+                self.assertEqual(len(untouched), files_per_page)
+                self.assertGreater(min(untouched), newest_ns)
+                self.assertIn(
+                    f"l3_touch files={2 * files_per_page} gone={files_per_page}",
+                    logs.output[-1],
+                )
+
+    def test_with_the_switches_off_no_thread_runs_and_a_touch_moves_no_mtime(self):
+        """Off must leave the file backend as it was: no thread is started, and a caller
+        that asks for a touch anyway changes no file."""
+        with mock.patch.dict(os.environ):
+            os.environ.pop("SGLANG_HICACHE_NIXL_TOUCH_INTERVAL_S", None)
+            os.environ.pop("SGLANG_HICACHE_NIXL_RETIRE_ENDED_PAGES", None)
+            backend = self._backend()
+        self.assertEqual(
+            (backend.touch_interval_s, backend.retire_ended_pages), (0.0, False)
+        )
+        self.assertEqual(self._touch_threads(), [])
+        self._write_pages(backend, ["page-0"], zero_copy=True)
+        before = self._page_mtimes_ns(["page-0"])
+        backend.touch_pages(["page-0"], newest_ns=None)
+        backend.close()
+        self.assertEqual(self._page_mtimes_ns(["page-0"]), before)
+
+    def test_a_retired_page_has_every_file_at_mtime_zero(self):
+        """The retire switch alone runs the touch thread, and a retired page's K and V
+        both get mtime zero; a page not named keeps the mtime of its write."""
+        backend = self._backend(retire_ended_pages=True)
+        self._write_pages(backend, ["ended", "live"], zero_copy=True)
+        backend.touch_pages(["ended"], newest_ns=None)
+        backend.close()
+        ended, live = self._page_mtimes_ns(["ended", "live"])
+        self.assertEqual(ended, [0, 0])
+        self.assertEqual(len(live), 2)
+        self.assertGreater(min(live), 0)
+
+    def test_a_rank_that_writes_no_files_takes_neither_switch(self):
+        """An MLA rank other than 0 writes no page file: it runs no touch thread and
+        offers the cache neither switch, or the cache would retire files never made."""
+        backend = self._backend(
+            mla_tp_rank=1, touch_interval_s=300, retire_ended_pages=True
+        )
+        self.assertEqual(
+            (backend.touch_interval_s, backend.retire_ended_pages), (0.0, False)
+        )
+        self.assertEqual(self._touch_threads(), [])
+
+    def test_a_touch_that_fails_does_not_end_the_thread(self):
+        """A touch that raises is logged and the thread goes on: ended, it would leave
+        every later refresh and retire in a queue nobody reads, with no log line."""
+        backend = self._backend(retire_ended_pages=True)
+        self._write_pages(backend, ["first", "second"], zero_copy=True)
+        stamp_pages = backend.file_manager.stamp_pages
+        calls = []
+
+        def failing_once(page_files, *, newest_ns):
+            calls.append(page_files)
+            if len(calls) == 1:
+                raise RuntimeError("the first touch fails")
+            return stamp_pages(page_files, newest_ns=newest_ns)
+
+        backend.file_manager.stamp_pages = failing_once
+        with self.assertLogs(self.LOGGER, level="WARNING") as logs:
+            backend.touch_pages(["first"], newest_ns=None)
+            backend.touch_pages(["second"], newest_ns=None)
+            backend.close()
+        first, second = self._page_mtimes_ns(["first", "second"])
+        self.assertGreater(min(first), 0)
+        self.assertEqual(second, [0, 0])
+        self.assertIn("NIXL L3 touch failed", logs.output[0])
+        self.assertEqual(self._touch_threads(), [])
+
+    def test_a_backend_dropped_without_close_is_collected_with_its_thread(self):
+        """The touch thread holds its backend weakly: held by it, a backend dropped
+        without close() would live on, thread and registered memory, for good."""
+        backend = self._backend(touch_interval_s=300, close_at_cleanup=False)
+        self.assertEqual(len(self._touch_threads()), 1)
+        dropped = weakref.ref(backend)
+        # Should the backend survive, close it so that its thread does not outlive
+        # this test.
+        self.addCleanup(lambda: dropped() is None or dropped().close())
+        del backend
+        gc.collect()
+        self.assertIsNone(dropped())
+        self.assertEqual(self._touch_threads(), [])
 
 
 if __name__ == "__main__":

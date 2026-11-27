@@ -24,7 +24,7 @@ import time
 from array import array
 from collections import deque
 from contextlib import contextmanager, nullcontext
-from functools import partial
+from functools import cached_property, partial
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Deque, Dict, List, Optional, Set, Tuple, Union
 
@@ -221,6 +221,9 @@ from sglang.srt.managers.schedule_policy import (
     PrefillAdder,
     SchedulePolicy,
 )
+from sglang.srt.managers.scheduler_components.admission_pass_over import (
+    AdmissionPassOver,
+)
 from sglang.srt.managers.scheduler_components.batch_result_processor import (
     SchedulerBatchResultProcessor,
 )
@@ -266,6 +269,7 @@ from sglang.srt.managers.scheduler_components.output_streamer import (
 from sglang.srt.managers.scheduler_components.pool_stats_observer import (
     SchedulerPoolStatsObserver,
 )
+from sglang.srt.managers.scheduler_components.prefill_load_hold import PrefillLoadHold
 from sglang.srt.managers.scheduler_components.profiler_manager import (
     SchedulerProfilerManager,
 )
@@ -447,6 +451,16 @@ class Scheduler(
     # overrides init_load_publisher (which would otherwise not set it).
     _last_stall_publish_ts: float = float("-inf")
     kv_checksum_computer: Optional[KvChecksumComputer] = None
+
+    # Off unless init_prefill_load_hold and init_admission_pass_over assign them; lazy
+    # and per instance, so a scheduler built without __init__ takes the default path.
+    @cached_property
+    def prefill_load_hold(self) -> PrefillLoadHold:
+        return PrefillLoadHold(max_steps=0)
+
+    @cached_property
+    def admission_pass_over(self) -> AdmissionPassOver:
+        return AdmissionPassOver(lookahead=0)
 
     def __init__(
         self,
@@ -643,6 +657,8 @@ class Scheduler(
         # Init schedule policy and new token estimation
         self.init_schedule_policy()
         self.maybe_init_next_turn_prefetch()
+        self.init_prefill_load_hold()
+        self.init_admission_pass_over()
 
         # Init watchdog, memory saver, input blocker and recv skipper
         self.init_watch_dog_memory_saver_input_blocker()
@@ -1348,6 +1364,40 @@ class Scheduler(
         self._prefill_decode_interval_remaining -= 1
         return True
 
+    def _batch_full_after_no_token(
+        self, *, adder: PrefillAdder, running_batch: ScheduleBatch
+    ) -> bool:
+        if self.enable_hierarchical_cache or self.enable_unified_cache_external_linker:
+            # Set batch_is_full after making sure there are requests that can be served
+            return len(adder.can_run_list) > 0 or not running_batch.is_empty()
+        return True
+
+    def _hold_prefill_batch_for_load(
+        self, new_batch: Optional[ScheduleBatch], running_batch: ScheduleBatch
+    ) -> Optional[ScheduleBatch]:
+        if new_batch is None or new_batch.hicache_consumer_index < 0:
+            return new_batch
+        # A batch mixed with the running requests leaves running_batch empty.
+        if not self.prefill_load_hold.should_hold(
+            load_tokens=new_batch.hicache_load_tokens,
+            decoding=not (running_batch.is_empty() or running_batch.is_prefill_only),
+            chunked=self.chunked_req is not None,
+        ):
+            return new_batch
+        self.prefill_load_hold.hold(new_batch)
+        return None
+
+    def _take_held_prefill_batch(
+        self, running_batch: ScheduleBatch
+    ) -> Optional[ScheduleBatch]:
+        hold = self.prefill_load_hold
+        return hold.take(
+            load_done=self.tree_cache.is_load_back_event_done(
+                hold.held.hicache_consumer_index
+            ),
+            decoding=not (running_batch.is_empty() or running_batch.is_prefill_only),
+        )
+
     def _arm_prefill_decode_interval(self, batch: Optional[ScheduleBatch]) -> None:
         if self.prefill_decode_interval == 0 or batch is None:
             return
@@ -1439,6 +1489,35 @@ class Scheduler(
             soft_pins=get_memory().hicache_storage_next_turn_soft_pins,
         )
         self.tree_cache.next_turn_prefetch = self.next_turn_prefetch
+
+    def init_prefill_load_hold(self) -> None:
+        """Decode beside a prefill batch's host-to-GPU load instead of waiting on it."""
+        self.prefill_load_hold = PrefillLoadHold.create(
+            requested_steps=envs.SGLANG_HICACHE_PREFILL_LOAD_HOLD_STEPS.get(),
+            hierarchical_cache=self.enable_hierarchical_cache,
+            tp_size=get_parallel().tp_size,
+            pp_size=get_parallel().pp_size,
+            dp_attention=self.enable_dp_attention,
+            disaggregation_mode=DisaggregationMode(get_disagg().disaggregation_mode),
+            speculative=not self.spec_algorithm.is_none(),
+            dllm=self.dllm_config is not None,
+            hisparse=self.enable_hisparse,
+        )
+
+    def init_admission_pass_over(self) -> None:
+        """Let later waiting requests take GPU room that an earlier one cannot use."""
+        self.admission_pass_over = AdmissionPassOver.create(
+            requested_lookahead=envs.SGLANG_PREFILL_PASS_OVER_LOOKAHEAD.get(),
+            single_rank=get_parallel().tp_size == 1
+            and get_parallel().pp_size == 1
+            and not self.enable_dp_attention,
+            disaggregation_mode=DisaggregationMode(get_disagg().disaggregation_mode),
+            priority_scheduling=self.enable_priority_scheduling,
+            lora=self.enable_lora,
+            dllm=self.dllm_config is not None,
+            hybrid_ssm=self.is_hybrid_ssm,
+            radix_cache=not self.disable_radix_cache,
+        )
 
     def init_soft_watchdog(self):
         if (x := get_device().soft_watchdog_timeout) is not None:
@@ -2377,6 +2456,7 @@ class Scheduler(
             * get_parallel().attn_dcp_size,
             get_last_batch=lambda: self.last_batch,
             get_running_batch=lambda: self.running_batch,
+            get_held_batch=lambda: self.prefill_load_hold.held,
         )
 
     def init_invariant_checker(self) -> None:
@@ -2395,6 +2475,7 @@ class Scheduler(
             get_last_batch=lambda: self.last_batch,
             get_running_batch=lambda: self.running_batch,
             get_chunked_req=lambda: self.chunked_req,
+            get_held_batch=lambda: self.prefill_load_hold.held,
             scheduler_stage_metrics=self.scheduler_stage_metrics,
         )
 
@@ -3748,12 +3829,16 @@ class Scheduler(
 
         if self.dllm_config is not None:
             new_batch = self.get_new_batch_dllm(running_batch)
+        elif self.prefill_load_hold.held is not None:
+            new_batch = self._take_held_prefill_batch(running_batch)
         elif self._should_defer_prefill():
             new_batch = None
         else:
             prefill_plan = self.get_new_batch_prefill(running_batch)
-            new_batch = prefill_plan.batch_to_run
             running_batch = prefill_plan.running_batch
+            new_batch = self._hold_prefill_batch_for_load(
+                prefill_plan.batch_to_run, running_batch
+            )
 
         need_mlp_sync = self.require_mlp_sync
         if (
@@ -3976,8 +4061,12 @@ class Scheduler(
         if mamba_allocator is not None:
             mamba_allocator.alloc_group_begin(len(self.waiting_queue))
         buffer_pipeline = self.tree_cache.buffer_pipeline
+        pass_over = self.admission_pass_over
+        pass_over.begin()
         # Get requests from the waiting queue to a new prefill batch
         for req in self.waiting_queue:
+            if pass_over.exhausted:
+                break
             if self.enable_lora and not self.can_schedule_lora_req(req, running_loras):
                 continue
 
@@ -4004,6 +4093,12 @@ class Scheduler(
                     break
 
             if self.enable_hicache_storage:
+                # Behind a refused request, a read in flight is left alone: checking it
+                # can end it early under the timeout and best_effort policies.
+                if pass_over.behind_refusal and self.tree_cache.has_ongoing_prefetch(
+                    req.cache_request_handle
+                ):
+                    continue
                 prefetch_done = self.tree_cache.check_prefetch_progress(
                     req.cache_request_handle
                 )
@@ -4042,23 +4137,25 @@ class Scheduler(
             if self.enable_lora:
                 running_loras.add(req.lora_id)
 
+            added = len(adder.can_run_list) > 0 and req is adder.can_run_list[-1]
+            if added:
+                pass_over.admitted(req.rid)
             if res != AddReqResult.CONTINUE:
+                # Refused for room: later, smaller requests may fit what is free.
+                if (
+                    res == AddReqResult.NO_TOKEN
+                    and not added
+                    and pass_over.refused(req.rid)
+                ):
+                    continue
                 if res == AddReqResult.NO_TOKEN:
-                    if (
-                        self.enable_hierarchical_cache
-                        or self.enable_unified_cache_external_linker
-                    ):
-                        # Set batch_is_full after making sure there are requests that can be served
-                        running_batch.batch_is_full = len(adder.can_run_list) > 0 or (
-                            not running_batch.is_empty()
-                        )
-                    else:
-                        running_batch.batch_is_full = True
+                    running_batch.batch_is_full = self._batch_full_after_no_token(
+                        adder=adder, running_batch=running_batch
+                    )
                 # revert matched mamba idx to avoid memory leak, if req is not added.
                 # Only free if the slot was freshly allocated in this batch (not
                 # pre-existing from a session). Session-held slots have their own
                 # lifecycle and freeing them here causes double-free.
-                added = len(adder.can_run_list) > 0 and req is adder.can_run_list[-1]
                 if not added:
                     # init_next_round_input() may stage deferred Mamba COW/clear
                     # metadata before add_one_req() rejects the request.
@@ -4073,6 +4170,12 @@ class Scheduler(
 
         if mamba_allocator is not None:
             mamba_allocator.alloc_group_end()
+        # A walk that refused a request for room leaves the batch as full as a walk
+        # that stopped at that refusal would.
+        if pass_over.end() and not running_batch.batch_is_full:
+            running_batch.batch_is_full = self._batch_full_after_no_token(
+                adder=adder, running_batch=running_batch
+            )
 
         # Update waiting queue
         can_run_list: List[Req] = adder.can_run_list
@@ -4120,6 +4223,7 @@ class Scheduler(
             new_batch.hicache_consumer_index = (
                 self.tree_cache.ready_to_load_host_cache()
             )
+            new_batch.hicache_load_tokens = adder.host_load_tokens
 
         new_batch.prepare_for_extend()
 
@@ -5029,6 +5133,7 @@ class Scheduler(
         # Batch running status
         idle = (
             self.running_batch.is_empty()
+            and self.prefill_load_hold.held is None
             and self.chunked_req is None
             and not self.dllm_manager.any_staging_reqs()
             and (self.last_batch is None or self.last_batch.is_empty())
@@ -5444,7 +5549,12 @@ class Scheduler(
 
     def collect_inflight_reqs(self) -> Set[Req]:
         if get_parallel().pp_size == 1:
-            inflight_batches = [self.running_batch, self.last_batch]
+            # A batch held for its host-to-GPU load is in neither of the other two.
+            inflight_batches = [
+                self.running_batch,
+                self.last_batch,
+                self.prefill_load_hold.held,
+            ]
         else:
             inflight_batches = [*self.running_mbs, *self.mbs]
         return {

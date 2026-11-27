@@ -1,0 +1,2323 @@
+--- a/python/sglang/srt/environ.py
++++ b/python/sglang/srt/environ.py
+@@ -785,8 +785,8 @@
+     # Next-turn prefetcher: a read refused host room is retried on its own paced budget
+     # and does not spend the turn's lookup allowance.
+     SGLANG_HICACHE_NEXT_TURN_ROOM_RETRY = EnvBool(False)
+-    # Next-turn prefetcher: priced decisions take the measured prices (GPU time, host room, the
+-    # fitted prefill cost) instead of --hicache-storage-next-turn-memory-price and a constant.
++    # Next-turn prefetcher: priced decisions take the measured GPU, room and prefill prices, not
++    # the memory-price flag. Needs price learning off; next_use or return_chance to price room.
+     SGLANG_HICACHE_NEXT_TURN_MEASURED_PRICES = EnvBool(False)
+     # Next-turn prefetcher, arrival gate: a lookup that finds nothing in storage spends none of
+     # the turn's lookups, and the turn's key is cut to what its prompt repeats of it.
+--- a/python/sglang/srt/mem_cache/evict_policy.py
++++ b/python/sglang/srt/mem_cache/evict_policy.py
+@@ -12,6 +12,11 @@
+     def get_priority(self, node: TreeNode) -> Union[float, Tuple]:
+         pass
+ 
++    def peek_priority(self, node: TreeNode) -> Union[float, Tuple]:
++        """get_priority for a caller that is not evicting. A strategy that keeps state as
++        it ranks overrides this to answer the same and keep none."""
++        return self.get_priority(node)
++
+ 
+ class LRUStrategy(EvictionStrategy):
+     def get_priority(self, node: TreeNode) -> float:
+--- a/python/sglang/srt/mem_cache/next_turn_meter.py
++++ b/python/sglang/srt/mem_cache/next_turn_meter.py
+@@ -1,10 +1,12 @@
+-"""What the next-turn prefetcher measures (agent_cache/results/design_unified_1126/DESIGN.md
+-section 6): the waiting queue, host eviction, admissions and prefills as the scheduler thread
+-shows them, kept as the prices and estimators of next_turn_prices.py, with the fields of the
+-HICACHE_EVT prices line the prefetcher logs every interval.
+-
+-The meter reads the cache and decides nothing: the prefetcher feeds it every pass and reads
+-its board. Every time is a time.perf_counter() value passed in.
++"""What the next-turn prefetcher measures ("Four actions, three prices",
++agent_cache/results/design_unified_1126/): the waiting queue, host eviction, admissions and
++prefills as the scheduler thread shows them, kept as the prices and estimators of
++next_turn_prices.py, with the fields of the HICACHE_EVT prices line the prefetcher logs every
++interval.
++
++The meter only reads the cache and the eviction strategy, and decides nothing: the prefetcher
++binds its hooks, feeds it every pass and reads its board. Every time is a
++time.perf_counter() value passed in.
+ """
+ 
+ from __future__ import annotations
+@@ -12,7 +14,7 @@
+ from typing import TYPE_CHECKING, Callable, Optional
+ 
+ from sglang.srt.mem_cache.base_prefix_cache import CacheRequestHandle
+-from sglang.srt.mem_cache.next_turn_estimators import L3LoadModel, ReadPathLags
++from sglang.srt.mem_cache.next_turn_estimators import L3LoadModel, Rate, residual_wait
+ from sglang.srt.mem_cache.next_turn_policy import RECOMPUTE_S_PER_TOKEN
+ from sglang.srt.mem_cache.next_turn_prices import (
+     LAM_CEILING,
+@@ -27,6 +29,7 @@
+     HOLDING_MIN_HORIZON_S,
+     NextUseStrategy,
+     ReturnChanceStrategy,
++    queued_holding_rate,
+ )
+ 
+ if TYPE_CHECKING:
+@@ -90,20 +93,20 @@
+         # rate (per second) among the victims that have one.
+         self._evicted_tokens = 0
+         self._evicted_rate: Optional[float] = None
++        # Per second, what a queued turn's history is worth when host eviction takes it.
++        self._queued_rate = 1.0 / HOLDING_MIN_HORIZON_S
+         # The price of the host leaf eviction would take next, and when it was priced.
+         self._victim_price = 0.0
+         self._victim_priced_at = float("-inf")
+         # The read scheduler's window, budget, hold and write-hold counts at the last line.
+         self._hold_counts_logged = (0, 0, 0, 0)
+         strategy = tree_cache.tree_core.eviction_strategy
++        # None under an eviction policy that holds no forecast: room then has no price.
+         self._holding_strategy = (
+             strategy
+             if isinstance(strategy, (NextUseStrategy, ReturnChanceStrategy))
+             else None
+         )
+-        tree_cache.tree_core.host_eviction_observer = self.on_host_evicted
+-        if tree_cache.read_scheduler is not None:
+-            tree_cache.read_lags = ReadPathLags()
+ 
+     def follow(
+         self,
+@@ -112,11 +115,11 @@
+         admitted: int,
+         plans: int,
+         sessions_waiting: int,
+-        arrival_rate: float,
++        rate: Optional[Rate],
+         load: L3LoadModel,
+         now: float,
+     ) -> Optional[dict[str, object]]:
+-        """One scheduler pass: `admitted` turns left the queue for the GPU and
++        """One scheduler pass: `admitted` turns left the queue for the GPU at `rate` and
+         waiting_queue is what stays. sessions_waiting are the sessions whose next turn is
+         not running; `plans` is only logged. Folds in the host eviction since the last
+         pass. Returns the fields of a prices line once every interval, else None."""
+@@ -131,15 +134,27 @@
+         board.observe_queue(
+             ready_waiting=ready_waiting,
+             sessions_waiting=sessions_waiting,
+-            arrival_rate=arrival_rate,
++            arrival_rate=0.0 if rate is None else rate.per_s,
+             now=now,
+         )
++        if self._holding_strategy is not None:
++            self._queued_rate = queued_holding_rate(
++                self._holding_strategy.queued_order,
++                # The last arrival waits for everyone ahead of it; None without a rate.
++                queue_wait_s=(
++                    residual_wait(position=len(waiting_queue) - 1, rate=rate)
++                    if waiting_queue
++                    else 0.0
++                ),
++            )
+         if self._evicted_tokens > 0:
+-            rate, self._evicted_rate = self._evicted_rate, None
++            holding_rate, self._evicted_rate = self._evicted_rate, None
+             tokens, self._evicted_tokens = self._evicted_tokens, 0
+             board.observe_eviction(
+                 marginal_index=(
+-                    None if rate is None else rate * self.restore_s_per_token(load, now)
++                    None
++                    if holding_rate is None
++                    else holding_rate * self.restore_s_per_token(load=load, now=now)
+                 ),
+                 tokens=tokens,
+                 now=now,
+@@ -151,9 +166,10 @@
+             queued=len(waiting_queue), plans=plans, load=load, now=now
+         )
+ 
+-    def restore_s_per_token(self, load: L3LoadModel, now: float) -> float:
++    def restore_s_per_token(self, *, load: L3LoadModel, now: float) -> float:
+         """Seconds of TTFT a read costs per token it restores: its turn's wait at c and the
+-        device's time at kappa. Times a holding rate it is a price of host room."""
++        device's time at what the late reads behind it cost. Times a holding rate it prices
++        host room, so it holds no price of room: with kappa's write term lam feeds on lam."""
+         board = self.board
+         cache = self._tree_cache
+         late = 0
+@@ -166,19 +182,24 @@
+         board.observe_device(
+             late_reads=late, pending_write_tokens=cache.pending_backup_tokens
+         )
+-        return (board.c(now) + board.kappa(now)) * load.read_s_per_page / self._page_size
++        return (
++            (board.c(now) + board.kappa_of_reads(now))
++            * load.read_s_per_page
++            / self._page_size
++        )
+ 
+     def on_host_evicted(self, node, tokens: int) -> None:
+         """Host eviction is taking node with `tokens` host tokens. Called inside it, so it
+-        only records: the next pass folds it into the price of host room."""
++        only records, and asks the strategy nothing that changes how it ranks: the next
++        pass folds the victims into the price of host room."""
+         self._evicted_tokens += tokens
+         if self._holding_strategy is None:
+             return
+-        rate = self._holding_strategy.holding_rate(node)
++        rate = self._holding_strategy.holding_rate(node, queued=self._queued_rate)
+         if rate is not None and (self._evicted_rate is None or rate > self._evicted_rate):
+             self._evicted_rate = rate
+ 
+-    def next_victim_price(self, load: L3LoadModel, now: float) -> float:
++    def next_victim_price(self, *, load: L3LoadModel, now: float) -> float:
+         """The index of the holder host eviction would take next, as a price of host room:
+         what the frontier's price will answer only once that eviction is made."""
+         if self._holding_strategy is None:
+@@ -189,7 +210,8 @@
+             rate = (
+                 None
+                 if victim is None
+-                # A queued turn's history is needed within its wait: the top rate.
++                # A read staged for a turn not here must not take a queued turn's history,
++                # however long that turn still waits: the top rate.
+                 else self._holding_strategy.holding_rate(
+                     victim, queued=1.0 / HOLDING_MIN_HORIZON_S
+                 )
+@@ -197,7 +219,9 @@
+             self._victim_price = (
+                 0.0
+                 if rate is None
+-                else min(LAM_CEILING, rate * self.restore_s_per_token(load, now))
++                else min(
++                    LAM_CEILING, rate * self.restore_s_per_token(load=load, now=now)
++                )
+             )
+         return self._victim_price
+ 
+@@ -233,34 +257,36 @@
+         # A retracted request re-enters the queue after its first forward: nothing to compare.
+         if predicted is None or wait < 0.0:
+             return
+-        if not reader:
++        if reader:
++            if landed_after is not None:
++                self.admission_error.observe(
++                    predicted_wait_s=predicted,
++                    wait_s=wait,
++                    landed_after_arrival_s=landed_after,
++                )
++        elif predicted > 0.0:
++            # 0 is an empty queue at arrival, by rule and not by the admission rate: such
++            # turns would fill the bin the hold reads for waits under 2 s with zeros.
+             self.admission_error.observe(predicted_wait_s=predicted, wait_s=wait)
+-        elif landed_after is not None:
+-            self.admission_error.observe(
+-                predicted_wait_s=predicted,
+-                wait_s=wait,
+-                landed_after_arrival_s=landed_after,
+-            )
+ 
+     def _price_fields(
+         self, *, queued: int, plans: int, load: L3LoadModel, now: float
+     ) -> dict[str, object]:
+-        """One HICACHE_EVT prices line: the four prices and what each is measured from.
+-        waiting, with the running count of the batch lines, gives the users in session.
+-        Values stay within [\\w./-]+, as the scripts read every such line."""
++        # One HICACHE_EVT prices line. waiting plus the batch lines' running count is the
++        # users in session. Values stay within [\w./-]+, as the scripts read every line.
+         board = self.board
+         srs = self._tree_cache.read_scheduler
+-        restore_s = self.restore_s_per_token(load, now)
++        restore_s = self.restore_s_per_token(load=load, now=now)
+         lam = board.lam(now)
+         a, b = self.prefill_cost.coefficients()
+         errors = self.admission_error.pooled()
+         q10, q50, q90 = (
+-            quantile_of(errors, q) if errors else None for q in (0.1, 0.5, 0.9)
++            quantile_of(errors, q=q) if errors else None for q in (0.1, 0.5, 0.9)
+         )
+         # What a held read of 20K tokens would get: the landing quantile and its margin.
+         q20k = landing_quantile(price=lam, tokens=20_000, lateness_weight=board.c(now))
+         margin = (
+-            -quantile_of(errors, q20k)
++            -quantile_of(errors, q=q20k)
+             if len(errors) >= MIN_ERROR_SAMPLES
+             else self._hold_margin_s
+         )
+@@ -293,9 +319,8 @@
+         )
+ 
+     def _read_path_fields(self) -> dict[str, object]:
+-        """The read path's measured lags, and how often each limit kept a parked read from
+-        dispatch since the previous prices line: the window, the budget, the arrival hold
+-        and the write hold. All "na" without the deadline read order."""
++        # The read path's measured lags, and how often each limit (window, budget, arrival
++        # hold, write hold) kept a read parked since the previous line; "na" under fifo.
+         names = ("win_holds", "budget_holds", "held", "write_holds")
+         cache = self._tree_cache
+         srs = cache.read_scheduler
+--- a/python/sglang/srt/mem_cache/next_turn_prefetch.py
++++ b/python/sglang/srt/mem_cache/next_turn_prefetch.py
+@@ -34,8 +34,8 @@
+ with soft pins the read of an arrived turn takes room from staged reads; and the price
+ follows how much room reads were refused. No forecast ends such a plan.
+ 
+-Env switches, each off by default (next_turn_switches.py; agent_cache/results/
+-design_unified_1126/DESIGN.md section 9), put measured prices in place of the constants. A
++Env switches, each off by default (next_turn_switches.py; "Four actions, three prices",
++agent_cache/results/design_unified_1126/), put measured prices in place of the constants. A
+ meter (next_turn_meter.py) reads the lateness weight c, the GPU price mu and the room price
+ lam off the queue and host eviction; they weigh a staged read's start, the hold's margin and
+ read-or-recompute at the gate. Read-time estimates then count the line of parked reads, and
+@@ -68,6 +68,7 @@
+     ArrivalOffset,
+     L3LoadModel,
+     Rate,
++    ReadPathLags,
+     residual_wait,
+     trigger_time,
+     wait_at_arrival,
+@@ -479,6 +480,7 @@
+             parking=self._deadline_mode,
+             staging_by_cost=self._expected_cost and self._stages_reads,
+             price_learning=price_learning,
++            priced_eviction=self._next_use is not None,
+         )
+         self._measured_prices = switches.measured_prices
+         self._free_empty_lookups = switches.free_empty_lookups
+@@ -504,14 +506,18 @@
+                 read_deadline=self.read_deadline,
+             )
+             self._prices = self._meter.board
++            tree_cache.tree_core.host_eviction_observer = self._meter.on_host_evicted
+             tree_cache.prefetch_landed_fn = self.on_read_landed
++            if self._deadline_mode:
++                # From here on the cache times its lookups, dispatches and landings.
++                tree_cache.read_lags = ReadPathLags()
+         # rid -> the wait its queue position predicted when a turn with no plan was first
+         # seen queued; a planned turn keeps its own in pred_wait_ql.
+         self._pred_wait: dict[str, float] = {}
+         # rid -> the tick clock when the turn's last storage read landed.
+         self._landed_at: dict[str, float] = {}
+-        # Since when every queued turn has been waiting on a read of its own; None when
+-        # the queue is empty or some turn has nothing to read.
++        # Since when every queued turn has been waiting on a read of its own, or since the
++        # starved rule last gave one up; None when the queue is empty or a turn is ready.
+         self._starved_since: Optional[float] = None
+         # The load model for estimates that count the read line in pages: _load itself
+         # until the read path's own lags are measured, then with them for its seeds.
+@@ -743,8 +749,9 @@
+             self._refresh_load_model()
+         if self._meter is not None:
+             self._follow_prices(waiting_queue, admitted=admitted, now=now)
+-        if self._recompute_when_starved:
+-            self._relieve_starved_gpu(waiting_queue, now=now)
++        starved = self._recompute_when_starved and self._gpu_starved(
++            waiting_queue, now=now
++        )
+         # The hold times reads of turns with no plan, so it needs a fresh rate regardless.
+         if not self._plans and not self._hold_arrived:
+             return []
+@@ -800,6 +807,10 @@
+             backlog_pages=backlog_pages,
+             now=now,
+         )
++        if starved:
++            # After the queue loop: a turn that arrived this pass is registered by now, so
++            # every parked read's deadline is the one dispatch will order it by.
++            self._relieve_starved_gpu(waiting_queue, now=now)
+         return refetch
+ 
+     def _queue_ahead(self, waiting_queue: list[Req], *, now: float) -> int:
+@@ -831,7 +842,7 @@
+             # no plan is one more.
+             sessions_waiting=len(self._plans)
+             + sum(req.rid not in self._plans for req in waiting_queue),
+-            arrival_rate=0.0 if rate is None else rate.per_s,
++            rate=rate,
+             load=self._load,
+             now=now,
+         )
+@@ -844,13 +855,12 @@
+         return self._prices.lam(now) if self._measured_prices else self._price.price
+ 
+     def _staging_price(self, now: float) -> float:
+-        """Host room's price for a read staged before its turn. The frontier answers the
+-        evictions already made, while a staged pin lasts until its turn arrives; so a
+-        staging also pays the index of the holder it would evict next."""
++        """Host room's price for a read staged before its turn: the frontier answers the
++        evictions already made, so a staging also pays for the holder it would evict next."""
+         price = self._memory_price(now)
+         if not self._measured_prices:
+             return price
+-        return max(price, self._meter.next_victim_price(self._load, now))
++        return max(price, self._meter.next_victim_price(load=self._load, now=now))
+ 
+     def on_refetch_result(self, *, req: Req, issued: bool) -> None:
+         """The Scheduler re-issued the prefetch tick() asked for; `issued` says
+@@ -1012,26 +1022,19 @@
+         if wait is None:
+             return False
+         admission_at = now + wait
+-        baseline = self._queued_baseline(plan, req)
+         # Not even a read of the whole key would need to start yet: skip the probe.
+         if not self._deadline_mode and now < trigger_time(
+             admission_at=admission_at,
+-            load_s=self._load_seconds(baseline, backlog_pages),
++            load_s=self._load_seconds(self._queued_chain(plan, req=req), backlog_pages),
+             margin_s=TRIGGER_MARGIN_S,
+         ):
+             return False
+         if now - plan.last_probe_t >= PROBE_INTERVAL_S:
+-            plan.missing_tokens = baseline - self._resident_tokens(plan, now=now)
++            plan.missing_tokens = self._probe_missing(plan, req=req, now=now)
+             if plan.missing_tokens < self._tree_cache.prefetch_threshold:
+                 # The history came back by another read: nothing left to retry.
+                 plan.room_refused = False
+-        load_s, backlog_pages = self._line_seconds(
+-            plan.missing_tokens,
+-            # As read_deadline() answers for this turn's own read.
+-            deadline=None if position <= 1 else admission_at,
+-            backlog_pages=backlog_pages,
+-            now=now,
+-        )
++        load_s = self._load_seconds(plan.missing_tokens, backlog_pages)
+         trigger_at = trigger_time(
+             admission_at=admission_at, load_s=load_s, margin_s=TRIGGER_MARGIN_S
+         )
+@@ -1040,6 +1043,15 @@
+         ):
+             return False
+         if plan.due_case == 0:
++            if self._read_line:
++                # Under the deadline order this estimate times nothing and is only logged:
++                # the line is counted here and at a refetch, not for every turn every pass.
++                load_s, backlog_pages = self._queued_line_seconds(
++                    plan, req=req, position=position, admission_at=admission_at, now=now
++                )
++                trigger_at = trigger_time(
++                    admission_at=admission_at, load_s=load_s, margin_s=TRIGGER_MARGIN_S
++                )
+             self._mark_due(
+                 plan,
+                 case=2,
+@@ -1056,7 +1068,6 @@
+         return self._wants_refetch(
+             plan,
+             req=req,
+-            baseline=baseline,
+             position=position,
+             admissible_ahead=admissible_ahead,
+             wait_s=wait,
+@@ -1064,21 +1075,55 @@
+             now=now,
+         )
+ 
+-    def _queued_baseline(self, plan: TurnPlan, req: Req) -> int:
+-        """Tokens of history a queued turn should have in memory: its key, or the match of
+-        its last lookup if longer. Once the gate has seen its prompt or a lookup has
+-        answered, what the prompt repeats of the key, as far as storage was found to reach."""
++    def _queued_chain(self, plan: TurnPlan, *, req: Req) -> int:
++        """Tokens of history a queued turn can have in any tier: its key, or its last
++        lookup's match if longer; once a prompt or an answer is known, the key as repeated."""
+         if plan.shared_tokens is None and plan.absent_from is None:
+             return max(len(plan.key), req.storage_prefetch_last_match_len or 0)
+-        chain = len(plan.key) if plan.shared_tokens is None else plan.shared_tokens
+-        return chain if plan.absent_from is None else min(chain, plan.absent_from)
++        return len(plan.key) if plan.shared_tokens is None else plan.shared_tokens
++
++    def _probe_missing(self, plan: TurnPlan, *, req: Req, now: float) -> int:
++        """Probe the queued turn's key: tokens of its history in neither device nor host
++        memory, as far as storage was found to reach."""
++        resident = self._resident_tokens(plan, now=now)
++        if plan.absent_from is not None and resident > plan.absent_from:
++            # Memory reaches past where the last lookup stopped: that lookup says nothing
++            # of what storage holds beyond.
++            plan.absent_from = None
++        chain = self._queued_chain(plan, req=req)
++        if plan.absent_from is not None:
++            chain = min(chain, plan.absent_from)
++        return chain - resident
++
++    def _queued_line_seconds(
++        self,
++        plan: TurnPlan,
++        *,
++        req: Req,
++        position: int,
++        admission_at: float,
++        now: float,
++    ) -> tuple[float, int]:
++        # The queue check's estimate with the read line counted, timed as read_deadline()
++        # answers for the turn. A read of its own already parked stands in the line.
++        cache = self._tree_cache
++        handle = req.cache_request_handle
++        if cache.read_scheduler.is_parked(handle):
++            ahead_pages = cache.parked_read_pages_ahead(handle)
++        else:
++            ahead_pages = cache.storage_read_line_pages(
++                None if position <= 1 else admission_at
++            )
++        seconds = self._seconds_in_line(
++            plan.missing_tokens, ahead_pages=ahead_pages, timed=position > 1, now=now
++        )
++        return seconds, ahead_pages
+ 
+     def _wants_refetch(
+         self,
+         plan: TurnPlan,
+         *,
+         req: Req,
+-        baseline: int,
+         position: int,
+         admissible_ahead: int,
+         wait_s: float,
+@@ -1100,7 +1145,7 @@
+         ):
+             return False
+         # The last probe may predate a read that has since landed.
+-        plan.missing_tokens = baseline - self._resident_tokens(plan, now=now)
++        plan.missing_tokens = self._probe_missing(plan, req=req, now=now)
+         if plan.missing_tokens < cache.prefetch_threshold:
+             plan.room_refused = False
+             return False
+@@ -1117,6 +1162,10 @@
+             if plan.refetch_capped:
+                 return False
+         plan.last_refetch_t = now
++        if self._read_line:
++            load_s, _ = self._queued_line_seconds(
++                plan, req=req, position=position, admission_at=now + wait_s, now=now
++            )
+         plan.pending_refetch = RefetchDecision(
+             missing_tokens=plan.missing_tokens,
+             position=position,
+@@ -1395,9 +1444,9 @@
+         backlog_pages: int,
+         now: float,
+     ) -> tuple[Optional[float], float, int]:
+-        """Rule 1 for the plan's read on the engine's own estimates: (seconds until it
+-        should start, None for the turn's arrival; seconds from issuing it to its pages
+-        being usable, margin included; pages served before it)."""
++        """Rule 1 on the engine's own estimates: (seconds until the plan's read should
++        start, None = at arrival; seconds from issuing it to usable pages, margin
++        included; pages served before it)."""
+         load_s, backlog_pages = self._line_seconds(
+             plan.missing_tokens,
+             # The deadline the staged read gets once it is parked.
+@@ -1428,9 +1477,9 @@
+         return start_in, read_s, backlog_pages
+ 
+     def on_read_landed(self, handle: CacheRequestHandle, node_id: int) -> None:
+-        """A storage read's span was inserted as node_id. Under return_chance eviction
+-        it belongs to the session of the plan it was read for; without this a span
+-        read back under a prompt that sessions share ranks as un-hinted."""
++        """A storage read's span was inserted as node_id. While prices are measured the
++        landing is stamped for its turn's admission. Under return_chance eviction the span
++        joins the session of the plan it was read for, or it would rank as un-hinted."""
+         plan = self._plans.get(handle.rid)
+         if self._prices is not None and (plan is not None or handle.rid in self._queued):
+             # The last tick's clock: a landing is drained before its pass's tick, so this
+@@ -1664,12 +1713,15 @@
+         if plan is None:
+             return True
+         threshold = self._tree_cache.prefetch_threshold
+-        history = self._history_tokens(plan, matched_tokens, new_input_tokens)
+-        chain = history
+-        if plan.absent_from is not None:
+-            # Storage had nothing from there on; a match that shrank below it re-opens
+-            # the span up to it.
+-            chain = min(history, max(plan.absent_from, matched_tokens))
++        history = self._history_tokens(
++            plan, matched_tokens=matched_tokens, new_input_tokens=new_input_tokens
++        )
++        if plan.absent_from is not None and matched_tokens > plan.absent_from:
++            # The match reaches past where the last lookup stopped: that lookup says
++            # nothing of what storage holds beyond.
++            plan.absent_from = None
++        # Storage had nothing from the mark on; a match below it leaves the span up to it.
++        chain = history if plan.absent_from is None else min(history, plan.absent_from)
+         quote = None
+         if plan.recompute:
+             decision = "recompute"
+@@ -1733,10 +1785,8 @@
+         missing: int,
+         new_input_tokens: Optional[Sequence[int]],
+     ) -> Optional[RecomputeQuote]:
+-        """Read-or-recompute for the turn's missing history, priced only for a turn that
+-        arrives with nobody else queued and no ready turn waiting (itself included, once
+-        it has waited): behind a queue the read is hidden and GPU time is dear, so the
+-        turn reads as without the switch. None when not priced."""
++        """Read-or-recompute for the turn's missing history, as priced. None behind another
++        queued turn or a ready one (itself, once it has waited): a queue hides the read."""
+         if (
+             not self._recompute_by_price
+             or new_input_tokens is None
+@@ -1763,18 +1813,19 @@
+             now=now,
+         )
+ 
+-    def _relieve_starved_gpu(self, waiting_queue: list[Req], *, now: float) -> None:
+-        """With the SSD as the bottleneck every queued turn can be waiting on its own read
+-        while the GPU has no turn to admit. Once that has lasted NTP_GPU_BOUND_S, the first
+-        queued turn with a plan whose read is still parked gives the read up and computes
+-        the span again, if that is sooner than the read would land. One turn a pass."""
++    def _gpu_starved(self, waiting_queue: list[Req], *, now: float) -> bool:
++        """True once every queued turn has been waiting on a read of its own for
++        NTP_GPU_BOUND_S, with the read path's lags measured: the SSD holds the GPU up."""
+         if not waiting_queue or self._meter.ready_since:
+             self._starved_since = None
+-            return
++            return False
+         if self._starved_since is None:
+             self._starved_since = now
+-        if now - self._starved_since < NTP_GPU_BOUND_S or not self._line_measured:
+-            return
++        return now - self._starved_since >= NTP_GPU_BOUND_S and self._line_measured
++
++    def _relieve_starved_gpu(self, waiting_queue: list[Req], *, now: float) -> None:
++        """The first queued turn with a plan and a read still parked recomputes the span, if
++        that is sooner than the read lands. One a pass; a drop restarts the starved wait."""
+         cache = self._tree_cache
+         for req in waiting_queue:
+             handle = req.cache_request_handle
+@@ -1783,12 +1834,12 @@
+             if span is None:
+                 continue
+             start, tokens = span
+-            land_s = self._line_load.seconds(
+-                own_pages=math.ceil(tokens / self._page_size),
+-                backlog_pages=cache.parked_read_pages_ahead(handle),
++            land_s = self._seconds_in_line(
++                tokens,
++                ahead_pages=cache.parked_read_pages_ahead(handle),
++                timed=self.read_deadline(handle) is not None,
++                now=now,
+             )
+-            if self.read_deadline(handle) is not None:
+-                land_s += cache.read_lags.write_hold_left_s(now)
+             recompute_s = self._meter.prefill_cost.seconds(
+                 new_tokens=tokens, total_tokens=start + tokens
+             )
+@@ -1796,6 +1847,7 @@
+                 parked = cache.read_scheduler.parked_count()
+                 if cache.drop_parked_read(handle):
+                     plan.recompute = True
++                    self._starved_since = now
+                     _log_event(
+                         "ntp_starve",
+                         req.rid,
+@@ -1809,12 +1861,12 @@
+     def _history_tokens(
+         self,
+         plan: TurnPlan,
++        *,
+         matched_tokens: int,
+         new_input_tokens: Optional[Sequence[int]],
+     ) -> int:
+-        """Tokens of history the turn can have in any tier: the plan's key, which is the
+-        previous prompt and the reply as generated. With free empty lookups it is cut to
+-        what the turn's prompt repeats of it; the staged lookup has no prompt to compare."""
++        """Tokens of history the turn can have in any tier: the plan's key, cut under free
++        empty lookups to what the turn's prompt repeats of it (a staged lookup has none)."""
+         key = plan.key
+         if not self._free_empty_lookups or plan.staging_call:
+             return len(key)
+@@ -1918,10 +1970,8 @@
+         return not_before
+ 
+     def _hold_margin(self, *, tokens: int, wait_s: float) -> tuple[float, float]:
+-        """(seconds before its load estimate requires that a held read starts, the landing
+-        quantile q behind it). Minus the q-quantile of measured minus predicted wait at
+-        this wait: the read then lands by admission with chance 1 - q. The fixed margin
+-        stands until enough admissions were seen at this wait."""
++        """(seconds before its load estimate requires that a held read starts, the quantile
++        q behind it); the fixed margin until enough admissions were seen at this wait."""
+         now = self._last_now
+         quantile = landing_quantile(
+             price=self._memory_price(now),
+@@ -1934,7 +1984,8 @@
+         return margin_s, quantile
+ 
+     def _refresh_load_model(self) -> None:
+-        """Replace the load model's per-page seeds with the read thread's EWMA."""
++        """Replace the load model's per-page seeds with the read thread's EWMA; with the
++        read line counted, also keep a model on the read path's measured lags."""
+         ms_per_page = self._tree_cache.cache_controller.storage_read_ms_per_page
+         s_per_page = None if ms_per_page is None else ms_per_page / 1000.0
+         if s_per_page is not None and self._load.read_s_per_page != s_per_page:
+@@ -1965,22 +2016,27 @@
+         now: float,
+     ) -> tuple[float, int]:
+         """(seconds from issuing a read of `tokens` to its pages being inserted, pages
+-        served before it). With the read line counted, a read that parks due at `deadline`
+-        (None = needed now) also waits for the parked reads ordered no later and, if
+-        timed, for the write hold; the lags are then the read path's measured ones."""
+-        own_pages = math.ceil(tokens / self._page_size)
++        ahead). With the read line, parked reads due by `deadline` (None = now) count."""
+         if not self._read_line:
+-            return (
+-                self._load.seconds(own_pages=own_pages, backlog_pages=backlog_pages),
+-                backlog_pages,
+-            )
+-        cache = self._tree_cache
+-        ahead_pages = cache.storage_read_line_pages(deadline)
+-        seconds = self._line_load.seconds(own_pages=own_pages, backlog_pages=ahead_pages)
+-        if deadline is not None:
+-            seconds += cache.read_lags.write_hold_left_s(now)
++            return self._load_seconds(tokens, backlog_pages), backlog_pages
++        ahead_pages = self._tree_cache.storage_read_line_pages(deadline)
++        seconds = self._seconds_in_line(
++            tokens, ahead_pages=ahead_pages, timed=deadline is not None, now=now
++        )
+         return seconds, ahead_pages
+ 
++    def _seconds_in_line(
++        self, tokens: int, *, ahead_pages: int, timed: bool, now: float
++    ) -> float:
++        # A read of `tokens` behind ahead_pages of the line, on the lags measured with no
++        # read ahead folded in; a timed read also waits out what is left of a write hold.
++        seconds = self._line_load.seconds(
++            own_pages=math.ceil(tokens / self._page_size), backlog_pages=ahead_pages
++        )
++        if timed:
++            seconds += self._tree_cache.read_lags.write_hold_left_s(now)
++        return seconds
++
+     def _end_session(self, *, rid: str, session: Optional[str], now: float) -> None:
+         """The session's next turn is not coming: its tail is evicted first."""
+         if session is None:
+--- a/python/sglang/srt/mem_cache/next_turn_prices.py
++++ b/python/sglang/srt/mem_cache/next_turn_prices.py
+@@ -1,6 +1,6 @@
+ """Prices of GPU time, host room and the SSD, measured from their queues, and the estimators
+-the priced decisions of the next-turn prefetcher read
+-(agent_cache/results/design_unified_1126/DESIGN.md, sections 2, 3.2 and 6).
++the priced decisions of the next-turn prefetcher read ("Four actions, three prices",
++agent_cache/results/design_unified_1126/).
+ 
+ Units: c is seconds of summed TTFT per second one turn waits on its read; mu is seconds of
+ summed TTFT per GPU-second; kappa is seconds of TTFT per second of device time; lam is seconds
+@@ -37,7 +37,8 @@
+ MIN_ERROR_SAMPLES = 30
+ # A host eviction this long ago no longer says room is short. Arbitrary; one half-life.
+ FRONTIER_STALE_S = 30.0
+-# As PriceController.ceiling: bounds the loop lam -> kappa (pending writes at lam) -> lam.
++# As PriceController.ceiling. A victim due within half a second behind a line of late reads
++# would otherwise price room far above any price the knob took, and stop every staging.
+ LAM_CEILING = 1e-3
+ # A recompute is priced against a read only while c is at least this. Measured: wrong on
+ # 4-20 % of its recomputes with the condition, 25-50 % without (campaigns 33 and 34).
+@@ -72,7 +73,7 @@
+ 
+ 
+ class PriceBoard(msgspec.Struct):
+-    """c, mu, kappa and lam, each read off one queue (DESIGN.md section 6)."""
++    """c, mu, kappa and lam, each read off one queue."""
+ 
+     admissions: DecayedMean = msgspec.field(default_factory=DecayedMean)
+     ready: DecayedMean = msgspec.field(default_factory=DecayedMean)
+@@ -147,7 +148,7 @@
+             return light
+         return max(light, float(self.sessions_waiting))
+ 
+-    def mu_for(self, job_s: float, now: float) -> float:
++    def mu_for(self, *, job_s: float, now: float) -> float:
+         """mu for a job of job_s GPU-seconds. At light load the job also delays the turns
+         that arrive while it runs, half of it each on average; at saturation they are in mu."""
+         if self.c(now) < C_SATURATED:
+@@ -160,22 +161,26 @@
+             return 0.0
+         return min(LAM_CEILING, self.frontier.value(now=now, prior=0.0, prior_weight=0.0))
+ 
++    def kappa_of_reads(self, now: float) -> float:
++        """The part of kappa that holds no price of room: each late read's turn waits at c.
++        What prices the room itself must stop here, or lam would feed on lam."""
++        return self.c(now) * self.late_reads
++
+     def kappa(self, now: float) -> float:
+         """A second of device time delays every transfer behind it: a late read's turn at c,
+         the room a pending write locks at lam."""
+-        return self.c(now) * self.late_reads + self.lam(now) * self.pending_write_tokens
++        return self.kappa_of_reads(now) + self.lam(now) * self.pending_write_tokens
+ 
+ 
+ def landing_quantile(*, price: float, tokens: int, lateness_weight: float) -> float:
+-    """q of DESIGN.md section 3.2: a read should land at the q-quantile of its turn's
+-    admission time when a second late costs lateness_weight and a second early costs
+-    price x tokens."""
++    """The quantile q of its turn's admission time at which a read should land, when a
++    second late costs lateness_weight and a second early costs price x tokens."""
+     rent = max(0.0, price) * tokens
+     q = rent / (max(lateness_weight, C_FLOOR) + rent)
+     return min(Q_MAX, max(Q_MIN, q))
+ 
+ 
+-def quantile_of(ascending: list[float], q: float) -> float:
++def quantile_of(ascending: list[float], *, q: float) -> float:
+     return ascending[min(len(ascending) - 1, int(q * len(ascending)))]
+ 
+ 
+@@ -224,7 +229,7 @@
+         ordered = self.ordered[index]
+         if ordered is None:
+             ordered = self.ordered[index] = sorted(self.errors[index])
+-        return quantile_of(ordered, q)
++        return quantile_of(ordered, q=q)
+ 
+     def margin(self, q: float, *, predicted_wait_s: float, fallback_s: float) -> float:
+         """Seconds before its load estimate requires that a held read starts, so that it
+@@ -240,7 +245,7 @@
+         """Median lag of the turns that read; None until MIN_ERROR_SAMPLES were seen."""
+         if len(self.reader_lags) < MIN_ERROR_SAMPLES:
+             return None
+-        return quantile_of(sorted(self.reader_lags), 0.5)
++        return quantile_of(sorted(self.reader_lags), q=0.5)
+ 
+ 
+ class PrefillCostModel(msgspec.Struct):
+@@ -318,7 +323,7 @@
+     read_s: float,
+     now: float,
+ ) -> RecomputeQuote:
+-    """DESIGN.md section 2 for a turn that arrives with no ready turn waiting, `matched` of
++    """Read or recompute, for a turn that arrives with no ready turn waiting, `matched` of
+     its `total` prompt tokens in memory and `missing` more in storage: recompute them when
+     their prefill, at the price of GPU time for a job that long, takes less than the read
+     keeps the turn waiting. Not once c has fallen: a queue then hides the read."""
+@@ -326,7 +331,7 @@
+     recompute_s = cost.seconds(
+         new_tokens=total - matched, total_tokens=total
+     ) - cost.seconds(new_tokens=with_read, total_tokens=total)
+-    mu = board.mu_for(recompute_s, now)
++    mu = board.mu_for(job_s=recompute_s, now=now)
+     c = board.c(now)
+     return RecomputeQuote(
+         recompute_s=recompute_s,
+--- a/python/sglang/srt/mem_cache/next_turn_switches.py
++++ b/python/sglang/srt/mem_cache/next_turn_switches.py
+@@ -1,10 +1,10 @@
+-"""The env switches of the next-turn prefetcher's priced decisions
+-(agent_cache/results/design_unified_1126/DESIGN.md section 9), read once per prefetcher.
++"""The env switches of the next-turn prefetcher's priced decisions ("Four actions, three
++prices", agent_cache/results/design_unified_1126/), read once per prefetcher.
+ 
+-A switch with nothing to act on in a setup is off there, as every one is in mode observe:
+-one block of switches can then serve arms that differ in read order or timing. A switch that
+-would act without another switch it needs is refused, since it would run on the constants it
+-was made to replace.
++Only the prices log works in mode observe: every other switch changes a decision and is off
++there. In mode on, a switch with nothing to act on in a setup is off as well, so one block of
++switches can serve arms that differ in read order or timing. A switch that would act without
++something it needs is refused, since it would run on the constants it was made to replace.
+ """
+ 
+ from __future__ import annotations
+@@ -37,10 +37,12 @@
+         parking: bool,
+         staging_by_cost: bool,
+         price_learning: str,
++        priced_eviction: bool,
+     ) -> Switches:
+         """acting: mode on. gated, holding: acting with the arrival gate, the arrival hold.
+         parking: the deadline read order, under which reads park. staging_by_cost: read
+-        timing expected_cost, which weighs a staged read's stall against its rent."""
++        timing expected_cost, which weighs a staged read's stall against its rent.
++        priced_eviction: the eviction policy knows what each holder is worth per second."""
+         switches = cls(
+             prices_log_interval_s=envs.SGLANG_LOG_HICACHE_PRICES_INTERVAL.get(),
+             measured_prices=(
+@@ -50,9 +52,13 @@
+                 gated and envs.SGLANG_HICACHE_NEXT_TURN_FREE_EMPTY_LOOKUPS.get()
+             ),
+             lateness_weight=(
+-                staging_by_cost and envs.SGLANG_HICACHE_NEXT_TURN_LATENESS_WEIGHT.get()
++                acting
++                and staging_by_cost
++                and envs.SGLANG_HICACHE_NEXT_TURN_LATENESS_WEIGHT.get()
++            ),
++            read_line=(
++                acting and parking and envs.SGLANG_HICACHE_NEXT_TURN_READ_LINE.get()
+             ),
+-            read_line=parking and envs.SGLANG_HICACHE_NEXT_TURN_READ_LINE.get(),
+             hold_quantile=(
+                 holding and envs.SGLANG_HICACHE_NEXT_TURN_HOLD_QUANTILE.get()
+             ),
+@@ -65,7 +71,9 @@
+             ),
+         )
+         unmet = switches._unmet(
+-            staging_by_cost=staging_by_cost, price_learning=price_learning
++            staging_by_cost=staging_by_cost,
++            price_learning=price_learning,
++            priced_eviction=priced_eviction,
+         )
+         if unmet:
+             raise ValueError("; ".join(unmet))
+@@ -81,13 +89,27 @@
+             or self.read_line
+         )
+ 
+-    def _unmet(self, *, staging_by_cost: bool, price_learning: str) -> list[str]:
++    def _unmet(
++        self, *, staging_by_cost: bool, price_learning: str, priced_eviction: bool
++    ) -> list[str]:
+         unmet = []
+         if self.measured_prices and price_learning != "off":
+             unmet.append(
+                 "SGLANG_HICACHE_NEXT_TURN_MEASURED_PRICES replaces the learned price: "
+                 "it needs --hicache-storage-next-turn-price-learning off"
+             )
++        if (
++            self.measured_prices
++            and not priced_eviction
++            and (staging_by_cost or self.hold_quantile)
++        ):
++            # The room's price is read off host eviction's victims: under a policy with
++            # no forecast it is 0 for ever, and a staged or held read would pay no rent.
++            unmet.append(
++                "SGLANG_HICACHE_NEXT_TURN_MEASURED_PRICES prices host room for staged "
++                "and held reads off the eviction policy: it needs "
++                "--radix-eviction-policy next_use or return_chance"
++            )
+         if self.hold_quantile and not self.measured_prices:
+             # At the knob's 5e-5 a 20K-token read lands at the median, late half the time.
+             unmet.append(
+--- a/python/sglang/srt/mem_cache/next_use_eviction.py
++++ b/python/sglang/srt/mem_cache/next_use_eviction.py
+@@ -106,6 +106,16 @@
+     return node.last_access_time
+ 
+ 
++def queued_holding_rate(queued_order: str, *, queue_wait_s: Optional[float]) -> float:
++    """Per second, what the history of the queued turn eviction takes first is worth: one
++    over its wait left. Under "farthest" that turn is the last arrival, which waits
++    queue_wait_s (None = not known); under "lru" it is the turn least recently touched,
++    nearest admission, so the shortest horizon stands."""
++    if queued_order == "farthest" and queue_wait_s is not None:
++        return 1.0 / max(queue_wait_s, HOLDING_MIN_HORIZON_S)
++    return 1.0 / HOLDING_MIN_HORIZON_S
++
++
+ class NextUseRegistry:
+     """Node id -> predicted next use (perf_counter seconds), or the forecast it
+     comes from; None = ended. Past max_entries the oldest registration is dropped:
+@@ -247,16 +257,19 @@
+         # like the registry, oldest first.
+         self._tail_of: OrderedDict[int, int] = OrderedDict()
+ 
+-    def _session_registration(self, node: TreeNode) -> tuple[bool, Registration]:
++    def _session_registration(
++        self, node: TreeNode, *, adopt: bool = True
++    ) -> tuple[bool, Registration]:
+         """The registration of the node's session. The prefetcher registers one tail
+         per session; a session's body once that tail is evicted, and a span read back
+         under it, are other nodes. A node takes the registration of its only child
+         (found when the child was ranked) or of the parent it is the only child of:
+-        with one child there is one session on that path."""
++        with one child there is one session on that path. adopt=False only reads: pricing
++        or peeking at a node must not change which session eviction ranks it with."""
+         registry = self.registry
+         parent = node.parent
+         only_child = parent is not None and len(parent.children) == 1
+-        if parent is not None and not only_child:
++        if adopt and parent is not None and not only_child:
+             # A branch point belongs to no single session, even if it once had one child.
+             self._tail_of.pop(parent.id, None)
+         tail_id = node.id
+@@ -276,8 +289,9 @@
+             known, forecast = registry.lookup(tail_id)
+             if not known:
+                 return False, None
+-            self.adopt(node.id, tail_id)
+-        if only_child and not registry.lookup(parent.id)[0]:
++            if adopt:
++                self.adopt(node.id, tail_id)
++        if adopt and only_child and not registry.lookup(parent.id)[0]:
+             self.adopt(parent.id, tail_id)
+         return True, forecast
+ 
+@@ -289,7 +303,13 @@
+             self._tail_of.popitem(last=False)
+ 
+     def get_priority(self, node: TreeNode) -> tuple[int, float, float]:
+-        known, forecast = self._session_registration(node)
++        return self._priority(node, adopt=True)
++
++    def peek_priority(self, node: TreeNode) -> tuple[int, float, float]:
++        return self._priority(node, adopt=False)
++
++    def _priority(self, node: TreeNode, *, adopt: bool) -> tuple[int, float, float]:
++        known, forecast = self._session_registration(node, adopt=adopt)
+         if not known:
+             return (RETURN_TIER_UNKNOWN, node.last_access_time, 0.0)
+         if forecast is None:
+@@ -326,7 +346,7 @@
+         whatever the score ranks by; 0 for an ended session or an exact hint long past; None
+         when unregistered. `queued` is the answer for a session whose turn waits in the
+         queue, whose wait the caller knows."""
+-        known, forecast = self._session_registration(node)
++        known, forecast = self._session_registration(node, adopt=False)
+         if not known:
+             return None
+         if isinstance(forecast, Queued):
+--- a/python/sglang/srt/mem_cache/unified_cache/components/full.py
++++ b/python/sglang/srt/mem_cache/unified_cache/components/full.py
+@@ -263,14 +263,22 @@
+                     (self.session_ref_eviction_strategy(x.parent), x.parent),
+                 )
+ 
++    def _peek_host_priority(self, node: UnifiedTreeNode):
++        # session_ref_eviction_strategy's answer through peek_priority: nothing is being
++        # evicted, so the strategy must keep no state of this ranking.
++        priority = self.tree_core.eviction_strategy.peek_priority(node)
++        if self.tree_core.enable_session_radix_cache:
++            ref = self.session_ref(node)
++            return ref > 0, ref, priority
++        return priority
++
+     def next_host_victim(self) -> Optional[UnifiedTreeNode]:
+         """The host leaf drive_host_eviction would take first; None when none is evictable."""
+-        self._ensure_eviction_strategy()
+         leaves = self.tree_core.evictable_host_leaves
+         if not leaves:
+             return None
+         # Ties go by node, as in the eviction heap.
+-        _, victim = min((self.session_ref_eviction_strategy(n), n) for n in leaves)
++        _, victim = min((self._peek_host_priority(n), n) for n in leaves)
+         return victim
+ 
+     def acquire_component_lock(
+--- a/python/sglang/srt/mem_cache/unified_radix_cache.py
++++ b/python/sglang/srt/mem_cache/unified_radix_cache.py
+@@ -194,8 +194,10 @@
+ 
+ 
+ class UnifiedRadixCache(BasePrefixCache):
+-    # Bound by the next-turn prefetcher under env switches. The gate that also reads the prompt,
+-    # asked in place of prefetch_gate_fn: (request, matched tokens, prompt from the match on).
++    # Set by the next-turn prefetcher under env switches; None = off. Class-level defaults,
++    # unlike the hooks of __init__: a cache built without it has them too.
++    # The gate that also reads the prompt, asked in place of prefetch_gate_fn: (request,
++    # matched tokens, prompt from the match on).
+     prefetch_gate_prompt_fn: Optional[
+         Callable[[CacheRequestHandle, int, Sequence[int]], bool]
+     ] = None
+@@ -2220,13 +2222,9 @@
+             # Paced: the limiter clears as transfers finish, not on the next pass.
+             self.storage_prefetch_retries.poll_miss(req_id, storage_hit_end)
+             return
+-        if self.prefetch_gate_prompt_fn is not None:
+-            allowed = self.prefetch_gate_prompt_fn(request, storage_start, prompt_tail)
+-        else:
+-            allowed = self.prefetch_gate_fn is None or self.prefetch_gate_fn(
+-                request, storage_start
+-            )
+-        if not allowed:
++        if not self._prefetch_gate_allows(
++            request, matched_tokens=storage_start, prompt_tail=prompt_tail
++        ):
+             stats["declined_gate"] += 1
+             return
+ 
+@@ -2315,6 +2313,21 @@
+             # allocation (_launch_storage_hit).
+             self.cache_controller.prefetch_tokens_occupied += len(prefetch_key)
+ 
++    def _prefetch_gate_allows(
++        self,
++        request: CacheRequestHandle,
++        *,
++        matched_tokens: int,
++        prompt_tail: Sequence[int],
++    ) -> bool:
++        """The next-turn prefetcher's say on a storage lookup; no gate bound allows it. The
++        gate that also reads the prompt is asked in place of the other."""
++        if self.prefetch_gate_prompt_fn is not None:
++            return self.prefetch_gate_prompt_fn(request, matched_tokens, prompt_tail)
++        return self.prefetch_gate_fn is None or self.prefetch_gate_fn(
++            request, matched_tokens
++        )
++
+     def _prefetch_timeout_check_linear_func(self, operation: PrefetchOperation) -> bool:
+         return (
+             time.monotonic() - operation.start_time
+@@ -2555,7 +2568,7 @@
+             # storage span unresolved until admission proves that L2 -> L1
+             # load-back actually materialized it for this request.
+             self._resolve_storage_prefetch_tokens(request, insert_result.prefix_len)
+-            self._observe_read_landing(operation, completed_tokens)
++            self._observe_read_landing(operation, completed_tokens=completed_tokens)
+             if loaded_from_storage > 0 and insert_result.inserted_host_node is not None:
+                 self._pin_prefetch(
+                     request, insert_result.inserted_host_node, loaded_from_storage
+@@ -2587,8 +2600,22 @@
+         )
+         return
+ 
++    def _report_storage_lookup(
++        self, operation: PrefetchOperation, *, hit_tokens: int
++    ) -> None:
++        """Tell the next-turn prefetcher what a storage lookup found. A terminated lookup
++        may not have run: its count is no answer."""
++        if self.prefetch_lookup_fn is None or operation.is_terminated():
++            return
++        self.prefetch_lookup_fn(
++            operation.handle,
++            storage_start=operation.storage_start,
++            requested_tokens=operation.stats_requested_tokens,
++            hit_tokens=hit_tokens,
++        )
++
+     def _observe_read_landing(
+-        self, operation: PrefetchOperation, completed_tokens: int
++        self, operation: PrefetchOperation, *, completed_tokens: int
+     ) -> None:
+         """Feed the read path's fixed lag: from dispatch to the pages' insertion, less the
+         pages ahead at dispatch and its own at the read thread's rate."""
+@@ -3516,14 +3543,7 @@
+                     continue
+                 if hit_tokens > 0:
+                     self._record_storage_prefetch_hit(request, hit_tokens)
+-                # A terminated lookup may not have run: its count is no answer.
+-                if self.prefetch_lookup_fn is not None and not operation.is_terminated():
+-                    self.prefetch_lookup_fn(
+-                        request,
+-                        storage_start=operation.storage_start,
+-                        requested_tokens=operation.stats_requested_tokens,
+-                        hit_tokens=hit_tokens,
+-                    )
++                self._report_storage_lookup(operation, hit_tokens=hit_tokens)
+                 if operation.is_terminated():
+                     # Controller-side miss termination (retryable) or an abort
+                     # race (abort cleanup discards the marker).
+--- a/test/registered/unit/mem_cache/test_next_turn_estimators.py
++++ b/test/registered/unit/mem_cache/test_next_turn_estimators.py
+@@ -425,11 +425,11 @@
+         self.queue(board, ready=30, sessions=109, rate=2.6, now=10.0)
+         self.assertAlmostEqual(board.mu(now=10.0), 31.0, places=2)
+         self.assertAlmostEqual(
+-            board.mu_for(0.5, now=10.0), 31.0 + 2.6 * 0.5 / 2, places=2
++            board.mu_for(job_s=0.5, now=10.0), 31.0 + 2.6 * 0.5 / 2, places=2
+         )
+         board.observe_admissions(count=200, ready_left=True, now=10.0)
+         self.assertEqual(board.mu(now=10.0), 109.0)
+-        self.assertEqual(board.mu_for(0.5, now=10.0), 109.0)
++        self.assertEqual(board.mu_for(job_s=0.5, now=10.0), 109.0)
+         # The sessions seen fall before the smoothed c recovers: not below the ready turns.
+         self.queue(board, ready=0, sessions=2, rate=2.6, now=10.0)
+         self.assertAlmostEqual(board.mu(now=10.0), 31.0, places=2)
+@@ -558,6 +558,17 @@
+             model.observe(new_tokens=1_000, total_tokens=10_000, seconds=0.03)
+         self.assertEqual(model.coefficients(), (1.1e-4, 0.0))
+ 
++    def test_the_fit_follows_a_change_of_cost(self):
++        """A sample weighs half after 200 more: 400 prefills at half the cost bring the estimate
++        to 0.30 s, where the plain mean, 0.375 s, would price the rest of the run."""
++        model = PrefillCostModel(seed_a=1.1e-4)
++        for seconds in (0.5, 0.25):
++            for _ in range(400):
++                model.observe(new_tokens=10_000, total_tokens=10_000, seconds=seconds)
++        self.assertAlmostEqual(
++            model.seconds(new_tokens=10_000, total_tokens=10_000), 0.3, delta=0.005
++        )
++
+     def test_one_shape_of_request_gives_a_per_token_cost_not_a_negative_term(self):
+         """Samples that all look alike cannot tell the two terms apart; the fit must fall
+         back to one rate, not return a negative coefficient that prices a long history
+--- a/test/registered/unit/mem_cache/test_next_turn_prefetch.py
++++ b/test/registered/unit/mem_cache/test_next_turn_prefetch.py
+@@ -6,7 +6,6 @@
+ 
+ import contextlib
+ import logging
+-import re
+ import unittest
+ from array import array
+ from types import SimpleNamespace
+@@ -30,6 +29,7 @@
+     LAG_MIN_SAMPLES,
+     ArrivalOffset,
+     L3LoadModel,
++    ReadPathLags,
+     residual_wait,
+ )
+ from sglang.srt.mem_cache.next_turn_policy import (
+@@ -40,6 +40,7 @@
+ from sglang.srt.mem_cache.next_turn_prefetch import (
+     MAX_REFETCHES,
+     MIN_EXPIRY_S,
++    NTP_GPU_BOUND_S,
+     NTP_HOLD_MARGIN_S,
+     NTP_JIT_MARGIN_S,
+     NTP_LEAD_HORIZON_S,
+@@ -51,8 +52,9 @@
+     PROBE_INTERVAL_S,
+     NextTurnPrefetcher,
+ )
+-from sglang.srt.mem_cache.next_turn_prices import PrefillCostModel
++from sglang.srt.mem_cache.next_turn_prices import LAM_CEILING, PrefillCostModel
+ from sglang.srt.mem_cache.next_use_eviction import (
++    HOLDING_MIN_HORIZON_S,
+     NextUseStrategy,
+     Queued,
+     ReturnChanceStrategy,
+@@ -1164,6 +1166,17 @@
+     return stack
+ 
+ 
++# Every env switch of the priced decisions but the prices log, and what two of them need.
++DECISION_SWITCHES = (
++    envs.SGLANG_HICACHE_NEXT_TURN_MEASURED_PRICES,
++    envs.SGLANG_HICACHE_NEXT_TURN_FREE_EMPTY_LOOKUPS,
++    envs.SGLANG_HICACHE_NEXT_TURN_LATENESS_WEIGHT,
++    envs.SGLANG_HICACHE_NEXT_TURN_READ_LINE,
++    envs.SGLANG_HICACHE_NEXT_TURN_HOLD_QUANTILE,
++    envs.SGLANG_HICACHE_NEXT_TURN_RECOMPUTE_BY_PRICE,
++    envs.SGLANG_HICACHE_NEXT_TURN_RECOMPUTE_WHEN_STARVED,
++    envs.SGLANG_HICACHE_NIXL_SKIP_STORED_WRITES,
++)
+ BIG_KEY_TOKENS = 1000 * PAGE
+ SHARP = {"key": "*", "p10": 45.0, "p50": 50.0, "p90": 56.0, "n": 40}
+ WIDE = {"key": "*", "p10": 0.85, "p50": 22.0, "p90": 58.0, "n": 500}
+@@ -1659,14 +1672,71 @@
+                 self.assertEqual(ntp._measured_prices, deciding)
+             stack.close()
+         hold_switches(self, (envs.SGLANG_HICACHE_NEXT_TURN_MEASURED_PRICES, True))
+-        with self.assertRaises(ValueError):
+-            NextTurnPrefetcher(
+-                mode="on",
+-                tree_cache=MeasuredCache(),
+-                page_size=PAGE,
+-                read_timing="expected_cost",
+-                price_learning="harm",
+-            )
++        for learning in ("on", "harm"):
++            with self.subTest(learning=learning), self.assertRaises(ValueError):
++                NextTurnPrefetcher(
++                    mode="on",
++                    tree_cache=MeasuredCache(),
++                    page_size=PAGE,
++                    read_timing="expected_cost",
++                    price_learning=learning,
++                )
++
++    def test_in_mode_observe_only_the_prices_log_works(self):
++        """Observe logs what the prefetcher would decide without the switches: none of
++        them may weigh a logged decision there, bind a hook or ask for what it needs."""
++        for interval in (0.0, 5.0):
++            with self.subTest(interval=interval):
++                stack = hold_switches(
++                    self,
++                    (envs.SGLANG_LOG_HICACHE_PRICES_INTERVAL, interval),
++                    *((switch, True) for switch in DECISION_SWITCHES),
++                )
++                cache = MeasuredCache()
++                ntp = NextTurnPrefetcher(
++                    mode="observe",
++                    tree_cache=cache,
++                    page_size=PAGE,
++                    read_timing="expected_cost",
++                    arrival_gate="on",
++                    arrival_hold="on",
++                    price_learning="harm",
++                )
++                stack.close()
++                self.assertEqual(ntp._meter is not None, interval > 0)
++                self.assertFalse(
++                    ntp._measured_prices
++                    or ntp._free_empty_lookups
++                    or ntp._lateness_weight
++                    or ntp._read_line
++                    or ntp._hold_quantile
++                    or ntp._recompute_by_price
++                    or ntp._recompute_when_starved
++                )
++                self.assertIsNone(cache.prefetch_gate_prompt_fn)
++                self.assertIsNone(cache.prefetch_lookup_fn)
++
++    def test_measured_prices_need_an_eviction_policy_that_prices_its_holders(self):
++        """Under an eviction policy with no forecast the room's price is 0 for ever: the switch
++        is refused where a staged or held read would then pay no rent, and only there."""
++        hold_switches(
++            self,
++            (envs.SGLANG_HICACHE_NEXT_TURN_MEASURED_PRICES, True),
++            (envs.SGLANG_HICACHE_NEXT_TURN_HOLD_QUANTILE, True),
++        )
++
++        def unpriced():
++            cache = MeasuredCache()
++            cache.tree_core.eviction_strategy = None
++            return cache
++
++        for setup in ({"read_timing": "expected_cost"}, {"arrival_hold": "on"}):
++            with self.subTest(setup), self.assertRaises(ValueError):
++                NextTurnPrefetcher(
++                    mode="on", tree_cache=unpriced(), page_size=PAGE, **setup
++                )
++        ntp = NextTurnPrefetcher(mode="on", tree_cache=unpriced(), page_size=PAGE)
++        self.assertTrue(ntp._measured_prices)
+ 
+ 
+ class TestArrivalGate(PrefetcherTestCase):
+@@ -1753,6 +1823,56 @@
+         self.assertEqual(cache._prefetch_outcome_stats["declined_gate"], 1)
+         self.assertFalse(cache.has_ongoing_prefetch(handle))
+ 
++    def test_the_real_cache_hands_the_prompt_to_the_gate_that_reads_it(self):
++        """Of an 8-token key the prompt repeats 7, all in memory: judged by the key alone one
++        token is missing, and the turn looks storage up for a reply no tier holds."""
++        hold_switches(self, (envs.SGLANG_HICACHE_NEXT_TURN_FREE_EMPTY_LOOKUPS, True))
++        cache = cpu_unified_cache()
++        cache.enable_storage = True
++        cache.prefetch_threshold = 1
++        cache.cache_controller = SimpleNamespace(
++            get_prefetch_submission=lambda rid: None,
++            prefetch_rate_limited=lambda: False,
++        )
++        ntp = NextTurnPrefetcher(
++            mode="on", tree_cache=cache, page_size=2, arrival_gate="on"
++        )
++        ntp.on_turn_committed(
++            req=make_req("s-t0", kv_hints=hints("s-t1")),
++            key=key_of(8),
++            rotation_tail_declined=False,
++            now=0.0,
++        )
++        handle = CacheRequestHandle("s-t1", 0)
++        cache.prefetch_from_storage(
++            handle,
++            cache.root_node_handle(),
++            array("q", [107, 108, 109, 110]),
++            matched_prefix_tokens=list(range(7)),
++        )
++        self.assertEqual(cache._prefetch_outcome_stats["declined_gate"], 1)
++        self.assertEqual(ntp._plans["s-t1"].shared_tokens, 7)
++        self.assertFalse(cache.has_ongoing_prefetch(handle))
++
++    def test_the_prices_are_measured_on_the_real_cache_in_both_modes(self):
++        """What the meter reads must exist on the real cache, not only on a fake: a prices line
++        is logged, and with nothing parked or evictable the cache's new answers are empty."""
++        hold_switches(self, (envs.SGLANG_LOG_HICACHE_PRICES_INTERVAL, 5.0))
++        for mode in ("observe", "on"):
++            with self.subTest(mode=mode):
++                cache = cpu_unified_cache()
++                ntp = NextTurnPrefetcher(mode=mode, tree_cache=cache, page_size=2)
++                self.assertIsNotNone(cache.tree_core.host_eviction_observer)
++                with self.assertLogs(LOGGER, level="INFO") as logs:
++                    ntp.tick(waiting_queue=[make_req("u-t1", entered=0.0)], now=0.0)
++                prices = [line for line in logs.output if "HICACHE_EVT prices " in line]
++                self.assertEqual(len(prices), 1)
++                nobody = CacheRequestHandle("nobody", 0)
++                self.assertIsNone(cache.next_host_victim())
++                self.assertEqual(cache.storage_read_line_pages(None), 0)
++                self.assertIsNone(cache.parked_read_span(nobody))
++                self.assertFalse(cache.drop_parked_read(nobody))
++
+ 
+ class TestArrivalHold(PrefetcherTestCase):
+     mode = "on"
+@@ -2140,6 +2260,52 @@
+     "trig_lead_ms",
+     "case",
+ ]
++# As logged with every switch off: the scripts read these lines by position.
++EC_START_FIELDS = [
++    "rid",
++    "decision",
++    "tokens",
++    "start_ms",
++    "idle_ms",
++    "read_ms",
++    "wait_ms",
++    "price",
++]
++HOLD_FIELDS = ["rid", "pos", "pages", "wait_ms", "load_ms", "hold_ms"]
++PRICES_FIELDS = [
++    "rid",
++    "c",
++    "mu",
++    "waiting",
++    "ready",
++    "queued",
++    "plans",
++    "kappa",
++    "late",
++    "parked",
++    "pend_w",
++    "lam",
++    "evict_tok",
++    "k_us",
++    "rec_a_us",
++    "rec_b_ns",
++    "rec_n",
++    "read_ms_page",
++    "err_n",
++    "err_q10_ms",
++    "err_q50_ms",
++    "err_q90_ms",
++    "rd_lag_ms",
++    "q20k",
++    "margin_ms",
++    "lookup_ms",
++    "lag_ms",
++    "whold_ms",
++    "win_holds",
++    "budget_holds",
++    "held",
++    "write_holds",
++]
+ 
+ 
+ class TestMeasuredPrices(PrefetcherTestCase):
+@@ -2203,6 +2369,36 @@
+         for name, value in lines[1].items():
+             self.assertRegex(value, r"\A[\w./-]+\Z", name)
+ 
++    def test_the_prices_line_names_every_price_and_counts_holds_since_the_line_before(self):
++        """A field dropped is a column lost for a whole run. The hold counts are per line, not
++        running totals; under the fifo read order they and the lags read na."""
++        holds = ("win_holds", "budget_holds", "held", "write_holds")
++
++        def line_at(ntp, now):
++            found = self.events(lambda: ntp.tick(waiting_queue=[], now=now))
++            (line,) = [fields for kind, fields in found if kind == "prices"]
++            return line
++
++        stats = self.cache.read_scheduler.stats
++        stats.window_holds, stats.hold_skips = 3, 7
++        first = line_at(self.ntp, 0.0)
++        self.assertEqual(list(first), PRICES_FIELDS)
++        self.assertEqual([first[name] for name in holds], ["3", "0", "7", "0"])
++        stats.window_holds, stats.write_holds = 5, 4
++        second = line_at(self.ntp, 5.0)
++        self.assertEqual([second[name] for name in holds], ["2", "0", "0", "4"])
++
++        fifo = self.make_cache()
++        fifo.read_scheduler = None
++        line = line_at(
++            NextTurnPrefetcher(mode=self.mode, tree_cache=fifo, page_size=PAGE), 0.0
++        )
++        self.assertEqual(list(line), PRICES_FIELDS)
++        self.assertEqual(
++            [line[name] for name in ("parked", "late", "lookup_ms", *holds)],
++            ["0", "0", "na", "na", "na", "na", "na"],
++        )
++
+     def test_ntp_admit_keeps_its_fields_and_gains_the_reader_flag_and_the_landing(self):
+         """The scripts read ntp_admit by position: the two fields go at its end, and only
+         while prices are measured. A reader's admission is timed from its last landing."""
+@@ -2232,20 +2428,29 @@
+                     self.assertEqual((admit["reader"], admit["land_ms"]), ("1", "700"))
+ 
+     def test_the_admission_error_is_fed_by_turns_that_read_nothing_with_readers_apart(self):
+-        """A reader waits for its own landing, so its wait against the queue's prediction is
+-        the read line, and a retracted request re-enters the queue after its first forward,
+-        so its wait is negative: either one, taken as an error of the admission estimate,
+-        would move every held read's start."""
++        """The error bins hold measured minus predicted wait where the queue's rate predicted
++        it: not a reader's wait, a retracted request's, or a turn that found the queue empty."""
+         tracker = self.ntp._meter.admission_error
+-        for rid in ("a", "b"):
++        for rid in ("a", "b", "c"):
+             self.commit(f"{rid}1", f"{rid}2", now=0.0)
+         self.commit("z1", "z2", now=0.0, gap_s=500.0)  # keeps the queue followed
+-        a2 = make_req("a2", entered=5.0)
+-        self.ntp.tick(waiting_queue=[a2], now=5.0)
+-        a2.time_stats.forward_entry_time = 5.3
++        # 30 admissions: the queue drains one turn every 2 s.
++        self.admit_through_queue([f"x{i}" for i in range(30)], now=1.0)
++        self.assertEqual([len(errors) for errors in tracker.errors], [0] * 5)
++
++        def through_queue(*rids, entered, admitted, reader=None):
++            reqs = [make_req(rid, entered=entered) for rid in rids]
++            self.ntp.tick(waiting_queue=reqs, now=entered)
++            for req in reqs:
++                req.storage_hit_length = 640 if req.rid == reader else 0
++                req.time_stats.forward_entry_time = admitted
++            return reqs
++
++        # u found the queue empty; a2 was predicted 3 s behind it and v, with no plan, 5 s.
++        _, a2, _ = through_queue("u", "a2", "v", entered=5.0, admitted=5.3)
+         self.ntp.tick(waiting_queue=[], now=5.4)
+-        self.assertEqual([len(errors) for errors in tracker.errors], [1, 0, 0, 0, 0])
+-        self.assertAlmostEqual(tracker.errors[0][0], 0.3)
++        self.assertEqual([len(errors) for errors in tracker.errors], [0, 1, 1, 0, 0])
++        self.assertAlmostEqual(tracker.errors[1][0], 0.3 - 3.0)
+ 
+         b2 = make_req("b2", entered=6.0)
+         self.ntp.tick(waiting_queue=[b2], now=6.0)
+@@ -2254,31 +2459,88 @@
+         b2.storage_hit_length = 640
+         b2.time_stats.forward_entry_time = 7.4
+         self.ntp.tick(waiting_queue=[], now=7.5)
+-        self.assertEqual(len(tracker.errors[0]), 1)
+         self.assertAlmostEqual(tracker.reader_lags[0], 0.4)
+-
+-        a2.time_stats.wait_queue_entry_time = 8.0  # retracted: queued again, no plan now
+-        self.ntp.tick(waiting_queue=[a2], now=8.0)
+-        self.ntp.tick(waiting_queue=[], now=8.5)
+-        self.assertEqual(len(tracker.errors[0]), 1)
++        # A reader whose landing was not seen has no lag, and is no non-reader either.
++        through_queue("u2", "c2", entered=8.0, admitted=8.3, reader="c2")
++        self.ntp.tick(waiting_queue=[], now=8.4)
++        # Retracted: a2 is queued again after its first forward, with no plan now.
++        a2.time_stats.wait_queue_entry_time = 9.0
++        self.ntp.tick(waiting_queue=[make_req("u3", entered=9.0), a2], now=9.0)
++        self.ntp.tick(waiting_queue=[], now=9.5)
++        self.assertEqual([len(errors) for errors in tracker.errors], [0, 1, 1, 0, 0])
++        self.assertEqual(len(tracker.reader_lags), 1)
++
++    def test_an_aborted_turn_is_not_an_admission(self):
++        """c is the share of admissions that left no ready turn waiting: an abort that left
++        the queue beside a ready turn would otherwise read as the GPU passing that turn over."""
++        ready, gone = make_req("ready", entered=0.0), make_req("gone", entered=0.0)
++        self.ntp.tick(waiting_queue=[ready, gone], now=0.0)
++        self.ntp.tick(waiting_queue=[ready, gone], now=1.0)
++        self.ntp.tick(waiting_queue=[ready], now=1.1)
++        self.assertEqual(self.board.c(1.1), 1.0)
++
++    def test_a_landing_is_stamped_for_a_planned_or_queued_turn_under_any_eviction_policy(self):
++        """Under next_use there is no return_chance strategy to adopt a landed span into, and a
++        landing for a request never seen queued would stay in the table for ever."""
++        self.assertIsInstance(self.cache.tree_core.eviction_strategy, NextUseStrategy)
++        self.ntp.on_turn_committed(
++            req=make_req("s-t0", kv_hints=hints("s-t1")),
++            key=key_of(KEY_TOKENS),
++            rotation_tail_declined=False,
++            now=0.0,
++            tail_node_id=5,
++        )
++        self.ntp.tick(waiting_queue=[make_req("queued", entered=1.0)], now=1.0)
++        for rid in ("s-t1", "queued", "unknown"):
++            self.cache.prefetch_landed_fn(CacheRequestHandle(rid, 0), 9)
++        self.assertEqual(self.ntp._landed_at, {"s-t1": 1.0, "queued": 1.0})
+ 
+     def test_host_eviction_prices_the_room_by_the_victim_worth_most(self):
+-        """lam is the index of the marginal holder: the highest holding rate among a
+-        pass's victims times what a read costs per token restored (c = 1 and kappa = 0
+-        here). A queued turn's history and an un-hinted prefix are evicted tokens with no
+-        price of their own."""
++        """lam is the highest holding rate among a pass's victims times what a read costs per
++        token restored; an un-hinted prefix is evicted tokens with no price of its own."""
+         registry = self.cache.tree_core.eviction_strategy.registry
+         registry.register(1, 100.0)
+         registry.register(2, 10.0)
+-        registry.register(3, Queued(since=0.0))
+         self.ntp.tick(waiting_queue=[], now=0.0)
+         self.assertEqual(self.board.lam(0.0), 0.0)
+-        for node_id in (1, 2, 3, 4):
++        for node_id in (1, 2, 4):
+             self.cache.tree_core.host_eviction_observer(SimpleNamespace(id=node_id), 640)
+         self.ntp.tick(waiting_queue=[], now=0.1)
+         read_s_per_token = L3LoadModel().read_s_per_page / PAGE
+         self.assertAlmostEqual(self.board.lam(0.1), (1.0 / 10.0) * read_s_per_token)
+-        self.assertEqual(self.board.evicted_tokens, 4 * 640)
++        self.assertEqual(self.board.evicted_tokens, 3 * 640)
++
++    def test_a_queued_turns_history_is_priced_by_the_wait_it_has_left(self):
++        """Unpriced, room reads as free while eviction takes queued turns' history. "farthest"
++        takes the last arrival (9 s of queue here); "lru" the turn nearest admission."""
++        read_s_per_token = L3LoadModel().read_s_per_page / PAGE
++        queue = [make_req(f"q{i}", entered=2.0) for i in range(5)]
++        for order, rate in (("farthest", 1.0 / 9.0), ("lru", 1.0 / HOLDING_MIN_HORIZON_S)):
++            with self.subTest(order=order):
++                cache = self.make_cache()
++                cache.tree_core.eviction_strategy = NextUseStrategy(
++                    horizon_s=300.0, clock=lambda: 2.0, queued_order=order
++                )
++                cache.tree_core.eviction_strategy.registry.register(7, Queued(since=2.0))
++                self.ntp = NextTurnPrefetcher(mode=self.mode, tree_cache=cache, page_size=PAGE)
++                # 30 admissions: the queue drains one turn every 2 s.
++                self.admit_through_queue([f"x{i}" for i in range(30)], now=1.0)
++                self.ntp.tick(waiting_queue=queue, now=2.0)
++                cache.tree_core.host_eviction_observer(SimpleNamespace(id=7), 640)
++                self.ntp.tick(waiting_queue=queue, now=2.1)
++                self.assertAlmostEqual(self.ntp._prices.lam(2.1), rate * read_s_per_token)
++
++    def test_the_room_price_does_not_feed_on_the_writes_it_prices(self):
++        """With kappa's pending-write term in the restore cost behind lam, 50K pending tokens
++        multiply each sample by 1.95 and lam climbs to its ceiling whatever room is worth."""
++        registry = self.cache.tree_core.eviction_strategy.registry
++        self.cache.pending_backup_tokens = 50_000
++        for second in range(1, 61):
++            # The strategy's clock stands at 0: due back in a second, a rate of 1 a second.
++            registry.register(second, 1.0)
++            self.cache.tree_core.host_eviction_observer(SimpleNamespace(id=second), 640)
++            self.ntp.tick(waiting_queue=[], now=float(second))
++        self.assertAlmostEqual(self.board.lam(60.0), L3LoadModel().read_s_per_page / PAGE)
+ 
+     def test_kappa_counts_the_parked_reads_past_their_latest_start(self):
+         """A parked read is late once even dispatched now it lands after its turn is due,
+@@ -2473,6 +2735,76 @@
+             returned, found = scheduler_pass(now, matched=0)
+             self.assertEqual((returned, reevictions(found)), ([], []))
+ 
++    def test_a_match_past_the_key_is_covered_without_comparing_the_prompt(self):
++        """Another session can hold more of the prompt than the plan's key is long. No
++        key is left to compare then, and comparing raised in the arrival path."""
++        found = self.gate(KEY_TOKENS + 500)
++        self.assertEqual(gate_decisions(found), [("covered", "0")])
++        self.assertIsNone(self.plan.shared_tokens)
++
++    def test_a_hit_too_short_to_read_is_given_back_and_logged(self):
++        """The cache revokes a hit under the read threshold, so the turn read nothing:
++        kept as charged, such answers use the turn's reads up as empty ones did."""
++        self.assertEqual(gate_decisions(self.gate(512)), [("read", "1")])
++        ((kind, lookup),) = self.events(lambda: self.answer(start=512, hit=128))
++        self.assertEqual(kind, "ntp_lookup")
++        self.assertEqual(
++            list(lookup.items()),
++            [
++                ("rid", "s-t1"),
++                ("start", "512"),
++                ("asked", str(KEY_TOKENS)),
++                ("hit", "128"),
++                ("refunded", "1"),
++                ("lookups", "0"),
++            ],
++        )
++        self.assertEqual((self.plan.absent_from, self.plan.free_lookups), (512, 1))
++
++    def test_a_match_that_grew_past_the_mark_opens_what_lies_beyond_it(self):
++        """A lookup from token 0 that finds nothing says the first page left storage, not the
++        pages after it: once another session computed that head, the rest is asked for again."""
++        self.cache.resident = 0
++        self.assertEqual(gate_decisions(self.gate(0)), [("read", "1")])
++        self.answer(start=0, hit=0)
++        self.assertEqual(self.ntp.tick(waiting_queue=[self.req], now=5.2), [])
++        self.cache.resident = 256
++        self.assertEqual(self.ntp.tick(waiting_queue=[self.req], now=5.8), [self.req])
++        self.assertEqual(gate_decisions(self.gate(256)), [("read", "1")])
++
++        # The gate alone, for a turn the queue check has not probed since.
++        self.commit("b-t0", "b-t1", now=0.0)
++        handle = CacheRequestHandle(rid="b-t1", attempt_id=0)
++        tail = array("q", range(self.SHARED))
++        self.cache.prefetch_gate_prompt_fn(handle, 0, tail)
++        self.cache.prefetch_lookup_fn(
++            handle, storage_start=0, requested_tokens=KEY_TOKENS, hit_tokens=0
++        )
++        found = self.events(
++            lambda: self.cache.prefetch_gate_prompt_fn(handle, 256, tail[256:])
++        )
++        self.assertEqual(gate_decisions(found), [("read", "1")])
++
++    def test_a_free_room_retry_that_finds_nothing_gives_back_no_read(self):
++        """The queue check re-issues a refused read without counting it: marked as counted, its
++        empty answer would take a re-read off the turn's count that was never added."""
++        hold_switches(self, (envs.SGLANG_HICACHE_NEXT_TURN_ROOM_RETRY, True))
++        self.ntp = NextTurnPrefetcher(
++            mode=self.mode, tree_cache=self.cache, page_size=PAGE, arrival_gate="on"
++        )
++        self.commit("s-t0", "s-t1", now=0.0)
++        plan = self.ntp._plans["s-t1"]
++        self.cache.resident = 0
++        self.assertEqual(gate_decisions(self.gate(0)), [("read", "1")])
++        self.answer(start=0, hit=KEY_TOKENS)
++        self.ntp.on_read_refused(self.handle, tokens=KEY_TOKENS, cut=False, now=5.2)
++        (again,) = self.ntp.tick(waiting_queue=[self.req], now=5.2 + NTP_ROOM_RETRY_S)
++        self.assertEqual(gate_decisions(self.gate(0)), [("retry", "1")])
++        self.cache.ongoing.add(self.handle)
++        self.ntp.on_refetch_result(req=again, issued=True)
++        self.answer(start=0, hit=0)
++        self.assertEqual((plan.lookups, plan.refetches, plan.free_lookups), (1, 0, 0))
++
+     def test_the_switch_binds_only_with_the_gate_in_mode_on(self):
+         """Without the gate nothing counts lookups, and observe must never change what
+         the engine reads: the cache then keeps asking the two-argument gate, or none."""
+@@ -2655,10 +2987,57 @@
+                 self.assertEqual(self.ec_start(0.01), (decision, f"{price:.3g}"))
+                 self.assertEqual(len(self.cache.prefetches), int(decision == "now"))
+ 
++    def test_a_staging_pays_the_frontier_price_when_no_victim_is_dearer(self):
++        """With the frontier dropped from a staging's price, a room that just evicted a holder
++        due back in 10 s reads as free and the read starts at once."""
++        self.cache.tree_core.eviction_strategy.registry.register(1, 10.0)
++        self.cache.tree_core.host_eviction_observer(SimpleNamespace(id=1), 640)
++        self.commit_entry(SHARP)
++        per_token = L3LoadModel().read_s_per_page / PAGE
++        self.assertEqual(self.ec_start(0.01), ("wait", f"{per_token / 10.0:.3g}"))
++
++    def test_under_return_chance_a_staging_pays_for_the_session_of_the_next_victim(self):
++        """The arms that stage by expected cost evict by return chance: priced only under
++        next_use, their stagings would pay for no victim at all."""
++        strategy = ReturnChanceStrategy(horizon_s=30.0, clock=lambda: 0.0)
++        strategy.registry.register(
++            1, ReturnForecast(dist=GapDistribution.point(10.0), idle_from=0.0)
++        )
++        self.cache.tree_core.eviction_strategy = strategy
++        self.cache.victim = SimpleNamespace(id=1, parent=None, children={})
++        self.ntp = self.make_ntp()
++        self.commit_entry(SHARP)
++        per_token = L3LoadModel().read_s_per_page / PAGE
++        self.assertEqual(self.ec_start(0.01), ("wait", f"{per_token / 10.0:.3g}"))
++
++    def test_the_next_victim_is_priced_again_only_every_half_second_and_within_the_ceiling(
++        self,
++    ):
++        """Pricing costs one priority per evictable host leaf, so not every pass; and a victim
++        due at once behind 13 late reads is worth 1.09e-3, above the ceiling."""
++        registry = self.cache.tree_core.eviction_strategy.registry
++        for node_id, next_use in ((1, 10.0), (2, 100.0), (3, 0.0)):
++            registry.register(node_id, next_use)
++        meter, load = self.ntp._meter, L3LoadModel()
++        per_token = load.read_s_per_page / PAGE
++        self.cache.victim = SimpleNamespace(id=1)
++        self.assertAlmostEqual(meter.next_victim_price(load=load, now=0.0), per_token / 10.0)
++        self.cache.victim = SimpleNamespace(id=2)
++        self.assertAlmostEqual(meter.next_victim_price(load=load, now=0.4), per_token / 10.0)
++        self.assertAlmostEqual(meter.next_victim_price(load=load, now=0.6), per_token / 100.0)
++        for late in range(13):
++            self.cache.read_scheduler.park(
++                handle=CacheRequestHandle(f"late{late}", 0), operation=None, pages=1, now=0.0
++            )
++        self.cache.victim = SimpleNamespace(id=3)
++        self.assertEqual(meter.next_victim_price(load=load, now=1.2), LAM_CEILING)
++
+     def test_the_harm_of_a_refused_read_is_its_recompute_at_the_fitted_cost_times_mu(self):
+         """What a staged pin costs an arrived turn refused room: the prefill of the tokens
+         the pin held, at the price of GPU time. The constant it replaces is Triton's at
+         one length, times a queue count that is 0 or the whole queue."""
++        # FA3's cost (campaigns 33 and 34): 20K tokens from scratch take 0.54 s.
++        self.ntp._meter.prefill_cost = PrefillCostModel(seed_a=12.8e-6, seed_b=0.71e-9)
+         self.commit_entry(WIDE)
+         waiting = [make_req("a-t1", entered=0.0), make_req("b-t1", entered=0.0)]
+         self.cache.pinned = {self.handle: 20_000}
+@@ -2669,11 +3048,90 @@
+         (price,) = [fields for kind, fields in found if kind == "ec_price"]
+         mu = self.ntp._prices.mu(5.2)
+         self.assertGreater(mu, 2.5)
+-        self.assertEqual(int(price["harm_ms"]), round(mu * 20_000 * 1.1e-4 * 1000))
++        prefill_s = 12.8e-6 * 20_000 + 0.71e-9 * 20_000**2
++        self.assertEqual(int(price["harm_ms"]), round(mu * prefill_s * 1000))
+         with self.assertRaises(ValueError):
+             self.make_ntp(price_learning="harm")
+ 
+ 
++class TestPricesLogOnly(MeasuredTimingTestCase):
++    """SGLANG_LOG_HICACHE_PRICES_INTERVAL alone, under expected-cost timing with the
++    arrival hold: one script run without it and with it."""
++
++    def script(self, prices_interval_s):
++        """A saturated spell (12 ready turns queued for 19 s while 190 others are admitted), a
++        held read, a read staged once the queue drained, and a turn refused room under its
++        pin. Returns the lines logged and the answers given."""
++        stack = hold_switches(
++            self, (envs.SGLANG_LOG_HICACHE_PRICES_INTERVAL, prices_interval_s)
++        )
++        self.cache = self.make_cache()
++        self.cache.resident = self.cache.matched_tokens = 4 * PAGE
++        self.ntp = self.make_ntp(arrival_hold="on")
++        stack.close()
++        self.commit_entry(SHARP)
++        stuck = [make_req(f"q{i}", entered=0.0) for i in range(12)]
++        found, answers = [], []
++        for step in range(190):
++            turn = make_req(f"busy-{step}", entered=0.1 * step)
++            found += self.tick(0.1 * step, queue=stuck + [turn])
++            turn.time_stats.forward_entry_time = 0.1 * step + 0.05
++        found += self.tick(19.0, queue=stuck)
++        last = stuck[-1].cache_request_handle
++        held = ParkedRead(handle=last, operation=None, pages=10, parked_at=0.0)
++        found += self.events(
++            lambda: answers.append(self.ntp.read_not_before(last, held, 0))
++        )
++        for req in stuck:
++            req.time_stats.forward_entry_time = 19.05
++        now = 19.25
++        while now < self.sharp_start() + 1.0:
++            found += self.tick(now)
++            answers.append((now, [h for h, *_ in self.cache.prefetches]))
++            now += 0.25
++        self.cache.land(self.handle, self.missing)
++        found += self.tick(now)
++        refused = make_req("r-t1", entered=now)
++        self.cache.refusals = [(refused.cache_request_handle, 30_000)]
++        arrived = make_req("s-t1", entered=now)
++        for step in range(1, 25):
++            found += self.tick(now + 0.25 * step, queue=[refused, arrived])
++        arrived.time_stats.forward_entry_time = now + 6.2
++        found += self.tick(now + 6.25, queue=[refused])
++        return found, answers
++
++    def test_the_prices_log_alone_changes_no_decision_and_no_other_line(self):
++        """With only the log on c, mu and the admission error exist to be read: no start, hold
++        or harm charge may read them, and every line but ntp_admit keeps its fields."""
++        off, off_answers = self.script(0.0)
++        on, on_answers = self.script(5.0)
++        self.assertEqual(on_answers, off_answers)
++
++        def decisions(found):
++            lines = []
++            for kind, fields in found:
++                if kind == "ntp_admit":
++                    fields = {name: fields[name] for name in ADMIT_FIELDS}
++                if kind != "prices":
++                    lines.append((kind, fields))
++            return lines
++
++        self.assertEqual(decisions(on), decisions(off))
++        by_kind = {}
++        for kind, fields in off:
++            by_kind.setdefault(kind, []).append(fields)
++        for kind, names in (("ec_start", EC_START_FIELDS), ("ntp_hold", HOLD_FIELDS)):
++            self.assertEqual({tuple(fields) for fields in by_kind[kind]}, {tuple(names)})
++        # The script reached what it compares: the hold held, the read was staged where
++        # an idle GPU stages it, the refusal was charged and the turn admitted.
++        self.assertGreater(off_answers[0], 19.0)
++        self.assertEqual(off_answers[-1][1], [self.handle])
++        self.assertIn("now", [fields["decision"] for fields in by_kind["ec_start"]])
++        self.assertGreater(max(int(f["harm_ms"]) for f in by_kind["ec_price"]), 0)
++        self.assertEqual(len(by_kind["ntp_admit"]), 1)
++        self.assertIn("prices", [kind for kind, _ in on])
++
++
+ def measure_lags(cache, *, lookup_s=0.02, fixed_s=0.01):
+     """Enough park and landing samples for the read path's lags to be published."""
+     for _ in range(LAG_MIN_SAMPLES):
+@@ -2681,6 +3139,16 @@
+         cache.read_lags.fixed.observe(fixed_s)
+ 
+ 
++def hold_writes(cache, *, since, usual_s=4.0):
++    """Enough write holds of usual_s for their length to be published, and one on since
++    `since`: timed reads are write-held."""
++    lags = cache.read_lags
++    for hold in range(LAG_MIN_SAMPLES):
++        lags.note_write_hold(held=True, now=since - 100.0 * (hold + 1))
++        lags.note_write_hold(held=False, now=since - 100.0 * (hold + 1) + usual_s)
++    lags.note_write_hold(held=True, now=since)
++
++
+ class TestReadLine(PrefetcherTestCase):
+     """SGLANG_HICACHE_NEXT_TURN_READ_LINE under just-in-time timing and the arrival hold."""
+ 
+@@ -2696,7 +3164,28 @@
+         self.handle = CacheRequestHandle(rid="s-t1", attempt_id=0)
+         self.ntp = self.make_ntp()
+         # s-t1 is due at 50.1 s; one plan's read is due before it and one after.
+-        for session, gap_s in (("e", 30.0), ("l", 80.0), ("s", 50.0)):
++        self.commit_gaps(e=30.0, l=80.0, s=50.0)
++        srs = self.cache.read_scheduler
++        srs.park(handle=CacheRequestHandle("e-t1", 0), operation=None, pages=400, now=0.0)
++        srs.park(handle=CacheRequestHandle("l-t1", 0), operation=None, pages=4000, now=0.0)
++        own_pages = (KEY_TOKENS - 4 * PAGE) // PAGE
++        # The start without the switch: admission minus the load of the read alone, minus
++        # the margin.
++        self.start_alone = (
++            ArrivalOffset().predict_arrival(t_commit=0.0, gap_s=50.0)
++            - L3LoadModel().seconds(own_pages=own_pages, backlog_pages=0)
++            - NTP_JIT_MARGIN_S
++        )
++
++    def make_ntp(self, **kwargs):
++        kwargs.setdefault("read_timing", "just_in_time")
++        return NextTurnPrefetcher(
++            mode=self.mode, tree_cache=self.cache, page_size=PAGE, **kwargs
++        )
++
++    def commit_gaps(self, **gaps):
++        """A plan of KEY_TOKENS per session, its next turn <session>-t1 due after the gap."""
++        for session, gap_s in gaps.items():
+             self.ntp.on_turn_committed(
+                 req=make_req(
+                     f"{session}-t0",
+@@ -2713,26 +3202,61 @@
+                 rotation_tail_declined=False,
+                 now=0.0,
+             )
+-        srs = self.cache.read_scheduler
+-        srs.park(handle=CacheRequestHandle("e-t1", 0), operation=None, pages=400, now=0.0)
+-        srs.park(handle=CacheRequestHandle("l-t1", 0), operation=None, pages=4000, now=0.0)
+-        own_pages = (KEY_TOKENS - 4 * PAGE) // PAGE
+-        # The start today: admission minus the load of the read alone, minus the margin.
+-        self.start_alone = (
+-            ArrivalOffset().predict_arrival(t_commit=0.0, gap_s=50.0)
+-            - L3LoadModel().seconds(own_pages=own_pages, backlog_pages=0)
+-            - NTP_JIT_MARGIN_S
+-        )
+-
+-    def make_ntp(self, **kwargs):
+-        kwargs.setdefault("read_timing", "just_in_time")
+-        return NextTurnPrefetcher(
+-            mode=self.mode, tree_cache=self.cache, page_size=PAGE, **kwargs
+-        )
+ 
+     def staged(self):
+         return self.handle in [handle for handle, *_ in self.cache.prefetches]
+ 
++    def test_a_pending_read_counts_the_line_and_a_timed_one_the_write_hold_too(self):
++        """ntp_due says what was counted: a timed read waits for the parked reads due no later
++        (400 pages) and for the write hold (2.8 s left); a read needed now for neither."""
++        self.ntp = self.make_ntp(read_timing="horizon")
++        self.commit_gaps(e=30.0, l=80.0, s=50.0, o=0.0)
++        hold_writes(self.cache, since=-1.0)
++        found = self.events(lambda: self.ntp.tick(waiting_queue=[], now=0.2))
++        due = {
++            fields["rid"]: (fields["backlog_pages"], fields["load_ms"])
++            for kind, fields in found
++            if kind == "ntp_due"
++        }
++        seeds_s = L3LoadModel().seconds(own_pages=12, backlog_pages=0)
++        self.assertEqual(
++            (due["s-t1"], due["o-t1"]),
++            (
++                ("400", str(round((seeds_s + 400 * 0.0025 + 2.8) * 1000))),
++                ("0", str(round(seeds_s * 1000))),
++            ),
++        )
++
++    def test_the_queue_check_counts_the_line_once_a_turn_and_not_the_turns_own_read(self):
++        """Only logged under the deadline order, the estimate must not walk the parked reads per
++        queued turn per pass; a turn's own parked read stands in that line, not behind it."""
++        self.cache = self.make_cache()
++        self.cache.resident = self.cache.matched_tokens = 4 * PAGE
++        self.ntp = self.make_ntp()
++        self.commit_gaps(s=5.0)
++        srs = self.cache.read_scheduler
++        srs.park(handle=CacheRequestHandle("urgent", 0), operation=None, pages=200, now=0.0)
++        srs.park(handle=self.handle, operation=None, pages=12, now=0.0)
++        self.cache.ongoing.add(self.handle)
++        asked = []
++        line_pages = self.cache.storage_read_line_pages
++        pages_ahead = self.cache.parked_read_pages_ahead
++        self.cache.storage_read_line_pages = lambda due: asked.append(due) or line_pages(due)
++        self.cache.parked_read_pages_ahead = lambda own: asked.append(own) or pages_ahead(own)
++        req = make_req("s-t1", entered=1.0)
++        found = []
++        for step in range(10):
++            found += self.events(
++                lambda: self.ntp.tick(waiting_queue=[req], now=1.0 + 0.1 * step)
++            )
++        (due,) = [fields for kind, fields in found if kind == "ntp_due"]
++        load_s = L3LoadModel().seconds(own_pages=12, backlog_pages=200)
++        self.assertEqual(
++            (due["case"], due["backlog_pages"], due["load_ms"]),
++            ("2", "200", str(round(load_s * 1000))),
++        )
++        self.assertEqual(asked, [self.handle])
++
+     def test_a_parked_read_due_earlier_moves_a_start_earlier_and_one_due_later_does_not(self):
+         """Dispatch serves reads by deadline, so a read staged now waits for the parked
+         ones due before it. Counting launched reads only, a planned 8 s read took 30 to
+@@ -2746,7 +3270,7 @@
+     def test_once_ready_turns_mostly_wait_just_in_time_leaves_the_line_out(self):
+         """This timing weighs no cost against an early start: with the GPU saturated a
+         late read delays nobody, and the line (5 s of it here) would only pin more history
+-        early. The start is then today's, on the seeded lags."""
++        early. The start is then the one without the switch, on the seeded lags."""
+         self.cache.read_scheduler.park(
+             handle=CacheRequestHandle("urgent", 0), operation=None, pages=2000, now=0.0
+         )
+@@ -2814,13 +3338,21 @@
+         (envs.SGLANG_HICACHE_NEXT_TURN_LATENESS_WEIGHT, True),
+         (envs.SGLANG_HICACHE_NEXT_TURN_READ_LINE, True),
+     )
+-    # A read needed now parked ahead of anything staged: 5 s of line.
++    # A staged read due 20 s before the plan's, parked: 5 s of line.
+     LINE_PAGES = 2000
+ 
+     def setUp(self):
+         super().setUp()
++        # Session e is due at 30.1 s; all of its short key is in memory, so the ticks
++        # stage nothing for it.
++        self.ntp.on_turn_committed(
++            req=make_req("e-t0", kv_hints=hints("e-t1", 30.0)),
++            key=key_of(4 * PAGE),
++            rotation_tail_declined=False,
++            now=0.0,
++        )
+         self.cache.read_scheduler.park(
+-            handle=CacheRequestHandle("line", 0),
++            handle=CacheRequestHandle("e-t1", 0),
+             operation=None,
+             pages=self.LINE_PAGES,
+             now=0.0,
+@@ -3107,6 +3639,33 @@
+         self.ntp.tick(waiting_queue=[make_req("busy", entered=2.0)], now=2.0)
+         self.assertEqual(self.gate(other)["decision"], "read")
+ 
++    def test_the_turns_that_arrive_during_a_recompute_are_priced_into_it(self):
++        """At 2.7 admissions a second a 0.7 s recompute delays the turn or two that arrive while
++        it runs: 24K tokens that an idle engine recomputes are read."""
++        handle = self.plan_turn("s", 375 * PAGE)
++        self.assertEqual(self.gate(handle, history=375 * PAGE)["decision"], "recompute")
++        self.admit_through_queue([f"x{i}" for i in range(160)], now=1.0)
++        busy = self.gate(handle, history=375 * PAGE)
++        self.assertEqual(busy["decision"], "read")
++        self.assertGreater(float(busy["mu"]), 1.9)
++
++    def test_the_read_is_priced_behind_the_line_ahead_and_not_behind_the_write_hold(self):
++        """A read needed at arrival waits for the reads needed now parked before it, never for
++        the write hold: 60K tokens read at an idle thread are recomputed behind 5 s of reads."""
++        hold_writes(self.cache, since=0.0)
++        self.assertEqual(self.gate(self.plan_turn("s"))["read_ms"], "345")
++        long_history = 938 * PAGE
++        idle = self.gate(self.plan_turn("l", long_history), history=long_history)
++        self.assertEqual(idle["decision"], "read")
++        self.cache.read_scheduler.park(
++            handle=CacheRequestHandle("urgent", 0), operation=None, pages=2000, now=0.0
++        )
++        behind = self.gate(self.plan_turn("m", long_history), history=long_history)
++        self.assertEqual(
++            (behind["decision"], behind["read_ms"]),
++            ("recompute", str(round((0.03 + (938 + 2000) * 0.0025) * 1000))),
++        )
++
+     def test_a_falling_c_unmeasured_lags_and_the_staged_lookup_are_not_recomputed(self):
+         """Below c = 0.8 the rule was wrong on a quarter to half of its recomputes: a queue
+         formed behind them. On the load model's seeds a recompute would win at every size.
+@@ -3210,6 +3769,87 @@
+         self.assertEqual(self.passes(1.0, 1.6, 2.2), [])
+         self.assertEqual(self.cache.dropped, [])
+ 
++    def test_a_ready_turn_stops_the_rule_at_once_and_its_wait_starts_again(self):
++        """A turn with nothing to read is work for the GPU from the pass it is seen; once it is
++        admitted the queue must again go half a second with no ready turn."""
++        self.assertEqual(self.passes(1.0, 1.4), [])
++        ready = make_req("ready-t1", entered=1.5)
++        self.queue.append(ready)
++        self.assertEqual(self.passes(1.5, 1.6, 1.7), [])
++        ready.time_stats.forward_entry_time = 1.75
++        self.queue.remove(ready)
++        self.assertEqual(self.passes(1.8, 2.2), [])
++        (starve,) = self.passes(2.4)
++        self.assertEqual(starve["rid"], "b-t1")
++
++    def test_unmeasured_lags_keep_every_read(self):
++        """On the load model's seeds a parked read looks 0.9 s slower than it is, and
++        nearly any recompute beats it."""
++        self.cache.read_lags = ReadPathLags()
++        self.assertEqual(self.passes(1.0, 1.6, 2.2), [])
++        self.assertEqual(self.cache.dropped, [])
++
++    def test_a_timed_read_is_also_weighed_behind_the_write_hold(self):
++        """b's span costs 607 ms to compute against 345 ms to read. Write-held with 3.3 s left,
++        a read due at b's admission lands later; a read needed now is never held."""
++        self.admit_through_queue([f"x{i}" for i in range(30)], now=0.5)
++        self.cache.backlog_pages = 0
++        self.cache.read_scheduler.discard(self.handles["c"])
++        self.cache.spans[self.handles["b"]] = (40_000, SHORT_HISTORY)
++        self.cache.ongoing.add(self.handles["d"])
++        hold_writes(self.cache, since=1.0)
++        self.queue = [make_req(f"{name}-t1", entered=1.0) for name in ("a", "b")]
++        self.assertEqual(self.passes(1.0, 1.6), [])
++        self.queue.insert(1, make_req("d-t1", entered=1.0))
++        (starve,) = self.passes(1.7)
++        self.assertEqual(
++            (starve["rid"], starve["land_ms"], starve["rec_ms"]), ("b-t1", "3645", "607")
++        )
++
++    def test_a_turn_that_gave_its_read_up_is_not_handed_back_for_another(self):
++        """Its history is missing by choice: the queue check would re-issue its prefetch
++        every probe interval, for the gate to decline each time."""
++        self.cache.resident = self.cache.matched_tokens = 0
++        self.passes(1.0, 1.4, 1.6)
++        self.assertEqual(self.cache.dropped, [self.handles["b"]])
++        for now in (2.2, 2.8):
++            self.assertEqual(self.ntp.tick(waiting_queue=self.queue, now=now), [])
++
++    def test_after_a_drop_the_queue_must_starve_for_another_half_second(self):
++        """Admission takes the dropped turn within its pass, so the next pass sees the same
++        starved queue: without a new wait a read was given up on every pass."""
++        self.cache.park(self.handles["d"], start=0, tokens=SHORT_HISTORY)
++        self.queue.append(make_req("d-t1", entered=1.0))
++        dropped_at = {}
++        for step in range(70):
++            now = 1.0 + 0.025 * step
++            for starve in self.passes(now):
++                dropped_at[starve["rid"]] = now
++                (turn,) = [req for req in self.queue if req.rid == starve["rid"]]
++                turn.time_stats.forward_entry_time = now + 0.001
++                self.queue.remove(turn)
++        self.assertEqual(list(dropped_at), ["b-t1", "d-t1"])
++        self.assertGreaterEqual(
++            dropped_at["d-t1"] - dropped_at["b-t1"], NTP_GPU_BOUND_S - 1e-9
++        )
++
++    def test_a_turn_is_weighed_by_the_deadline_it_has_once_it_is_queued(self):
++        """At the head x's read is needed now. Weighed in the pass x arrives by its staged
++        deadline, the 345 ms read looked 2.6 s away and was given up for a 607 ms recompute."""
++        srs = self.cache.read_scheduler
++        srs.clear()
++        self.cache.backlog_pages = 0
++        staged = [self.plan_turn(f"p{i}") for i in range(3)]
++        x = self.plan_turn("x")
++        for handle in staged:
++            self.cache.park(handle, start=0, tokens=300 * PAGE)
++        self.cache.park(x, start=40_000, tokens=SHORT_HISTORY)
++        self.queue = [make_req("a-t1", entered=1.0)]
++        self.assertEqual(self.passes(1.0, 1.4), [])
++        self.queue.append(make_req("x-t1", entered=1.6))
++        self.assertEqual(self.passes(1.6, 1.7, 2.3), [])
++        self.assertTrue(srs.is_parked(x))
++
+     def test_with_the_switch_off_a_starved_queue_keeps_its_reads(self):
+         stack = hold_switches(self, (self.switch, False))
+         ntp = self.make_ntp()
+--- a/test/registered/unit/mem_cache/test_next_use_eviction.py
++++ b/test/registered/unit/mem_cache/test_next_use_eviction.py
+@@ -5,6 +5,7 @@
+ 
+ register_cpu_ci(est_time=10, suite="base-a-test-cpu")
+ 
++import contextlib
+ import time
+ import unittest
+ from array import array
+@@ -12,6 +13,7 @@
+ 
+ import torch
+ 
++from sglang.srt.environ import envs
+ from sglang.srt.mem_cache.allocator import TokenToKVPoolAllocator
+ from sglang.srt.mem_cache.base_prefix_cache import (
+     EvictParams,
+@@ -19,9 +21,12 @@
+     MatchPrefixParams,
+ )
+ from sglang.srt.mem_cache.cache_init_params import CacheInitParams
++from sglang.srt.mem_cache.evict_policy import LRUStrategy
+ from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool, ReqToTokenPool
+ from sglang.srt.mem_cache.next_turn_policy import GapDistribution
++from sglang.srt.mem_cache.next_turn_prefetch import NextTurnPrefetcher
+ from sglang.srt.mem_cache.next_use_eviction import (
++    HOLDING_MIN_HORIZON_S,
+     POINT_GRACE_S,
+     QUEUED_MAX_AGE_S,
+     RETURN_TIER_ENDED,
+@@ -38,6 +43,7 @@
+     Queued,
+     ReturnChanceStrategy,
+     ReturnForecast,
++    queued_holding_rate,
+ )
+ from sglang.srt.mem_cache.radix_cache import RadixKey
+ from sglang.srt.mem_cache.unified_cache.components import ComponentType, FullComponent
+@@ -387,9 +393,9 @@
+         )
+ 
+     def test_return_chance_rate_is_the_sessions_whichever_of_its_nodes_goes(self):
+-        """Eviction takes a session's body after its tail, and the body carries no
+-        registration of its own; an exact hint is worth one over the time left, is still
+-        due within the grace, and is not coming after it."""
++        """A session's body carries no registration: it is the session's once eviction has
++        ranked the tail, and pricing alone must not make it so. An exact hint is worth one
++        over the time left, due within the grace and not coming after it."""
+         now = 1000.0
+         strategy = ReturnChanceStrategy(horizon_s=30.0, clock=lambda: now)
+         registry = strategy.registry
+@@ -399,6 +405,8 @@
+         registry.register(3, ReturnForecast(dist=sharp, idle_from=now))
+         rate = strategy.holding_rate(tail)
+         self.assertAlmostEqual(rate, 1.0 / 20.0, delta=0.003)
++        self.assertIsNone(strategy.holding_rate(body))
++        strategy.get_priority(tail)
+         self.assertEqual(strategy.holding_rate(body), rate)
+         for node_id, gap_s, idle_s, expected in (
+             (10, 60.0, 10.0, 1.0 / 50.0),
+@@ -416,6 +424,32 @@
+         self.assertIsNone(strategy.holding_rate(node(14)))
+         self.assertIsNone(strategy.holding_rate(node(15)))
+ 
++    def test_a_queued_turn_is_worth_what_the_caller_says_until_its_registration_is_stale(self):
++        """A registration left by a turn aborted before it committed ranks as un-hinted again:
++        priced as queued it would hold the room's price up for ten minutes."""
++        now = 1000.0
++        stale = Queued(since=now - QUEUED_MAX_AGE_S - 1.0)
++        for strategy in (
++            NextUseStrategy(clock=lambda: now),
++            ReturnChanceStrategy(clock=lambda: now),
++        ):
++            with self.subTest(strategy=type(strategy).__name__):
++                strategy.registry.register(1, Queued(since=now - 5.0))
++                strategy.registry.register(2, stale)
++                self.assertEqual(strategy.holding_rate(node(1), queued=0.25), 0.25)
++                self.assertIsNone(strategy.holding_rate(node(2), queued=0.25))
++
++    def test_the_queued_victim_is_the_last_arrival_under_farthest_and_near_the_head_under_lru(
++        self,
++    ):
++        """One over the wait the evicted turn has left: the whole queue's under "farthest". At
++        the top rate there, a 20 s queue would read as room 40 times dearer than it is."""
++        top = 1.0 / HOLDING_MIN_HORIZON_S
++        self.assertEqual(queued_holding_rate("farthest", queue_wait_s=20.0), 1.0 / 20.0)
++        self.assertEqual(queued_holding_rate("farthest", queue_wait_s=0.1), top)
++        self.assertEqual(queued_holding_rate("farthest", queue_wait_s=None), top)
++        self.assertEqual(queued_holding_rate("lru", queue_wait_s=20.0), top)
++
+ 
+ class TestHostEvictionObserver(CustomTestCase):
+     """Host eviction of the FULL component over three host leaves of 4, 8 and 16 tokens,
+@@ -445,11 +479,13 @@
+             evictable_host_leaves=set(self.leaves),
+             host_eviction_observer=lambda victim, tokens: self.seen.append((victim, tokens)),
+             _evict_host_leaf=evict,
++            eviction_strategy=LRUStrategy(),
++            enable_session_radix_cache=False,
+         )
+         self.component = FullComponent.__new__(FullComponent)
+         self.component.component_type = full
+         self.component.tree_core = self.core
+-        self.component.session_ref_eviction_strategy = lambda node: node.last_access_time
++        self.component.session_ref_eviction_strategy = None
+ 
+     def evict_host(self, tokens):
+         self.component.drive_host_eviction(tokens, {ComponentType.FULL: 0}, {}, {})
+@@ -476,6 +512,153 @@
+         self.assertEqual(self.evicted, [first, second, third])
+         self.assertIsNone(self.component.next_host_victim())
+ 
++    def test_the_next_victim_follows_session_refs_as_eviction_does(self):
++        """With session refs a leaf some session still holds goes after every leaf none
++        does, whatever its age: named by age alone, the next victim would be the wrong one."""
++        first, second, _ = self.leaves
++        self.core.enable_session_radix_cache = True
++        self.component.session_ref_eviction_strategy = (
++            self.component._session_ref_eviction_strategy
++        )
++        first.component_data[ComponentType.FULL].session_ref = 1
++        self.assertIs(self.component.next_host_victim(), second)
++        self.evict_host(1)
++        self.assertEqual(self.evicted, [second])
++
++
++class TestPricingLeavesEvictionAlone(CustomTestCase):
++    """root -> body -> {a, b} and root -> unhinted, four host tokens each, under return_chance
++    on a tree core that detaches victims as the real one does. The tails are ended
++    sessions'; the body and the un-hinted leaf, used before the body, carry no registration."""
++
++    def tree(self, *, tails):
++        full = ComponentType.FULL
++        strategy = ReturnChanceStrategy(horizon_s=30.0, clock=lambda: 1000.0)
++        evicted = []
++
++        def made(name, parent, last_access):
++            created = UnifiedTreeNode((full,))
++            created.name = name
++            created.parent = parent
++            created.last_access_time = last_access
++            created.component_data[full].host_value = torch.zeros(4, dtype=torch.int64)
++            if parent is not None:
++                parent.children[created.id] = created
++            return created
++
++        root = made("root", None, 0.0)
++        body = made("body", root, 50.0)
++        unhinted = made("unhinted", root, 10.0)
++        leaves = {unhinted}
++        for age, name in enumerate(tails, start=1):
++            tail = made(name, body, float(age))
++            strategy.registry.register(tail.id, None)
++            leaves.add(tail)
++
++        def evict(victim, tracker, device_frees, host_frees):
++            data = victim.component_data[full]
++            tracker[full] += len(data.host_value)
++            data.host_value = None
++            core.evictable_host_leaves.discard(victim)
++            del victim.parent.children[victim.id]
++            evicted.append(victim.name)
++            # A host-backed parent left childless becomes a host leaf.
++            if victim.parent is not root and not victim.parent.children:
++                core.evictable_host_leaves.add(victim.parent)
++
++        core = SimpleNamespace(
++            evictable_host_leaves=leaves,
++            host_eviction_observer=None,
++            _evict_host_leaf=evict,
++            eviction_strategy=strategy,
++            enable_session_radix_cache=False,
++        )
++        component = FullComponent.__new__(FullComponent)
++        component.component_type = full
++        component.tree_core = core
++        component.session_ref_eviction_strategy = None
++        return component, core, body, evicted
++
++    def test_the_prices_log_does_not_change_which_leaf_host_eviction_takes(self):
++        """Asked about b once a is gone, a price that ranks as eviction does pulls the body into
++        b's ended session, and the body leaves before the un-hinted leaf."""
++        orders = {}
++        for prices_interval_s in (0.0, 5.0):
++            component, core, _, evicted = self.tree(tails=("a", "b"))
++            stack = contextlib.ExitStack()
++            self.addCleanup(stack.close)
++            stack.enter_context(
++                envs.SGLANG_LOG_HICACHE_PRICES_INTERVAL.override(prices_interval_s)
++            )
++            NextTurnPrefetcher(
++                mode="observe",
++                tree_cache=SimpleNamespace(read_scheduler=None, tree_core=core),
++                page_size=64,
++            )
++            stack.close()
++            self.assertEqual(core.host_eviction_observer is not None, prices_interval_s > 0)
++            component.drive_host_eviction(12, {ComponentType.FULL: 0}, {}, {})
++            orders[prices_interval_s] = evicted
++        self.assertEqual(orders[0.0], ["a", "b", "unhinted"])
++        self.assertEqual(orders[5.0], orders[0.0])
++
++    def test_naming_the_next_victim_ranks_nothing_into_a_session(self):
++        """Asked between eviction passes: ranked as eviction ranks, the body's only child would
++        pull the body into its session when eviction ranks nothing."""
++        component, core, body, _ = self.tree(tails=("b",))
++        self.assertEqual(component.next_host_victim().name, "b")
++        self.assertEqual(
++            core.eviction_strategy.peek_priority(body)[0], RETURN_TIER_UNKNOWN
++        )
++
++    def test_host_eviction_of_the_real_tree_is_the_same_with_the_prices_log_on(self):
++        """On a real tree, host-only: the leaf named as next victim goes first, and with the log
++        on eviction keeps what it keeps without, the body and the un-hinted leaf."""
++        full = ComponentType.FULL
++        kept = {}
++        for prices_interval_s in (0.0, 5.0):
++            params = next_use_params(horizon_s=30.0)
++            params.eviction_policy = "return_chance"
++            cache = UnifiedRadixCache(params)
++            core = cache.tree_core
++            core.set_hicache_enabled()
++            alloc = cache.token_to_kv_pool_allocator.alloc
++            nodes = {}
++            keys = {"x": [1, 2, 3, 4], "y": [1, 2, 5, 6], "w": [7, 8], "u": [9, 10]}
++            for name, tokens in keys.items():
++                inserted = cache.insert(
++                    InsertParams(key=RadixKey(array("q", tokens)), value=alloc(len(tokens)))
++                )
++                nodes[name] = core.node_by_id(inserted.last_device_node)
++            nodes["body"] = nodes["x"].parent
++            self.assertIs(nodes["y"].parent, nodes["body"])
++            ages = {"body": 50.0, "y": 1.0, "x": 2.0, "w": 60.0, "u": 10.0}
++            for name, node in nodes.items():
++                data = node.component_data[full]
++                data.host_value, data.value = data.value.clone(), None
++                node.last_access_time = ages[name]
++            for node in nodes.values():
++                core._update_evictable_leaf_sets(node)
++            for name in ("x", "y", "w"):
++                core.eviction_strategy.registry.register(nodes[name].id, None)
++            stack = contextlib.ExitStack()
++            self.addCleanup(stack.close)
++            stack.enter_context(
++                envs.SGLANG_LOG_HICACHE_PRICES_INTERVAL.override(prices_interval_s)
++            )
++            NextTurnPrefetcher(mode="on", tree_cache=cache, page_size=1)
++            stack.close()
++            self.assertIs(cache.next_host_victim(), nodes["y"])
++            freed = core.drive_host_eviction(full, 6)
++            self.assertEqual(freed.tracker[full], 6)
++            # Host values of this tree are stand-ins: nothing to hand back to a pool.
++            freed.host_frees.clear()
++            freed.device_frees.clear()
++            kept[prices_interval_s] = sorted(
++                name for name, node in nodes.items() if node in core.evictable_host_leaves
++            )
++        self.assertEqual(kept, {0.0: ["body", "u"], 5.0: ["body", "u"]})
++
+ 
+ def next_use_params(horizon_s: float) -> CacheInitParams:
+     dtype = torch.float16
